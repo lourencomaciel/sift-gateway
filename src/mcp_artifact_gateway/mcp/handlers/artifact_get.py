@@ -112,15 +112,6 @@ async def handle_artifact_get(
                     commit()
             return precondition
 
-        ctx._safe_touch_for_retrieval(
-            connection,
-            session_id=session_id,
-            artifact_id=artifact_id,
-        )
-        commit = getattr(connection, "commit", None)
-        if callable(commit):
-            commit()
-
         assert row is not None
         if cursor_payload is not None:
             try:
@@ -139,6 +130,15 @@ async def handle_artifact_get(
                     )
             except CursorStaleError as exc:
                 return ctx._cursor_error(exc)
+
+        ctx._safe_touch_for_retrieval(
+            connection,
+            session_id=session_id,
+            artifact_id=artifact_id,
+        )
+        commit = getattr(connection, "commit", None)
+        if callable(commit):
+            commit()
 
         if target == "mapped":
             roots_rows = connection.execute(
