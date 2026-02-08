@@ -1,6 +1,7 @@
 """Advisory lock stampede control and artifact reuse logic."""
 from __future__ import annotations
 
+import asyncio
 import time
 from dataclasses import dataclass
 from typing import Any
@@ -161,3 +162,36 @@ def acquire_advisory_lock(
             )
             return False
         time.sleep(sleep_seconds)
+
+
+async def acquire_advisory_lock_async(
+    connection: Any,
+    *,
+    request_key: str,
+    timeout_ms: int,
+    poll_interval_ms: int = 50,
+    metrics: Any | None = None,
+    logger: Any | None = None,
+) -> bool:
+    """Acquire advisory lock with timeout, using asyncio.sleep to avoid blocking the event loop."""
+    log = logger or get_logger(component="cache.reuse")
+    deadline = time.monotonic() + (max(timeout_ms, 0) / 1000.0)
+    sleep_seconds = max(poll_interval_ms, 1) / 1000.0
+
+    while True:
+        if try_acquire_advisory_lock(connection, request_key=request_key):
+            _increment_metric(metrics, "advisory_lock_acquired")
+            log.info(
+                LogEvents.ADVISORY_LOCK_ACQUIRED,
+                request_key=request_key,
+            )
+            return True
+        if time.monotonic() >= deadline:
+            _increment_metric(metrics, "advisory_lock_timeouts")
+            log.warning(
+                LogEvents.ADVISORY_LOCK_TIMEOUT,
+                request_key=request_key,
+                timeout_ms=timeout_ms,
+            )
+            return False
+        await asyncio.sleep(sleep_seconds)
