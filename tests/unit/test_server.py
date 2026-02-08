@@ -437,7 +437,10 @@ def test_handle_mirrored_tool_returns_busy_when_lock_times_out(
     )
     mirrored = server.mirrored_tools["demo.echo"]
 
-    monkeypatch.setattr("mcp_artifact_gateway.mcp.handlers.mirrored_tool.acquire_advisory_lock", lambda *_args, **_kwargs: False)
+    async def _lock_fail(*_args, **_kwargs):
+        return False
+
+    monkeypatch.setattr("mcp_artifact_gateway.mcp.handlers.mirrored_tool.acquire_advisory_lock_async", _lock_fail)
 
     async def _must_not_call(*_args, **_kwargs):
         raise AssertionError("upstream should not be called when lock fails")

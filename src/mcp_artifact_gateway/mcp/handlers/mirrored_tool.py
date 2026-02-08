@@ -10,7 +10,7 @@ from mcp_artifact_gateway.artifacts.create import (
 )
 from mcp_artifact_gateway.cache.reuse import (
     ReuseResult,
-    acquire_advisory_lock,
+    acquire_advisory_lock_async,
 )
 from mcp_artifact_gateway.constants import RESPONSE_TYPE_RESULT
 from mcp_artifact_gateway.envelope.responses import gateway_error, gateway_tool_result
@@ -141,7 +141,7 @@ async def handle_mirrored_tool(
     else:
         with ctx.db_pool.connection() as connection:
             if cache_mode != "fresh":
-                acquired = acquire_advisory_lock(
+                acquired = await acquire_advisory_lock_async(
                     connection,
                     request_key=identity.request_key,
                     timeout_ms=ctx.config.advisory_lock_timeout_ms,
