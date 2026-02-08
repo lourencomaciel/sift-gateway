@@ -8,7 +8,7 @@ from mcp_artifact_gateway.constants import ARTIFACT_ID_PREFIX, WORKSPACE_ID
 
 _VALID_MAP_KINDS = {"none", "full", "partial"}
 _VALID_MAP_STATUS = {"pending", "ready", "failed", "stale"}
-_VALID_INDEX_STATUS = {"off", "ready", "failed"}
+_VALID_INDEX_STATUS = {"off", "pending", "ready", "partial", "failed"}
 
 
 def validate_artifact_row(row: Mapping[str, Any]) -> None:
@@ -42,4 +42,3 @@ def validate_artifact_row(row: Mapping[str, Any]) -> None:
         if not isinstance(value, int) or value < 0:
             msg = f"{key} must be a non-negative integer"
             raise ValueError(msg)
-
