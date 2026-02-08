@@ -1,0 +1,54 @@
+[project]
+name = "mcp-artifact-gateway"
+version = "0.1.0"
+description = "Local single-tenant MCP gateway that proxies upstream MCP tools, stores results as durable artifact envelopes, and provides bounded deterministic retrieval."
+readme = "README.md"
+authors = [
+    { name = "zmaciel", email = "46382529+zmaciel@users.noreply.github.com" }
+]
+requires-python = ">=3.11"
+dependencies = [
+    # MCP framework
+    "fastmcp>=2.0.0",
+    # Postgres (async + binary speedups)
+    "psycopg[binary,pool]>=3.2.0",
+    # Streaming JSON parser (partial mapping)
+    "ijson>=3.3.0",
+    # Compression for canonical bytes
+    "zstandard>=0.23.0",
+    # Structured logging
+    "structlog>=24.0.0",
+    # Config & model validation
+    "pydantic>=2.0.0",
+    "pydantic-settings>=2.0.0",
+    # Fast JSON (optional, used for non-canonical paths)
+    "orjson>=3.10.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.24.0",
+    "pytest-cov>=6.0.0",
+    "ruff>=0.8.0",
+    "mypy>=1.13.0",
+]
+
+[project.scripts]
+mcp-gateway = "mcp_artifact_gateway.main:cli"
+
+[build-system]
+requires = ["uv_build>=0.10.0,<0.11.0"]
+build-backend = "uv_build"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
