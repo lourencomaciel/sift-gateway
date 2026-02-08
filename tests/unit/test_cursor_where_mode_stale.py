@@ -1,29 +1,25 @@
-import pytest
+from __future__ import annotations
 
-from mcp_artifact_gateway.constants import TRAVERSAL_CONTRACT_VERSION
-from mcp_artifact_gateway.cursor.hmac import CursorStaleError
-from mcp_artifact_gateway.cursor.payload import build_cursor_payload, verify_cursor_bindings
+from mcp_artifact_gateway.cursor.payload import CursorStaleError, assert_cursor_binding, build_cursor_payload
 
 
 def test_cursor_where_mode_stale() -> None:
     payload = build_cursor_payload(
-        tool="artifact.search",
-        binding={"order_by": "created_seq_desc"},
-        position_state={"cursor": None},
+        tool="artifact.select",
         artifact_id="art_1",
-        artifact_generation=1,
-        map_kind="full",
-        mapper_version="mapper_v1",
-        cursor_secret_version="v1",
-        cursor_ttl_minutes=5,
+        position_state={"offset": 0},
+        ttl_minutes=10,
         where_canonicalization_mode="raw_string",
     )
-
-    with pytest.raises(CursorStaleError):
-        verify_cursor_bindings(
+    try:
+        assert_cursor_binding(
             payload,
-            artifact_generation=1,
-            map_kind="full",
-            where_canonicalization_mode="canonical_ast",
-            traversal_contract_version=TRAVERSAL_CONTRACT_VERSION,
+            expected_tool="artifact.select",
+            expected_artifact_id="art_1",
+            expected_where_mode="canonical_ast",
         )
+    except CursorStaleError as exc:
+        assert "where_canonicalization_mode mismatch" in str(exc)
+    else:
+        raise AssertionError("expected CursorStaleError")
+

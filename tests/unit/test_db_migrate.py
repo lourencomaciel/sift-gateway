@@ -1,93 +1,55 @@
-import asyncio
+from __future__ import annotations
 
-import pytest
+from pathlib import Path
 
-from mcp_artifact_gateway.db.migrate import check_migrations, run_migrations
-
-
-class FakeCursor:
-    def __init__(self, conn) -> None:
-        self._conn = conn
-        self._last_query = None
-
-    async def __aenter__(self):
-        return self
-
-    async def __aexit__(self, exc_type, exc, tb):
-        return False
-
-    async def execute(self, query, params=None):
-        self._last_query = query
-        # Handle insertion into schema_migrations
-        if isinstance(query, str) and query.startswith("INSERT INTO schema_migrations"):
-            filename = params[0]
-            self._conn.applied.add(filename)
-
-    async def fetchall(self):
-        if "FROM schema_migrations" in str(self._last_query):
-            return [{"filename": f} for f in sorted(self._conn.applied)]
-        return []
-
-    async def fetchone(self):
-        if "to_regclass" in str(self._last_query):
-            return {"tbl": "schema_migrations" if self._conn.has_schema else None}
-        if "FROM schema_migrations" in str(self._last_query):
-            rows = [{"filename": f} for f in sorted(self._conn.applied)]
-            return rows[0] if rows else None
-        return None
+from mcp_artifact_gateway.db.migrate import apply_migrations, list_migrations
 
 
-class FakeTransaction:
-    def __init__(self, conn) -> None:
-        self._conn = conn
+class _FakeResult:
+    def __init__(self, rows):
+        self._rows = rows
 
-    async def __aenter__(self):
-        return self._conn
-
-    async def __aexit__(self, exc_type, exc, tb):
-        return False
+    def fetchall(self):
+        return self._rows
 
 
-class FakeConnection:
+class _FakeConnection:
     def __init__(self) -> None:
         self.applied: set[str] = set()
-        self.has_schema = False
+        self.queries: list[str] = []
+        self.commit_calls = 0
 
-    async def execute(self, query, params=None):
-        if isinstance(query, str) and query.startswith("CREATE TABLE IF NOT EXISTS schema_migrations"):
-            self.has_schema = True
-        if isinstance(query, str) and query.startswith("INSERT INTO schema_migrations"):
-            filename = params[0]
-            self.applied.add(filename)
-        # Ignore migration SQL bodies
+    def execute(self, query: str, params=None):
+        self.queries.append(query)
+        normalized = " ".join(query.lower().split())
+        if normalized.startswith("select migration_name from schema_migrations"):
+            return _FakeResult([(name,) for name in sorted(self.applied)])
+        if normalized.startswith("insert into schema_migrations"):
+            assert params is not None
+            self.applied.add(str(params[0]))
+            return _FakeResult([])
+        return _FakeResult([])
 
-    async def commit(self):
-        return None
-
-    def cursor(self, row_factory=None):
-        return FakeCursor(self)
-
-    def transaction(self):
-        return FakeTransaction(self)
+    def commit(self):
+        self.commit_calls += 1
 
 
-@pytest.mark.asyncio
-async def test_run_migrations_applies_pending() -> None:
-    conn = FakeConnection()
-    applied = await run_migrations(conn)
-    assert "001_init.sql" in applied
-    assert conn.has_schema is True
+def test_list_migrations_includes_sql_files() -> None:
+    migration_paths = list_migrations(
+        Path("src/mcp_artifact_gateway/db/migrations").resolve()
+    )
+    names = [path.name for path in migration_paths]
+    assert "001_init.sql" in names
 
 
-@pytest.mark.asyncio
-async def test_check_migrations_missing_table_raises() -> None:
-    conn = FakeConnection()
-    with pytest.raises(RuntimeError):
-        await check_migrations(conn)
+def test_apply_migrations_idempotent() -> None:
+    connection = _FakeConnection()
+    migrations_dir = Path("src/mcp_artifact_gateway/db/migrations").resolve()
 
+    first = apply_migrations(connection, migrations_dir)
+    second = apply_migrations(connection, migrations_dir)
 
-@pytest.mark.asyncio
-async def test_check_migrations_after_apply() -> None:
-    conn = FakeConnection()
-    await run_migrations(conn)
-    await check_migrations(conn)
+    assert "001_init.sql" in first
+    assert second == []
+    assert connection.commit_calls == 2
+

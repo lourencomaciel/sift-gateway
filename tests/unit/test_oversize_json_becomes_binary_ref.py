@@ -1,32 +1,27 @@
-from pathlib import Path
+from __future__ import annotations
 
-import pytest
+from mcp_artifact_gateway.envelope.model import BinaryRefContentPart, Envelope, JsonContentPart
+from mcp_artifact_gateway.envelope.oversize import replace_oversized_json_parts
+from mcp_artifact_gateway.fs.blob_store import BlobStore
 
-from mcp_artifact_gateway.envelope.oversize import check_and_offload_oversize_json
-from mcp_artifact_gateway.fs.blob_store import BinaryRef
 
-
-@pytest.mark.asyncio
-async def test_oversize_json_offloaded(tmp_path) -> None:
-    async def fake_put(raw_bytes: bytes, mime: str | None) -> BinaryRef:
-        return BinaryRef(
-            binary_hash="hash",
-            blob_id="bin_hash",
-            byte_count=len(raw_bytes),
-            mime=mime,
-            fs_path=Path(tmp_path / "bin"),
-        )
-
-    parts = [
-        {"type": "json", "value": {"a": "b"}},
-        {"type": "text", "text": "ok"},
-    ]
-
-    converted, warnings = await check_and_offload_oversize_json(
-        parts, max_json_part_parse_bytes=1, blob_store_put_fn=fake_put
+def test_oversized_json_part_becomes_binary_ref(tmp_path) -> None:
+    store = BlobStore(tmp_path / "blobs" / "bin")
+    envelope = Envelope(
+        upstream_instance_id="up_1",
+        upstream_prefix="github",
+        tool="search_issues",
+        status="ok",
+        content=[JsonContentPart(value={"big": "x" * 1000})],
+        meta={"warnings": []},
     )
 
-    assert converted[0].type == "binary_ref"
-    assert converted[1].type == "text"
-    assert warnings
-    assert warnings[0]["original_part_index"] == 0
+    rewritten = replace_oversized_json_parts(
+        envelope,
+        max_json_part_parse_bytes=200,
+        blob_store=store,
+    )
+    assert isinstance(rewritten.content[0], BinaryRefContentPart)
+    assert rewritten.meta["warnings"]
+    assert rewritten.meta["warnings"][0]["code"] == "oversized_json_part"
+

@@ -1,34 +1,49 @@
-import hashlib
+from __future__ import annotations
 
-import pytest
+from pathlib import Path
 
 from mcp_artifact_gateway.fs.blob_store import BlobStore
 
 
-@pytest.mark.asyncio
-async def test_put_bytes_and_dedupe(tmp_path) -> None:
-    store = BlobStore(tmp_path, probe_bytes=2)
-    data = b"abcdef"
-    ref = await store.put_bytes(data, mime="text/json")
+def test_blob_store_put_and_open(tmp_path: Path) -> None:
+    store = BlobStore(tmp_path / "blobs" / "bin", probe_bytes=4)
+    payload = b"abcdef123456"
 
-    assert ref.byte_count == len(data)
-    assert ref.mime == "application/json"
-    assert ref.blob_id.startswith("bin_")
-    assert store.blob_path(ref.binary_hash).exists()
+    ref = store.put_bytes(payload, mime="IMAGE/JPG; charset=utf-8")
+    assert ref.mime == "image/jpeg"
+    assert ref.byte_count == len(payload)
+    assert Path(ref.fs_path).exists()
+    assert Path(ref.fs_path).read_bytes() == payload
 
-    # Second put should dedupe
-    ref2 = await store.put_bytes(data, mime="application/json")
-    assert ref2.binary_hash == ref.binary_hash
+    with store.open_stream(ref.binary_hash) as handle:
+        assert handle.read() == payload
 
 
-@pytest.mark.asyncio
-async def test_existing_blob_size_mismatch(tmp_path) -> None:
-    store = BlobStore(tmp_path)
-    data = b"abc"
-    binary_hash = hashlib.sha256(data).hexdigest()
-    path = store.blob_path(binary_hash)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_bytes(b"ab")  # wrong size
+def test_blob_store_rejects_existing_size_mismatch(tmp_path: Path) -> None:
+    store = BlobStore(tmp_path / "blobs" / "bin")
+    payload = b"same-hash-source"
+    ref = store.put_bytes(payload)
 
-    with pytest.raises(ValueError):
-        await store.put_bytes(data)
+    # Corrupt file size manually and force re-put same payload hash path.
+    Path(ref.fs_path).write_bytes(b"x")
+    try:
+        store.put_bytes(payload)
+    except ValueError as exc:
+        assert "size mismatch" in str(exc)
+    else:
+        raise AssertionError("expected ValueError")
+
+
+def test_blob_store_rejects_existing_content_mismatch_same_size(tmp_path: Path) -> None:
+    store = BlobStore(tmp_path / "blobs" / "bin")
+    payload = b"same-size-bytes"
+    ref = store.put_bytes(payload)
+
+    # Corrupt content while preserving file size.
+    Path(ref.fs_path).write_bytes(b"X" * len(payload))
+    try:
+        store.put_bytes(payload)
+    except ValueError as exc:
+        assert "content hash mismatch" in str(exc)
+    else:
+        raise AssertionError("expected ValueError")
