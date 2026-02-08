@@ -79,14 +79,6 @@ _BUILTIN_TOOL_DESCRIPTIONS = {
     "artifact.find": "Find matching records under mapped roots.",
     "artifact.chain_pages": "Return chain-ordered child artifacts.",
 }
-_VISIBLE_ARTIFACT_SQL = """
-SELECT 1
-FROM artifact_refs
-WHERE workspace_id = %s
-  AND session_id = %s
-  AND artifact_id = %s
-LIMIT 1
-"""
 
 
 class RuntimeTool(Tool):
@@ -99,20 +91,13 @@ class RuntimeTool(Tool):
         return ToolResult(structured_content=result)
 
 
-def _candidate_from_row(row: tuple[object, ...] | dict[str, Any] | None) -> dict[str, Any] | None:
-    if row is None:
-        return None
-    if isinstance(row, dict):
-        return row
-    if len(row) < 5:
-        return None
-    return {
-        "artifact_id": row[0],
-        "payload_hash_full": row[1],
-        "upstream_tool_schema_hash": row[2],
-        "map_status": row[3],
-        "generation": row[4],
-    }
+_CANDIDATE_COLUMNS = [
+    "artifact_id",
+    "payload_hash_full",
+    "upstream_tool_schema_hash",
+    "map_status",
+    "generation",
+]
 
 
 def _upstream_error_message(result: dict[str, Any]) -> str:
@@ -371,8 +356,10 @@ class GatewayServer:
         session_id: str,
         artifact_id: str,
     ) -> bool:
+        from mcp_artifact_gateway.mcp.handlers.common import VISIBLE_ARTIFACT_SQL
+
         row = connection.execute(
-            _VISIBLE_ARTIFACT_SQL,
+            VISIBLE_ARTIFACT_SQL,
             (WORKSPACE_ID, session_id, artifact_id),
         ).fetchone()
         return row is not None
@@ -552,8 +539,10 @@ class GatewayServer:
             (WORKSPACE_ID, request_key),
         ).fetchone()
 
+        from mcp_artifact_gateway.mcp.handlers.common import row_to_dict
+
         return check_reuse_candidate(
-            _candidate_from_row(row),
+            row_to_dict(row, _CANDIDATE_COLUMNS),
             expected_schema_hash=expected_schema_hash,
             strict_schema_reuse=strict_schema_reuse,
         )

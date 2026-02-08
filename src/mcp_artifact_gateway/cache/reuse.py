@@ -6,6 +6,7 @@ import time
 from dataclasses import dataclass
 from typing import Any
 
+from mcp_artifact_gateway.db.protocols import increment_metric
 from mcp_artifact_gateway.obs.logging import LogEvents, get_logger
 from mcp_artifact_gateway.util.hashing import advisory_lock_keys
 
@@ -71,14 +72,14 @@ def check_reuse_candidate(
     log = logger or get_logger(component="cache.reuse")
 
     if candidate_row is None:
-        _increment_metric(metrics, "cache_misses")
+        increment_metric(metrics, "cache_misses")
         log.info(LogEvents.REUSE_MISS, request_key=request_key)
         return ReuseResult(reused=False)
 
     if strict_schema_reuse and expected_schema_hash is not None:
         stored_hash = candidate_row.get("upstream_tool_schema_hash")
         if stored_hash != expected_schema_hash:
-            _increment_metric(metrics, "cache_misses")
+            increment_metric(metrics, "cache_misses")
             log.info(
                 LogEvents.REUSE_MISS,
                 request_key=request_key,
@@ -86,7 +87,7 @@ def check_reuse_candidate(
             )
             return ReuseResult(reused=False, reason="schema_hash_mismatch")
 
-    _increment_metric(metrics, "cache_hits")
+    increment_metric(metrics, "cache_hits")
     log.info(
         LogEvents.REUSE_HIT,
         request_key=request_key,
@@ -107,15 +108,6 @@ INSERT INTO payload_hash_aliases (
 ) VALUES (%s, %s, %s, %s, %s)
 ON CONFLICT (workspace_id, payload_hash_dedupe, payload_hash_full) DO NOTHING
 """
-
-
-def _increment_metric(metrics: Any | None, attr: str) -> None:
-    if metrics is None:
-        return
-    counter = getattr(metrics, attr, None)
-    increment = getattr(counter, "increment", None)
-    if callable(increment):
-        increment()
 
 
 def _lock_result(row: tuple[object, ...] | None) -> bool:
@@ -147,14 +139,14 @@ def acquire_advisory_lock(
 
     while True:
         if try_acquire_advisory_lock(connection, request_key=request_key):
-            _increment_metric(metrics, "advisory_lock_acquired")
+            increment_metric(metrics, "advisory_lock_acquired")
             log.info(
                 LogEvents.ADVISORY_LOCK_ACQUIRED,
                 request_key=request_key,
             )
             return True
         if time.monotonic() >= deadline:
-            _increment_metric(metrics, "advisory_lock_timeouts")
+            increment_metric(metrics, "advisory_lock_timeouts")
             log.warning(
                 LogEvents.ADVISORY_LOCK_TIMEOUT,
                 request_key=request_key,
@@ -180,14 +172,14 @@ async def acquire_advisory_lock_async(
 
     while True:
         if try_acquire_advisory_lock(connection, request_key=request_key):
-            _increment_metric(metrics, "advisory_lock_acquired")
+            increment_metric(metrics, "advisory_lock_acquired")
             log.info(
                 LogEvents.ADVISORY_LOCK_ACQUIRED,
                 request_key=request_key,
             )
             return True
         if time.monotonic() >= deadline:
-            _increment_metric(metrics, "advisory_lock_timeouts")
+            increment_metric(metrics, "advisory_lock_timeouts")
             log.warning(
                 LogEvents.ADVISORY_LOCK_TIMEOUT,
                 request_key=request_key,

@@ -5,7 +5,7 @@ import datetime as dt
 import json
 import secrets
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import Any
 
 from mcp_artifact_gateway.canon.compress import CompressedBytes, compress_bytes
 from mcp_artifact_gateway.canon.rfc8785 import canonical_bytes
@@ -28,6 +28,7 @@ from mcp_artifact_gateway.envelope.model import (
     Envelope,
     JsonContentPart,
 )
+from mcp_artifact_gateway.db.protocols import ConnectionLike, increment_metric, safe_rollback
 from mcp_artifact_gateway.obs.logging import LogEvents, get_logger
 from mcp_artifact_gateway.util.hashing import sha256_hex
 
@@ -251,23 +252,6 @@ ON CONFLICT (workspace_id, payload_hash_full, binary_hash) DO NOTHING
 """
 
 
-def _increment_metric(metrics: Any | None, attr: str, amount: int = 1) -> None:
-    if metrics is None:
-        return
-    counter = getattr(metrics, attr, None)
-    increment = getattr(counter, "increment", None)
-    if callable(increment):
-        increment(amount)
-
-
-class CursorLike(Protocol):
-    def fetchone(self) -> tuple[object, ...] | None: ...
-
-
-class ArtifactConnectionLike(Protocol):
-    def execute(self, query: str, params: tuple[object, ...] | None = None) -> CursorLike: ...
-    def commit(self) -> None: ...
-
 
 def _artifact_insert_params(row: dict[str, Any]) -> tuple[object, ...]:
     return (
@@ -310,7 +294,7 @@ def _created_seq_from_row(row: tuple[object, ...] | None) -> int | None:
 
 def persist_artifact(
     *,
-    connection: ArtifactConnectionLike,
+    connection: ConnectionLike,
     config: GatewayConfig,
     input_data: CreateArtifactInput,
     binary_hashes: list[str] | None = None,
@@ -341,7 +325,7 @@ def persist_artifact(
     # Check for oversize JSON offload
     is_oversize = payload_json_bytes > config.inline_envelope_max_json_bytes
     if is_oversize:
-        _increment_metric(metrics, "oversize_json_count")
+        increment_metric(metrics, "oversize_json_count")
         log.info(
             LogEvents.ARTIFACT_OVERSIZE_JSON,
             artifact_id=artifact_id,
@@ -380,7 +364,7 @@ def persist_artifact(
                 INSERT_PAYLOAD_BINARY_REF_SQL,
                 (WORKSPACE_ID, payload_hash, binary_hash),
             )
-            _increment_metric(metrics, "binary_blob_writes")
+            increment_metric(metrics, "binary_blob_writes")
             log.info(
                 LogEvents.ARTIFACT_BINARY_BLOB_WRITE,
                 artifact_id=artifact_id,
@@ -390,9 +374,7 @@ def persist_artifact(
 
         connection.commit()
     except Exception:
-        rollback = getattr(connection, "rollback", None)
-        if callable(rollback):
-            rollback()
+        safe_rollback(connection)
         raise
 
     log.info(

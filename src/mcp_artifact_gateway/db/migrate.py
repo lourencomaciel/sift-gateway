@@ -4,17 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol
 
-
-class CursorLike(Protocol):
-    def execute(self, query: str, params: tuple[object, ...] | None = None) -> object: ...
-    def fetchall(self) -> list[tuple[object, ...]]: ...
-
-
-class ConnectionLike(Protocol):
-    def execute(self, query: str, params: tuple[object, ...] | None = None) -> CursorLike: ...
-    def commit(self) -> None: ...
+from mcp_artifact_gateway.db.protocols import ConnectionLike
 
 
 @dataclass(frozen=True)
