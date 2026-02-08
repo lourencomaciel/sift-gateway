@@ -54,6 +54,7 @@ from mcp_artifact_gateway.mcp.upstream import (
     call_upstream_tool,
     connect_upstreams,
 )
+from mcp_artifact_gateway.obs.logging import LogEvents, get_logger
 from mcp_artifact_gateway.obs.metrics import GatewayMetrics, get_metrics
 from mcp_artifact_gateway.sessions import touch_for_retrieval, touch_for_search
 
@@ -486,7 +487,11 @@ class GatewayServer:
         try:
             task.result()
         except Exception:
-            return
+            log = get_logger(component="mcp.server")
+            log.error(
+                LogEvents.MAPPING_FAILED,
+                exc_info=task.exception(),
+            )
 
     def _schedule_background_mapping(
         self,

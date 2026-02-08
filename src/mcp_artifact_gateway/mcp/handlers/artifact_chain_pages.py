@@ -62,7 +62,6 @@ async def handle_artifact_chain_pages(
         offset = raw_offset
 
     limit = ctx._bounded_limit(arguments.get("limit"))
-    sql = f"{FETCH_CHAIN_PAGES_SQL}\nLIMIT %s OFFSET %s"
 
     with ctx.db_pool.connection() as connection:
         if not ctx._artifact_visible(
@@ -73,7 +72,7 @@ async def handle_artifact_chain_pages(
             return gateway_error("NOT_FOUND", "parent artifact not found")
 
         rows = connection.execute(
-            sql,
+            FETCH_CHAIN_PAGES_SQL,
             (WORKSPACE_ID, parent_artifact_id, limit + 1, offset),
         ).fetchall()
         mapped_rows = rows_to_dicts(rows, _CHAIN_COLUMNS)
