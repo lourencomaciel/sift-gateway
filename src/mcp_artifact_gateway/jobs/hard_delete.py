@@ -154,6 +154,7 @@ def run_hard_delete_batch(
         binary_blobs_deleted = 0
         fs_blobs_removed = 0
         blob_bytes_reclaimed = 0
+        fs_paths_to_remove: list[str] = []
         for row in blob_rows:
             if len(row) < 4:
                 continue
@@ -170,11 +171,16 @@ def run_hard_delete_batch(
             if isinstance(byte_count, int) and byte_count > 0:
                 blob_bytes_reclaimed += byte_count
             if remove_fs_blobs and isinstance(fs_path, str):
-                if _remove_blob_file(fs_path):
-                    fs_blobs_removed += 1
+                fs_paths_to_remove.append(fs_path)
 
         total_reclaimed = payload_bytes_reclaimed + blob_bytes_reclaimed
         connection.commit()
+
+        # Remove FS blobs AFTER commit so a rollback doesn't orphan files
+        for fs_path in fs_paths_to_remove:
+            if _remove_blob_file(fs_path):
+                fs_blobs_removed += 1
+
         increment_metric(metrics, "prune_hard_deletes", artifacts_deleted)
         increment_metric(metrics, "prune_bytes_reclaimed", total_reclaimed)
         increment_metric(metrics, "prune_fs_orphans_removed", fs_blobs_removed)

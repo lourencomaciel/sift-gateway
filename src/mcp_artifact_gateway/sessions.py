@@ -29,14 +29,14 @@ _UPSERT_SESSION_SQL = """\
 INSERT INTO sessions (workspace_id, session_id, created_at, last_seen_at)
 VALUES (%s, %s, NOW(), NOW())
 ON CONFLICT (workspace_id, session_id)
-DO UPDATE SET last_seen_at = NOW();
+DO UPDATE SET last_seen_at = EXCLUDED.last_seen_at;
 """
 
 _UPSERT_ARTIFACT_REF_SQL = """\
 INSERT INTO artifact_refs (workspace_id, session_id, artifact_id, first_seen_at, last_seen_at)
 VALUES (%s, %s, %s, NOW(), NOW())
 ON CONFLICT (workspace_id, session_id, artifact_id)
-DO UPDATE SET last_seen_at = NOW();
+DO UPDATE SET last_seen_at = EXCLUDED.last_seen_at;
 """
 
 _TOUCH_ARTIFACT_SQL = """\
