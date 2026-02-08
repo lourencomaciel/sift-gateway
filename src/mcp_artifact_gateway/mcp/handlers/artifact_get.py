@@ -38,7 +38,7 @@ async def handle_artifact_get(
 
     err = validate_get_args(arguments)
     if err is not None:
-        return err
+        return gateway_error(str(err["code"]), str(err["message"]))
     if ctx.db_pool is None:
         return ctx._not_implemented("artifact.get")
 
@@ -110,7 +110,7 @@ async def handle_artifact_get(
                 commit = getattr(connection, "commit", None)
                 if callable(commit):
                     commit()
-            return precondition
+            return gateway_error(str(precondition["code"]), str(precondition["message"]))
 
         assert row is not None
         if cursor_payload is not None:
@@ -160,7 +160,7 @@ async def handle_artifact_get(
 
         envelope_value = row.get("envelope")
         canonical_bytes_raw = row.get("envelope_canonical_bytes")
-        if isinstance(envelope_value, dict):
+        if isinstance(envelope_value, dict) and "content" in envelope_value:
             envelope = envelope_value
         elif canonical_bytes_raw is None:
             return gateway_error("INTERNAL_ERROR", "missing canonical bytes for artifact")

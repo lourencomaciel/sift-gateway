@@ -59,7 +59,7 @@ async def handle_artifact_select(
 
     err = validate_select_args(arguments)
     if err is not None:
-        return err
+        return gateway_error(str(err["code"]), str(err["message"]))
     if ctx.db_pool is None:
         return ctx._not_implemented("artifact.select")
 
@@ -274,7 +274,7 @@ async def handle_artifact_select(
                 return gateway_error("NOT_FOUND", "artifact not found")
             envelope_value = artifact_row.get("envelope")
             canonical_bytes_raw = artifact_row.get("envelope_canonical_bytes")
-            if isinstance(envelope_value, dict):
+            if isinstance(envelope_value, dict) and "content" in envelope_value:
                 envelope = envelope_value
             elif canonical_bytes_raw is None:
                 return gateway_error("INTERNAL_ERROR", "missing canonical bytes for artifact")
