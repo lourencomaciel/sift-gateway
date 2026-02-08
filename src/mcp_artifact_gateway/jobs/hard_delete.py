@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from mcp_artifact_gateway.constants import WORKSPACE_ID
+from mcp_artifact_gateway.db.protocols import increment_metric, safe_rollback
 from mcp_artifact_gateway.obs.logging import LogEvents, get_logger
 
 
@@ -31,10 +32,10 @@ LIMIT %s
 FOR UPDATE SKIP LOCKED
 """
 
-# Step 2: Delete artifact (cascades to artifact_roots, artifact_refs, artifact_samples)
-DELETE_ARTIFACT_SQL = """
+# Step 2: Delete artifacts (cascades to artifact_roots, artifact_refs, artifact_samples)
+DELETE_ARTIFACTS_BATCH_SQL = """
 DELETE FROM artifacts
-WHERE workspace_id = %s AND artifact_id = %s
+WHERE workspace_id = %s AND artifact_id = ANY(%s)
 """
 
 # Step 3: Find unreferenced payloads
@@ -50,9 +51,9 @@ WHERE pb.workspace_id = %s
 """
 
 # Step 4: Delete unreferenced payloads (cascades payload_binary_refs, payload_hash_aliases)
-DELETE_PAYLOAD_SQL = """
+DELETE_PAYLOADS_BATCH_SQL = """
 DELETE FROM payload_blobs
-WHERE workspace_id = %s AND payload_hash_full = %s
+WHERE workspace_id = %s AND payload_hash_full = ANY(%s)
 """
 
 # Step 5: Find unreferenced binary blobs
@@ -67,10 +68,10 @@ WHERE bb.workspace_id = %s
   )
 """
 
-# Step 6: Delete binary blob DB row
-DELETE_BLOB_SQL = """
+# Step 6: Delete binary blob DB rows
+DELETE_BLOBS_BATCH_SQL = """
 DELETE FROM binary_blobs
-WHERE workspace_id = %s AND binary_hash = %s
+WHERE workspace_id = %s AND binary_hash = ANY(%s)
 """
 
 
@@ -80,21 +81,6 @@ def hard_delete_candidates_params(
 ) -> tuple[object, ...]:
     """Params for FIND_HARD_DELETE_CANDIDATES_SQL."""
     return (WORKSPACE_ID, grace_period_timestamp, batch_size)
-
-
-def _safe_rollback(connection: object) -> None:
-    rollback = getattr(connection, "rollback", None)
-    if callable(rollback):
-        rollback()
-
-
-def _increment_metric(metrics: Any | None, attr: str, amount: int = 1) -> None:
-    if metrics is None:
-        return
-    counter = getattr(metrics, attr, None)
-    increment = getattr(counter, "increment", None)
-    if callable(increment):
-        increment(amount)
 
 
 def _remove_blob_file(fs_path: str) -> bool:
@@ -127,24 +113,22 @@ def run_hard_delete_batch(
             ),
         ).fetchall()
 
-        artifacts_deleted = 0
-        for row in candidate_rows:
-            if len(row) < 1:
-                continue
-            artifact_id = row[0]
-            if not isinstance(artifact_id, str):
-                continue
+        artifact_ids = [
+            row[0] for row in candidate_rows
+            if len(row) >= 1 and isinstance(row[0], str)
+        ]
+        if artifact_ids:
             connection.execute(
-                DELETE_ARTIFACT_SQL,
-                (WORKSPACE_ID, artifact_id),
+                DELETE_ARTIFACTS_BATCH_SQL,
+                (WORKSPACE_ID, artifact_ids),
             )
-            artifacts_deleted += 1
+        artifacts_deleted = len(artifact_ids)
 
         payload_rows = connection.execute(
             FIND_UNREFERENCED_PAYLOADS_SQL,
             (WORKSPACE_ID,),
         ).fetchall()
-        payloads_deleted = 0
+        payload_hashes = []
         payload_bytes_reclaimed = 0
         for row in payload_rows:
             if len(row) < 2:
@@ -153,21 +137,24 @@ def run_hard_delete_batch(
             payload_total_bytes = row[1]
             if not isinstance(payload_hash_full, str):
                 continue
-            connection.execute(
-                DELETE_PAYLOAD_SQL,
-                (WORKSPACE_ID, payload_hash_full),
-            )
-            payloads_deleted += 1
+            payload_hashes.append(payload_hash_full)
             if isinstance(payload_total_bytes, int) and payload_total_bytes > 0:
                 payload_bytes_reclaimed += payload_total_bytes
+        if payload_hashes:
+            connection.execute(
+                DELETE_PAYLOADS_BATCH_SQL,
+                (WORKSPACE_ID, payload_hashes),
+            )
+        payloads_deleted = len(payload_hashes)
 
         blob_rows = connection.execute(
             FIND_UNREFERENCED_BLOBS_SQL,
             (WORKSPACE_ID,),
         ).fetchall()
-        binary_blobs_deleted = 0
+        blob_hashes = []
         fs_blobs_removed = 0
         blob_bytes_reclaimed = 0
+        fs_paths_to_remove: list[str] = []
         for row in blob_rows:
             if len(row) < 4:
                 continue
@@ -176,22 +163,29 @@ def run_hard_delete_batch(
             byte_count = row[3]
             if not isinstance(binary_hash, str):
                 continue
-            connection.execute(
-                DELETE_BLOB_SQL,
-                (WORKSPACE_ID, binary_hash),
-            )
-            binary_blobs_deleted += 1
+            blob_hashes.append(binary_hash)
             if isinstance(byte_count, int) and byte_count > 0:
                 blob_bytes_reclaimed += byte_count
             if remove_fs_blobs and isinstance(fs_path, str):
-                if _remove_blob_file(fs_path):
-                    fs_blobs_removed += 1
+                fs_paths_to_remove.append(fs_path)
+        if blob_hashes:
+            connection.execute(
+                DELETE_BLOBS_BATCH_SQL,
+                (WORKSPACE_ID, blob_hashes),
+            )
+        binary_blobs_deleted = len(blob_hashes)
 
         total_reclaimed = payload_bytes_reclaimed + blob_bytes_reclaimed
         connection.commit()
-        _increment_metric(metrics, "prune_hard_deletes", artifacts_deleted)
-        _increment_metric(metrics, "prune_bytes_reclaimed", total_reclaimed)
-        _increment_metric(metrics, "prune_fs_orphans_removed", fs_blobs_removed)
+
+        # Remove FS blobs AFTER commit so a rollback doesn't orphan files
+        for fs_path in fs_paths_to_remove:
+            if _remove_blob_file(fs_path):
+                fs_blobs_removed += 1
+
+        increment_metric(metrics, "prune_hard_deletes", artifacts_deleted)
+        increment_metric(metrics, "prune_bytes_reclaimed", total_reclaimed)
+        increment_metric(metrics, "prune_fs_orphans_removed", fs_blobs_removed)
         if artifacts_deleted > 0:
             log.info(
                 LogEvents.PRUNE_HARD_DELETE,
@@ -213,5 +207,5 @@ def run_hard_delete_batch(
             bytes_reclaimed=total_reclaimed,
         )
     except Exception:
-        _safe_rollback(connection)
+        safe_rollback(connection)
         raise

@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import logging
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
 from mcp_artifact_gateway.config.settings import GatewayConfig
 from mcp_artifact_gateway.db.conn import connect
+
+_logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -102,7 +105,7 @@ def _check_db(config: GatewayConfig) -> tuple[bool, list[str]]:
         try:
             connection.close()
         except Exception:
-            pass
+            _logger.warning("failed to close DB connection during startup check", exc_info=True)
 
     return True, details
 

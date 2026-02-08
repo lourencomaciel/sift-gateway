@@ -4,9 +4,10 @@ from __future__ import annotations
 from collections import defaultdict
 from dataclasses import dataclass
 import time
-from typing import Any, Protocol
+from typing import Any
 
 from mcp_artifact_gateway.constants import MAPPER_VERSION, WORKSPACE_ID
+from mcp_artifact_gateway.db.protocols import ConnectionLike, safe_rollback
 from mcp_artifact_gateway.mapping.runner import MappingInput, MappingResult, SampleRecord, run_mapping
 from mcp_artifact_gateway.obs.logging import LogEvents, get_logger
 
@@ -18,18 +19,6 @@ class WorkerContext:
     artifact_id: str
     generation: int       # snapshot at start
     map_status: str       # must be "pending" or "stale"
-
-
-class CursorLike(Protocol):
-    rowcount: int
-
-    def fetchone(self) -> tuple[object, ...] | None: ...
-
-
-class MappingConnectionLike(Protocol):
-    def execute(self, query: str, params: tuple[object, ...] | None = None) -> CursorLike: ...
-
-    def commit(self) -> None: ...
 
 
 # SQL for conditional mapping update (race-safe)
@@ -110,12 +99,6 @@ def _cursor_rowcount(cursor: object) -> int:
     return 1
 
 
-def _safe_rollback(connection: object) -> None:
-    rollback = getattr(connection, "rollback", None)
-    if callable(rollback):
-        rollback()
-
-
 def _root_sample_indices(root: Any) -> list[int] | None:
     raw = root.sample_indices
     if raw is None:
@@ -188,7 +171,7 @@ def _validate_sample_alignment(
 
 
 def persist_mapping_result(
-    connection: MappingConnectionLike,
+    connection: ConnectionLike,
     *,
     worker_ctx: WorkerContext,
     result: MappingResult,
@@ -211,7 +194,7 @@ def persist_mapping_result(
         ),
     )
     if _cursor_rowcount(update_cursor) == 0:
-        _safe_rollback(connection)
+        safe_rollback(connection)
         return False
 
     if result.map_status != "ready":
@@ -251,7 +234,7 @@ def persist_mapping_result(
 
 
 def run_mapping_worker(
-    connection: MappingConnectionLike,
+    connection: ConnectionLike,
     *,
     worker_ctx: WorkerContext,
     mapping_input: MappingInput,
@@ -284,7 +267,7 @@ def run_mapping_worker(
             result=result,
         )
     except Exception as exc:
-        _safe_rollback(connection)
+        safe_rollback(connection)
         failure = MappingResult(
             map_kind=result.map_kind,
             map_status="failed",
@@ -304,7 +287,7 @@ def run_mapping_worker(
                 result=failure,
             )
         except Exception:
-            _safe_rollback(connection)
+            safe_rollback(connection)
             persisted = False
 
     duration_ms = (time.monotonic() - started_at) * 1000.0

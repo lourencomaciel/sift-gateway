@@ -80,7 +80,9 @@ def validate_against_schema(
     for key in required:
         if key not in args:
             violations.append(f"missing required argument: {key}")
-    for key in args:
-        if properties and key not in properties:
-            violations.append(f"unknown argument: {key}")
+    additional = schema.get("additionalProperties", True)
+    if additional is False:
+        for key in args:
+            if properties and key not in properties:
+                violations.append(f"unknown argument: {key}")
     return violations
