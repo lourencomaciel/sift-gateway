@@ -40,8 +40,8 @@ async def handle_artifact_search(
         arguments,
         max_limit=ctx.config.artifact_search_max_limit,
     )
-    if "error" in parsed:
-        return gateway_error(str(parsed["error"]), str(parsed["message"]))
+    if "code" in parsed:
+        return gateway_error(str(parsed["code"]), str(parsed["message"]))
     if ctx.db_pool is None:
         return ctx._not_implemented("artifact.search")
 

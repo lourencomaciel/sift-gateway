@@ -2,9 +2,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import Any
 
 from mcp_artifact_gateway.constants import WORKSPACE_ID
+from mcp_artifact_gateway.db.protocols import ConnectionLike, increment_metric, safe_rollback
 from mcp_artifact_gateway.obs.logging import LogEvents, get_logger
 
 
@@ -13,16 +14,6 @@ class SoftDeleteResult:
     """Result of a soft delete batch."""
     deleted_count: int
     artifact_ids: list[str]
-
-
-class CursorLike(Protocol):
-    def fetchall(self) -> list[tuple[object, ...]]: ...
-
-
-class SoftDeleteConnectionLike(Protocol):
-    def execute(self, query: str, params: tuple[object, ...] | None = None) -> CursorLike: ...
-
-    def commit(self) -> None: ...
 
 
 # Use SKIP LOCKED for concurrent safety, recheck predicates
@@ -99,23 +90,8 @@ def _extract_artifact_ids(rows: list[tuple[object, ...]]) -> list[str]:
     return artifact_ids
 
 
-def _safe_rollback(connection: object) -> None:
-    rollback = getattr(connection, "rollback", None)
-    if callable(rollback):
-        rollback()
-
-
-def _increment_metric(metrics: Any | None, attr: str, amount: int = 1) -> None:
-    if metrics is None:
-        return
-    counter = getattr(metrics, attr, None)
-    increment = getattr(counter, "increment", None)
-    if callable(increment):
-        increment(amount)
-
-
 def run_soft_delete_expired(
-    connection: SoftDeleteConnectionLike,
+    connection: ConnectionLike,
     *,
     batch_size: int = 100,
     metrics: Any | None = None,
@@ -130,7 +106,7 @@ def run_soft_delete_expired(
         ).fetchall()
         artifact_ids = _extract_artifact_ids(rows)
         connection.commit()
-        _increment_metric(metrics, "prune_soft_deletes", len(artifact_ids))
+        increment_metric(metrics, "prune_soft_deletes", len(artifact_ids))
         if artifact_ids:
             log.info(
                 LogEvents.PRUNE_SOFT_DELETE,
@@ -143,12 +119,12 @@ def run_soft_delete_expired(
             artifact_ids=artifact_ids,
         )
     except Exception:
-        _safe_rollback(connection)
+        safe_rollback(connection)
         raise
 
 
 def run_soft_delete_unreferenced(
-    connection: SoftDeleteConnectionLike,
+    connection: ConnectionLike,
     *,
     threshold_timestamp: str,
     batch_size: int = 100,
@@ -167,7 +143,7 @@ def run_soft_delete_unreferenced(
         ).fetchall()
         artifact_ids = _extract_artifact_ids(rows)
         connection.commit()
-        _increment_metric(metrics, "prune_soft_deletes", len(artifact_ids))
+        increment_metric(metrics, "prune_soft_deletes", len(artifact_ids))
         if artifact_ids:
             log.info(
                 LogEvents.PRUNE_SOFT_DELETE,
@@ -181,5 +157,5 @@ def run_soft_delete_unreferenced(
             artifact_ids=artifact_ids,
         )
     except Exception:
-        _safe_rollback(connection)
+        safe_rollback(connection)
         raise

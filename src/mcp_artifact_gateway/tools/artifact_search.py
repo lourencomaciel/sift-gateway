@@ -35,7 +35,7 @@ def validate_search_args(
     ctx = arguments.get("_gateway_context")
     if not isinstance(ctx, dict) or not ctx.get("session_id"):
         return {
-            "error": "INVALID_ARGUMENT",
+            "code": "INVALID_ARGUMENT",
             "message": "missing _gateway_context.session_id",
         }
 
@@ -45,7 +45,7 @@ def validate_search_args(
         filters = {}
     if not isinstance(filters, dict):
         return {
-            "error": "INVALID_ARGUMENT",
+            "code": "INVALID_ARGUMENT",
             "message": "filters must be an object",
         }
     order_by = arguments.get("order_by", "created_seq_desc")
@@ -54,14 +54,14 @@ def validate_search_args(
 
     if order_by not in ("created_seq_desc", "last_seen_desc"):
         return {
-            "error": "INVALID_ARGUMENT",
+            "code": "INVALID_ARGUMENT",
             "message": f"invalid order_by: {order_by}",
         }
 
     status = filters.get("status")
     if status is not None and status not in ("ok", "error"):
         return {
-            "error": "INVALID_ARGUMENT",
+            "code": "INVALID_ARGUMENT",
             "message": f"invalid status filter: {status}",
         }
 

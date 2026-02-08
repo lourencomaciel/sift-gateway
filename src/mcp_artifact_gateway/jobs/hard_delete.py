@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from mcp_artifact_gateway.constants import WORKSPACE_ID
+from mcp_artifact_gateway.db.protocols import increment_metric, safe_rollback
 from mcp_artifact_gateway.obs.logging import LogEvents, get_logger
 
 
@@ -80,21 +81,6 @@ def hard_delete_candidates_params(
 ) -> tuple[object, ...]:
     """Params for FIND_HARD_DELETE_CANDIDATES_SQL."""
     return (WORKSPACE_ID, grace_period_timestamp, batch_size)
-
-
-def _safe_rollback(connection: object) -> None:
-    rollback = getattr(connection, "rollback", None)
-    if callable(rollback):
-        rollback()
-
-
-def _increment_metric(metrics: Any | None, attr: str, amount: int = 1) -> None:
-    if metrics is None:
-        return
-    counter = getattr(metrics, attr, None)
-    increment = getattr(counter, "increment", None)
-    if callable(increment):
-        increment(amount)
 
 
 def _remove_blob_file(fs_path: str) -> bool:
@@ -189,9 +175,9 @@ def run_hard_delete_batch(
 
         total_reclaimed = payload_bytes_reclaimed + blob_bytes_reclaimed
         connection.commit()
-        _increment_metric(metrics, "prune_hard_deletes", artifacts_deleted)
-        _increment_metric(metrics, "prune_bytes_reclaimed", total_reclaimed)
-        _increment_metric(metrics, "prune_fs_orphans_removed", fs_blobs_removed)
+        increment_metric(metrics, "prune_hard_deletes", artifacts_deleted)
+        increment_metric(metrics, "prune_bytes_reclaimed", total_reclaimed)
+        increment_metric(metrics, "prune_fs_orphans_removed", fs_blobs_removed)
         if artifacts_deleted > 0:
             log.info(
                 LogEvents.PRUNE_HARD_DELETE,
@@ -213,5 +199,5 @@ def run_hard_delete_batch(
             bytes_reclaimed=total_reclaimed,
         )
     except Exception:
-        _safe_rollback(connection)
+        safe_rollback(connection)
         raise

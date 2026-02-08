@@ -12,7 +12,7 @@ from mcp_artifact_gateway.tools.artifact_search import (
 
 def test_validate_search_args_requires_session_id() -> None:
     result = validate_search_args({}, max_limit=200)
-    assert result["error"] == "INVALID_ARGUMENT"
+    assert result["code"] == "INVALID_ARGUMENT"
     assert "session_id" in result["message"]
 
 
@@ -20,7 +20,7 @@ def test_validate_search_args_requires_session_id_in_context() -> None:
     result = validate_search_args(
         {"_gateway_context": {}}, max_limit=200
     )
-    assert result["error"] == "INVALID_ARGUMENT"
+    assert result["code"] == "INVALID_ARGUMENT"
 
 
 def test_validate_search_args_rejects_invalid_order_by() -> None:
@@ -31,7 +31,7 @@ def test_validate_search_args_rejects_invalid_order_by() -> None:
         },
         max_limit=200,
     )
-    assert result["error"] == "INVALID_ARGUMENT"
+    assert result["code"] == "INVALID_ARGUMENT"
     assert "invalid order_by" in result["message"]
 
 
@@ -44,7 +44,7 @@ def test_validate_search_args_accepts_valid_order_by() -> None:
             },
             max_limit=200,
         )
-        assert "error" not in result
+        assert "code" not in result
         assert result["order_by"] == order
 
 
@@ -89,7 +89,7 @@ def test_validate_search_args_rejects_invalid_status_filter() -> None:
         },
         max_limit=200,
     )
-    assert result["error"] == "INVALID_ARGUMENT"
+    assert result["code"] == "INVALID_ARGUMENT"
     assert "status" in result["message"]
 
 
