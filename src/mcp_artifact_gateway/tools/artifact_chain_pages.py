@@ -34,6 +34,7 @@ WHERE a.workspace_id = %s
   AND a.parent_artifact_id = %s
   AND a.deleted_at IS NULL
 ORDER BY a.chain_seq ASC NULLS LAST, a.created_seq ASC
+LIMIT %s OFFSET %s
 """
 
 # SQL for allocating chain_seq with retry

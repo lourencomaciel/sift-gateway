@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any, Mapping
 
 from mcp_artifact_gateway.constants import WORKSPACE_ID
+
+_logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Row mapping helpers
@@ -19,6 +22,12 @@ def row_to_dict(
         return None
     if isinstance(row, Mapping):
         return dict(row)
+    if len(row) < len(columns):
+        _logger.warning(
+            "row has %d values but %d columns expected; missing columns will be None",
+            len(row),
+            len(columns),
+        )
     return {
         column: row[index] if index < len(row) else None
         for index, column in enumerate(columns)
