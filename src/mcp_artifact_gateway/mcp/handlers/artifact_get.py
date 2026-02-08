@@ -165,11 +165,14 @@ async def handle_artifact_get(
         elif canonical_bytes_raw is None:
             return gateway_error("INTERNAL_ERROR", "missing canonical bytes for artifact")
         else:
-            envelope = reconstruct_envelope(
-                compressed_bytes=bytes(canonical_bytes_raw),
-                encoding=str(row.get("envelope_canonical_encoding", "none")),
-                expected_hash=str(row.get("payload_hash_full", "")),
-            )
+            try:
+                envelope = reconstruct_envelope(
+                    compressed_bytes=bytes(canonical_bytes_raw),
+                    encoding=str(row.get("envelope_canonical_encoding", "none")),
+                    expected_hash=str(row.get("payload_hash_full", "")),
+                )
+            except ValueError as exc:
+                return gateway_error("INTERNAL_ERROR", f"envelope reconstruction failed: {exc}")
 
         if jsonpath is not None:
             values = evaluate_jsonpath(
