@@ -68,16 +68,15 @@ async def handle_artifact_describe(
         if artifact_row is None:
             return gateway_error("NOT_FOUND", "artifact not found")
 
-        ctx._safe_touch_for_retrieval(
-            connection,
-            session_id=session_id,
-            artifact_id=artifact_id,
-        )
-        commit = getattr(connection, "commit", None)
-        if callable(commit):
-            commit()
-
         if artifact_row.get("deleted_at") is not None:
+            ctx._safe_touch_for_retrieval(
+                connection,
+                session_id=session_id,
+                artifact_id=artifact_id,
+            )
+            commit = getattr(connection, "commit", None)
+            if callable(commit):
+                commit()
             return gateway_error("GONE", "artifact has been deleted")
 
         roots = rows_to_dicts(
@@ -87,5 +86,14 @@ async def handle_artifact_describe(
             ).fetchall(),
             ROOT_COLUMNS,
         )
+
+        ctx._safe_touch_for_retrieval(
+            connection,
+            session_id=session_id,
+            artifact_id=artifact_id,
+        )
+        commit = getattr(connection, "commit", None)
+        if callable(commit):
+            commit()
 
     return build_describe_response(artifact_row, roots)

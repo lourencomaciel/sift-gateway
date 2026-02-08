@@ -156,6 +156,7 @@ class GatewayServer:
     cursor_secrets: CursorSecrets | None = None
     upstream_errors: dict[str, str] = field(default_factory=dict)
     mirrored_tools: dict[str, MirroredTool] = field(default_factory=dict)
+    _mapping_tasks: set[asyncio.Task[None]] = field(default_factory=set)
 
     def __post_init__(self) -> None:
         if not self.mirrored_tools and self.upstreams:
@@ -469,8 +470,8 @@ class GatewayServer:
 
         await asyncio.to_thread(_execute)
 
-    @staticmethod
-    def _consume_mapping_task(task: asyncio.Task[None]) -> None:
+    def _consume_mapping_task(self, task: asyncio.Task[None]) -> None:
+        self._mapping_tasks.discard(task)
         try:
             task.result()
         except Exception:
@@ -489,7 +490,19 @@ class GatewayServer:
         task = asyncio.create_task(
             self._run_mapping_background(handle=handle, envelope=envelope)
         )
+        self._mapping_tasks.add(task)
         task.add_done_callback(self._consume_mapping_task)
+
+    async def drain_mapping_tasks(self, *, timeout: float = 30.0) -> int:
+        """Await all pending background mapping tasks.
+
+        Returns the number of tasks that were still pending.
+        """
+        pending = set(self._mapping_tasks)
+        if not pending:
+            return 0
+        done, still_pending = await asyncio.wait(pending, timeout=timeout)
+        return len(still_pending)
 
     def _trigger_mapping_for_artifact(
         self,
@@ -507,24 +520,6 @@ class GatewayServer:
         self._schedule_background_mapping(handle=handle, envelope=envelope)
 
     # -- Reuse / cache helpers --
-
-    def _check_reuse(
-        self,
-        *,
-        request_key: str,
-        expected_schema_hash: str | None,
-        strict_schema_reuse: bool,
-    ) -> ReuseResult:
-        if self.db_pool is None:
-            return ReuseResult(reused=False)
-
-        with self.db_pool.connection() as connection:
-            return self._check_reuse_on_connection(
-                connection,
-                request_key=request_key,
-                expected_schema_hash=expected_schema_hash,
-                strict_schema_reuse=strict_schema_reuse,
-            )
 
     def _check_reuse_on_connection(
         self,
