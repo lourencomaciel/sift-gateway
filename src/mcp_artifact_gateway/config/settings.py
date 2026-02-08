@@ -5,16 +5,16 @@ Spec references: §2, §3, §16, §17, §18, Addendum A.3, Addendum D.3.
 
 from __future__ import annotations
 
+import json
 import os
 from enum import Enum
 from pathlib import Path
-from typing import Literal
+from typing import Literal, Mapping
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from pydantic_settings.sources import JsonConfigSettingsSource, PydanticBaseSettingsSource
 
-from mcp_artifact_gateway.constants import DEFAULT_DATA_DIR
+from mcp_artifact_gateway.constants import CONFIG_FILENAME, DEFAULT_DATA_DIR, STATE_SUBDIR
 
 
 # ---------------------------------------------------------------------------
@@ -82,6 +82,24 @@ class UpstreamConfig(BaseSettings):
         default_factory=list,
         description="JSONPath subset exclusions for dedupe hash (§7.2)",
     )
+
+    @field_validator("command")
+    @classmethod
+    def _validate_stdio_command(cls, value: str | None, info) -> str | None:
+        transport = info.data.get("transport")
+        if transport == "stdio" and not value:
+            msg = "stdio upstream requires command"
+            raise ValueError(msg)
+        return value
+
+    @field_validator("url")
+    @classmethod
+    def _validate_http_url(cls, value: str | None, info) -> str | None:
+        transport = info.data.get("transport")
+        if transport == "http" and not value:
+            msg = "http upstream requires url"
+            raise ValueError(msg)
+        return value
 
 
 # ---------------------------------------------------------------------------
@@ -212,31 +230,201 @@ class GatewayConfig(BaseSettings):
     def _resolve_data_dir(cls, v: str | Path) -> Path:
         return Path(v).resolve()
 
-    @classmethod
-    def settings_customise_sources(
-        cls,
-        settings_cls: type[BaseSettings],
-        init_settings: PydanticBaseSettingsSource,
-        env_settings: PydanticBaseSettingsSource,
-        dotenv_settings: PydanticBaseSettingsSource,
-        file_secret_settings: PydanticBaseSettingsSource,
-    ) -> tuple[PydanticBaseSettingsSource, ...]:
-        """Load config from env vars -> config.json -> defaults.
 
-        The config.json file is resolved under DATA_DIR/state/config.json where
-        DATA_DIR comes from an explicit init override (if provided), else the
-        MCP_GATEWAY_DATA_DIR environment variable, else the default.
-        """
-        init_kwargs = getattr(init_settings, "init_kwargs", {})
-        data_dir_override = init_kwargs.get("data_dir")
-        if data_dir_override is not None:
-            base_dir = Path(data_dir_override).resolve()
+_JSON_DECODE_TOP_LEVEL_FIELDS = {"upstreams"}
+_JSON_DECODE_UPSTREAM_FIELDS = {
+    "args",
+    "dedupe_exclusions",
+    "env",
+    "headers",
+    "semantic_salt_env_keys",
+    "semantic_salt_headers",
+}
+
+
+def _should_decode_json(parts: tuple[str, ...]) -> bool:
+    if len(parts) == 1:
+        return parts[0] in _JSON_DECODE_TOP_LEVEL_FIELDS
+
+    if len(parts) == 3 and parts[0] == "upstreams" and parts[1].isdigit():
+        return parts[2] in _JSON_DECODE_UPSTREAM_FIELDS
+
+    return False
+
+
+def _coerce_env_value(raw: str, parts: tuple[str, ...]) -> object:
+    if not _should_decode_json(parts):
+        return raw
+
+    stripped = raw.strip()
+    if not stripped:
+        return raw
+    if stripped[0] not in "[{":
+        return raw
+    try:
+        return json.loads(stripped)
+    except json.JSONDecodeError:
+        return raw
+
+
+def _env_path_segments(env_key: str) -> tuple[str, ...] | None:
+    prefix = "MCP_GATEWAY_"
+    if not env_key.startswith(prefix):
+        return None
+    suffix = env_key[len(prefix) :]
+    if not suffix:
+        return None
+    parts = tuple(part for part in suffix.split("__") if part)
+    if not parts:
+        return None
+    return parts
+
+
+def _match_model_field(raw_key: str, fields: Mapping[str, object]) -> str | None:
+    for field_name in fields:
+        if field_name.lower() == raw_key.lower():
+            return field_name
+    return None
+
+
+def _normalize_env_parts(parts: tuple[str, ...]) -> tuple[str, ...] | None:
+    top_level = _match_model_field(parts[0], GatewayConfig.model_fields)
+    if top_level is None:
+        return None
+
+    normalized: list[str] = [top_level]
+    if top_level == "upstreams" and len(parts) >= 2:
+        normalized.append(parts[1])
+        if len(parts) >= 3:
+            upstream_field = _match_model_field(parts[2], UpstreamConfig.model_fields)
+            if upstream_field is None:
+                normalized.append(parts[2].lower())
+            else:
+                normalized.append(upstream_field)
+            if upstream_field in {"env", "headers"}:
+                normalized.extend(parts[3:])
+            else:
+                normalized.extend(part.lower() if not part.isdigit() else part for part in parts[3:])
+        return tuple(normalized)
+
+    normalized.extend(part.lower() if not part.isdigit() else part for part in parts[1:])
+    return tuple(normalized)
+
+
+class _SparseList(list):
+    """List built from indexed env overrides; merged by index."""
+
+
+def _set_nested_env_value(container: object | None, parts: tuple[str, ...], value: object) -> object:
+    head, *tail = parts
+    is_index = head.isdigit()
+
+    if is_index:
+        idx = int(head)
+        if isinstance(container, _SparseList):
+            out: list[object | None] = _SparseList(container)
+        elif isinstance(container, list):
+            out = list(container)
         else:
-            env_data_dir = os.getenv("MCP_GATEWAY_DATA_DIR")
-            base_dir = Path(env_data_dir or DEFAULT_DATA_DIR).resolve()
+            out = _SparseList()
+        while len(out) <= idx:
+            out.append(None)
+        if tail:
+            out[idx] = _set_nested_env_value(out[idx], tuple(tail), value)
+        else:
+            out[idx] = value
+        return out
 
-        config_path = base_dir / "state" / "config.json"
-        json_settings = JsonConfigSettingsSource(settings_cls, json_file=config_path)
+    out = {} if not isinstance(container, dict) else dict(container)
+    if tail:
+        out[head] = _set_nested_env_value(out.get(head), tuple(tail), value)
+    else:
+        out[head] = value
+    return out
 
-        # Priority: init (CLI overrides) -> env -> config.json -> defaults
-        return init_settings, env_settings, json_settings, dotenv_settings, file_secret_settings
+
+def _deep_merge(base: object, override: object) -> object:
+    if isinstance(base, dict) and isinstance(override, dict):
+        merged = dict(base)
+        for key, value in override.items():
+            if key in merged:
+                merged[key] = _deep_merge(merged[key], value)
+            else:
+                merged[key] = _deep_merge(None, value)
+        return merged
+
+    if isinstance(base, list) and isinstance(override, list):
+        if not isinstance(override, _SparseList):
+            return list(override)
+
+        merged = list(base)
+        for index, value in enumerate(override):
+            if value is None:
+                continue
+            if index >= len(merged):
+                while len(merged) <= index:
+                    merged.append(None)
+            merged[index] = _deep_merge(merged[index], value)
+        return merged
+
+    if isinstance(override, _SparseList):
+        return list(override)
+
+    return override
+
+
+def _load_env_overrides() -> dict[str, object]:
+    overrides: object = {}
+    env_items = sorted(os.environ.items(), key=lambda item: len(item[0].split("__")))
+    for env_key, raw_value in env_items:
+        parts = _env_path_segments(env_key)
+        if parts is None:
+            continue
+        normalized_parts = _normalize_env_parts(parts)
+        if normalized_parts is None:
+            continue
+        value = _coerce_env_value(raw_value, normalized_parts)
+        overrides = _set_nested_env_value(overrides, normalized_parts, value)
+    if not isinstance(overrides, dict):
+        return {}
+    return overrides
+
+
+def _load_state_config(data_dir: Path) -> dict[str, object]:
+    config_path = data_dir / STATE_SUBDIR / CONFIG_FILENAME
+    if not config_path.exists():
+        return {}
+    raw = json.loads(config_path.read_text(encoding="utf-8"))
+    if not isinstance(raw, dict):
+        msg = "config.json must contain a JSON object"
+        raise ValueError(msg)
+    return raw
+
+
+def load_gateway_config(*, data_dir_override: str | None = None) -> GatewayConfig:
+    """Load config with precedence env > config.json > defaults."""
+    env_overrides = _load_env_overrides()
+    env_data_dir = env_overrides.get("data_dir")
+
+    if data_dir_override is not None:
+        data_dir = Path(data_dir_override).resolve()
+    elif isinstance(env_data_dir, str):
+        data_dir = Path(env_data_dir).resolve()
+    else:
+        data_dir = Path(DEFAULT_DATA_DIR).resolve()
+
+    from_file = _load_state_config(data_dir)
+    merged = _deep_merge(from_file, env_overrides)
+    if not isinstance(merged, dict):
+        msg = "invalid merged gateway config shape"
+        raise ValueError(msg)
+    merged["data_dir"] = str(data_dir)
+
+    config = GatewayConfig(**merged)
+
+    prefixes = [upstream.prefix for upstream in config.upstreams]
+    if len(prefixes) != len(set(prefixes)):
+        msg = "upstream prefixes must be unique"
+        raise ValueError(msg)
+
+    return config

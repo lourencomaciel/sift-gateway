@@ -1,55 +1,42 @@
-from mcp_artifact_gateway.envelope.jsonb import minimal_projection, prepare_envelope_jsonb
-from mcp_artifact_gateway.envelope.model import (
-    ContentPartBinaryRef,
-    ContentPartJson,
-    ContentPartResourceRef,
-    ContentPartText,
-    Envelope,
-    EnvelopeMeta,
-    UpstreamPagination,
-)
+from __future__ import annotations
+
+from mcp_artifact_gateway.envelope.jsonb import envelope_to_jsonb
+from mcp_artifact_gateway.envelope.model import Envelope, JsonContentPart
 
 
-def _envelope() -> Envelope:
+def _sample_envelope() -> Envelope:
     return Envelope(
-        upstream_instance_id="u1",
-        upstream_prefix="p",
-        tool="tool",
+        upstream_instance_id="up_1",
+        upstream_prefix="github",
+        tool="search_issues",
         status="ok",
-        content=[
-            ContentPartJson(value={"a": 1}),
-            ContentPartText(text="hello"),
-            ContentPartResourceRef(uri="file://x", durability="external_ref"),
-            ContentPartBinaryRef(
-                blob_id="bin_123",
-                binary_hash="hash",
-                mime="application/octet-stream",
-                byte_count=10,
-            ),
-        ],
-        meta=EnvelopeMeta(
-            warnings=[{"type": "warn"}],
-            upstream_pagination=UpstreamPagination(next_cursor="c", has_more=True),
-        ),
+        content=[JsonContentPart(value={"k": "v"})],
+        meta={"warnings": []},
     )
 
 
-def test_minimal_projection_drops_values() -> None:
-    env = _envelope()
-    proj = minimal_projection(env)
-    assert proj["status"] == "ok"
-    # JSON and text parts should be descriptors only
-    assert proj["content"][0] == {"type": "json"}
-    assert proj["content"][1] == {"type": "text"}
+def test_envelope_jsonb_full() -> None:
+    payload = envelope_to_jsonb(_sample_envelope(), mode="full", minimize_threshold_bytes=1)
+    assert payload is not None
+    assert payload["content"][0]["type"] == "json"
 
 
-def test_prepare_envelope_jsonb_modes() -> None:
-    env = _envelope()
-    full = prepare_envelope_jsonb(env, "full", threshold_bytes=0, payload_json_bytes=0)
-    assert "content" in full and "value" in full["content"][0]
+def test_envelope_jsonb_none() -> None:
+    payload = envelope_to_jsonb(_sample_envelope(), mode="none", minimize_threshold_bytes=1)
+    assert payload is None
 
-    minimal = prepare_envelope_jsonb(env, "minimal_for_large", threshold_bytes=1, payload_json_bytes=10)
-    assert minimal["content"][0] == {"type": "json"}
 
-    none_mode = prepare_envelope_jsonb(env, "none", threshold_bytes=0, payload_json_bytes=0)
-    assert none_mode["content"][0] == {"type": "json"}
+def test_envelope_jsonb_minimal_for_large() -> None:
+    envelope = Envelope(
+        upstream_instance_id="up_1",
+        upstream_prefix="github",
+        tool="search_issues",
+        status="ok",
+        content=[JsonContentPart(value={"k": "x" * 500})],
+        meta={"warnings": []},
+    )
+    payload = envelope_to_jsonb(envelope, mode="minimal_for_large", minimize_threshold_bytes=20)
+    assert payload is not None
+    assert "content_summary" in payload
+    assert payload["content_summary"]["part_count"] == 1
+
