@@ -139,8 +139,15 @@ async def handle_mirrored_tool(
             )
         handle = ctx._build_non_persisted_handle(input_data=_create_input(envelope))
     else:
-        with ctx.db_pool.connection() as connection:
-            if cache_mode != "fresh":
+        # Phase 1: Cache check in a short-lived connection.
+        # The advisory lock is transaction-scoped and released when this
+        # connection closes, so there is a small window for duplicate
+        # upstream calls.  This is an acceptable trade-off: pool starvation
+        # from holding a connection during a 30 s upstream call is far worse
+        # than an occasional redundant call (persist handles the race via
+        # unique artifact IDs).
+        if cache_mode != "fresh":
+            with ctx.db_pool.connection() as connection:
                 acquired = await acquire_advisory_lock_async(
                     connection,
                     request_key=identity.request_key,
@@ -177,29 +184,33 @@ async def handle_mirrored_tool(
                     }
                 ctx._increment_metric("cache_misses")
 
-            try:
-                upstream_result = await ctx._call_upstream_with_metrics(
-                    mirrored=mirrored,
-                    forwarded_args=forwarded_args,
-                )
-            except Exception as exc:
-                upstream_result = {
-                    "content": [{"type": "text", "text": str(exc)}],
-                    "structuredContent": None,
-                    "isError": True,
-                    "meta": {"exception_type": type(exc).__name__},
-                }
+        # Phase 2: Upstream call — no DB connection held.
+        try:
+            upstream_result = await ctx._call_upstream_with_metrics(
+                mirrored=mirrored,
+                forwarded_args=forwarded_args,
+            )
+        except Exception as exc:
+            upstream_result = {
+                "content": [{"type": "text", "text": str(exc)}],
+                "structuredContent": None,
+                "isError": True,
+                "meta": {"exception_type": type(exc).__name__},
+            }
 
-            try:
-                envelope = ctx._envelope_from_upstream_result(
-                    mirrored=mirrored,
-                    upstream_result=upstream_result,
-                )
-            except ValueError as exc:
-                return gateway_error(
-                    "UPSTREAM_RESPONSE_INVALID",
-                    str(exc),
-                )
+        try:
+            envelope = ctx._envelope_from_upstream_result(
+                mirrored=mirrored,
+                upstream_result=upstream_result,
+            )
+        except ValueError as exc:
+            return gateway_error(
+                "UPSTREAM_RESPONSE_INVALID",
+                str(exc),
+            )
+
+        # Phase 3: Persist in a new short-lived connection.
+        with ctx.db_pool.connection() as connection:
             binary_hashes = ctx._binary_hashes_from_envelope(envelope)
             handle = persist_artifact(
                 connection=connection,

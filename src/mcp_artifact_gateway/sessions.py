@@ -39,6 +39,13 @@ ON CONFLICT (workspace_id, session_id, artifact_id)
 DO UPDATE SET last_seen_at = EXCLUDED.last_seen_at;
 """
 
+_BATCH_UPSERT_ARTIFACT_REFS_SQL = """\
+INSERT INTO artifact_refs (workspace_id, session_id, artifact_id, first_seen_at, last_seen_at)
+SELECT %s, %s, unnest(%s::text[]), NOW(), NOW()
+ON CONFLICT (workspace_id, session_id, artifact_id)
+DO UPDATE SET last_seen_at = EXCLUDED.last_seen_at;
+"""
+
 _TOUCH_ARTIFACT_SQL = """\
 UPDATE artifacts
 SET last_referenced_at = NOW()
@@ -112,15 +119,25 @@ def touch_for_retrieval(conn: Any, session_id: str, artifact_id: str) -> TouchRe
     )
 
 
+def batch_upsert_artifact_refs(conn: Any, session_id: str, artifact_ids: list[str]) -> bool:
+    """Upsert multiple artifact_refs rows in a single query. Returns True on success."""
+    if not artifact_ids:
+        return False
+    with conn.cursor() as cur:
+        cur.execute(
+            _BATCH_UPSERT_ARTIFACT_REFS_SQL,
+            (WORKSPACE_ID, session_id, artifact_ids),
+        )
+    return True
+
+
 def touch_for_search(conn: Any, session_id: str, artifact_ids: list[str]) -> TouchResult:
     """Touch session + artifact_refs only on search.
 
     Search does NOT touch artifacts.last_referenced_at.
     """
     session_ok = upsert_session(conn, session_id)
-    ref_ok = False
-    for artifact_id in artifact_ids:
-        ref_ok = upsert_artifact_ref(conn, session_id, artifact_id) or ref_ok
+    ref_ok = batch_upsert_artifact_refs(conn, session_id, artifact_ids)
     return TouchResult(
         session_updated=session_ok,
         artifact_ref_updated=ref_ok,

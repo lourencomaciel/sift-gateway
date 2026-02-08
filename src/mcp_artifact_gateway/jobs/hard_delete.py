@@ -32,10 +32,10 @@ LIMIT %s
 FOR UPDATE SKIP LOCKED
 """
 
-# Step 2: Delete artifact (cascades to artifact_roots, artifact_refs, artifact_samples)
-DELETE_ARTIFACT_SQL = """
+# Step 2: Delete artifacts (cascades to artifact_roots, artifact_refs, artifact_samples)
+DELETE_ARTIFACTS_BATCH_SQL = """
 DELETE FROM artifacts
-WHERE workspace_id = %s AND artifact_id = %s
+WHERE workspace_id = %s AND artifact_id = ANY(%s)
 """
 
 # Step 3: Find unreferenced payloads
@@ -51,9 +51,9 @@ WHERE pb.workspace_id = %s
 """
 
 # Step 4: Delete unreferenced payloads (cascades payload_binary_refs, payload_hash_aliases)
-DELETE_PAYLOAD_SQL = """
+DELETE_PAYLOADS_BATCH_SQL = """
 DELETE FROM payload_blobs
-WHERE workspace_id = %s AND payload_hash_full = %s
+WHERE workspace_id = %s AND payload_hash_full = ANY(%s)
 """
 
 # Step 5: Find unreferenced binary blobs
@@ -68,10 +68,10 @@ WHERE bb.workspace_id = %s
   )
 """
 
-# Step 6: Delete binary blob DB row
-DELETE_BLOB_SQL = """
+# Step 6: Delete binary blob DB rows
+DELETE_BLOBS_BATCH_SQL = """
 DELETE FROM binary_blobs
-WHERE workspace_id = %s AND binary_hash = %s
+WHERE workspace_id = %s AND binary_hash = ANY(%s)
 """
 
 
@@ -113,24 +113,22 @@ def run_hard_delete_batch(
             ),
         ).fetchall()
 
-        artifacts_deleted = 0
-        for row in candidate_rows:
-            if len(row) < 1:
-                continue
-            artifact_id = row[0]
-            if not isinstance(artifact_id, str):
-                continue
+        artifact_ids = [
+            row[0] for row in candidate_rows
+            if len(row) >= 1 and isinstance(row[0], str)
+        ]
+        if artifact_ids:
             connection.execute(
-                DELETE_ARTIFACT_SQL,
-                (WORKSPACE_ID, artifact_id),
+                DELETE_ARTIFACTS_BATCH_SQL,
+                (WORKSPACE_ID, artifact_ids),
             )
-            artifacts_deleted += 1
+        artifacts_deleted = len(artifact_ids)
 
         payload_rows = connection.execute(
             FIND_UNREFERENCED_PAYLOADS_SQL,
             (WORKSPACE_ID,),
         ).fetchall()
-        payloads_deleted = 0
+        payload_hashes = []
         payload_bytes_reclaimed = 0
         for row in payload_rows:
             if len(row) < 2:
@@ -139,19 +137,21 @@ def run_hard_delete_batch(
             payload_total_bytes = row[1]
             if not isinstance(payload_hash_full, str):
                 continue
-            connection.execute(
-                DELETE_PAYLOAD_SQL,
-                (WORKSPACE_ID, payload_hash_full),
-            )
-            payloads_deleted += 1
+            payload_hashes.append(payload_hash_full)
             if isinstance(payload_total_bytes, int) and payload_total_bytes > 0:
                 payload_bytes_reclaimed += payload_total_bytes
+        if payload_hashes:
+            connection.execute(
+                DELETE_PAYLOADS_BATCH_SQL,
+                (WORKSPACE_ID, payload_hashes),
+            )
+        payloads_deleted = len(payload_hashes)
 
         blob_rows = connection.execute(
             FIND_UNREFERENCED_BLOBS_SQL,
             (WORKSPACE_ID,),
         ).fetchall()
-        binary_blobs_deleted = 0
+        blob_hashes = []
         fs_blobs_removed = 0
         blob_bytes_reclaimed = 0
         fs_paths_to_remove: list[str] = []
@@ -163,15 +163,17 @@ def run_hard_delete_batch(
             byte_count = row[3]
             if not isinstance(binary_hash, str):
                 continue
-            connection.execute(
-                DELETE_BLOB_SQL,
-                (WORKSPACE_ID, binary_hash),
-            )
-            binary_blobs_deleted += 1
+            blob_hashes.append(binary_hash)
             if isinstance(byte_count, int) and byte_count > 0:
                 blob_bytes_reclaimed += byte_count
             if remove_fs_blobs and isinstance(fs_path, str):
                 fs_paths_to_remove.append(fs_path)
+        if blob_hashes:
+            connection.execute(
+                DELETE_BLOBS_BATCH_SQL,
+                (WORKSPACE_ID, blob_hashes),
+            )
+        binary_blobs_deleted = len(blob_hashes)
 
         total_reclaimed = payload_bytes_reclaimed + blob_bytes_reclaimed
         connection.commit()

@@ -1029,8 +1029,8 @@ def test_artifact_find_db_runtime_filters_samples(tmp_path: Path, monkeypatch) -
             ),
             _SeqCursor(
                 all_rows=[
-                    (0, {"id": 1}, 10, "h1"),
-                    (1, {"id": 2}, 10, "h2"),
+                    ("rk_1", 0, {"id": 1}, 10, "h1"),
+                    ("rk_1", 1, {"id": 2}, 10, "h2"),
                 ]
             ),
         ]

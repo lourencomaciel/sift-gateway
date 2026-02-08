@@ -156,10 +156,10 @@ def test_touch_for_search_empty_artifact_list() -> None:
 
 
 def test_touch_for_search_multiple_artifacts() -> None:
-    """Search with multiple artifacts should upsert refs for each."""
+    """Search with multiple artifacts should batch-upsert refs in one query."""
     conn = _make_mock_conn(rowcount=1)
     result = touch_for_search(conn, "sess_1", ["art_1", "art_2", "art_3"])
     assert result.artifact_ref_updated is True
     assert result.artifact_touched is False
-    # 1 session upsert + 3 artifact_ref upserts = 4 cursor calls
-    assert conn.cursor.call_count == 4
+    # 1 session upsert + 1 batch artifact_ref upsert = 2 cursor calls
+    assert conn.cursor.call_count == 2

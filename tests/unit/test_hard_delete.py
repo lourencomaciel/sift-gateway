@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from mcp_artifact_gateway.constants import WORKSPACE_ID
 from mcp_artifact_gateway.jobs.hard_delete import (
-    DELETE_ARTIFACT_SQL,
-    DELETE_BLOB_SQL,
-    DELETE_PAYLOAD_SQL,
+    DELETE_ARTIFACTS_BATCH_SQL,
+    DELETE_BLOBS_BATCH_SQL,
+    DELETE_PAYLOADS_BATCH_SQL,
     FIND_HARD_DELETE_CANDIDATES_SQL,
     FIND_UNREFERENCED_BLOBS_SQL,
     FIND_UNREFERENCED_PAYLOADS_SQL,
@@ -64,9 +64,9 @@ def test_find_hard_delete_candidates_uses_skip_locked() -> None:
 
 
 def test_delete_artifact_sql_structure() -> None:
-    assert "DELETE FROM artifacts" in DELETE_ARTIFACT_SQL
-    assert "workspace_id = %s" in DELETE_ARTIFACT_SQL
-    assert "artifact_id = %s" in DELETE_ARTIFACT_SQL
+    assert "DELETE FROM artifacts" in DELETE_ARTIFACTS_BATCH_SQL
+    assert "workspace_id = %s" in DELETE_ARTIFACTS_BATCH_SQL
+    assert "ANY(%s)" in DELETE_ARTIFACTS_BATCH_SQL
 
 
 def test_find_unreferenced_payloads_uses_not_exists() -> None:
@@ -78,15 +78,15 @@ def test_find_unreferenced_blobs_uses_not_exists() -> None:
 
 
 def test_delete_payload_sql_structure() -> None:
-    assert "DELETE FROM payload_blobs" in DELETE_PAYLOAD_SQL
-    assert "workspace_id = %s" in DELETE_PAYLOAD_SQL
-    assert "payload_hash_full = %s" in DELETE_PAYLOAD_SQL
+    assert "DELETE FROM payload_blobs" in DELETE_PAYLOADS_BATCH_SQL
+    assert "workspace_id = %s" in DELETE_PAYLOADS_BATCH_SQL
+    assert "ANY(%s)" in DELETE_PAYLOADS_BATCH_SQL
 
 
 def test_delete_blob_sql_structure() -> None:
-    assert "DELETE FROM binary_blobs" in DELETE_BLOB_SQL
-    assert "workspace_id = %s" in DELETE_BLOB_SQL
-    assert "binary_hash = %s" in DELETE_BLOB_SQL
+    assert "DELETE FROM binary_blobs" in DELETE_BLOBS_BATCH_SQL
+    assert "workspace_id = %s" in DELETE_BLOBS_BATCH_SQL
+    assert "ANY(%s)" in DELETE_BLOBS_BATCH_SQL
 
 
 def test_hard_delete_candidates_params_returns_correct_tuple() -> None:
