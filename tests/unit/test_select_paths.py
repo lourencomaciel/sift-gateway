@@ -1,22 +1,25 @@
-import pytest
+from __future__ import annotations
 
-from mcp_artifact_gateway.query.select_paths import canonicalize_select_paths, select_paths_hash
-
-
-def test_canonicalize_select_paths() -> None:
-    paths = [".b", " .a ", ".a", "['z']"]
-    canonical = canonicalize_select_paths(paths)
-    assert canonical == [".a", ".b", ".z"]
+from mcp_artifact_gateway.query.select_paths import (
+    canonicalize_select_paths,
+    project_select_paths,
+    select_paths_hash,
+)
 
 
-def test_select_paths_rejects_absolute() -> None:
-    with pytest.raises(ValueError):
-        canonicalize_select_paths(["$.a"])
+def test_select_paths_canonicalize_and_dedupe() -> None:
+    paths = canonicalize_select_paths(["$['b']", "$.a", "$.a"])
+    assert paths == ["$.a", "$.b"]
+
+
+def test_select_projection_missing_as_null() -> None:
+    projected = project_select_paths({"a": 1}, ["$.a", "$.missing"], missing_as_null=True)
+    assert projected["$.a"] == 1
+    assert projected["$.missing"] is None
 
 
 def test_select_paths_hash_stable() -> None:
-    canonical = [".a", ".b"]
-    h1 = select_paths_hash(canonical)
-    h2 = select_paths_hash(canonical)
+    h1 = select_paths_hash(["$.a", "$.b"])
+    h2 = select_paths_hash(["$.b", "$.a"])
     assert h1 == h2
-    assert len(h1) == 64
+

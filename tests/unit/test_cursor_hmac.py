@@ -1,75 +1,100 @@
-from datetime import datetime, timedelta, timezone
+from __future__ import annotations
 
-import pytest
+import base64
+import datetime as dt
+import hmac
+from hashlib import sha256
 
-from mcp_artifact_gateway.cursor.hmac import (
-    CursorExpiredError,
-    CursorInvalidError,
-    sign_cursor,
-    verify_cursor,
-)
-from mcp_artifact_gateway.cursor.secrets import SecretStore, generate_secrets_file
-
-
-def _secret_store(tmp_path) -> SecretStore:
-    path = tmp_path / "secrets.json"
-    generate_secrets_file(path, num_secrets=1)
-    store = SecretStore(path)
-    store.load()
-    return store
+from mcp_artifact_gateway.constants import CURSOR_VERSION
+from mcp_artifact_gateway.cursor.hmac import CursorExpiredError, CursorTokenError, sign_cursor_payload, verify_cursor_token
+from mcp_artifact_gateway.cursor.secrets import CursorSecrets
 
 
-def test_sign_and_verify_roundtrip(tmp_path) -> None:
-    store = _secret_store(tmp_path)
+def _secrets() -> CursorSecrets:
+    return CursorSecrets(active={"v1": "secret-abc"}, signing_version="v1")
+
+
+def test_cursor_hmac_sign_and_verify() -> None:
     payload = {
-        "cursor_version": "cursor_v1",
-        "cursor_secret_version": store.signing_secret().version,
-        "expires_at": (datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat(),
+        "cursor_version": CURSOR_VERSION,
+        "tool": "artifact.search",
+        "expires_at": "2099-01-01T00:00:00Z",
     }
-    token = sign_cursor(payload, store.signing_secret().key_bytes)
-    decoded = verify_cursor(token, store)
-    assert decoded["cursor_version"] == "cursor_v1"
+    token = sign_cursor_payload(payload, _secrets())
+    verified = verify_cursor_token(token, _secrets())
+    assert verified["tool"] == "artifact.search"
 
 
-def test_invalid_format(tmp_path) -> None:
-    store = _secret_store(tmp_path)
-    with pytest.raises(CursorInvalidError):
-        verify_cursor("not-a-token", store)
-
-
-def test_invalid_signature(tmp_path) -> None:
-    store = _secret_store(tmp_path)
+def test_cursor_hmac_rejects_tamper() -> None:
     payload = {
-        "cursor_version": "cursor_v1",
-        "cursor_secret_version": store.signing_secret().version,
-        "expires_at": (datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat(),
+        "cursor_version": CURSOR_VERSION,
+        "expires_at": "2099-01-01T00:00:00Z",
     }
-    token = sign_cursor(payload, store.signing_secret().key_bytes)
-    bad = token[:-1] + ("A" if token[-1] != "A" else "B")
-    with pytest.raises(CursorInvalidError):
-        verify_cursor(bad, store)
+    token = sign_cursor_payload(payload, _secrets()) + "x"
+    try:
+        verify_cursor_token(token, _secrets())
+    except CursorTokenError:
+        pass
+    else:
+        raise AssertionError("expected CursorTokenError")
 
 
-def test_expired_cursor(tmp_path) -> None:
-    store = _secret_store(tmp_path)
+def test_cursor_hmac_detects_expired() -> None:
     payload = {
-        "cursor_version": "cursor_v1",
-        "cursor_secret_version": store.signing_secret().version,
-        "expires_at": (datetime.now(timezone.utc) - timedelta(minutes=1)).isoformat(),
+        "cursor_version": CURSOR_VERSION,
+        "expires_at": "2020-01-01T00:00:00Z",
     }
-    token = sign_cursor(payload, store.signing_secret().key_bytes)
-    with pytest.raises(CursorExpiredError):
-        verify_cursor(token, store)
+    token = sign_cursor_payload(payload, _secrets())
+    try:
+        verify_cursor_token(token, _secrets(), now=dt.datetime(2026, 1, 1, tzinfo=dt.timezone.utc))
+    except CursorExpiredError:
+        pass
+    else:
+        raise AssertionError("expected CursorExpiredError")
 
 
-def test_z_suffix_timestamp(tmp_path) -> None:
-    store = _secret_store(tmp_path)
-    expires_at = (datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat()
+def test_cursor_hmac_requires_expires_at() -> None:
+    payload = {"cursor_version": CURSOR_VERSION}
+    token = sign_cursor_payload(payload, _secrets())
+    try:
+        verify_cursor_token(token, _secrets())
+    except CursorTokenError as exc:
+        assert "missing expires_at" in str(exc)
+    else:
+        raise AssertionError("expected CursorTokenError")
+
+
+def test_cursor_hmac_rejects_invalid_base64() -> None:
+    token = "cur.v1.a.a"
+    try:
+        verify_cursor_token(token, _secrets())
+    except CursorTokenError as exc:
+        assert "invalid base64" in str(exc)
+    else:
+        raise AssertionError("expected CursorTokenError")
+
+
+def test_cursor_hmac_rejects_non_object_payload() -> None:
+    payload_bytes = b'["not-an-object"]'
+    secret = _secrets().current_secret().encode("utf-8")
+    signature = hmac.new(secret, payload_bytes, sha256).digest()
+    payload_b64 = base64.urlsafe_b64encode(payload_bytes).decode("ascii").rstrip("=")
+    signature_b64 = base64.urlsafe_b64encode(signature).decode("ascii").rstrip("=")
+    token = f"cur.v1.{payload_b64}.{signature_b64}"
+
+    try:
+        verify_cursor_token(token, _secrets())
+    except CursorTokenError as exc:
+        assert "JSON object" in str(exc)
+    else:
+        raise AssertionError("expected CursorTokenError")
+
+
+def test_cursor_hmac_accepts_naive_now_for_comparison() -> None:
     payload = {
-        "cursor_version": "cursor_v1",
-        "cursor_secret_version": store.signing_secret().version,
-        "expires_at": expires_at.replace("+00:00", "Z"),
+        "cursor_version": CURSOR_VERSION,
+        "expires_at": "2099-01-01T00:00:00Z",
     }
-    token = sign_cursor(payload, store.signing_secret().key_bytes)
-    decoded = verify_cursor(token, store)
-    assert decoded["expires_at"].endswith("Z")
+    token = sign_cursor_payload(payload, _secrets())
+    verified = verify_cursor_token(token, _secrets(), now=dt.datetime(2026, 1, 1))
+    assert verified["expires_at"] == "2099-01-01T00:00:00Z"

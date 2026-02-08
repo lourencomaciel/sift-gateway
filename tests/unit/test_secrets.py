@@ -1,15 +1,18 @@
-from mcp_artifact_gateway.cursor.secrets import SecretStore, generate_secrets_file
+from __future__ import annotations
+
+import os
+from pathlib import Path
+
+from mcp_artifact_gateway.cursor.secrets import load_or_create_cursor_secrets
 
 
-def test_generate_and_load_secrets(tmp_path) -> None:
-    path = tmp_path / "secrets.json"
-    generate_secrets_file(path, num_secrets=2)
+def test_load_or_create_cursor_secrets_roundtrip(tmp_path: Path) -> None:
+    path = tmp_path / "state" / "secrets.json"
 
-    store = SecretStore(path)
-    cfg = store.load()
+    first = load_or_create_cursor_secrets(path)
+    second = load_or_create_cursor_secrets(path)
 
-    assert cfg.cursor_ttl_minutes == 60
-    assert len(cfg.active_secrets) == 2
-    assert cfg.signing_secret_version == "v2"
-    assert store.signing_secret().version == "v2"
-    assert store.active_versions() == ["v1", "v2"]
+    assert first.signing_version == "v1"
+    assert first.active == second.active
+    if os.name == "posix":
+        assert (path.stat().st_mode & 0o777) == 0o600

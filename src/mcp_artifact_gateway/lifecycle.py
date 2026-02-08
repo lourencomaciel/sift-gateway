@@ -1,107 +1,132 @@
-"""Startup / shutdown lifecycle management for the MCP Artifact Gateway.
-
-Provides helpers to bootstrap the required directory tree on first run and to
-probe filesystem health at any point during operation.
-
-File I/O is synchronous because the operations target a local filesystem where
-system-call latency is negligible.
-"""
+"""Startup lifecycle checks for gateway bootability."""
 
 from __future__ import annotations
 
-import uuid
+import tempfile
+from dataclasses import dataclass
 from pathlib import Path
 
 from mcp_artifact_gateway.config.settings import GatewayConfig
+from mcp_artifact_gateway.db.conn import connect
 
 
-# ---------------------------------------------------------------------------
-# Internal helpers
-# ---------------------------------------------------------------------------
+@dataclass(frozen=True)
+class CheckResult:
+    fs_ok: bool
+    db_ok: bool
+    upstream_ok: bool
+    details: list[str]
 
-def _required_dirs(config: GatewayConfig) -> dict[str, Path]:
-    """Return a mapping of logical name to directory path for every directory
-    the gateway requires at runtime."""
-    return {
-        "state_dir": config.state_dir,
-        "resources_dir": config.resources_dir,
-        "blobs_bin_dir": config.blobs_bin_dir,
-        "tmp_dir": config.tmp_dir,
-        "logs_dir": config.logs_dir,
-    }
+    @property
+    def ok(self) -> bool:
+        return self.fs_ok and self.db_ok and self.upstream_ok
 
 
-def _verify_writable(directory: Path) -> None:
-    """Create and immediately remove a probe file inside *directory*.
+def ensure_data_dirs(config: GatewayConfig) -> list[Path]:
+    paths = [
+        config.state_dir,
+        config.resources_dir,
+        config.blobs_bin_dir,
+        config.tmp_dir,
+        config.logs_dir,
+    ]
+    for path in paths:
+        path.mkdir(parents=True, exist_ok=True)
+    return paths
 
-    Raises :class:`OSError` (or a subclass) if the directory is not writable.
-    """
-    probe = directory / f".gateway_probe_{uuid.uuid4().hex}"
-    try:
-        probe.write_bytes(b"ok")
-    finally:
-        # Always attempt cleanup, but don't mask the original error.
+
+def _check_writable(paths: list[Path]) -> tuple[bool, list[str]]:
+    details: list[str] = []
+    for path in paths:
+        probe: Path | None = None
         try:
-            probe.unlink(missing_ok=True)
-        except OSError:
+            with tempfile.NamedTemporaryFile(
+                mode="w",
+                encoding="utf-8",
+                dir=path,
+                prefix=".gateway-write-check-",
+                delete=False,
+            ) as handle:
+                probe = Path(handle.name)
+                handle.write("ok")
+            if probe is not None:
+                probe.unlink(missing_ok=True)
+        except OSError as exc:
+            details.append(f"FS write failed at {path}: {exc}")
+            if probe is not None:
+                try:
+                    probe.unlink(missing_ok=True)
+                except OSError:
+                    pass
+            return False, details
+    return True, details
+
+
+def _validate_upstreams(config: GatewayConfig) -> tuple[bool, list[str]]:
+    details: list[str] = []
+    prefixes = [upstream.prefix for upstream in config.upstreams]
+    if len(prefixes) != len(set(prefixes)):
+        details.append("duplicate upstream prefixes")
+        return False, details
+
+    for upstream in config.upstreams:
+        if upstream.transport == "stdio" and not upstream.command:
+            details.append(f"upstream '{upstream.prefix}' missing command for stdio transport")
+            return False, details
+        if upstream.transport == "http" and not upstream.url:
+            details.append(f"upstream '{upstream.prefix}' missing url for http transport")
+            return False, details
+    return True, details
+
+
+def _check_db(config: GatewayConfig) -> tuple[bool, list[str]]:
+    details: list[str] = []
+    if not config.postgres_dsn.strip():
+        details.append("postgres_dsn is empty")
+        return False, details
+
+    try:
+        connection = connect(config)
+    except Exception as exc:
+        details.append(f"DB connect failed: {exc}")
+        return False, details
+
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT 1")
+            cursor.fetchone()
+    except Exception as exc:
+        details.append(f"DB probe query failed: {exc}")
+        return False, details
+    finally:
+        try:
+            connection.close()
+        except Exception:
             pass
 
-
-# ---------------------------------------------------------------------------
-# Public API
-# ---------------------------------------------------------------------------
-
-async def ensure_directories(config: GatewayConfig) -> None:
-    """Create all directories required by the gateway and verify each is
-    writable.
-
-    This function is idempotent: it can be called on every startup without
-    side-effects if the directories already exist.
-
-    Parameters
-    ----------
-    config:
-        The active gateway configuration whose derived path properties
-        (``state_dir``, ``resources_dir``, etc.) define the directory layout.
-
-    Raises
-    ------
-    OSError
-        If any directory cannot be created or is not writable.
-    """
-    for name, directory in _required_dirs(config).items():
-        directory.mkdir(parents=True, exist_ok=True)
-        _verify_writable(directory)
+    return True, details
 
 
-async def check_filesystem_health(config: GatewayConfig) -> dict[str, str]:
-    """Probe every required directory and report its status.
+def run_startup_check(config: GatewayConfig) -> CheckResult:
+    details: list[str] = []
 
-    Returns
-    -------
-    dict[str, str]
-        A mapping of directory logical name to either ``"ok"`` or a
-        human-readable error string.  Example::
+    try:
+        dirs = ensure_data_dirs(config)
+        fs_ok, fs_details = _check_writable(dirs)
+        details.extend(fs_details)
+    except OSError as exc:
+        fs_ok = False
+        details.append(f"FS check failed: {exc}")
 
-            {
-                "state_dir": "ok",
-                "resources_dir": "ok",
-                "blobs_bin_dir": "error: [Errno 13] Permission denied: ...",
-                "tmp_dir": "ok",
-                "logs_dir": "ok",
-            }
-    """
-    results: dict[str, str] = {}
-    for name, directory in _required_dirs(config).items():
-        try:
-            if not directory.exists():
-                results[name] = f"error: directory does not exist: {directory}"
-                continue
-            if not directory.is_dir():
-                results[name] = f"error: path is not a directory: {directory}"
-                continue
-            _verify_writable(directory)
-            results[name] = "ok"
-        except OSError as exc:
-            results[name] = f"error: {exc}"
-    return results
+    db_ok, db_details = _check_db(config)
+    details.extend(db_details)
+
+    upstream_ok, upstream_details = _validate_upstreams(config)
+    details.extend(upstream_details)
+
+    return CheckResult(
+        fs_ok=fs_ok,
+        db_ok=db_ok,
+        upstream_ok=upstream_ok,
+        details=details,
+    )

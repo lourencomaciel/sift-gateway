@@ -1,40 +1,51 @@
-from decimal import Decimal
+from __future__ import annotations
 
-import pytest
-
-from mcp_artifact_gateway.query.where_dsl import evaluate_where, parse_where
+from mcp_artifact_gateway.query.where_dsl import WhereComputeLimitExceeded, WhereDslError, evaluate_where
 
 
-def test_simple_comparison_steps() -> None:
-    node = parse_where("a = 1")
-    match, steps = evaluate_where(node, {"a": 1})
-    assert match is True
-    assert steps == 2  # one segment + one comparison
+def test_where_dsl_eq_predicate() -> None:
+    where = {"path": "$.status", "op": "eq", "value": "open"}
+    assert evaluate_where({"status": "open"}, where) is True
+    assert evaluate_where({"status": "closed"}, where) is False
 
 
-def test_and_or_precedence() -> None:
-    node = parse_where("a = 1 OR a = 2 AND b = 3")
-    # AND should bind tighter than OR
-    match, _ = evaluate_where(node, {"a": 2, "b": 3})
-    assert match is True
-    match, _ = evaluate_where(node, {"a": 2, "b": 4})
-    assert match is False
+def test_where_dsl_compound_and_not() -> None:
+    where = {
+        "op": "and",
+        "clauses": [
+            {"path": "$.n", "op": "gt", "value": 1},
+            {"op": "not", "clause": {"path": "$.archived", "op": "eq", "value": True}},
+        ],
+    }
+    assert evaluate_where({"n": 3, "archived": False}, where) is True
+    assert evaluate_where({"n": 0, "archived": False}, where) is False
 
 
-def test_wildcard_exists_semantics() -> None:
-    node = parse_where("items[*].v >= 3")
-    record = {"items": [{"v": 1}, {"v": 3}]}
-    match, _ = evaluate_where(node, record)
-    assert match is True
+def test_where_dsl_compute_limit() -> None:
+    where = {"op": "and", "clauses": [{"path": "$.a", "op": "exists"} for _ in range(5)]}
+    try:
+        evaluate_where({"a": 1}, where, max_compute_steps=2)
+    except WhereComputeLimitExceeded:
+        pass
+    else:
+        raise AssertionError("expected WhereComputeLimitExceeded")
 
 
-def test_null_semantics() -> None:
-    node = parse_where("missing != null")
-    match, _ = evaluate_where(node, {"a": 1})
-    assert match is False
+def test_where_dsl_rejects_non_object_clause() -> None:
+    where = {"op": "and", "clauses": [1]}
+    try:
+        evaluate_where({"a": 1}, where)
+    except WhereDslError as exc:
+        assert "clauses must contain objects" in str(exc)
+    else:
+        raise AssertionError("expected WhereDslError")
 
 
-def test_decimal_comparison() -> None:
-    node = parse_where("a > 1.5")
-    match, _ = evaluate_where(node, {"a": Decimal("2.0")})
-    assert match is True
+def test_where_dsl_rejects_non_comparable_values() -> None:
+    where = {"path": "$.n", "op": "gt", "value": 1}
+    try:
+        evaluate_where({"n": "3"}, where)
+    except WhereDslError as exc:
+        assert "comparable values" in str(exc)
+    else:
+        raise AssertionError("expected WhereDslError")

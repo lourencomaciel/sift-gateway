@@ -1,44 +1,46 @@
-import pytest
+from __future__ import annotations
 
-from mcp_artifact_gateway.query.jsonpath import (
-    BudgetExceededError,
-    IndexSegment,
-    PropertySegment,
-    RootSegment,
-    WildcardSegment,
-    evaluate_path,
-    normalize_jsonpath,
-    parse_jsonpath,
-)
+from mcp_artifact_gateway.query.jsonpath import JsonPathError, canonicalize_jsonpath, evaluate_jsonpath
 
 
-def test_parse_and_normalize() -> None:
-    segments = parse_jsonpath("$['a'][0].b")
-    assert isinstance(segments[0], RootSegment)
-    assert isinstance(segments[1], PropertySegment)
-    assert isinstance(segments[2], IndexSegment)
-    assert isinstance(segments[3], PropertySegment)
-
-    normalized = normalize_jsonpath("$['a'][0].b")
-    assert normalized == "$.a[0].b"
+def test_jsonpath_canonicalizes_bracket_and_dot() -> None:
+    assert canonicalize_jsonpath("$['a'].b[0]") == "$.a.b[0]"
 
 
-def test_invalid_path() -> None:
-    with pytest.raises(ValueError):
-        parse_jsonpath("a.b")
+def test_jsonpath_evaluates_wildcards_deterministically() -> None:
+    doc = {"obj": {"b": 2, "a": 1}}
+    assert evaluate_jsonpath(doc, "$.obj[*]") == [1, 2]
 
 
-def test_evaluate_path_order_and_wildcard() -> None:
-    obj = {"a": {"b": 1, "a": 2}}
-    segments = parse_jsonpath("$.a[*]")
-    results = evaluate_path(obj, segments)
-    # Wildcard on dict should be in lex order: 'a' then 'b'
-    values = [value for _, value in results]
-    assert values == [2, 1]
+def test_jsonpath_rejects_invalid() -> None:
+    try:
+        evaluate_jsonpath({"a": 1}, "a.b")
+    except JsonPathError:
+        pass
+    else:
+        raise AssertionError("expected JsonPathError")
 
 
-def test_total_wildcard_cap() -> None:
-    obj = {"a": [1, 2, 3]}
-    segments = parse_jsonpath("$.a[*]")
-    with pytest.raises(BudgetExceededError):
-        evaluate_path(obj, segments, max_wildcard_expansion_total=2)
+def test_jsonpath_decodes_supported_bracket_escapes() -> None:
+    doc = {
+        "line\nbreak": "nl",
+        "carriage\rreturn": "cr",
+        "tab\tchar": "tab",
+        "quote'char": "quote",
+        "slash\\char": "slash",
+    }
+    assert evaluate_jsonpath(doc, r"$['line\nbreak']") == ["nl"]
+    assert evaluate_jsonpath(doc, r"$['carriage\rreturn']") == ["cr"]
+    assert evaluate_jsonpath(doc, r"$['tab\tchar']") == ["tab"]
+    assert evaluate_jsonpath(doc, r"$['quote\'char']") == ["quote"]
+    assert evaluate_jsonpath(doc, r"$['slash\\char']") == ["slash"]
+    assert canonicalize_jsonpath(r"$['line\nbreak']") == r"$['line\nbreak']"
+
+
+def test_jsonpath_rejects_unsupported_bracket_escape() -> None:
+    try:
+        evaluate_jsonpath({"a": 1}, r"$['a\q']")
+    except JsonPathError as exc:
+        assert "unsupported escape sequence" in str(exc)
+    else:
+        raise AssertionError("expected JsonPathError")
