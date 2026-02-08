@@ -5,12 +5,14 @@ Spec references: §2, §3, §16, §17, §18, Addendum A.3, Addendum D.3.
 
 from __future__ import annotations
 
+import os
 from enum import Enum
 from pathlib import Path
 from typing import Literal
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings.sources import JsonConfigSettingsSource, PydanticBaseSettingsSource
 
 from mcp_artifact_gateway.constants import DEFAULT_DATA_DIR
 
@@ -209,3 +211,32 @@ class GatewayConfig(BaseSettings):
     @classmethod
     def _resolve_data_dir(cls, v: str | Path) -> Path:
         return Path(v).resolve()
+
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls: type[BaseSettings],
+        init_settings: PydanticBaseSettingsSource,
+        env_settings: PydanticBaseSettingsSource,
+        dotenv_settings: PydanticBaseSettingsSource,
+        file_secret_settings: PydanticBaseSettingsSource,
+    ) -> tuple[PydanticBaseSettingsSource, ...]:
+        """Load config from env vars -> config.json -> defaults.
+
+        The config.json file is resolved under DATA_DIR/state/config.json where
+        DATA_DIR comes from an explicit init override (if provided), else the
+        MCP_GATEWAY_DATA_DIR environment variable, else the default.
+        """
+        init_kwargs = getattr(init_settings, "init_kwargs", {})
+        data_dir_override = init_kwargs.get("data_dir")
+        if data_dir_override is not None:
+            base_dir = Path(data_dir_override).resolve()
+        else:
+            env_data_dir = os.getenv("MCP_GATEWAY_DATA_DIR")
+            base_dir = Path(env_data_dir or DEFAULT_DATA_DIR).resolve()
+
+        config_path = base_dir / "state" / "config.json"
+        json_settings = JsonConfigSettingsSource(settings_cls, json_file=config_path)
+
+        # Priority: init (CLI overrides) -> env -> config.json -> defaults
+        return init_settings, env_settings, json_settings, dotenv_settings, file_secret_settings

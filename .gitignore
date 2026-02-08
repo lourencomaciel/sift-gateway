@@ -24,6 +24,5 @@ wheels/
 .DS_Store
 
 # Planning files (local only)
-task_plan.md
 findings.md
 progress.md
