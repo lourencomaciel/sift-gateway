@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import dataclasses
 
+import asyncio
+
 from mcp_artifact_gateway.cache.reuse import (
     ReuseResult,
     acquire_advisory_lock,
+    acquire_advisory_lock_async,
     check_reuse_candidate,
     try_acquire_advisory_lock,
 )
@@ -235,3 +238,47 @@ def test_check_reuse_candidate_increments_cache_miss_on_schema_mismatch() -> Non
     assert result.reused is False
     assert metrics.cache_misses.value == 1
     assert metrics.cache_hits.value == 0
+
+
+# ---- acquire_advisory_lock_async ----
+
+def test_acquire_advisory_lock_async_success(monkeypatch) -> None:
+    conn = _LockConnection([False, False, True])
+    metrics = _Metrics()
+
+    async def _noop_sleep(_seconds):
+        pass
+
+    monkeypatch.setattr("mcp_artifact_gateway.cache.reuse.asyncio.sleep", _noop_sleep)
+
+    acquired = asyncio.run(
+        acquire_advisory_lock_async(
+            conn,
+            request_key="rk_async_1",
+            timeout_ms=5000,
+            poll_interval_ms=1,
+            metrics=metrics,
+        )
+    )
+    assert acquired is True
+    assert conn.calls == 3
+    assert metrics.advisory_lock_acquired.value == 1
+    assert metrics.advisory_lock_timeouts.value == 0
+
+
+def test_acquire_advisory_lock_async_timeout(monkeypatch) -> None:
+    conn = _LockConnection([False])
+    metrics = _Metrics()
+
+    acquired = asyncio.run(
+        acquire_advisory_lock_async(
+            conn,
+            request_key="rk_async_2",
+            timeout_ms=0,
+            poll_interval_ms=1,
+            metrics=metrics,
+        )
+    )
+    assert acquired is False
+    assert metrics.advisory_lock_acquired.value == 0
+    assert metrics.advisory_lock_timeouts.value == 1
