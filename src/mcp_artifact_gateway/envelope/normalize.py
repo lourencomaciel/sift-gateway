@@ -14,6 +14,8 @@ from mcp_artifact_gateway.envelope.model import (
     ResourceRefContentPart,
     TextContentPart,
 )
+from mcp_artifact_gateway.envelope.oversize import replace_oversized_json_parts
+from mcp_artifact_gateway.fs.blob_store import BlobStore
 
 
 def strip_reserved_args(args: Mapping[str, Any]) -> dict[str, Any]:
@@ -98,8 +100,15 @@ def normalize_envelope(
     content: list[Mapping[str, Any]] | None = None,
     error: Mapping[str, Any] | None = None,
     meta: Mapping[str, Any] | None = None,
+    max_json_part_parse_bytes: int | None = None,
+    blob_store: BlobStore | None = None,
 ) -> Envelope:
-    """Build normalized envelope with status invariants enforced."""
+    """Build normalized envelope with status invariants enforced.
+
+    When both *max_json_part_parse_bytes* and *blob_store* are provided,
+    oversized JSON parts are replaced with binary refs and a warning is
+    appended to ``meta.warnings`` (see :func:`replace_oversized_json_parts`).
+    """
     inferred_status = status or ("error" if error is not None else "ok")
     if inferred_status not in {"ok", "error"}:
         msg = f"invalid envelope status: {inferred_status}"
@@ -122,7 +131,7 @@ def normalize_envelope(
     if warnings is None:
         normalized_meta["warnings"] = []
 
-    return Envelope(
+    envelope = Envelope(
         upstream_instance_id=upstream_instance_id,
         upstream_prefix=upstream_prefix,
         tool=tool,
@@ -131,3 +140,13 @@ def normalize_envelope(
         error=normalized_error,
         meta=normalized_meta,
     )
+
+    # Apply oversize JSON handling when configured
+    if max_json_part_parse_bytes is not None and blob_store is not None:
+        envelope = replace_oversized_json_parts(
+            envelope,
+            max_json_part_parse_bytes=max_json_part_parse_bytes,
+            blob_store=blob_store,
+        )
+
+    return envelope

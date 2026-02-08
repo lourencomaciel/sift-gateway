@@ -26,7 +26,15 @@ class Segment:
     value: str | int | None
 
 
-def parse_jsonpath(path: str) -> list[Segment]:
+def parse_jsonpath(
+    path: str,
+    *,
+    max_length: int | None = None,
+    max_segments: int | None = None,
+) -> list[Segment]:
+    if max_length is not None and len(path) > max_length:
+        msg = f"JSONPath exceeds max length ({max_length})"
+        raise JsonPathError(msg)
     if not path or path[0] != "$":
         msg = "JSONPath must start with '$'"
         raise JsonPathError(msg)
@@ -43,6 +51,9 @@ def parse_jsonpath(path: str) -> list[Segment]:
                 raise JsonPathError(msg)
             name = match.group(0)
             segments.append(Segment(kind="field", value=name))
+            if max_segments is not None and len(segments) > max_segments:
+                msg = f"JSONPath exceeds max segments ({max_segments})"
+                raise JsonPathError(msg)
             i = match.end()
             continue
 
@@ -52,6 +63,9 @@ def parse_jsonpath(path: str) -> list[Segment]:
 
         if path.startswith("[*]", i):
             segments.append(Segment(kind="wildcard", value=None))
+            if max_segments is not None and len(segments) > max_segments:
+                msg = f"JSONPath exceeds max segments ({max_segments})"
+                raise JsonPathError(msg)
             i += 3
             continue
 
@@ -81,6 +95,9 @@ def parse_jsonpath(path: str) -> list[Segment]:
                 msg = "unterminated bracket field"
                 raise JsonPathError(msg)
             segments.append(Segment(kind="field", value="".join(out)))
+            if max_segments is not None and len(segments) > max_segments:
+                msg = f"JSONPath exceeds max segments ({max_segments})"
+                raise JsonPathError(msg)
             continue
 
         i += 1
@@ -93,13 +110,21 @@ def parse_jsonpath(path: str) -> list[Segment]:
         index = int(path[start:i])
         i += 1
         segments.append(Segment(kind="index", value=index))
+        if max_segments is not None and len(segments) > max_segments:
+            msg = f"JSONPath exceeds max segments ({max_segments})"
+            raise JsonPathError(msg)
 
     return segments
 
 
-def canonicalize_jsonpath(path: str) -> str:
+def canonicalize_jsonpath(
+    path: str,
+    *,
+    max_length: int | None = None,
+    max_segments: int | None = None,
+) -> str:
     parts = ["$"]
-    for seg in parse_jsonpath(path):
+    for seg in parse_jsonpath(path, max_length=max_length, max_segments=max_segments):
         if seg.kind == "field":
             name = str(seg.value)
             if _IDENT_RE.fullmatch(name):
@@ -120,9 +145,17 @@ def canonicalize_jsonpath(path: str) -> str:
     return "".join(parts)
 
 
-def evaluate_jsonpath(document: Any, path: str) -> list[Any]:
+def evaluate_jsonpath(
+    document: Any,
+    path: str,
+    *,
+    max_length: int | None = None,
+    max_segments: int | None = None,
+    max_wildcard_expansion_total: int | None = None,
+) -> list[Any]:
     nodes = [document]
-    for seg in parse_jsonpath(path):
+    wildcard_expansion_total = 0
+    for seg in parse_jsonpath(path, max_length=max_length, max_segments=max_segments):
         next_nodes: list[Any] = []
         if seg.kind == "field":
             field = str(seg.value)
@@ -137,9 +170,20 @@ def evaluate_jsonpath(document: Any, path: str) -> list[Any]:
         else:
             for node in nodes:
                 if isinstance(node, list):
+                    wildcard_expansion_total += len(node)
                     next_nodes.extend(node)
                 elif isinstance(node, dict):
+                    wildcard_expansion_total += len(node)
                     for key in sorted(node):
                         next_nodes.append(node[key])
+            if (
+                max_wildcard_expansion_total is not None
+                and wildcard_expansion_total > max_wildcard_expansion_total
+            ):
+                msg = (
+                    "JSONPath wildcard expansion exceeds max total "
+                    f"({max_wildcard_expansion_total})"
+                )
+                raise JsonPathError(msg)
         nodes = next_nodes
     return nodes
