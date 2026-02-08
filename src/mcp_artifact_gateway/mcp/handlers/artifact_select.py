@@ -15,6 +15,7 @@ from mcp_artifact_gateway.cursor.sample_set_hash import (
 from mcp_artifact_gateway.envelope.responses import gateway_error
 from mcp_artifact_gateway.mcp.handlers.common import (
     ARTIFACT_META_COLUMNS,
+    ENVELOPE_COLUMNS,
     FETCH_ARTIFACT_META_SQL,
     SAMPLE_COLUMNS,
     row_to_dict,
@@ -43,23 +44,6 @@ _SELECT_ROOT_COLUMNS = [
     "sample_indices",
     "root_summary",
 ]
-
-_GET_COLUMNS = [
-    "artifact_id",
-    "payload_hash_full",
-    "deleted_at",
-    "map_kind",
-    "map_status",
-    "generation",
-    "mapped_part_index",
-    "map_budget_fingerprint",
-    "envelope",
-    "envelope_canonical_encoding",
-    "envelope_canonical_bytes",
-    "envelope_canonical_bytes_len",
-    "contains_binary_refs",
-]
-
 
 async def handle_artifact_select(
     ctx: GatewayServer,
@@ -284,18 +268,21 @@ async def handle_artifact_select(
                     FETCH_ARTIFACT_SQL,
                     (WORKSPACE_ID, artifact_id),
                 ).fetchone(),
-                _GET_COLUMNS,
+                ENVELOPE_COLUMNS,
             )
             if artifact_row is None:
                 return gateway_error("NOT_FOUND", "artifact not found")
             envelope_value = artifact_row.get("envelope")
+            canonical_bytes_raw = artifact_row.get("envelope_canonical_bytes")
             if isinstance(envelope_value, dict):
                 envelope = envelope_value
+            elif canonical_bytes_raw is None:
+                return gateway_error("INTERNAL_ERROR", "missing canonical bytes for artifact")
             else:
                 envelope = reconstruct_envelope(
-                    compressed_bytes=bytes(artifact_row["envelope_canonical_bytes"]),
-                    encoding=str(artifact_row["envelope_canonical_encoding"]),
-                    expected_hash=str(artifact_row["payload_hash_full"]),
+                    compressed_bytes=bytes(canonical_bytes_raw),
+                    encoding=str(artifact_row.get("envelope_canonical_encoding", "none")),
+                    expected_hash=str(artifact_row.get("payload_hash_full", "")),
                 )
             try:
                 root_values = evaluate_jsonpath(

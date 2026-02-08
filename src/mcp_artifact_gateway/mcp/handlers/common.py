@@ -92,3 +92,19 @@ ROOT_COLUMNS = [
 ]
 
 SAMPLE_COLUMNS = ["sample_index", "record", "record_bytes", "record_hash"]
+
+ENVELOPE_COLUMNS = [
+    "artifact_id",
+    "payload_hash_full",
+    "deleted_at",
+    "map_kind",
+    "map_status",
+    "generation",
+    "mapped_part_index",
+    "map_budget_fingerprint",
+    "envelope",
+    "envelope_canonical_encoding",
+    "envelope_canonical_bytes",
+    "envelope_canonical_bytes_len",
+    "contains_binary_refs",
+]
