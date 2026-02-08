@@ -437,7 +437,7 @@ def test_handle_mirrored_tool_returns_busy_when_lock_times_out(
     )
     mirrored = server.mirrored_tools["demo.echo"]
 
-    monkeypatch.setattr("mcp_artifact_gateway.mcp.server.acquire_advisory_lock", lambda *_args, **_kwargs: False)
+    monkeypatch.setattr("mcp_artifact_gateway.mcp.handlers.mirrored_tool.acquire_advisory_lock", lambda *_args, **_kwargs: False)
 
     async def _must_not_call(*_args, **_kwargs):
         raise AssertionError("upstream should not be called when lock fails")
@@ -482,7 +482,7 @@ def test_handle_mirrored_tool_runs_inline_mapping_in_sync_mode(
 
     monkeypatch.setattr("mcp_artifact_gateway.mcp.server.call_upstream_tool", _fake_call)
     monkeypatch.setattr(
-        "mcp_artifact_gateway.mcp.server.persist_artifact",
+        "mcp_artifact_gateway.mcp.handlers.mirrored_tool.persist_artifact",
         lambda **_kwargs: _persisted_handle(),
     )
     monkeypatch.setattr(
@@ -535,7 +535,7 @@ def test_handle_mirrored_tool_schedules_background_mapping_in_async_mode(
 
     monkeypatch.setattr("mcp_artifact_gateway.mcp.server.call_upstream_tool", _fake_call)
     monkeypatch.setattr(
-        "mcp_artifact_gateway.mcp.server.persist_artifact",
+        "mcp_artifact_gateway.mcp.handlers.mirrored_tool.persist_artifact",
         lambda **_kwargs: _persisted_handle(),
     )
     monkeypatch.setattr(
