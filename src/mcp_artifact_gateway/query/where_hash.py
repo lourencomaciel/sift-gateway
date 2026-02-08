@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from mcp_artifact_gateway.canon.rfc8785 import canonical_bytes
-from mcp_artifact_gateway.query.where_dsl import canonicalize_where_ast
+from mcp_artifact_gateway.query.where_dsl import canonicalize_where_ast, parse_where_expression
 from mcp_artifact_gateway.util.hashing import sha256_hex
 
 
@@ -20,10 +20,11 @@ def where_hash(where: Any, *, mode: str = "raw_string") -> str:
             canonical_ast = canonicalize_where_ast(where)
             return sha256_hex(canonical_bytes(canonical_ast))
         if isinstance(where, str):
-            return sha256_hex(where.encode("utf-8"))
+            parsed = parse_where_expression(where)
+            canonical_ast = canonicalize_where_ast(parsed)
+            return sha256_hex(canonical_bytes(canonical_ast))
         msg = "canonical_ast mode requires dict or string where"
         raise ValueError(msg)
 
     msg = f"unsupported where canonicalization mode: {mode}"
     raise ValueError(msg)
-
