@@ -9,6 +9,7 @@ from mcp_artifact_gateway.cursor.hmac import CursorExpiredError, CursorTokenErro
 from mcp_artifact_gateway.cursor.payload import CursorStaleError
 from mcp_artifact_gateway.envelope.responses import gateway_error
 from mcp_artifact_gateway.mcp.handlers.common import (
+    ENVELOPE_COLUMNS,
     ROOT_COLUMNS,
     row_to_dict,
     rows_to_dicts,
@@ -23,23 +24,6 @@ from mcp_artifact_gateway.storage.payload_store import reconstruct_envelope
 
 if TYPE_CHECKING:
     from mcp_artifact_gateway.mcp.server import GatewayServer
-
-_GET_COLUMNS = [
-    "artifact_id",
-    "payload_hash_full",
-    "deleted_at",
-    "map_kind",
-    "map_status",
-    "generation",
-    "mapped_part_index",
-    "map_budget_fingerprint",
-    "envelope",
-    "envelope_canonical_encoding",
-    "envelope_canonical_bytes",
-    "envelope_canonical_bytes_len",
-    "contains_binary_refs",
-]
-
 
 async def handle_artifact_get(
     ctx: GatewayServer,
@@ -113,7 +97,7 @@ async def handle_artifact_get(
                 FETCH_ARTIFACT_SQL,
                 (WORKSPACE_ID, artifact_id),
             ).fetchone(),
-            _GET_COLUMNS,
+            ENVELOPE_COLUMNS,
         )
         precondition = check_get_preconditions(row, target)
         if precondition is not None:
@@ -175,13 +159,16 @@ async def handle_artifact_get(
             }
 
         envelope_value = row.get("envelope")
+        canonical_bytes_raw = row.get("envelope_canonical_bytes")
         if isinstance(envelope_value, dict):
             envelope = envelope_value
+        elif canonical_bytes_raw is None:
+            return gateway_error("INTERNAL_ERROR", "missing canonical bytes for artifact")
         else:
             envelope = reconstruct_envelope(
-                compressed_bytes=bytes(row["envelope_canonical_bytes"]),
-                encoding=str(row["envelope_canonical_encoding"]),
-                expected_hash=str(row["payload_hash_full"]),
+                compressed_bytes=bytes(canonical_bytes_raw),
+                encoding=str(row.get("envelope_canonical_encoding", "none")),
+                expected_hash=str(row.get("payload_hash_full", "")),
             )
 
         if jsonpath is not None:
