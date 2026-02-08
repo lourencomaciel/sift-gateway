@@ -77,7 +77,7 @@ CREATE TABLE IF NOT EXISTS payload_binary_refs (
 CREATE TABLE IF NOT EXISTS artifacts (
     workspace_id TEXT NOT NULL,
     artifact_id TEXT NOT NULL,
-    created_seq BIGSERIAL NOT NULL,
+    created_seq BIGINT GENERATED ALWAYS AS IDENTITY,
     session_id TEXT NOT NULL,
     source_tool TEXT NOT NULL,
     upstream_instance_id TEXT NOT NULL,
@@ -103,7 +103,13 @@ CREATE TABLE IF NOT EXISTS artifacts (
     map_backend_id TEXT NULL,
     prng_version TEXT NULL,
     map_error TEXT NULL,
-    index_status TEXT NOT NULL DEFAULT 'off' CHECK (index_status IN ('off', 'ready', 'failed')),
+    upstream_tool_schema_hash TEXT NULL,
+    request_args_hash TEXT NULL,
+    request_args_prefix TEXT NULL,
+    mapped_part_index INTEGER NULL CHECK (mapped_part_index IS NULL OR mapped_part_index >= 0),
+    index_status TEXT NOT NULL DEFAULT 'off' CHECK (
+        index_status IN ('off', 'pending', 'ready', 'partial', 'failed')
+    ),
     error_summary TEXT NULL,
     PRIMARY KEY (workspace_id, artifact_id),
     FOREIGN KEY (workspace_id, session_id)
@@ -130,6 +136,12 @@ CREATE INDEX IF NOT EXISTS idx_artifacts_created_seq_desc
 CREATE INDEX IF NOT EXISTS idx_artifacts_expires_active
     ON artifacts (workspace_id, expires_at)
     WHERE deleted_at IS NULL;
+
+CREATE INDEX IF NOT EXISTS idx_artifacts_session_id
+    ON artifacts (workspace_id, session_id);
+
+CREATE INDEX IF NOT EXISTS idx_artifacts_payload_hash
+    ON artifacts (workspace_id, payload_hash_full);
 
 CREATE TABLE IF NOT EXISTS artifact_refs (
     workspace_id TEXT NOT NULL,
