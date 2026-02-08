@@ -12,7 +12,6 @@ from mcp_artifact_gateway.mcp.handlers.common import (
     ARTIFACT_META_COLUMNS,
     FETCH_ARTIFACT_META_SQL,
     ROOT_COLUMNS,
-    SAMPLE_COLUMNS,
     row_to_dict,
     rows_to_dicts,
 )
@@ -22,6 +21,15 @@ from mcp_artifact_gateway.retrieval.response import apply_output_budgets
 
 if TYPE_CHECKING:
     from mcp_artifact_gateway.mcp.server import GatewayServer
+
+# Batch query: fetch all samples for multiple root_keys in one round-trip.
+_FETCH_SAMPLES_BATCH_SQL = """
+SELECT root_key, sample_index, record, record_bytes, record_hash
+FROM artifact_samples
+WHERE workspace_id = %s AND artifact_id = %s AND root_key = ANY(%s)
+ORDER BY root_key, sample_index ASC
+"""
+_BATCH_SAMPLE_COLUMNS = ["root_key", "sample_index", "record", "record_bytes", "record_hash"]
 
 
 async def handle_artifact_find(
@@ -33,7 +41,6 @@ async def handle_artifact_find(
         build_find_response,
         validate_find_args,
     )
-    from mcp_artifact_gateway.tools.artifact_select import FETCH_SAMPLES_SQL
 
     err = validate_find_args(arguments)
     if err is not None:
@@ -158,16 +165,19 @@ async def handle_artifact_find(
         if root_path_filter is not None:
             roots = [root for root in roots if root.get("root_path") == root_path_filter]
 
+        root_keys = [root["root_key"] for root in roots]
+        root_key_to_path = {root["root_key"]: root.get("root_path") for root in roots}
+
         items: list[dict[str, Any]] = []
-        for root in roots:
-            sample_rows = rows_to_dicts(
+        if root_keys:
+            all_sample_rows = rows_to_dicts(
                 connection.execute(
-                    FETCH_SAMPLES_SQL,
-                    (WORKSPACE_ID, artifact_id, root["root_key"]),
+                    _FETCH_SAMPLES_BATCH_SQL,
+                    (WORKSPACE_ID, artifact_id, root_keys),
                 ).fetchall(),
-                SAMPLE_COLUMNS,
+                _BATCH_SAMPLE_COLUMNS,
             )
-            for sample in sample_rows:
+            for sample in all_sample_rows:
                 record = sample.get("record")
                 if where_expr is not None:
                     try:
@@ -183,7 +193,7 @@ async def handle_artifact_find(
                         continue
                 items.append(
                     {
-                        "root_path": root.get("root_path"),
+                        "root_path": root_key_to_path.get(sample.get("root_key")),
                         "sample_index": sample.get("sample_index"),
                         "record": record,
                         "record_hash": sample.get("record_hash"),
