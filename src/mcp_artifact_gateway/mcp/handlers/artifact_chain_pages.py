@@ -37,7 +37,7 @@ async def handle_artifact_chain_pages(
 
     err = validate_chain_pages_args(arguments)
     if err is not None:
-        return err
+        return gateway_error(str(err["code"]), str(err["message"]))
     if ctx.db_pool is None:
         return ctx._not_implemented("artifact.chain_pages")
 

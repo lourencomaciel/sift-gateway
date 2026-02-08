@@ -42,7 +42,7 @@ async def handle_artifact_describe(
 
     err = validate_describe_args(arguments)
     if err is not None:
-        return err
+        return gateway_error(str(err["code"]), str(err["message"]))
     if ctx.db_pool is None:
         return ctx._not_implemented("artifact.describe")
 
