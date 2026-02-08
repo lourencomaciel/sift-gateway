@@ -1,122 +1,72 @@
-"""Gateway response models per Addendum A.
-
-These models define the shapes returned to MCP clients by the gateway's
-tool handlers.  They are distinct from the internal :class:`Envelope` type
-which represents the canonical storage form.
-"""
+"""Gateway response contracts for mirrored tool calls."""
 
 from __future__ import annotations
 
-from datetime import datetime
-from typing import Any, Literal
+from typing import Any
 
-from pydantic import BaseModel, Field
-
-
-# ---------------------------------------------------------------------------
-# Artifact handle (Addendum A.1)
-# ---------------------------------------------------------------------------
-class ArtifactHandle(BaseModel):
-    """Lightweight descriptor of a persisted artifact.
-
-    Returned inside :class:`GatewayToolResult` so that callers can reference
-    the artifact in subsequent retrieval / query calls.
-    """
-
-    model_config = {"extra": "forbid"}
-
-    workspace_id: str
-    artifact_id: str
-    created_seq: int
-    created_at: datetime
-    session_id: str
-    source_tool: str
-    upstream_instance_id: str
-    payload_hash_full: str
-    canonicalizer_version: str
-    status: Literal["ok", "error"]
-    payload_json_bytes: int
-    payload_binary_bytes_total: int
-    payload_total_bytes: int
-    contains_binary_refs: bool
-    map_kind: Literal["none", "full", "partial"] | None
-    map_status: Literal["pending", "ready", "failed", "stale"] | None
-    index_status: Literal["off", "pending", "ready", "partial", "failed"] | None
+from mcp_artifact_gateway.constants import RESPONSE_TYPE_ERROR, RESPONSE_TYPE_RESULT
+from mcp_artifact_gateway.envelope.model import Envelope
 
 
-# ---------------------------------------------------------------------------
-# Cache reuse info (Addendum A.1.1)
-# ---------------------------------------------------------------------------
-class CacheInfo(BaseModel):
-    """Describes whether (and why) an existing artifact was reused."""
-
-    model_config = {"extra": "forbid"}
-
-    reused: bool
-    reuse_reason: Literal["none", "request_key", "dedupe_alias"] = "none"
-    reused_artifact_id: str | None = None
-
-
-# ---------------------------------------------------------------------------
-# Gateway tool result (Addendum A.1)
-# ---------------------------------------------------------------------------
-class GatewayToolResult(BaseModel):
-    """Successful gateway response wrapping an artifact handle.
-
-    Optionally includes an inline copy of the envelope (when the payload is
-    small enough per the configured inline thresholds).
-    """
-
-    model_config = {"extra": "forbid"}
-
-    type: Literal["gateway_tool_result"] = "gateway_tool_result"
-    artifact: ArtifactHandle
-    cache: CacheInfo | None = None
-    inline: dict[str, Any] | None = None
-    warnings: list[dict[str, Any]] = Field(default_factory=list)
-    meta: dict[str, Any] = Field(default_factory=dict)
-
-
-# ---------------------------------------------------------------------------
-# Gateway error (Addendum A.2)
-# ---------------------------------------------------------------------------
-class GatewayError(BaseModel):
-    """Error response returned to MCP clients.
-
-    ``code`` is one of the well-known gateway error codes; ``message``
-    provides a human-readable explanation.
-    """
-
-    model_config = {"extra": "forbid"}
-
-    type: Literal["gateway_error"] = "gateway_error"
-    code: Literal[
-        "INVALID_ARGUMENT",
-        "NOT_FOUND",
-        "GONE",
-        "INTERNAL",
-        "CURSOR_INVALID",
-        "CURSOR_EXPIRED",
-        "CURSOR_STALE",
-        "BUDGET_EXCEEDED",
-        "UNSUPPORTED",
-    ]
-    message: str
-    details: dict[str, Any] = Field(default_factory=dict)
-
-
-# ---------------------------------------------------------------------------
-# Helper: quick error construction
-# ---------------------------------------------------------------------------
-def make_error(code: str, message: str, **details: Any) -> GatewayError:
-    """Create a :class:`GatewayError` with the given code, message, and details.
-
-    Example::
-
-        err = make_error("NOT_FOUND", "Artifact art_abc123 not found")
-    """
-    return GatewayError(
-        code=code,  # type: ignore[arg-type]
-        message=message,
-        details=details,
+def can_inline_envelope(
+    *,
+    payload_json_bytes: int,
+    payload_total_bytes: int,
+    contains_binary_refs: bool,
+    inline_allowed: bool,
+    max_json_bytes: int,
+    max_total_bytes: int,
+) -> bool:
+    return (
+        inline_allowed
+        and not contains_binary_refs
+        and payload_json_bytes <= max_json_bytes
+        and payload_total_bytes <= max_total_bytes
     )
+
+
+def gateway_tool_result(
+    *,
+    artifact_id: str,
+    envelope: Envelope,
+    payload_json_bytes: int,
+    payload_total_bytes: int,
+    contains_binary_refs: bool,
+    inline_allowed: bool,
+    max_json_bytes: int = 32_768,
+    max_total_bytes: int = 65_536,
+    cache_meta: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Create handle-first tool response with optional inline envelope."""
+    inline = can_inline_envelope(
+        payload_json_bytes=payload_json_bytes,
+        payload_total_bytes=payload_total_bytes,
+        contains_binary_refs=contains_binary_refs,
+        inline_allowed=inline_allowed,
+        max_json_bytes=max_json_bytes,
+        max_total_bytes=max_total_bytes,
+    )
+
+    response: dict[str, Any] = {
+        "type": RESPONSE_TYPE_RESULT,
+        "artifact_id": artifact_id,
+        "meta": {"inline": inline, "cache": cache_meta or {}},
+    }
+    if inline:
+        response["envelope"] = envelope.to_dict()
+    return response
+
+
+def gateway_error(
+    code: str,
+    message: str,
+    *,
+    details: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    return {
+        "type": RESPONSE_TYPE_ERROR,
+        "code": code,
+        "message": message,
+        "details": details or {},
+    }
+

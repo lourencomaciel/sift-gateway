@@ -1,52 +1,84 @@
-from mcp_artifact_gateway.envelope.normalize import (
-    normalize_error,
-    normalize_success,
-    normalize_timeout,
-    normalize_transport_error,
-)
+from __future__ import annotations
+
+from mcp_artifact_gateway.envelope.model import BinaryRefContentPart
+from mcp_artifact_gateway.envelope.normalize import normalize_envelope, strip_reserved_args
 
 
-def test_normalize_success() -> None:
-    env = normalize_success(
-        upstream_instance_id="u1",
-        upstream_prefix="github",
-        tool="search",
-        mcp_result=[{"type": "text", "text": "ok"}],
+def test_strip_reserved_args_keeps_non_reserved_gateway_word() -> None:
+    forwarded = strip_reserved_args(
+        {
+            "_gateway_context": {"session_id": "s1"},
+            "_gateway_parent_artifact_id": "art_1",
+            "_gateway_custom": 1,
+            "gateway_url": "keep-me",
+            "query": "open issues",
+        }
     )
-    assert env.status == "ok"
-    assert env.content[0].type == "text"
+    assert forwarded == {"gateway_url": "keep-me", "query": "open issues"}
 
 
-def test_normalize_error() -> None:
-    env = normalize_error(
-        upstream_instance_id="u1",
+def test_normalize_image_ref_aliases_to_binary_ref() -> None:
+    envelope = normalize_envelope(
+        upstream_instance_id="up_1",
         upstream_prefix="github",
-        tool="search",
-        error_code="UPSTREAM_ERROR",
-        message="boom",
+        tool="search_issues",
+        content=[
+            {
+                "type": "image_ref",
+                "blob_id": "bin_1",
+                "binary_hash": "abc",
+                "mime": "image/png",
+                "byte_count": 42,
+            }
+        ],
     )
-    assert env.status == "error"
-    assert env.error is not None
-    assert env.error.code == "UPSTREAM_ERROR"
+    assert isinstance(envelope.content[0], BinaryRefContentPart)
 
 
-def test_normalize_timeout() -> None:
-    env = normalize_timeout(
-        upstream_instance_id="u1",
+def test_normalize_infers_error_when_error_object_is_present() -> None:
+    envelope = normalize_envelope(
+        upstream_instance_id="up_1",
         upstream_prefix="github",
-        tool="search",
-        timeout_seconds=1.5,
+        tool="search_issues",
+        error={},
     )
-    assert env.error is not None
-    assert env.error.code == "UPSTREAM_TIMEOUT"
+    assert envelope.status == "error"
+    assert envelope.error is not None
+    assert envelope.error.code == "UPSTREAM_ERROR"
 
 
-def test_normalize_transport_error() -> None:
-    env = normalize_transport_error(
-        upstream_instance_id="u1",
-        upstream_prefix="github",
-        tool="search",
-        message="network",
-    )
-    assert env.error is not None
-    assert env.error.code == "TRANSPORT_ERROR"
+def test_normalize_rejects_inline_binary_bytes() -> None:
+    try:
+        normalize_envelope(
+            upstream_instance_id="up_1",
+            upstream_prefix="github",
+            tool="search_issues",
+            content=[
+                {
+                    "type": "binary_ref",
+                    "blob_id": "bin_1",
+                    "binary_hash": "abc",
+                    "mime": "application/octet-stream",
+                    "byte_count": 2,
+                    "bytes": "AAAA",
+                }
+            ],
+        )
+    except ValueError as exc:
+        assert "not allowed inline" in str(exc)
+    else:
+        raise AssertionError("expected ValueError")
+
+
+def test_normalize_rejects_binary_ref_missing_identifiers() -> None:
+    try:
+        normalize_envelope(
+            upstream_instance_id="up_1",
+            upstream_prefix="github",
+            tool="search_issues",
+            content=[{"type": "binary_ref", "byte_count": 1, "mime": "application/octet-stream"}],
+        )
+    except ValueError as exc:
+        assert "blob_id" in str(exc)
+    else:
+        raise AssertionError("expected ValueError")

@@ -1,26 +1,26 @@
-import pytest
+from __future__ import annotations
 
-from mcp_artifact_gateway.canon.compress import compress, decompress
-
-
-@pytest.mark.parametrize("encoding", ["zstd", "gzip", "none"])
-def test_roundtrip(encoding: str) -> None:
-    data = b"hello world" * 100
-    compressed, uncompressed_len = compress(data, encoding)
-    assert uncompressed_len == len(data)
-    result = decompress(compressed, encoding, expected_len=len(data))
-    assert result == data
+from mcp_artifact_gateway.canon.compress import compress_bytes, decompress_bytes
 
 
-def test_decompress_length_mismatch() -> None:
-    data = b"hello"
-    compressed, _ = compress(data, "gzip")
-    with pytest.raises(ValueError):
-        decompress(compressed, "gzip", expected_len=len(data) + 1)
+def test_gzip_roundtrip() -> None:
+    data = b"hello" * 100
+    compressed = compress_bytes(data, "gzip")
+    assert compressed.encoding == "gzip"
+    assert compressed.uncompressed_len == len(data)
+    assert decompress_bytes(compressed.data, compressed.encoding) == data
 
 
-def test_invalid_encoding() -> None:
-    with pytest.raises(ValueError):
-        compress(b"x", "brotli")
-    with pytest.raises(ValueError):
-        decompress(b"x", "brotli")
+def test_zstd_roundtrip() -> None:
+    data = b"world" * 100
+    compressed = compress_bytes(data, "zstd")
+    assert compressed.encoding == "zstd"
+    assert decompress_bytes(compressed.data, compressed.encoding) == data
+
+
+def test_none_roundtrip() -> None:
+    data = b"raw"
+    compressed = compress_bytes(data, "none")
+    assert compressed.data == data
+    assert decompress_bytes(compressed.data, compressed.encoding) == data
+
