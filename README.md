@@ -19,7 +19,7 @@ This gateway exists to move bulky MCP output out of context, keep it durable, an
 1. Connects to configured upstream MCP servers (stdio or HTTP).
 2. Mirrors each upstream tool as `{prefix}.{tool}`.
 3. Intercepts each call, forwards arguments upstream, and stores the normalized response envelope.
-4. Returns an artifact handle (`artifact_id`, plus optional inline envelope for small payloads).
+4. Returns the result: small payloads (< `passthrough_max_bytes`, default 8 KB) are returned raw (gateway is transparent); larger payloads return an artifact handle for retrieval via query tools.
 5. Exposes retrieval tools over stored artifacts with bounded response budgets and signed cursors.
 
 Design invariants (from v1.9 spec):
@@ -129,7 +129,7 @@ uv run mcp-gateway init --from ~/Library/Application\ Support/Claude/claude_desk
       "_gateway": {
         "semantic_salt_env_keys": ["GITHUB_ORG"],
         "strict_schema_reuse": true,
-        "inline_allowed": true,
+        "passthrough_allowed": true,
         "dedupe_exclusions": ["$.timestamp"]
       }
     },

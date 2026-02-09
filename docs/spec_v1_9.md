@@ -9,7 +9,7 @@ The MCP Artifact Gateway is a local, single-tenant MCP proxy that:
 1. Discovers tools exposed by upstream MCP servers (stdio or HTTP transport).
 2. Mirrors each tool as `{prefix}.{tool}` with identical schema — no injected fields.
 3. Intercepts every tool call, forwards it upstream, and wraps the result in a **durable artifact envelope** stored to Postgres and the local filesystem.
-4. Returns a compact **handle** (artifact ID + optional inline envelope) to the caller.
+4. Returns the result to the caller: small payloads are returned raw (**passthrough mode**); large payloads return a compact **handle** (artifact ID + cache metadata).
 5. Generates a **deterministic inventory** (full or partial schema mapping) for each artifact's JSON payload.
 6. Provides bounded, deterministic **retrieval** tools (`artifact.get`, `artifact.select`, `artifact.describe`, `artifact.find`, `artifact.search`, `artifact.chain_pages`) with signed cursor pagination.
 
@@ -167,3 +167,25 @@ All retrieval tools return: `{items, truncated, cursor, omitted, stats}`.
 | `TRAVERSAL_CONTRACT_VERSION` | `traversal_v1` |
 | `CURSOR_VERSION` | `cursor_v1` |
 | `PRNG_VERSION` | `prng_xoshiro256ss_v1` |
+
+## 14. Response model: passthrough vs handle-only
+
+The gateway uses a two-tier response model based on payload size:
+
+| Payload size | Mode | LLM sees | Storage | Mapping |
+|---|---|---|---|---|
+| < `passthrough_max_bytes` (default 8192) | **passthrough** | Raw upstream result (transparent) | Async, best-effort | Skipped |
+| >= `passthrough_max_bytes` | **handle-only** | `artifact_id` + cache metadata | Sync | Yes |
+
+### 14.1 Passthrough mode
+
+When the normalized envelope payload is smaller than `passthrough_max_bytes`, the gateway returns the raw upstream MCP response directly to the caller. From the LLM's perspective the gateway is invisible — the response looks identical to calling the upstream server without the gateway in the path.
+
+- **Size threshold**: Configurable globally via `passthrough_max_bytes` (default 8192 bytes, `0` = passthrough disabled). Per-upstream opt-out via `passthrough_allowed = false`.
+- **Async persist**: Passthrough results are still persisted (envelope + payload) for audit and durability, but persistence happens asynchronously and is best-effort. The caller does not wait for storage to complete.
+- **No mapping**: The mapping pipeline (full or partial) is skipped entirely for passthrough results. Retrieval tools will not have mapping data for these artifacts until/unless a background re-map occurs.
+- **Binary exclusion**: Responses containing binary refs (`binary_ref` content parts) never qualify for passthrough, regardless of payload size. Binary content always follows the handle-only path.
+
+### 14.2 Handle-only mode
+
+Payloads at or above the passthrough threshold follow the existing handle-only path: the envelope is stored synchronously, the mapping pipeline runs (full or partial depending on payload size), and the caller receives a compact handle containing the `artifact_id` and cache metadata. The LLM uses retrieval tools (`artifact.get`, `artifact.select`, etc.) to access the stored content.

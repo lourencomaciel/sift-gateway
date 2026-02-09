@@ -365,7 +365,8 @@ def test_handle_mirrored_tool_rejects_invalid_chain_seq(tmp_path: Path) -> None:
 
 
 def test_handle_mirrored_tool_success_path_without_db(tmp_path: Path, monkeypatch) -> None:
-    server = _server_with_upstream(tmp_path)
+    config = GatewayConfig(data_dir=tmp_path, passthrough_max_bytes=0)
+    server = GatewayServer(config=config, upstreams=[_upstream()])
     mirrored = server.mirrored_tools["demo.echo"]
 
     async def _fake_call(_instance, _tool_name, _arguments):
@@ -465,7 +466,7 @@ def test_handle_mirrored_tool_runs_inline_mapping_in_sync_mode(
     monkeypatch,
 ) -> None:
     server = GatewayServer(
-        config=GatewayConfig(data_dir=tmp_path, mapping_mode="sync"),
+        config=GatewayConfig(data_dir=tmp_path, mapping_mode="sync", passthrough_max_bytes=0),
         upstreams=[_upstream()],
         db_pool=_FakePool((True,)),  # type: ignore[arg-type]
         metrics=GatewayMetrics(),
@@ -518,7 +519,7 @@ def test_handle_mirrored_tool_schedules_background_mapping_in_async_mode(
     monkeypatch,
 ) -> None:
     server = GatewayServer(
-        config=GatewayConfig(data_dir=tmp_path, mapping_mode="async"),
+        config=GatewayConfig(data_dir=tmp_path, mapping_mode="async", passthrough_max_bytes=0),
         upstreams=[_upstream()],
         db_pool=_FakePool((True,)),  # type: ignore[arg-type]
         metrics=GatewayMetrics(),
@@ -1313,7 +1314,7 @@ def test_handle_mirrored_tool_recovers_db_ok_on_successful_probe(
 ) -> None:
     """When db_ok=False but DB probe succeeds, recover and proceed normally."""
     server = GatewayServer(
-        config=GatewayConfig(data_dir=tmp_path),
+        config=GatewayConfig(data_dir=tmp_path, passthrough_max_bytes=0),
         upstreams=[_upstream()],
         db_pool=_FakePool(None),  # type: ignore[arg-type]  # probe SELECT 1 succeeds
         db_ok=False,
@@ -1444,7 +1445,7 @@ def test_handle_mirrored_tool_skips_cache_on_non_connectivity_error(
             return _FakeConnectionContext(None)
 
     server = GatewayServer(
-        config=GatewayConfig(data_dir=tmp_path),
+        config=GatewayConfig(data_dir=tmp_path, passthrough_max_bytes=0),
         upstreams=[_upstream()],
         db_pool=_FailOnceThenOkPool(),  # type: ignore[arg-type]
         metrics=GatewayMetrics(),
@@ -1513,7 +1514,7 @@ def test_handle_mirrored_tool_returns_internal_on_db_persist_failure(
             raise psycopg.OperationalError("connection lost")
 
     server = GatewayServer(
-        config=GatewayConfig(data_dir=tmp_path, quota_enforcement_enabled=False),
+        config=GatewayConfig(data_dir=tmp_path, quota_enforcement_enabled=False, passthrough_max_bytes=0),
         upstreams=[_upstream()],
         db_pool=_FailPool(),  # type: ignore[arg-type]
         metrics=GatewayMetrics(),
@@ -1555,7 +1556,7 @@ def test_handle_mirrored_tool_keeps_db_ok_on_integrity_error(
     import psycopg
 
     server = GatewayServer(
-        config=GatewayConfig(data_dir=tmp_path),
+        config=GatewayConfig(data_dir=tmp_path, passthrough_max_bytes=0),
         upstreams=[_upstream()],
         db_pool=_FakePool(None),  # type: ignore[arg-type]
         metrics=GatewayMetrics(),
@@ -1602,7 +1603,7 @@ def test_handle_mirrored_tool_returns_internal_on_non_db_persist_failure(
 ) -> None:
     """When persist_artifact raises a non-DB error, return INTERNAL but keep db_ok=True."""
     server = GatewayServer(
-        config=GatewayConfig(data_dir=tmp_path),
+        config=GatewayConfig(data_dir=tmp_path, passthrough_max_bytes=0),
         upstreams=[_upstream()],
         db_pool=_FakePool(None),  # type: ignore[arg-type]
         metrics=GatewayMetrics(),
@@ -1649,7 +1650,7 @@ def test_handle_mirrored_tool_succeeds_when_mapping_fails(
 ) -> None:
     """When mapping raises after persist succeeds, return success (non-fatal)."""
     server = GatewayServer(
-        config=GatewayConfig(data_dir=tmp_path),
+        config=GatewayConfig(data_dir=tmp_path, passthrough_max_bytes=0),
         upstreams=[_upstream()],
         db_pool=_FakePool(None),  # type: ignore[arg-type]
         metrics=GatewayMetrics(),
@@ -1731,7 +1732,7 @@ def test_handle_mirrored_tool_triggers_mapping_on_single_connection(
             return _FakeConnectionContext(None)
 
     server = GatewayServer(
-        config=GatewayConfig(data_dir=tmp_path, quota_enforcement_enabled=False),
+        config=GatewayConfig(data_dir=tmp_path, quota_enforcement_enabled=False, passthrough_max_bytes=0),
         upstreams=[_upstream()],
         db_pool=_SingleCheckoutPool(),  # type: ignore[arg-type]
         metrics=GatewayMetrics(),
@@ -2024,7 +2025,7 @@ def test_handle_mirrored_tool_quota_ok_proceeds_to_persist(
     )
 
     server = GatewayServer(
-        config=GatewayConfig(data_dir=tmp_path),
+        config=GatewayConfig(data_dir=tmp_path, passthrough_max_bytes=0),
         upstreams=[_upstream()],
         db_pool=_FakePool(None),  # type: ignore[arg-type]
         metrics=GatewayMetrics(),
@@ -2178,7 +2179,7 @@ def test_handle_mirrored_tool_quota_check_marks_unhealthy_on_connectivity_error(
             raise psycopg.OperationalError("connection refused")
 
     server = GatewayServer(
-        config=GatewayConfig(data_dir=tmp_path),
+        config=GatewayConfig(data_dir=tmp_path, passthrough_max_bytes=0),
         upstreams=[_upstream()],
         db_pool=_FailOnSecondPool(),  # type: ignore[arg-type]
         metrics=GatewayMetrics(),
@@ -2227,7 +2228,7 @@ def test_handle_mirrored_tool_skips_quota_when_disabled(
     )
 
     server = GatewayServer(
-        config=GatewayConfig(data_dir=tmp_path, quota_enforcement_enabled=False),
+        config=GatewayConfig(data_dir=tmp_path, quota_enforcement_enabled=False, passthrough_max_bytes=0),
         upstreams=[_upstream()],
         db_pool=_FakePool(None),  # type: ignore[arg-type]
         metrics=GatewayMetrics(),

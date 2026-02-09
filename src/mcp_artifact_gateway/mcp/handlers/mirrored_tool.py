@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import TYPE_CHECKING, Any
 
 import psycopg
 
 from mcp_artifact_gateway.artifacts.create import (
     CreateArtifactInput,
+    compute_payload_sizes,
     persist_artifact,
 )
 from mcp_artifact_gateway.cache.reuse import (
@@ -15,7 +17,8 @@ from mcp_artifact_gateway.cache.reuse import (
     acquire_advisory_lock_async,
 )
 from mcp_artifact_gateway.constants import RESPONSE_TYPE_RESULT
-from mcp_artifact_gateway.envelope.responses import gateway_error, gateway_tool_result
+from mcp_artifact_gateway.envelope.model import Envelope
+from mcp_artifact_gateway.envelope.responses import can_passthrough, gateway_error, gateway_tool_result
 from mcp_artifact_gateway.mcp.mirror import (
     MirroredTool,
     extract_gateway_context,
@@ -45,6 +48,27 @@ def _lookup_cache_mode(context: dict[str, Any] | None) -> str | None:
     if raw in {"allow", "fresh"}:
         return str(raw)
     return None
+
+
+async def _persist_async(
+    ctx: GatewayServer,
+    input_data: CreateArtifactInput,
+    envelope: Envelope,
+) -> None:
+    """Best-effort async artifact persistence (no mapping)."""
+    try:
+        if ctx.db_pool is None:
+            return
+        with ctx.db_pool.connection() as connection:
+            binary_hashes = ctx._binary_hashes_from_envelope(envelope)
+            persist_artifact(
+                connection=connection,
+                config=ctx.config,
+                input_data=input_data,
+                binary_hashes=binary_hashes,
+            )
+    except Exception:
+        pass  # best-effort; fire-and-forget
 
 
 async def handle_mirrored_tool(
@@ -154,6 +178,16 @@ async def handle_mirrored_tool(
                 "UPSTREAM_RESPONSE_INVALID",
                 str(exc),
             )
+        # Check passthrough eligibility (DB-less path)
+        _, _, payload_total = compute_payload_sizes(envelope)
+        passthrough_eligible = can_passthrough(
+            payload_total_bytes=payload_total,
+            contains_binary_refs=envelope.contains_binary_refs,
+            passthrough_allowed=mirrored.upstream.config.passthrough_allowed,
+            max_bytes=ctx.config.passthrough_max_bytes,
+        )
+        if passthrough_eligible:
+            return upstream_result
         handle = ctx._build_non_persisted_handle(input_data=_create_input(envelope))
     else:
         # Phase 1: Cache check in a short-lived connection.
@@ -198,7 +232,6 @@ async def handle_mirrored_tool(
                             "type": RESPONSE_TYPE_RESULT,
                             "artifact_id": reuse.artifact_id,
                             "meta": {
-                                "inline": False,
                                 "cache": {
                                     "reused": True,
                                     "reason": reuse.reason or "request_key_match",
@@ -297,6 +330,19 @@ async def handle_mirrored_tool(
                 str(exc),
             )
 
+        # Phase 2.5: Passthrough check — if the result is small enough,
+        # return the raw upstream result immediately and persist async.
+        _, _, payload_total = compute_payload_sizes(envelope)
+        passthrough_eligible = can_passthrough(
+            payload_total_bytes=payload_total,
+            contains_binary_refs=envelope.contains_binary_refs,
+            passthrough_allowed=mirrored.upstream.config.passthrough_allowed,
+            max_bytes=ctx.config.passthrough_max_bytes,
+        )
+        if passthrough_eligible:
+            asyncio.create_task(_persist_async(ctx, _create_input(envelope), envelope))
+            return upstream_result
+
         # Phase 3: Persist + Phase 4: Mapping in a single connection.
         # Reusing the same connection avoids a second pool checkout that
         # could silently fail (e.g. PoolTimeout under load), leaving the
@@ -335,13 +381,6 @@ async def handle_mirrored_tool(
 
     return gateway_tool_result(
         artifact_id=handle.artifact_id,
-        envelope=envelope,
-        payload_json_bytes=handle.payload_json_bytes,
-        payload_total_bytes=handle.payload_total_bytes,
-        contains_binary_refs=handle.contains_binary_refs,
-        inline_allowed=mirrored.upstream.config.inline_allowed,
-        max_json_bytes=ctx.config.inline_envelope_max_json_bytes,
-        max_total_bytes=ctx.config.inline_envelope_max_total_bytes,
         cache_meta={
             "reused": False,
             "reason": reuse.reason,

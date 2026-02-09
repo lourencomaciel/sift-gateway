@@ -6,7 +6,6 @@ from mcp_artifact_gateway.artifacts.create import (
     compute_payload_sizes,
     generate_artifact_id,
     prepare_envelope_storage,
-    should_inline_envelope,
 )
 
 __all__ = [
@@ -16,5 +15,4 @@ __all__ = [
     "compute_payload_sizes",
     "generate_artifact_id",
     "prepare_envelope_storage",
-    "should_inline_envelope",
 ]
