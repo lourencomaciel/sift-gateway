@@ -148,6 +148,7 @@ def test_serve_dispatches_init_command(tmp_path: Path, monkeypatch, capsys) -> N
             dry_run=True,
             data_dir=str(data_dir),
             gateway_name="artifact-gateway",
+            postgres_dsn=None,
         ),
     )
 
@@ -158,3 +159,32 @@ def test_serve_dispatches_init_command(tmp_path: Path, monkeypatch, capsys) -> N
     assert "gh" in captured.out
     # Dry run — source should be unchanged
     assert json.loads(source.read_text())["mcpServers"]["gh"]["command"] == "gh"
+
+
+def test_init_accepts_postgres_dsn_flag(tmp_path: Path, monkeypatch, capsys) -> None:
+    source = tmp_path / "config.json"
+    source.write_text(json.dumps({
+        "mcpServers": {"gh": {"command": "gh"}},
+    }), encoding="utf-8")
+    data_dir = tmp_path / "gateway"
+
+    monkeypatch.setattr(
+        "mcp_artifact_gateway.main._parse_args",
+        lambda: argparse.Namespace(
+            command="init",
+            source=str(source),
+            revert=False,
+            dry_run=False,
+            data_dir=str(data_dir),
+            gateway_name="artifact-gateway",
+            postgres_dsn="postgresql://custom:pass@host:5432/db",
+        ),
+    )
+
+    exit_code = serve()
+
+    assert exit_code == 0
+    gw_config = json.loads(
+        (data_dir / "state" / "config.json").read_text()
+    )
+    assert gw_config["postgres_dsn"] == "postgresql://custom:pass@host:5432/db"

@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -189,3 +191,136 @@ class TestRunRevert:
 
         with pytest.raises(FileNotFoundError, match="no backup found"):
             run_revert(source)
+
+
+# ---------------------------------------------------------------------------
+# Helper for Docker provisioning tests
+# ---------------------------------------------------------------------------
+@dataclass(frozen=True)
+class _FakeDockerResult:
+    dsn: str
+    container_name: str
+    port: int
+    password: str
+    already_running: bool
+
+
+def _source_with_servers(tmp_path: Path) -> Path:
+    source = tmp_path / "config.json"
+    source.write_text(json.dumps({
+        "mcpServers": {"gh": {"command": "gh"}},
+    }), encoding="utf-8")
+    return source
+
+
+class TestInitDockerProvisioning:
+    """Tests for Docker auto-provisioning integration in run_init."""
+
+    def test_triggers_docker_when_no_dsn(self, tmp_path: Path, monkeypatch) -> None:
+        monkeypatch.delenv("MCP_GATEWAY_POSTGRES_DSN", raising=False)
+        source = _source_with_servers(tmp_path)
+        fake_result = _FakeDockerResult(
+            dsn="postgresql://mcp_gateway:secret@localhost:5432/mcp_gateway",
+            container_name="mcp-gateway-postgres",
+            port=5432,
+            password="secret",
+            already_running=False,
+        )
+
+        with patch(
+            "mcp_artifact_gateway.config.docker_postgres.provision_postgres",
+            return_value=fake_result,
+        ) as mock_prov:
+            summary = run_init(source, data_dir=tmp_path / "gw")
+
+        mock_prov.assert_called_once_with(dry_run=False)
+        gw_config = json.loads(Path(summary["gateway_config_path"]).read_text())
+        assert gw_config["postgres_dsn"] == fake_result.dsn
+        assert summary["docker_postgres"]["container"] == "mcp-gateway-postgres"
+
+    def test_skips_docker_when_cli_dsn_provided(self, tmp_path: Path, monkeypatch) -> None:
+        monkeypatch.delenv("MCP_GATEWAY_POSTGRES_DSN", raising=False)
+        source = _source_with_servers(tmp_path)
+
+        with patch(
+            "mcp_artifact_gateway.config.docker_postgres.provision_postgres",
+        ) as mock_prov:
+            summary = run_init(
+                source,
+                data_dir=tmp_path / "gw",
+                postgres_dsn="postgresql://explicit:pass@host/db",
+            )
+
+        mock_prov.assert_not_called()
+        gw_config = json.loads(Path(summary["gateway_config_path"]).read_text())
+        assert gw_config["postgres_dsn"] == "postgresql://explicit:pass@host/db"
+
+    def test_skips_docker_when_env_var_set(self, tmp_path: Path, monkeypatch) -> None:
+        monkeypatch.setenv("MCP_GATEWAY_POSTGRES_DSN", "postgresql://env@host/db")
+        source = _source_with_servers(tmp_path)
+
+        with patch(
+            "mcp_artifact_gateway.config.docker_postgres.provision_postgres",
+        ) as mock_prov:
+            summary = run_init(source, data_dir=tmp_path / "gw")
+
+        mock_prov.assert_not_called()
+        gw_config = json.loads(Path(summary["gateway_config_path"]).read_text())
+        assert gw_config["postgres_dsn"] == "postgresql://env@host/db"
+
+    def test_skips_docker_when_dsn_in_existing_config(self, tmp_path: Path, monkeypatch) -> None:
+        monkeypatch.delenv("MCP_GATEWAY_POSTGRES_DSN", raising=False)
+        source = _source_with_servers(tmp_path)
+        data_dir = tmp_path / "gw"
+        state_dir = data_dir / "state"
+        state_dir.mkdir(parents=True)
+        (state_dir / "config.json").write_text(json.dumps({
+            "postgres_dsn": "postgresql://existing@host/db",
+        }))
+
+        with patch(
+            "mcp_artifact_gateway.config.docker_postgres.provision_postgres",
+        ) as mock_prov:
+            summary = run_init(source, data_dir=data_dir)
+
+        mock_prov.assert_not_called()
+        gw_config = json.loads(Path(summary["gateway_config_path"]).read_text())
+        assert gw_config["postgres_dsn"] == "postgresql://existing@host/db"
+
+    def test_docker_not_found_falls_back_gracefully(self, tmp_path: Path, monkeypatch) -> None:
+        monkeypatch.delenv("MCP_GATEWAY_POSTGRES_DSN", raising=False)
+        source = _source_with_servers(tmp_path)
+
+        from mcp_artifact_gateway.config.docker_postgres import DockerNotFoundError
+
+        with patch(
+            "mcp_artifact_gateway.config.docker_postgres.provision_postgres",
+            side_effect=DockerNotFoundError("Docker not found"),
+        ):
+            summary = run_init(source, data_dir=tmp_path / "gw")
+
+        assert "docker_postgres_skipped" in summary
+        gw_config = json.loads(Path(summary["gateway_config_path"]).read_text())
+        assert "postgres_dsn" not in gw_config
+
+    def test_dry_run_passes_through_to_docker(self, tmp_path: Path, monkeypatch) -> None:
+        monkeypatch.delenv("MCP_GATEWAY_POSTGRES_DSN", raising=False)
+        source = _source_with_servers(tmp_path)
+        fake_result = _FakeDockerResult(
+            dsn="postgresql://mcp_gateway:<generated>@localhost:5432/mcp_gateway",
+            container_name="mcp-gateway-postgres",
+            port=5432,
+            password="<generated>",
+            already_running=False,
+        )
+
+        with patch(
+            "mcp_artifact_gateway.config.docker_postgres.provision_postgres",
+            return_value=fake_result,
+        ) as mock_prov:
+            summary = run_init(source, data_dir=tmp_path / "gw", dry_run=True)
+
+        mock_prov.assert_called_once_with(dry_run=True)
+        assert summary["docker_postgres"]["container"] == "mcp-gateway-postgres"
+        # Dry run — no files written
+        assert not Path(summary["gateway_config_path"]).exists()

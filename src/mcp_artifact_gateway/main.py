@@ -66,6 +66,11 @@ def _parse_args() -> argparse.Namespace:
         default="artifact-gateway",
         help="Name for the gateway entry in the rewritten source file",
     )
+    init_parser.add_argument(
+        "--postgres-dsn",
+        default=None,
+        help="Postgres connection string (skips Docker auto-provisioning)",
+    )
 
     return parser.parse_args()
 
@@ -96,6 +101,7 @@ def _run_init(args: argparse.Namespace) -> int:
         data_dir=data_dir,
         gateway_name=args.gateway_name,
         dry_run=args.dry_run,
+        postgres_dsn=args.postgres_dsn,
     )
     print_init_summary(summary, dry_run=args.dry_run)
     return 0

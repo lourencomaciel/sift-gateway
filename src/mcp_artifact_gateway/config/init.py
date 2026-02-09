@@ -16,6 +16,7 @@ Use ``mcp-gateway init --from <file> --revert`` to restore the backup.
 from __future__ import annotations
 
 import json
+import os
 import shutil
 from pathlib import Path
 from typing import Any
@@ -61,6 +62,7 @@ def run_init(
     data_dir: Path | None = None,
     gateway_name: str = "artifact-gateway",
     dry_run: bool = False,
+    postgres_dsn: str | None = None,
 ) -> dict[str, Any]:
     """Migrate MCP servers from source file into the gateway.
 
@@ -111,6 +113,26 @@ def run_init(
     # Remove legacy format if present
     new_gateway_config.pop("upstreams", None)
 
+    # 2.5. Postgres provisioning
+    dsn_from_env = os.environ.get("MCP_GATEWAY_POSTGRES_DSN")
+    dsn_from_config = existing_gateway_config.get("postgres_dsn")
+    dsn_explicitly_set = postgres_dsn or dsn_from_env or dsn_from_config
+
+    if dsn_explicitly_set:
+        resolved_dsn = postgres_dsn or dsn_from_env or dsn_from_config
+        new_gateway_config["postgres_dsn"] = resolved_dsn
+    else:
+        from mcp_artifact_gateway.config.docker_postgres import (
+            DockerNotFoundError,
+            provision_postgres,
+        )
+
+        try:
+            pg_result = provision_postgres(dry_run=dry_run)
+            new_gateway_config["postgres_dsn"] = pg_result.dsn
+        except DockerNotFoundError:
+            pg_result = None
+
     # 3. Prepare rewritten source file (only the gateway as MCP server)
     #    Preserve the original format (mcpServers vs mcp.servers)
     new_source = dict(source_raw)
@@ -123,12 +145,24 @@ def run_init(
     # 4. Backup path
     backup_path = source_path.with_suffix(source_path.suffix + ".backup")
 
-    summary = {
+    summary: dict[str, Any] = {
         "servers_migrated": server_names,
         "backup_path": str(backup_path),
         "source_path": str(source_path),
         "gateway_config_path": str(gateway_config_path),
     }
+
+    if not dsn_explicitly_set:
+        if pg_result is not None:
+            summary["docker_postgres"] = {
+                "container": pg_result.container_name,
+                "port": pg_result.port,
+                "already_running": pg_result.already_running,
+            }
+        else:
+            summary["docker_postgres_skipped"] = (
+                "Docker not found. Install Docker or set --postgres-dsn."
+            )
 
     if dry_run:
         return summary
@@ -178,6 +212,13 @@ def print_init_summary(summary: dict[str, Any], *, dry_run: bool = False) -> Non
     for name in servers:
         print(f"  - {name}")
     print()
+    if "docker_postgres" in summary:
+        pg = summary["docker_postgres"]
+        status = "reused" if pg["already_running"] else "started"
+        print(f"{prefix}Postgres:       {status} container '{pg['container']}' on port {pg['port']}")
+    elif "docker_postgres_skipped" in summary:
+        print(f"{prefix}Postgres:       {summary['docker_postgres_skipped']}")
+
     print(f"{prefix}Backup:         {summary['backup_path']}")
     print(f"{prefix}Gateway config: {summary['gateway_config_path']}")
     print(f"{prefix}Source updated:  {summary['source_path']}")
