@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import datetime as dt
+from decimal import Decimal
 
 from mcp_artifact_gateway.constants import WORKSPACE_ID
 from mcp_artifact_gateway.jobs.quota import (
@@ -162,6 +163,13 @@ def test_parse_storage_usage_from_valid_row() -> None:
     assert usage.binary_blob_bytes == 500
     assert usage.payload_total_bytes == 1000
     # total = payload_json_bytes(800) + binary_blob_bytes(500)
+    assert usage.total_storage_bytes == 1300
+
+
+def test_parse_storage_usage_from_decimal_row() -> None:
+    usage = _parse_storage_usage((Decimal("500"), Decimal("1000"), Decimal("800")))
+    assert usage.binary_blob_bytes == 500
+    assert usage.payload_total_bytes == 1000
     assert usage.total_storage_bytes == 1300
 
 

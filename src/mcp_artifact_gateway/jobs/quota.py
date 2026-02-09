@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import datetime as dt
 from dataclasses import dataclass
+from numbers import Number
 from typing import Any
 
 from mcp_artifact_gateway.constants import WORKSPACE_ID
@@ -108,9 +109,10 @@ def _parse_storage_usage(row: tuple[object, ...] | None) -> StorageUsage:
             payload_total_bytes=0,
             total_storage_bytes=0,
         )
-    binary_blob_bytes = int(row[0]) if isinstance(row[0], (int, float)) else 0
-    payload_total_bytes = int(row[1]) if isinstance(row[1], (int, float)) else 0
-    payload_json_bytes_sum = int(row[2]) if isinstance(row[2], (int, float)) else 0
+    # psycopg may return Decimal for SUM(BIGINT); accept any numeric type.
+    binary_blob_bytes = int(row[0]) if isinstance(row[0], Number) else 0
+    payload_total_bytes = int(row[1]) if isinstance(row[1], Number) else 0
+    payload_json_bytes_sum = int(row[2]) if isinstance(row[2], Number) else 0
     return StorageUsage(
         binary_blob_bytes=binary_blob_bytes,
         payload_total_bytes=payload_total_bytes,
