@@ -251,10 +251,20 @@ async def handle_artifact_find(
             position_state={"offset": offset + len(selected)},
             extra=extra,
         )
+    determinism: dict[str, str] | None = None
+    # No sampled_only guard needed: artifact.find always operates in sampled mode.
+    if map_budget_fingerprint:
+        from mcp_artifact_gateway.constants import TRAVERSAL_CONTRACT_VERSION
+
+        determinism = {
+            "traversal_contract_version": TRAVERSAL_CONTRACT_VERSION,
+            "map_budget_fingerprint": map_budget_fingerprint,
+        }
     return build_find_response(
         items=selected,
         truncated=truncated,
         cursor=next_cursor,
         sampled_only=True,
         index_status=index_status,
+        determinism=determinism,
     )
