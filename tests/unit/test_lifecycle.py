@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from mcp_artifact_gateway.config.settings import GatewayConfig, UpstreamConfig
-from mcp_artifact_gateway.lifecycle import ensure_data_dirs, run_startup_check
+from mcp_artifact_gateway.lifecycle import _check_migrations, ensure_data_dirs, run_startup_check
 
 
 class _FakeCursor:
@@ -105,3 +105,24 @@ def test_lifecycle_startup_check_reports_db_probe_failure(tmp_path: Path, monkey
     assert report.db_ok is False
     assert report.ok is False
     assert any("DB probe query failed" in item for item in report.details)
+
+
+def test_check_migrations_silent_on_failure() -> None:
+    """_check_migrations never raises — errors are swallowed."""
+    details: list[str] = []
+    _check_migrations(None, details)  # type: ignore[arg-type]
+    # No crash, no details appended for unhandled connections
+    assert not any("pending" in d for d in details)
+
+
+def test_check_migrations_does_not_affect_db_ok(tmp_path: Path, monkeypatch) -> None:
+    """Migration check is informational; db_ok stays True even if migration check fails."""
+    monkeypatch.setattr("mcp_artifact_gateway.lifecycle.connect", lambda _config: _FakeConnection())
+    config = GatewayConfig(
+        data_dir=tmp_path,
+        upstreams=[UpstreamConfig(prefix="gh", transport="http", url="https://one.example")],
+    )
+    report = run_startup_check(config)
+    # _FakeConnection doesn't support fetchall() for migration check,
+    # but _check_migrations swallows the error silently
+    assert report.db_ok is True

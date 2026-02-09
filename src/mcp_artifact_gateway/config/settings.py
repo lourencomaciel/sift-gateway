@@ -189,6 +189,7 @@ class GatewayConfig(BaseSettings):
 
     # --------------- Cursor (§14, Addendum D) ---------------
     cursor_ttl_minutes: int = Field(60, ge=1)
+    cursor_secret_max_active_keys: int = Field(5, ge=1)
     where_canonicalization_mode: WhereCanonicalizationMode = Field(
         WhereCanonicalizationMode.raw_string
     )

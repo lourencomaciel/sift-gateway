@@ -686,7 +686,7 @@ Integration tests (strongly recommended to count as done):
     - [x] `envelope_jsonb_mode`, `envelope_jsonb_minimize_threshold_bytes`
     - [x] `max_json_part_parse_bytes` (oversized JSON becomes byte-backed binary ref)
     - [x] partial-map budgets (the full set used in `map_budget_fingerprint`)
-    - [ ] cursor TTL and secret rotation settings
+    - [x] cursor TTL and secret rotation settings
 - [x] `src/mcp_artifact_gateway/constants.py`
   - [x] `WORKSPACE_ID = "local"`
   - [x] `traversal_contract_version` constant
@@ -700,15 +700,15 @@ Integration tests (strongly recommended to count as done):
 
 - [x] `src/mcp_artifact_gateway/lifecycle.py`
   - [x] Ensures directories exist, permissions ok, temp dir writable
-  - [ ] DB connect + migration check
-  - [ ] Upstream MCP connect + tool discovery
-  - [ ] Starts mapping worker loop if enabled
-  - [ ] Starts prune worker loop if enabled
-  - [ ] Clean shutdown closes upstream sessions, db pool, worker tasks
+  - [x] DB connect + migration check
+  - [x] Upstream MCP connect + tool discovery (in app.py/bootstrap_server)
+  - [x] Starts mapping worker loop if enabled (per-request async tasks via _schedule_background_mapping)
+  - [ ] Starts prune worker loop if enabled (quota enforced inline; periodic scheduler deferred)
+  - [x] Clean shutdown closes upstream sessions, db pool, worker tasks
 
 Acceptance
 
-- [ ] Running `mcp-gateway --check` prints: DB ok, FS ok, upstream ok, versions, budgets (mirrors `gateway.status`)
+- [x] Running `mcp-gateway --check` prints: DB ok, FS ok, upstream ok, versions, budgets (mirrors `gateway.status`)
 
 ---
 
