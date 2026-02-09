@@ -82,6 +82,10 @@ class LogEvents:
     PRUNE_BYTES_RECLAIMED = "gateway.prune.bytes_reclaimed"
     PRUNE_FS_RECONCILE = "gateway.prune.fs_reconcile"
 
+    # Quota
+    QUOTA_BREACH = "gateway.quota.breach"
+    QUOTA_ENFORCED = "gateway.quota.enforced"
+
     # Advisory lock
     ADVISORY_LOCK_ACQUIRED = "gateway.lock.acquired"
     ADVISORY_LOCK_TIMEOUT = "gateway.lock.timeout"

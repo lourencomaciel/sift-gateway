@@ -126,6 +126,10 @@ class GatewayMetrics:
         self.prune_bytes_reclaimed = Counter()
         self.prune_fs_orphans_removed = Counter()
 
+        # Quota
+        self.quota_breaches = Counter()
+        self.quota_enforcements = Counter()
+
     def record_stop_reason(self, reason: str) -> None:
         """Record a mapping stop reason."""
         counter_map = {
@@ -204,6 +208,10 @@ class GatewayMetrics:
                 "bytes_reclaimed": self.prune_bytes_reclaimed.value,
                 "fs_orphans_removed": self.prune_fs_orphans_removed.value,
             },
+            "quota": {
+                "breaches": self.quota_breaches.value,
+                "enforcements": self.quota_enforcements.value,
+            },
         }
 
     def reset(self) -> dict[str, Any]:
@@ -257,6 +265,10 @@ class GatewayMetrics:
                 "hard_deletes": self.prune_hard_deletes.reset(),
                 "bytes_reclaimed": self.prune_bytes_reclaimed.reset(),
                 "fs_orphans_removed": self.prune_fs_orphans_removed.reset(),
+            },
+            "quota": {
+                "breaches": self.quota_breaches.reset(),
+                "enforcements": self.quota_enforcements.reset(),
             },
         }
 

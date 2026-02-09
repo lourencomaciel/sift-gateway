@@ -64,6 +64,27 @@ def build_status_response(config: GatewayConfig) -> dict[str, Any]:
     return build_status_response_with_runtime(config)
 
 
+def query_storage_usage_for_status(db_pool: Any) -> dict[str, Any] | None:
+    """Query storage usage from DB for the status response.
+
+    Returns a dict with usage info, or None if DB is unavailable.
+    """
+    if db_pool is None:
+        return None
+    try:
+        from mcp_artifact_gateway.db.repos.quota_repo import query_storage_usage
+
+        with db_pool.connection() as conn:
+            usage = query_storage_usage(conn)
+        return {
+            "total_bytes": usage.total_bytes,
+            "total_binary_bytes": usage.total_binary_bytes,
+            "artifact_count": usage.artifact_count,
+        }
+    except Exception:
+        return None
+
+
 def build_status_response_with_runtime(
     config: GatewayConfig,
     *,
@@ -71,6 +92,7 @@ def build_status_response_with_runtime(
     fs_health: dict[str, Any] | None = None,
     upstreams: list[dict[str, Any]] | None = None,
     cursor_secrets_info: dict[str, Any] | None = None,
+    storage_usage: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build status payload with runtime health probes and secret metadata.
 
@@ -86,6 +108,8 @@ def build_status_response_with_runtime(
         List of upstream connectivity dicts from ``GatewayServer._status_upstreams()``.
     cursor_secrets_info:
         Dict with ``signing_version`` and ``active_versions`` from cursor secrets.
+    storage_usage:
+        Result of ``query_storage_usage_for_status()``, or None if unavailable.
     """
     cursor_section: dict[str, Any] = {
         "cursor_ttl_minutes": config.cursor_ttl_minutes,
@@ -125,6 +149,7 @@ def build_status_response_with_runtime(
             "max_payload_total_bytes": config.max_payload_total_bytes,
             "max_total_storage_bytes": config.max_total_storage_bytes,
         },
+        "storage_usage": storage_usage,
         "cursor": cursor_section,
         "db": db_health if db_health is not None else {"ok": False, "error": "not probed"},
         "fs": fs_health if fs_health is not None else {"ok": False, "error": "not probed"},

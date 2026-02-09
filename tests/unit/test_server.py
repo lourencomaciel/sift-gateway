@@ -1792,3 +1792,108 @@ def test_handle_mirrored_tool_triggers_mapping_on_single_connection(
     assert response["artifact_id"] == "art_single_conn"
     assert checkout_count == 1  # only one connection checkout
     assert mapping_called is True  # mapping still ran
+
+
+# ---------------------------------------------------------------------------
+# Quota enforcement wiring
+# ---------------------------------------------------------------------------
+def test_handle_mirrored_tool_calls_quota_enforcement_after_persist(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    """After a successful persist, check_and_enforce_quota is called."""
+    server = GatewayServer(
+        config=GatewayConfig(data_dir=tmp_path),
+        upstreams=[_upstream()],
+        db_pool=_FakePool(None),  # type: ignore[arg-type]
+        metrics=GatewayMetrics(),
+    )
+    mirrored = server.mirrored_tools["demo.echo"]
+
+    async def _fake_call(_instance, _tool_name, _arguments):
+        return {
+            "content": [{"type": "text", "text": "ok"}],
+            "structuredContent": {"ok": True},
+            "isError": False,
+            "meta": {},
+        }
+
+    monkeypatch.setattr("mcp_artifact_gateway.mcp.server.call_upstream_tool", _fake_call)
+    monkeypatch.setattr(
+        "mcp_artifact_gateway.mcp.handlers.mirrored_tool.persist_artifact",
+        lambda **_kwargs: _persisted_handle(),
+    )
+
+    quota_calls: list[int] = []
+    original_check = None  # not needed
+
+    def _track_quota(connection, *, max_total_storage_bytes, **kwargs):
+        quota_calls.append(max_total_storage_bytes)
+
+    monkeypatch.setattr(
+        "mcp_artifact_gateway.mcp.handlers.mirrored_tool.check_and_enforce_quota",
+        _track_quota,
+    )
+
+    response = asyncio.run(
+        server.handle_mirrored_tool(
+            mirrored,
+            {
+                "_gateway_context": {"session_id": "sess_1", "cache_mode": "fresh"},
+                "message": "hello",
+            },
+        )
+    )
+    assert response["type"] == "gateway_tool_result"
+    assert len(quota_calls) == 1
+    assert quota_calls[0] == server.config.max_total_storage_bytes
+
+
+def test_handle_mirrored_tool_quota_failure_does_not_affect_response(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    """If check_and_enforce_quota raises, the tool still returns a successful result."""
+    server = GatewayServer(
+        config=GatewayConfig(data_dir=tmp_path),
+        upstreams=[_upstream()],
+        db_pool=_FakePool(None),  # type: ignore[arg-type]
+        metrics=GatewayMetrics(),
+    )
+    mirrored = server.mirrored_tools["demo.echo"]
+
+    async def _fake_call(_instance, _tool_name, _arguments):
+        return {
+            "content": [{"type": "text", "text": "ok"}],
+            "structuredContent": {"ok": True},
+            "isError": False,
+            "meta": {},
+        }
+
+    monkeypatch.setattr("mcp_artifact_gateway.mcp.server.call_upstream_tool", _fake_call)
+    monkeypatch.setattr(
+        "mcp_artifact_gateway.mcp.handlers.mirrored_tool.persist_artifact",
+        lambda **_kwargs: _persisted_handle(),
+    )
+
+    def _exploding_quota(connection, **kwargs):
+        raise RuntimeError("quota enforcement blew up")
+
+    monkeypatch.setattr(
+        "mcp_artifact_gateway.mcp.handlers.mirrored_tool.check_and_enforce_quota",
+        _exploding_quota,
+    )
+
+    response = asyncio.run(
+        server.handle_mirrored_tool(
+            mirrored,
+            {
+                "_gateway_context": {"session_id": "sess_1", "cache_mode": "fresh"},
+                "message": "hello",
+            },
+        )
+    )
+    # Artifact was persisted — response must still be successful
+    assert response["type"] == "gateway_tool_result"
+    assert response["artifact_id"] == "art_new"
+    assert server.db_ok is True  # quota failure must NOT latch db_ok

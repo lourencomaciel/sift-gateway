@@ -16,6 +16,7 @@ from mcp_artifact_gateway.cache.reuse import (
 )
 from mcp_artifact_gateway.constants import RESPONSE_TYPE_RESULT
 from mcp_artifact_gateway.envelope.responses import gateway_error, gateway_tool_result
+from mcp_artifact_gateway.jobs.quota import check_and_enforce_quota
 from mcp_artifact_gateway.mcp.mirror import (
     MirroredTool,
     extract_gateway_context,
@@ -265,6 +266,16 @@ async def handle_mirrored_tool(
                     )
                 except Exception:
                     pass  # mapping is best-effort; artifact already committed
+                # Quota enforcement: prune old artifacts if over storage cap.
+                # Best-effort — failures must not affect the tool response.
+                try:
+                    check_and_enforce_quota(
+                        connection,
+                        max_total_storage_bytes=ctx.config.max_total_storage_bytes,
+                        metrics=ctx.metrics,
+                    )
+                except Exception:
+                    pass  # quota enforcement is best-effort
         except (psycopg.OperationalError, psycopg.InterfaceError):
             ctx.db_ok = False
             return gateway_error(

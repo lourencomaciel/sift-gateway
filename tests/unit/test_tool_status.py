@@ -257,3 +257,82 @@ def test_probe_fs_partial_dirs(tmp_path: Path) -> None:
     assert result["paths"]["state_dir"] is True
     assert result["paths"]["blobs_bin_dir"] is False
     assert "blobs_bin_dir" in result["error"]
+
+
+# ---------------------------------------------------------------------------
+# storage_usage tests
+# ---------------------------------------------------------------------------
+from mcp_artifact_gateway.tools.status import query_storage_usage_for_status
+
+
+class _UsageFakeCursor:
+    def __init__(self, row: tuple[object, ...]) -> None:
+        self._row = row
+
+    def fetchone(self) -> tuple[object, ...]:
+        return self._row
+
+
+class _UsageFakeConn:
+    def __init__(self, row: tuple[object, ...]) -> None:
+        self._row = row
+
+    def execute(
+        self, _query: str, _params: tuple[object, ...] | None = None
+    ) -> _UsageFakeCursor:
+        return _UsageFakeCursor(self._row)
+
+
+class _UsageFakeConnCtx:
+    def __init__(self, row: tuple[object, ...]) -> None:
+        self._conn = _UsageFakeConn(row)
+
+    def __enter__(self) -> _UsageFakeConn:
+        return self._conn
+
+    def __exit__(self, *args: object) -> None:
+        pass
+
+
+class _UsageFakePool:
+    def __init__(self, row: tuple[object, ...]) -> None:
+        self._row = row
+
+    def connection(self) -> _UsageFakeConnCtx:
+        return _UsageFakeConnCtx(self._row)
+
+
+def test_query_storage_usage_for_status_returns_usage_dict() -> None:
+    pool = _UsageFakePool((5000, 2000, 10))
+    result = query_storage_usage_for_status(pool)
+    assert result is not None
+    assert result["total_bytes"] == 5000
+    assert result["total_binary_bytes"] == 2000
+    assert result["artifact_count"] == 10
+
+
+def test_query_storage_usage_for_status_returns_none_for_no_pool() -> None:
+    result = query_storage_usage_for_status(None)
+    assert result is None
+
+
+def test_query_storage_usage_for_status_returns_none_on_error() -> None:
+    class _ErrorPool:
+        def connection(self):
+            raise RuntimeError("connection failed")
+
+    result = query_storage_usage_for_status(_ErrorPool())
+    assert result is None
+
+
+def test_build_status_response_with_runtime_includes_storage_usage() -> None:
+    config = _default_config()
+    usage = {"total_bytes": 5000, "total_binary_bytes": 2000, "artifact_count": 10}
+    result = build_status_response_with_runtime(config, storage_usage=usage)
+    assert result["storage_usage"] == usage
+
+
+def test_build_status_response_with_runtime_storage_usage_none_by_default() -> None:
+    config = _default_config()
+    result = build_status_response_with_runtime(config)
+    assert result["storage_usage"] is None

@@ -8,6 +8,7 @@ from mcp_artifact_gateway.tools.status import (
     build_status_response_with_runtime,
     probe_db,
     probe_fs,
+    query_storage_usage_for_status,
 )
 
 if TYPE_CHECKING:
@@ -20,10 +21,12 @@ async def handle_status(
 ) -> dict[str, Any]:
     db_health = probe_db(ctx.db_pool)
     fs_health = probe_fs(ctx.config)
+    storage_usage = query_storage_usage_for_status(ctx.db_pool)
     return build_status_response_with_runtime(
         ctx.config,
         db_health=db_health,
         fs_health=fs_health,
         upstreams=ctx._status_upstreams(),
         cursor_secrets_info=ctx._cursor_secrets_info(),
+        storage_usage=storage_usage,
     )
