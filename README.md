@@ -34,6 +34,72 @@ This provisions two databases: `mcp_gateway` (app) and `mcp_test` (integration t
 cp .env.example .env
 ```
 
+## Setting Up MCP Servers
+
+The gateway uses the same `mcpServers` config format as Claude Desktop, Cursor, and Claude Code. The fastest way to get started is to migrate your existing config:
+
+```bash
+mcp-gateway init --from ~/Library/Application\ Support/Claude/claude_desktop_config.json
+```
+
+This will:
+1. Copy your MCP servers into the gateway's config (`.mcp_gateway/state/config.json`)
+2. Back up your original file to `<file>.backup`
+3. Rewrite the original to point only at the gateway
+
+Preview with `--dry-run` first:
+
+```bash
+mcp-gateway init --from ~/Library/Application\ Support/Claude/claude_desktop_config.json --dry-run
+```
+
+To undo:
+
+```bash
+mcp-gateway init --from ~/Library/Application\ Support/Claude/claude_desktop_config.json --revert
+```
+
+### Manual configuration
+
+You can also edit `.mcp_gateway/state/config.json` directly:
+
+```json
+{
+  "mcpServers": {
+    "github": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-github"],
+      "env": { "GITHUB_TOKEN": "..." }
+    },
+    "remote-api": {
+      "url": "https://example.com/mcp",
+      "headers": { "Authorization": "Bearer ..." }
+    }
+  }
+}
+```
+
+Transport is inferred automatically: `command` means stdio, `url` means HTTP.
+
+Gateway-specific options go under `_gateway` (ignored by other tools):
+
+```json
+{
+  "mcpServers": {
+    "github": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-github"],
+      "_gateway": {
+        "semantic_salt_env_keys": ["GITHUB_ORG"],
+        "strict_schema_reuse": false
+      }
+    }
+  }
+}
+```
+
+The legacy `upstreams` array format is still supported but deprecated.
+
 ## Configuration
 
 Environment variables use the `MCP_GATEWAY_` prefix.
@@ -105,6 +171,8 @@ src/mcp_artifact_gateway/
   main.py                  # CLI entrypoint
   constants.py             # version/identity/constants
   config/settings.py       # typed gateway settings (pydantic-settings)
+  config/mcp_servers.py    # standard mcpServers format parser
+  config/init.py           # mcp-gateway init migration command
   artifacts/               # artifact creation pipeline
   cache/                   # advisory locks, stampede control
   canon/                   # RFC 8785 canonicalizer
@@ -121,7 +189,7 @@ src/mcp_artifact_gateway/
   storage/                 # payload store (compress, hash, integrity)
   tools/                   # status, search, get, select, describe, find, chain_pages
 tests/
-  unit/                    # ~800 unit tests (no external deps)
+  unit/                    # ~850 unit tests (no external deps)
   integration/             # 20 end-to-end tests (requires Postgres)
 docker-compose.yml         # local Postgres with test DB init
 scripts/

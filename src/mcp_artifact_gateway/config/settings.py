@@ -407,6 +407,42 @@ def _load_state_config(data_dir: Path) -> dict[str, object]:
     return raw
 
 
+def _resolve_mcp_servers_format(merged: dict[str, object]) -> dict[str, object]:
+    """If config uses mcpServers format, convert to upstreams array.
+
+    Mutates and returns the merged dict. If the standard format keys are
+    present, they are consumed and replaced with the legacy ``upstreams``
+    array so that ``GatewayConfig`` can parse it normally.
+    """
+    from mcp_artifact_gateway.config.mcp_servers import resolve_mcp_servers_config
+
+    has_mcp_servers = "mcpServers" in merged
+    has_vscode = isinstance(merged.get("mcp"), dict)
+    has_legacy_upstreams = "upstreams" in merged
+
+    uses_new_format = has_mcp_servers or has_vscode
+
+    if uses_new_format and has_legacy_upstreams:
+        msg = (
+            "config contains both 'mcpServers' and legacy 'upstreams'; "
+            "use one format or the other, not both"
+        )
+        raise ValueError(msg)
+
+    if not uses_new_format:
+        return merged
+
+    upstream_dicts = resolve_mcp_servers_config(merged)
+    if upstream_dicts is not None:
+        merged["upstreams"] = upstream_dicts
+
+    # Strip keys that GatewayConfig doesn't know about (extra="forbid")
+    merged.pop("mcpServers", None)
+    merged.pop("mcp", None)
+
+    return merged
+
+
 def load_gateway_config(*, data_dir_override: str | None = None) -> GatewayConfig:
     """Load config with precedence env > config.json > defaults."""
     env_overrides = _load_env_overrides()
@@ -425,6 +461,9 @@ def load_gateway_config(*, data_dir_override: str | None = None) -> GatewayConfi
         msg = "invalid merged gateway config shape"
         raise ValueError(msg)
     merged["data_dir"] = str(data_dir)
+
+    # Convert mcpServers format to legacy upstreams if needed
+    merged = _resolve_mcp_servers_format(merged)
 
     config = GatewayConfig(**merged)
 
