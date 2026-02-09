@@ -22,6 +22,7 @@ from mcp_artifact_gateway.mcp.mirror import (
     strip_reserved_gateway_args,
     validate_against_schema,
 )
+from mcp_artifact_gateway.jobs.quota import enforce_quota
 from mcp_artifact_gateway.mcp.upstream import call_upstream_tool
 from mcp_artifact_gateway.request_identity import compute_request_identity
 
@@ -239,6 +240,44 @@ async def handle_mirrored_tool(
             return gateway_error(
                 "UPSTREAM_RESPONSE_INVALID",
                 str(exc),
+            )
+
+        # Phase 2.5: Quota enforcement — check caps and prune if needed.
+        # Uses a separate connection (prune needs its own transaction).
+        # Best-effort: non-connectivity errors skip the check.
+        quota_ok = True
+        if ctx.config.quota_enforcement_enabled:
+            try:
+                with ctx.db_pool.connection() as quota_conn:
+                    quota_result = enforce_quota(
+                        quota_conn,
+                        max_binary_blob_bytes=ctx.config.max_binary_blob_bytes,
+                        max_payload_total_bytes=ctx.config.max_payload_total_bytes,
+                        max_total_storage_bytes=ctx.config.max_total_storage_bytes,
+                        prune_batch_size=ctx.config.quota_prune_batch_size,
+                        max_prune_rounds=ctx.config.quota_max_prune_rounds,
+                        hard_delete_grace_seconds=ctx.config.quota_hard_delete_grace_seconds,
+                        remove_fs_blobs=ctx.blob_store is not None,
+                        metrics=ctx.metrics,
+                    )
+                    if not quota_result.space_cleared:
+                        quota_ok = False
+            except (psycopg.OperationalError, psycopg.InterfaceError):
+                ctx.db_ok = False
+                return gateway_error(
+                    "INTERNAL",
+                    "quota check failed; gateway marked unhealthy",
+                )
+            except Exception:
+                pass  # quota check is best-effort
+
+        if not quota_ok:
+            return gateway_error(
+                "QUOTA_EXCEEDED",
+                "workspace storage quota exceeded; prune could not free enough space",
+                details={
+                    "max_total_storage_bytes": ctx.config.max_total_storage_bytes,
+                },
             )
 
         # Phase 3: Persist + Phase 4: Mapping in a single connection.

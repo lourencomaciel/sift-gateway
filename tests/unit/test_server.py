@@ -1513,7 +1513,7 @@ def test_handle_mirrored_tool_returns_internal_on_db_persist_failure(
             raise psycopg.OperationalError("connection lost")
 
     server = GatewayServer(
-        config=GatewayConfig(data_dir=tmp_path),
+        config=GatewayConfig(data_dir=tmp_path, quota_enforcement_enabled=False),
         upstreams=[_upstream()],
         db_pool=_FailPool(),  # type: ignore[arg-type]
         metrics=GatewayMetrics(),
@@ -1731,7 +1731,7 @@ def test_handle_mirrored_tool_triggers_mapping_on_single_connection(
             return _FakeConnectionContext(None)
 
     server = GatewayServer(
-        config=GatewayConfig(data_dir=tmp_path),
+        config=GatewayConfig(data_dir=tmp_path, quota_enforcement_enabled=False),
         upstreams=[_upstream()],
         db_pool=_SingleCheckoutPool(),  # type: ignore[arg-type]
         metrics=GatewayMetrics(),
@@ -1792,3 +1792,352 @@ def test_handle_mirrored_tool_triggers_mapping_on_single_connection(
     assert response["artifact_id"] == "art_single_conn"
     assert checkout_count == 1  # only one connection checkout
     assert mapping_called is True  # mapping still ran
+
+
+# ---------------------------------------------------------------------------
+# Quota enforcement: Phase 2.5
+# ---------------------------------------------------------------------------
+
+
+def test_handle_mirrored_tool_quota_exceeded_returns_error(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    """When quota enforcement says space_cleared=False, return QUOTA_EXCEEDED."""
+    from mcp_artifact_gateway.jobs.quota import (
+        QuotaBreaches,
+        QuotaEnforcementResult,
+        StorageUsage,
+    )
+
+    server = GatewayServer(
+        config=GatewayConfig(data_dir=tmp_path),
+        upstreams=[_upstream()],
+        db_pool=_FakePool(None),  # type: ignore[arg-type]
+        metrics=GatewayMetrics(),
+    )
+    mirrored = server.mirrored_tools["demo.echo"]
+
+    async def _fake_call(_instance, _tool_name, _arguments):
+        return {
+            "content": [{"type": "text", "text": "ok"}],
+            "structuredContent": {"ok": True},
+            "isError": False,
+            "meta": {},
+        }
+
+    monkeypatch.setattr("mcp_artifact_gateway.mcp.server.call_upstream_tool", _fake_call)
+
+    _breaches = QuotaBreaches(
+        binary_blob_exceeded=False,
+        payload_total_exceeded=False,
+        total_storage_exceeded=True,
+    )
+    _usage = StorageUsage(binary_blob_bytes=0, payload_total_bytes=0, total_storage_bytes=999)
+
+    monkeypatch.setattr(
+        "mcp_artifact_gateway.mcp.handlers.mirrored_tool.enforce_quota",
+        lambda *a, **kw: QuotaEnforcementResult(
+            usage_before=_usage,
+            usage_after=_usage,
+            breaches_before=_breaches,
+            breaches_after=_breaches,
+            pruned=True,
+            soft_deleted_count=0,
+            hard_deleted_count=0,
+            bytes_reclaimed=0,
+            space_cleared=False,
+        ),
+    )
+
+    response = asyncio.run(
+        server.handle_mirrored_tool(
+            mirrored,
+            {
+                "_gateway_context": {"session_id": "sess_1", "cache_mode": "fresh"},
+                "message": "hello",
+            },
+        )
+    )
+    assert response["type"] == "gateway_error"
+    assert response["code"] == "QUOTA_EXCEEDED"
+    assert "quota" in response["message"].lower()
+
+
+def test_handle_mirrored_tool_quota_ok_proceeds_to_persist(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    """When quota enforcement says space_cleared=True, proceed to persist."""
+    from mcp_artifact_gateway.jobs.quota import (
+        QuotaBreaches,
+        QuotaEnforcementResult,
+        StorageUsage,
+    )
+
+    server = GatewayServer(
+        config=GatewayConfig(data_dir=tmp_path),
+        upstreams=[_upstream()],
+        db_pool=_FakePool(None),  # type: ignore[arg-type]
+        metrics=GatewayMetrics(),
+    )
+    mirrored = server.mirrored_tools["demo.echo"]
+
+    async def _fake_call(_instance, _tool_name, _arguments):
+        return {
+            "content": [{"type": "text", "text": "ok"}],
+            "structuredContent": {"ok": True},
+            "isError": False,
+            "meta": {},
+        }
+
+    monkeypatch.setattr("mcp_artifact_gateway.mcp.server.call_upstream_tool", _fake_call)
+
+    _usage = StorageUsage(binary_blob_bytes=0, payload_total_bytes=0, total_storage_bytes=100)
+    _no_breach = QuotaBreaches(False, False, False)
+
+    monkeypatch.setattr(
+        "mcp_artifact_gateway.mcp.handlers.mirrored_tool.enforce_quota",
+        lambda *a, **kw: QuotaEnforcementResult(
+            usage_before=_usage,
+            usage_after=None,
+            breaches_before=_no_breach,
+            breaches_after=None,
+            pruned=False,
+            soft_deleted_count=0,
+            hard_deleted_count=0,
+            bytes_reclaimed=0,
+            space_cleared=True,
+        ),
+    )
+
+    _fake_handle = ArtifactHandle(
+        artifact_id="art_quota_ok",
+        created_seq=1,
+        generation=1,
+        session_id="sess_1",
+        source_tool="demo.echo",
+        upstream_instance_id="demo",
+        request_key="rk_1",
+        payload_hash_full="h_1",
+        payload_json_bytes=10,
+        payload_binary_bytes_total=0,
+        payload_total_bytes=10,
+        contains_binary_refs=False,
+        map_kind="none",
+        map_status="pending",
+        index_status="pending",
+        status="ok",
+        error_summary=None,
+    )
+
+    monkeypatch.setattr(
+        "mcp_artifact_gateway.mcp.handlers.mirrored_tool.persist_artifact",
+        lambda connection, config, input_data, binary_hashes: _fake_handle,
+    )
+
+    response = asyncio.run(
+        server.handle_mirrored_tool(
+            mirrored,
+            {
+                "_gateway_context": {"session_id": "sess_1", "cache_mode": "fresh"},
+                "message": "hello",
+            },
+        )
+    )
+    assert response["type"] == "gateway_tool_result"
+    assert response["artifact_id"] == "art_quota_ok"
+
+
+def test_handle_mirrored_tool_quota_check_best_effort_on_generic_error(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    """Non-connectivity error in quota check is best-effort; proceed to persist."""
+    server = GatewayServer(
+        config=GatewayConfig(data_dir=tmp_path),
+        upstreams=[_upstream()],
+        db_pool=_FakePool(None),  # type: ignore[arg-type]
+        metrics=GatewayMetrics(),
+    )
+    mirrored = server.mirrored_tools["demo.echo"]
+
+    async def _fake_call(_instance, _tool_name, _arguments):
+        return {
+            "content": [{"type": "text", "text": "ok"}],
+            "structuredContent": {"ok": True},
+            "isError": False,
+            "meta": {},
+        }
+
+    monkeypatch.setattr("mcp_artifact_gateway.mcp.server.call_upstream_tool", _fake_call)
+
+    def _exploding_quota(*a, **kw):
+        raise RuntimeError("quota check exploded")
+
+    monkeypatch.setattr(
+        "mcp_artifact_gateway.mcp.handlers.mirrored_tool.enforce_quota",
+        _exploding_quota,
+    )
+
+    _fake_handle = ArtifactHandle(
+        artifact_id="art_quota_skip",
+        created_seq=1,
+        generation=1,
+        session_id="sess_1",
+        source_tool="demo.echo",
+        upstream_instance_id="demo",
+        request_key="rk_1",
+        payload_hash_full="h_1",
+        payload_json_bytes=10,
+        payload_binary_bytes_total=0,
+        payload_total_bytes=10,
+        contains_binary_refs=False,
+        map_kind="none",
+        map_status="pending",
+        index_status="pending",
+        status="ok",
+        error_summary=None,
+    )
+
+    monkeypatch.setattr(
+        "mcp_artifact_gateway.mcp.handlers.mirrored_tool.persist_artifact",
+        lambda connection, config, input_data, binary_hashes: _fake_handle,
+    )
+
+    response = asyncio.run(
+        server.handle_mirrored_tool(
+            mirrored,
+            {
+                "_gateway_context": {"session_id": "sess_1", "cache_mode": "fresh"},
+                "message": "hello",
+            },
+        )
+    )
+    assert response["type"] == "gateway_tool_result"
+    assert response["artifact_id"] == "art_quota_skip"
+    assert server.db_ok is True
+
+
+def test_handle_mirrored_tool_quota_check_marks_unhealthy_on_connectivity_error(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    """OperationalError during quota check marks db_ok=False and returns INTERNAL."""
+    import psycopg
+
+    class _FailOnSecondPool:
+        """First connection succeeds (probe), second fails (quota check)."""
+        _call_count = 0
+
+        def connection(self):
+            self._call_count += 1
+            if self._call_count == 1:
+                # Probe succeeds
+                return _FakeConnectionContext(None)
+            raise psycopg.OperationalError("connection refused")
+
+    server = GatewayServer(
+        config=GatewayConfig(data_dir=tmp_path),
+        upstreams=[_upstream()],
+        db_pool=_FailOnSecondPool(),  # type: ignore[arg-type]
+        metrics=GatewayMetrics(),
+    )
+    mirrored = server.mirrored_tools["demo.echo"]
+
+    async def _fake_call(_instance, _tool_name, _arguments):
+        return {
+            "content": [{"type": "text", "text": "ok"}],
+            "structuredContent": {"ok": True},
+            "isError": False,
+            "meta": {},
+        }
+
+    monkeypatch.setattr("mcp_artifact_gateway.mcp.server.call_upstream_tool", _fake_call)
+
+    response = asyncio.run(
+        server.handle_mirrored_tool(
+            mirrored,
+            {
+                "_gateway_context": {"session_id": "sess_1", "cache_mode": "fresh"},
+                "message": "hello",
+            },
+        )
+    )
+    assert response["type"] == "gateway_error"
+    assert response["code"] == "INTERNAL"
+    assert "quota" in response["message"].lower() or "unhealthy" in response["message"].lower()
+    assert server.db_ok is False
+
+
+def test_handle_mirrored_tool_skips_quota_when_disabled(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    """When quota_enforcement_enabled=False, quota check is skipped entirely."""
+    enforce_called = False
+
+    def _track_enforce(*a, **kw):
+        nonlocal enforce_called
+        enforce_called = True
+
+    monkeypatch.setattr(
+        "mcp_artifact_gateway.mcp.handlers.mirrored_tool.enforce_quota",
+        _track_enforce,
+    )
+
+    server = GatewayServer(
+        config=GatewayConfig(data_dir=tmp_path, quota_enforcement_enabled=False),
+        upstreams=[_upstream()],
+        db_pool=_FakePool(None),  # type: ignore[arg-type]
+        metrics=GatewayMetrics(),
+    )
+    mirrored = server.mirrored_tools["demo.echo"]
+
+    async def _fake_call(_instance, _tool_name, _arguments):
+        return {
+            "content": [{"type": "text", "text": "ok"}],
+            "structuredContent": {"ok": True},
+            "isError": False,
+            "meta": {},
+        }
+
+    monkeypatch.setattr("mcp_artifact_gateway.mcp.server.call_upstream_tool", _fake_call)
+
+    _fake_handle = ArtifactHandle(
+        artifact_id="art_no_quota",
+        created_seq=1,
+        generation=1,
+        session_id="sess_1",
+        source_tool="demo.echo",
+        upstream_instance_id="demo",
+        request_key="rk_1",
+        payload_hash_full="h_1",
+        payload_json_bytes=10,
+        payload_binary_bytes_total=0,
+        payload_total_bytes=10,
+        contains_binary_refs=False,
+        map_kind="none",
+        map_status="pending",
+        index_status="pending",
+        status="ok",
+        error_summary=None,
+    )
+
+    monkeypatch.setattr(
+        "mcp_artifact_gateway.mcp.handlers.mirrored_tool.persist_artifact",
+        lambda connection, config, input_data, binary_hashes: _fake_handle,
+    )
+
+    response = asyncio.run(
+        server.handle_mirrored_tool(
+            mirrored,
+            {
+                "_gateway_context": {"session_id": "sess_1", "cache_mode": "fresh"},
+                "message": "hello",
+            },
+        )
+    )
+    assert response["type"] == "gateway_tool_result"
+    assert response["artifact_id"] == "art_no_quota"
+    assert enforce_called is False

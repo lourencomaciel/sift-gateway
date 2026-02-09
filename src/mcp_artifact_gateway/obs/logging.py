@@ -85,3 +85,10 @@ class LogEvents:
     # Advisory lock
     ADVISORY_LOCK_ACQUIRED = "gateway.lock.acquired"
     ADVISORY_LOCK_TIMEOUT = "gateway.lock.timeout"
+
+    # Quota
+    QUOTA_CHECK = "gateway.quota.check"
+    QUOTA_BREACH = "gateway.quota.breach"
+    QUOTA_PRUNE_TRIGGERED = "gateway.quota.prune_triggered"
+    QUOTA_PRUNE_COMPLETE = "gateway.quota.prune_complete"
+    QUOTA_EXCEEDED = "gateway.quota.exceeded"

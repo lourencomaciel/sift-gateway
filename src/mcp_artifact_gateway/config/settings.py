@@ -147,6 +147,12 @@ class GatewayConfig(BaseSettings):
     max_payload_total_bytes: int = Field(1_000_000_000, ge=1)
     max_total_storage_bytes: int = Field(10_000_000_000, ge=1)
 
+    # --------------- Quota enforcement (§16.3) ---------------
+    quota_enforcement_enabled: bool = Field(True)
+    quota_prune_batch_size: int = Field(100, ge=1)
+    quota_max_prune_rounds: int = Field(5, ge=1)
+    quota_hard_delete_grace_seconds: int = Field(0, ge=0)
+
     # --------------- Full mapping (§13.3) ---------------
     max_full_map_bytes: int = Field(10_000_000, ge=1)
     max_root_discovery_k: int = Field(3, ge=1)
