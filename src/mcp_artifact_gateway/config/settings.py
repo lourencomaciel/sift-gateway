@@ -77,7 +77,7 @@ class UpstreamConfig(BaseSettings):
     strict_schema_reuse: bool = Field(
         True, description="Require schema hash match for reuse (§11.2)"
     )
-    inline_allowed: bool = Field(True, description="Allow inline envelope in response (Add. A.1.2)")
+    passthrough_allowed: bool = Field(True, description="Allow passthrough for small results (§ passthrough)")
     dedupe_exclusions: list[str] = Field(
         default_factory=list,
         description="JSONPath subset exclusions for dedupe hash (§7.2)",
@@ -183,9 +183,8 @@ class GatewayConfig(BaseSettings):
     # --------------- Search (Addendum B) ---------------
     artifact_search_max_limit: int = Field(200, ge=1)
 
-    # --------------- Inline thresholds (Addendum A.3) ---------------
-    inline_envelope_max_json_bytes: int = Field(32_768, ge=0)
-    inline_envelope_max_total_bytes: int = Field(65_536, ge=0)
+    # --------------- Passthrough (small result bypass) ---------------
+    passthrough_max_bytes: int = Field(8192, ge=0)
 
     # --------------- Cursor (§14, Addendum D) ---------------
     cursor_ttl_minutes: int = Field(60, ge=1)

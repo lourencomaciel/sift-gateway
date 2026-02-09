@@ -24,6 +24,70 @@ Phase 16: Documentation + Packaging (unit + integration tests complete)
 - [x] Phase 15: Test suite + done gates
 - [x] Phase 15b: Standard mcpServers config format + init command + Docker auto-provisioning
 - [ ] Phase 16: Documentation + packaging (README updated, docker-compose improved)
+- [x] Phase 17: Passthrough mode for small results (< 8 KB returned raw, async persist)
+
+## Phase 17: Passthrough Mode
+
+### Goal
+Two-tier response model. Below a configurable byte threshold (default 8,192), return the raw upstream response directly — no envelope wrapping, no artifact_id. The gateway is invisible. Storage happens asynchronously for audit/durability. Above the threshold, handle-only (artifact_id, no inline envelope). The inline tier is removed entirely.
+
+### Behavior Matrix
+
+| Payload Size      | Mode        | LLM Sees                         | Storage            | Mapping |
+|-------------------|-------------|-----------------------------------|--------------------|---------|
+| < passthrough_max | passthrough | Raw upstream result (transparent) | Async, best-effort | Skipped |
+| >= passthrough_max | handle-only | artifact_id only                 | Sync               | Yes     |
+
+Default: `passthrough_max_bytes=8192`. Set to `0` to disable passthrough (always handle-only).
+
+### Implementation Checklist
+
+#### Config (settings.py)
+- [x] Add `passthrough_max_bytes: int = Field(8192, ge=0)` to GatewayConfig (0 = disabled)
+- [x] Add `passthrough_allowed: bool = Field(True)` to UpstreamConfig (per-upstream opt-out)
+- [x] Remove `inline_envelope_max_json_bytes` and `inline_envelope_max_total_bytes`
+- [x] Remove `inline_allowed` from UpstreamConfig
+
+#### Response Layer (envelope/responses.py)
+- [x] Add `can_passthrough()` predicate (payload_total_bytes, passthrough_allowed, max_bytes, contains_binary_refs)
+- [x] Remove `can_inline_envelope()` and inline logic from `gateway_tool_result()`
+- [x] Simplify `gateway_tool_result()` — always handle-only (no inline branch)
+
+#### Handler (mcp/handlers/mirrored_tool.py)
+- [x] After envelope normalization, check passthrough eligibility
+- [x] If eligible: fire `asyncio.create_task` for async persist (no mapping), return raw result
+- [x] If not eligible: existing flow (sync persist + mapping + handle-only response)
+- [x] Remove inline-related args from `gateway_tool_result()` call
+
+#### Async Persist (mcp/handlers/mirrored_tool.py)
+- [x] Add `_persist_async()` function (module-level async helper)
+- [x] Wraps `persist_artifact()` in try/except, no mapping trigger
+- [x] Uses `asyncio.create_task` — best-effort, non-blocking
+
+#### Dead code removal (artifacts/create.py)
+- [x] Remove `should_inline_envelope()` function
+- [x] Remove oversize JSON metric check (referenced removed config fields)
+
+#### Tests
+- [x] `test_gateway_responses.py` — can_passthrough() predicate tests (size boundaries, binary refs, disabled)
+- [x] `test_gateway_responses.py` — gateway_tool_result() always handle-only (no inline)
+- [x] `test_server.py` — 13 handler tests updated with passthrough_max_bytes=0
+- [x] `test_artifact_create.py` — 7 inline tests removed, imports cleaned, create.py aligned
+- [x] Full suite: 941 passed, 0 failed
+
+#### Documentation
+- [x] `docs/spec_v1_9.md` — New section 14: passthrough vs handle-only
+- [x] `docs/config.md` — Document `passthrough_max_bytes` and `passthrough_allowed`; removed inline threshold docs
+- [x] `README.md` — Updated architecture description for two-tier model
+
+#### Project Meta
+- [x] `CLAUDE.md` — Added passthrough mode to conventions section
+
+### Design Decisions
+- See findings.md for rationale on: async mechanism, cache reuse, error handling, mapping skip
+- `payload_total_bytes` used for size check (JSON + binary sum, computed during normalization)
+- `asyncio.create_task` chosen over threading or background queue
+- Inline tier removed — it was a middle ground that added complexity without clear value
 
 ## Completion Checklists (Spec v1.9)
 These are copied from the spec checklists. Mark these items complete as implementation progresses.

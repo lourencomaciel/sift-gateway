@@ -107,12 +107,13 @@ Environment variables (`MCP_GATEWAY_*`) > `DATA_DIR/state/config.json` > compile
 |-----|------|---------|---------|-------------|
 | `artifact_search_max_limit` | int | 200 | `MCP_GATEWAY_ARTIFACT_SEARCH_MAX_LIMIT` | Max search limit parameter |
 
-## Inline envelope
+## Passthrough mode
 
 | Key | Type | Default | Env var | Description |
 |-----|------|---------|---------|-------------|
-| `inline_envelope_max_json_bytes` | int | 32768 | `MCP_GATEWAY_INLINE_ENVELOPE_MAX_JSON_BYTES` | Max JSON bytes to inline (32 KB) |
-| `inline_envelope_max_total_bytes` | int | 65536 | `MCP_GATEWAY_INLINE_ENVELOPE_MAX_TOTAL_BYTES` | Max total bytes to inline (64 KB) |
+| `passthrough_max_bytes` | int | 8192 | `MCP_GATEWAY_PASSTHROUGH_MAX_BYTES` | Max payload bytes for passthrough (8 KB); `0` = disabled |
+
+Results below this threshold are returned as raw upstream responses (gateway is transparent). Results at or above this threshold return handle-only. Binary responses never passthrough regardless of size. Passthrough results are persisted asynchronously for audit/durability. See also `passthrough_allowed` per-upstream.
 
 ## Cursor
 
@@ -145,7 +146,7 @@ Upstreams are configured as an array. Env var pattern: `MCP_GATEWAY_UPSTREAMS__<
 | `semantic_salt_headers` | list[str] | `[]` | Non-secret headers for upstream identity |
 | `semantic_salt_env_keys` | list[str] | `[]` | Env keys affecting upstream identity |
 | `strict_schema_reuse` | bool | true | Require schema hash match for reuse |
-| `inline_allowed` | bool | true | Allow inline envelope |
+| `passthrough_allowed` | bool | true | Allow passthrough mode for this upstream |
 | `dedupe_exclusions` | list[str] | `[]` | JSONPath exclusions for dedupe hash |
 
 ### mcpServers format
