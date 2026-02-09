@@ -46,6 +46,8 @@ def build_describe_response(
     roots: list[dict[str, Any]],
 ) -> dict[str, Any]:
     """Build artifact.describe response."""
+    from mcp_artifact_gateway.constants import TRAVERSAL_CONTRACT_VERSION
+
     response: dict[str, Any] = {
         "artifact_id": artifact_row["artifact_id"],
         "mapping": {
@@ -55,6 +57,7 @@ def build_describe_response(
             "map_budget_fingerprint": artifact_row.get("map_budget_fingerprint"),
             "map_backend_id": artifact_row.get("map_backend_id"),
             "prng_version": artifact_row.get("prng_version"),
+            "traversal_contract_version": TRAVERSAL_CONTRACT_VERSION,
         },
         "roots": [],
     }

@@ -270,10 +270,33 @@ class GatewayServer:
             reason = "traversal_version_mismatch"
         elif "artifact_generation mismatch" in message:
             reason = "generation_mismatch"
-        if reason is not None:
-            recorder = getattr(self.metrics, "record_cursor_stale_reason", None)
-            if callable(recorder):
-                recorder(reason)
+        elif "tool mismatch" in message:
+            reason = "tool_mismatch"
+        elif "artifact binding mismatch" in message:
+            reason = "artifact_binding_mismatch"
+        elif "workspace binding mismatch" in message:
+            reason = "workspace_binding_mismatch"
+        elif "mapper_version mismatch" in message:
+            reason = "mapper_version_mismatch"
+        elif "target mismatch" in message:
+            reason = "target_mismatch"
+        elif "normalized_jsonpath mismatch" in message:
+            reason = "jsonpath_mismatch"
+        elif "select_paths_hash mismatch" in message:
+            reason = "select_paths_mismatch"
+        elif "where_hash mismatch" in message:
+            reason = "where_hash_mismatch"
+        elif "root_path_filter mismatch" in message:
+            reason = "root_path_filter_mismatch"
+        elif "root_path mismatch" in message:
+            reason = "root_path_mismatch"
+        else:
+            reason = "unknown"
+        log = get_logger(component="mcp.server")
+        log.info(LogEvents.CURSOR_STALE, reason=reason, detail=message)
+        recorder = getattr(self.metrics, "record_cursor_stale_reason", None)
+        if callable(recorder):
+            recorder(reason)
 
     def _cursor_session_artifact_id(self, session_id: str, order_by: str) -> str:
         return f"session:{session_id}:{order_by}"
