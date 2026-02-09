@@ -82,6 +82,40 @@ def _validate_upstreams(config: GatewayConfig) -> tuple[bool, list[str]]:
     return True, details
 
 
+def _check_migrations(connection: object, details: list[str]) -> None:
+    """Append migration status info to *details* (informational, never fails db_ok)."""
+    try:
+        migrations_dir = Path(__file__).resolve().parent / "db" / "migrations"
+        if not migrations_dir.is_dir():
+            return
+
+        from mcp_artifact_gateway.db.migrate import list_migrations
+
+        available_names = {p.name for p in list_migrations(migrations_dir)}
+
+        with connection.cursor() as cur:  # type: ignore[union-attr]
+            cur.execute(
+                "SELECT EXISTS (SELECT FROM information_schema.tables "
+                "WHERE table_schema = 'public' AND table_name = 'schema_migrations')"
+            )
+            row = cur.fetchone()
+            if not row or not row[0]:
+                details.append(
+                    f"migrations: {len(available_names)} pending (table not initialized)"
+                )
+                return
+            cur.execute("SELECT migration_name FROM schema_migrations")
+            applied = {str(r[0]) for r in cur.fetchall()}
+
+        pending = sorted(available_names - applied)
+        if pending:
+            names = ", ".join(pending[:3])
+            suffix = ", ..." if len(pending) > 3 else ""
+            details.append(f"migrations: {len(pending)} pending ({names}{suffix})")
+    except Exception:
+        pass
+
+
 def _check_db(config: GatewayConfig) -> tuple[bool, list[str]]:
     details: list[str] = []
     if not config.postgres_dsn.strip():
@@ -98,6 +132,7 @@ def _check_db(config: GatewayConfig) -> tuple[bool, list[str]]:
         with connection.cursor() as cursor:
             cursor.execute("SELECT 1")
             cursor.fetchone()
+        _check_migrations(connection, details)
     except Exception as exc:
         details.append(f"DB probe query failed: {exc}")
         return False, details
