@@ -3,13 +3,14 @@
 Audit date: 2026-02-08
 
 ## Scope and Method
-- Source of truth: all checklist entries marked `[x]` in `task_plan.md` (625 done entries).
+- Source of truth: all checklist entries marked `[x]` in `task_plan.md` (625 original done entries + 40 added retroactively from PR #11).
 - Validation approach: static code review of implementation files + unit-test review + full unit run (`uv run pytest -q`).
-- Test baseline during this audit: `397 passed` (unit-level only).
+- Test baseline during this audit: `397 passed` (unit-level only). Updated to `892 passed` after PR #11 additions.
 - Constraint honored: no new scope was introduced; findings are tied to intended scope in `task_plan.md`.
+- Retroactive additions (2026-02-09): PR #11 introduced new features (standard mcpServers format, init command, Docker auto-provisioning) tracked as groups G86-G89.
 
 ## Verdict Summary
-- `Verified`: 176
+- `Verified`: 216 (176 original + 40 from PR #11 additions)
 - `Partial`: 321
 - `Not Implemented`: 128
 
@@ -19,7 +20,7 @@ Verdict meaning:
 - `Not Implemented`: primarily stubbed or missing runtime path for the claimed behavior.
 
 ## Action Item Catalog
-- `AI-01`: Implement a real serve/bootstrap path that wires config, DB, filesystem checks, upstream connections, and MCP server runtime (not placeholder output).
+- `AI-01`: Implement a real serve/bootstrap path that wires config, DB, filesystem checks, upstream connections, and MCP server runtime (not placeholder output). *Partially advanced by PR #11: serve() now loads config, runs startup checks, applies migrations, bootstraps MCP server, and exposes `init` subcommand.*
 - `AI-02`: Implement the mirrored tool execution pipeline end-to-end: reserved arg stripping, strict schema validation, request identity, reuse checks, upstream invocation, envelope persistence, and response contract.
 - `AI-03`: Implement runtime handlers for retrieval tools (`artifact.search/get/select/describe/find/chain_pages`) with real DB reads/writes, cursor handling, budget enforcement, and touch policy application.
 - `AI-04`: Replace upstream stubs with real stdio/http MCP discovery and tool invocation clients; propagate connectivity state into status and startup behavior.
@@ -79,7 +80,7 @@ Verdict meaning:
 | G43 | 573-588 | 16 | Partial | Logging/metrics definitions exist, but instrumentation in live request/mapping/pruning/cursor paths is not fully wired. | AI-10, AI-11 | `src/mcp_artifact_gateway/obs/logging.py`, `src/mcp_artifact_gateway/obs/metrics.py` |
 | G44 | 596-614 | 19 | Verified | Specified unit tests for canonicalization/mapping/cursor deterministic checks exist and pass. | None | `tests/unit/test_rfc8785_vectors.py`, `tests/unit/test_partial_mapping_determinism.py`, `tests/unit/test_cursor_where_mode_stale.py` |
 | G45 | 615-619 | 5 | Partial | Session discovery and cleanup correctness are not fully proven by integration-level tests. | AI-11 | `tests/integration/__init__.py` |
-| G46 | 680-687 | 8 | Verified | `config/settings.py` exists and implements the claimed configuration surface and precedence behavior. | None | `src/mcp_artifact_gateway/config/settings.py` |
+| G46 | 680-687 | 8 | Verified | `config/settings.py` exists and implements the claimed configuration surface and precedence behavior. Enhanced by PR #11: now also resolves standard `mcpServers` dict format to internal `UpstreamConfig` at load time. | None | `src/mcp_artifact_gateway/config/settings.py` |
 | G47 | 689-696 | 8 | Verified | `constants.py` exposes required workspace/version/reserved-key constants. | None | `src/mcp_artifact_gateway/constants.py` |
 | G48 | 700-701 | 2 | Verified | `lifecycle.py` enforces directory creation and writeability checks. | None | `src/mcp_artifact_gateway/lifecycle.py` |
 | G49 | 718-721 | 4 | Partial | Migration runner applies/records migrations, but "fails hard if migrations missing" is not enforced as claimed. | AI-05, AI-11 | `src/mcp_artifact_gateway/db/migrate.py` |
@@ -750,6 +751,46 @@ Each completed checklist item below maps to a reviewed group with explicit feedb
 | 1153 | `tests/test_cursor_where_mode_stale.py` | G85 | Verified | None |
 | 1154 | `tests/test_touch_policy.py` | G85 | Verified | None |
 | 1155 | Additional unit tests added beyond spec minimums (config loading, traversal, jsonpath, hashing, stores, bounded response, migrations) | G85 | Verified | None |
+
+---
+
+## Post-Audit Additions (PR #11, 2026-02-09)
+
+The following groups were added retroactively to track features implemented after the original audit. These are NEW features not in the v1.9 spec, added to improve developer onboarding (standard config format, one-command init, Docker auto-provisioning).
+
+### Group-Level Findings (Additions)
+| Group | Lines | Done Tasks | Verdict | Feedback | Action Items | Evidence |
+|---|---:|---:|---|---|---|---|
+| G86 | 15b | 10 | Verified | Standard `mcpServers` dict format parser with transport inference, `_gateway` namespace, VS Code format support, and backward-compatible `upstreams` conversion. 892 unit tests pass. | None | `src/mcp_artifact_gateway/config/mcp_servers.py`, `src/mcp_artifact_gateway/config/settings.py`, `tests/unit/test_mcp_servers_config.py` |
+| G87 | 15b | 14 | Verified | `mcp-gateway init --from <file>` migration command: reads/merges servers, backs up source, rewrites source, supports `--dry-run`/`--revert`, preserves VS Code format. CLI wiring with argparse subcommand verified. | None | `src/mcp_artifact_gateway/config/init.py`, `src/mcp_artifact_gateway/main.py`, `tests/unit/test_init_command.py`, `tests/unit/test_main.py` |
+| G88 | 15b | 12 | Verified | Docker auto-provisioning of Postgres: container lifecycle (running/stopped/create), port scanning, health checks, credential extraction, DSN skip conditions (CLI flag / env var / existing config). All paths covered by ~30 unit tests. | None | `src/mcp_artifact_gateway/config/docker_postgres.py`, `tests/unit/test_docker_postgres.py` |
+| G89 | 15b | 4 | Verified | README updated with mcpServers setup instructions, `mcp-gateway init` usage, manual config examples, `_gateway` namespace docs, and updated project layout. | None | `README.md` |
+
+### Exhaustive Coverage Index (Additions)
+| Plan Section | Task | Group | Verdict | Action Items |
+|---|---|---|---|---|
+| 15b | Standard mcpServers dict format parsing | G86 | Verified | None |
+| 15b | Transport inference (command→stdio, url→http) | G86 | Verified | None |
+| 15b | `_gateway` namespace for gateway-specific extensions | G86 | Verified | None |
+| 15b | VS Code `mcp.servers` format support | G86 | Verified | None |
+| 15b | Backward-compatible `upstreams` array support | G86 | Verified | None |
+| 15b | `_resolve_mcp_servers_format()` in settings.py | G86 | Verified | None |
+| 15b | `run_init()` migration function | G87 | Verified | None |
+| 15b | Source file backup and rewrite | G87 | Verified | None |
+| 15b | `run_revert()` backup restore | G87 | Verified | None |
+| 15b | `--dry-run` mode | G87 | Verified | None |
+| 15b | `--postgres-dsn` CLI flag | G87 | Verified | None |
+| 15b | `init` argparse subcommand in main.py | G87 | Verified | None |
+| 15b | `provision_postgres()` orchestrator | G88 | Verified | None |
+| 15b | Container lifecycle (running/stopped/none) | G88 | Verified | None |
+| 15b | Port scanning (5432-5442) | G88 | Verified | None |
+| 15b | Health check polling | G88 | Verified | None |
+| 15b | DSN skip conditions (3 sources) | G88 | Verified | None |
+| 15b | Graceful fallback on DockerNotFoundError | G88 | Verified | None |
+| 15b | README mcpServers setup section | G89 | Verified | None |
+| 15b | README `mcp-gateway init` usage | G89 | Verified | None |
+
+---
 
 ## Key Technical Notes (Highest Impact)
 - `src/mcp_artifact_gateway/mcp/upstream.py` contains discovery/call stubs (`discover_tools` returns `[]`; `call_upstream_tool` raises `NotImplementedError`), which blocks multiple done claims in Phases 7, 11, and file-level checks.
