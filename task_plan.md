@@ -22,6 +22,7 @@ Phase 16: Documentation + Packaging (unit + integration tests complete)
 - [x] Phase 13: Pruning + retention + cleanup
 - [x] Phase 14: Observability + metrics
 - [x] Phase 15: Test suite + done gates
+- [x] Phase 15b: Standard mcpServers config format + init command + Docker auto-provisioning
 - [ ] Phase 16: Documentation + packaging (README updated, docker-compose improved)
 
 ## Completion Checklists (Spec v1.9)
@@ -1163,6 +1164,75 @@ Acceptance
   - [x] cache reuse, session isolation, WHERE filtering, JSONPath, chain pages, oversize reconstruction, migration idempotency, generation-safe races, status health
 - [x] `tests/integration/test_postgres_runtime.py` (9 tests)
   - [x] persist + search + get, session isolation, binary refs, soft/hard delete
+
+---
+
+## 15b) Standard mcpServers config format, init command, Docker auto-provisioning
+
+> PR #11 on branch `feat/standard-mcp-config`. This is a new feature not in the original v1.9 spec.
+
+### Standard mcpServers config format (`config/mcp_servers.py`)
+
+- [x] `src/mcp_artifact_gateway/config/mcp_servers.py`
+  - [x] Parses standard `mcpServers` dict format (Claude Desktop, Cursor, Claude Code)
+  - [x] Parses VS Code `mcp.servers` format
+  - [x] Transport inference: `command` present → stdio, `url` present → http
+  - [x] `_gateway` namespace for gateway-specific extensions (semantic_salt_env_keys, strict_schema_reuse, etc.)
+  - [x] Converts mcpServers dict entries to internal `UpstreamConfig` objects
+  - [x] Backward-compatible: legacy `upstreams` array format still supported (deprecated)
+  - [x] Validates no ambiguous config (both `mcpServers` and `upstreams` present → error)
+- [x] `src/mcp_artifact_gateway/config/settings.py` updated
+  - [x] `_resolve_mcp_servers_format()` converts mcpServers at config load time
+  - [x] Strips mcpServers/mcp keys before passing to GatewayConfig (extra='forbid')
+- [x] `tests/unit/test_mcp_servers_config.py` — comprehensive tests for parsing/merging/inference
+
+### `mcp-gateway init` migration command (`config/init.py`)
+
+- [x] `src/mcp_artifact_gateway/config/init.py`
+  - [x] `run_init(source_path, *, data_dir, gateway_name, dry_run, postgres_dsn)` — main migration function
+  - [x] Reads source config file, extracts mcpServers (both formats)
+  - [x] Copies servers into gateway's own `state/config.json`
+  - [x] Backs up source file to `<file>.backup`
+  - [x] Rewrites source to point only at the gateway
+  - [x] Preserves VS Code `mcp.servers` format on rewrite
+  - [x] Merge behavior: existing gateway config wins over newly imported servers
+  - [x] `run_revert(source_path)` — restores backup
+  - [x] `print_init_summary()` — human-readable output with dry-run prefix
+- [x] `src/mcp_artifact_gateway/main.py` updated
+  - [x] `init` subcommand with argparse
+  - [x] `--from` (required): source config file path
+  - [x] `--revert` / `--dry-run` mutually exclusive
+  - [x] `--data-dir`, `--gateway-name` options
+  - [x] `--postgres-dsn` option (skips Docker auto-provisioning)
+- [x] `tests/unit/test_init_command.py` — tests for migration, revert, dry-run, VS Code format, Docker integration
+- [x] `tests/unit/test_main.py` — updated with init CLI tests
+
+### Docker auto-provisioning (`config/docker_postgres.py`)
+
+- [x] `src/mcp_artifact_gateway/config/docker_postgres.py`
+  - [x] `provision_postgres(*, container_name, volume_name, image, preferred_port, dry_run)` — main orchestrator
+  - [x] Returns `DockerPostgresResult(dsn, container_name, port, password, already_running)`
+  - [x] Single subprocess gateway `_run_docker(args)` for testability
+  - [x] Container lifecycle: running → reuse, stopped → start, none → create
+  - [x] Port scanning: checks 5432-5442 for available port
+  - [x] Health check polling with configurable timeout
+  - [x] Custom exceptions: `DockerNotFoundError`, `DockerCommandError`, `DockerHealthCheckError`, `PortConflictError`
+  - [x] Named container `mcp-gateway-postgres`, named volume `mcp-gateway-pgdata`, image `postgres:16-alpine`
+- [x] DSN skip conditions (auto-provisioning skipped when any of):
+  - [x] `--postgres-dsn` CLI flag provided
+  - [x] `MCP_GATEWAY_POSTGRES_DSN` env var set
+  - [x] `postgres_dsn` key exists in existing gateway config
+- [x] Graceful fallback: `DockerNotFoundError` → warning, continues without DSN
+- [x] `tests/unit/test_docker_postgres.py` — ~30 tests covering all Docker provisioning paths
+
+### README updated
+
+- [x] "Setting Up MCP Servers" section with `mcp-gateway init` usage
+- [x] Manual configuration examples (mcpServers format)
+- [x] `_gateway` namespace documentation
+- [x] Updated project layout to include new modules
+
+---
 
 ### Ship gate criteria
 
