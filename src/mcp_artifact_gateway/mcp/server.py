@@ -166,6 +166,23 @@ class GatewayServer:
     # Utility / infrastructure methods (used by handler modules via ctx)
     # ------------------------------------------------------------------
 
+    def _probe_db_recovery(self) -> bool:
+        """Probe DB pool and recover ``db_ok`` if the connection is healthy again.
+
+        Called by the preflight health gate so that a transient
+        ``OperationalError`` (e.g. ``PoolTimeout``) does not permanently
+        disable mirrored tool calls.
+        """
+        if self.db_pool is None:
+            return False
+        try:
+            with self.db_pool.connection() as conn:
+                conn.execute("SELECT 1")
+            self.db_ok = True
+            return True
+        except Exception:
+            return False
+
     @staticmethod
     def _not_implemented(tool_name: str) -> dict[str, Any]:
         return gateway_error(
