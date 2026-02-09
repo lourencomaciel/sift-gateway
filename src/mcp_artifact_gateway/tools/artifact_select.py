@@ -93,6 +93,7 @@ def build_select_result(
     sampled_prefix_len: int | None = None,
     omitted: dict[str, Any] | None = None,
     stats: dict[str, Any] | None = None,
+    determinism: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Build artifact.select response."""
     result: dict[str, Any] = {
@@ -111,4 +112,6 @@ def build_select_result(
             result["sample_indices_used"] = sample_indices_used
         if sampled_prefix_len is not None:
             result["sampled_prefix_len"] = sampled_prefix_len
+    if determinism:
+        result["determinism"] = determinism
     return result

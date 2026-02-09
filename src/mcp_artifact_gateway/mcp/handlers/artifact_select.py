@@ -400,6 +400,25 @@ async def handle_artifact_select(
         raw_sampled_prefix_len = root_summary.get("sampled_prefix_len")
         if isinstance(raw_sampled_prefix_len, int) and raw_sampled_prefix_len >= 0:
             sampled_prefix_len = raw_sampled_prefix_len
+    determinism: dict[str, str] | None = None
+    if sampled_only and map_budget_fingerprint:
+        from mcp_artifact_gateway.constants import TRAVERSAL_CONTRACT_VERSION
+
+        all_sample_indices = sorted(
+            int(si)
+            for sample in sample_rows
+            if isinstance((si := sample.get("sample_index")), int)
+        )
+        ssh = compute_sample_set_hash(
+            root_path=root_path,
+            sample_indices=all_sample_indices,
+            map_budget_fingerprint=map_budget_fingerprint,
+        )
+        determinism = {
+            "traversal_contract_version": TRAVERSAL_CONTRACT_VERSION,
+            "map_budget_fingerprint": map_budget_fingerprint,
+            "sample_set_hash": ssh,
+        }
     return build_select_result(
         items=selected,
         truncated=truncated,
@@ -409,4 +428,5 @@ async def handle_artifact_select(
         sampled_prefix_len=sampled_prefix_len,
         omitted={"count": omitted, "reason": "budget"} if truncated else None,
         stats={"bytes_out": used_bytes},
+        determinism=determinism,
     )

@@ -56,6 +56,7 @@ def build_find_response(
     cursor: str | None = None,
     sampled_only: bool = True,
     index_status: str = "off",
+    determinism: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Build artifact.find response.
 
@@ -68,4 +69,6 @@ def build_find_response(
     }
     if cursor:
         result["cursor"] = cursor
+    if determinism:
+        result["determinism"] = determinism
     return result
