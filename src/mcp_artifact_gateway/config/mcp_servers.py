@@ -30,7 +30,7 @@ _GATEWAY_EXTENSION_FIELDS = frozenset({
     "semantic_salt_headers",
     "semantic_salt_env_keys",
     "strict_schema_reuse",
-    "inline_allowed",
+    "passthrough_allowed",
     "dedupe_exclusions",
 })
 

@@ -130,7 +130,7 @@ class TestToUpstreamConfigs:
                 "_gateway": {
                     "semantic_salt_env_keys": ["GITHUB_ORG"],
                     "strict_schema_reuse": False,
-                    "inline_allowed": False,
+                    "passthrough_allowed": False,
                     "dedupe_exclusions": ["$.meta.timestamp"],
                 },
             }
@@ -138,7 +138,7 @@ class TestToUpstreamConfigs:
         c = configs[0]
         assert c["semantic_salt_env_keys"] == ["GITHUB_ORG"]
         assert c["strict_schema_reuse"] is False
-        assert c["inline_allowed"] is False
+        assert c["passthrough_allowed"] is False
         assert c["dedupe_exclusions"] == ["$.meta.timestamp"]
 
     def test_gateway_extensions_invalid_type_raises(self) -> None:

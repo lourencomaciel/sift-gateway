@@ -190,36 +190,6 @@ def build_artifact_row(
 
 
 # ---------------------------------------------------------------------------
-# Inline decision
-# ---------------------------------------------------------------------------
-def should_inline_envelope(
-    *,
-    payload_json_bytes: int,
-    payload_total_bytes: int,
-    contains_binary_refs: bool,
-    config: GatewayConfig,
-    inline_allowed: bool = True,
-) -> bool:
-    """Check if envelope should be returned inline with the handle.
-
-    Inline only when:
-    - policy allows
-    - payload_json_bytes <= inline_envelope_max_json_bytes
-    - payload_total_bytes <= inline_envelope_max_total_bytes
-    - no binary refs
-    """
-    if not inline_allowed:
-        return False
-    if contains_binary_refs:
-        return False
-    if payload_json_bytes > config.inline_envelope_max_json_bytes:
-        return False
-    if payload_total_bytes > config.inline_envelope_max_total_bytes:
-        return False
-    return True
-
-
-# ---------------------------------------------------------------------------
 # SQL helpers
 # ---------------------------------------------------------------------------
 INSERT_ARTIFACT_SQL = """
@@ -321,17 +291,6 @@ def persist_artifact(
         payload_total_bytes=payload_total_bytes,
     )
     validate_artifact_row(row)
-
-    # Check for oversize JSON offload
-    is_oversize = payload_json_bytes > config.inline_envelope_max_json_bytes
-    if is_oversize:
-        increment_metric(metrics, "oversize_json_count")
-        log.info(
-            LogEvents.ARTIFACT_OVERSIZE_JSON,
-            artifact_id=artifact_id,
-            payload_json_bytes=payload_json_bytes,
-            payload_hash_full=payload_hash,
-        )
 
     try:
         connection.execute(

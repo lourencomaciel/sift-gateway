@@ -13,7 +13,6 @@ from mcp_artifact_gateway.artifacts.create import (
     generate_artifact_id,
     persist_artifact,
     prepare_envelope_storage,
-    should_inline_envelope,
 )
 from mcp_artifact_gateway.artifacts.create import (
     CreateArtifactInput,
@@ -321,77 +320,6 @@ def test_build_artifact_row_no_error_summary_for_ok_envelope() -> None:
 
 
 # ---------------------------------------------------------------------------
-# should_inline_envelope
-# ---------------------------------------------------------------------------
-def test_should_inline_envelope_true_when_thresholds_met(tmp_path: Path) -> None:
-    config = _config(
-        tmp_path,
-        inline_envelope_max_json_bytes=32_768,
-        inline_envelope_max_total_bytes=65_536,
-    )
-    result = should_inline_envelope(
-        payload_json_bytes=100,
-        payload_total_bytes=100,
-        contains_binary_refs=False,
-        config=config,
-    )
-    assert result is True
-
-
-def test_should_inline_envelope_false_when_json_bytes_too_large(tmp_path: Path) -> None:
-    config = _config(
-        tmp_path,
-        inline_envelope_max_json_bytes=100,
-        inline_envelope_max_total_bytes=65_536,
-    )
-    result = should_inline_envelope(
-        payload_json_bytes=200,
-        payload_total_bytes=200,
-        contains_binary_refs=False,
-        config=config,
-    )
-    assert result is False
-
-
-def test_should_inline_envelope_false_when_total_bytes_too_large(tmp_path: Path) -> None:
-    config = _config(
-        tmp_path,
-        inline_envelope_max_json_bytes=32_768,
-        inline_envelope_max_total_bytes=100,
-    )
-    result = should_inline_envelope(
-        payload_json_bytes=50,
-        payload_total_bytes=200,
-        contains_binary_refs=False,
-        config=config,
-    )
-    assert result is False
-
-
-def test_should_inline_envelope_false_when_contains_binary_refs(tmp_path: Path) -> None:
-    config = _config(tmp_path)
-    result = should_inline_envelope(
-        payload_json_bytes=10,
-        payload_total_bytes=10,
-        contains_binary_refs=True,
-        config=config,
-    )
-    assert result is False
-
-
-def test_should_inline_envelope_false_when_inline_not_allowed(tmp_path: Path) -> None:
-    config = _config(tmp_path)
-    result = should_inline_envelope(
-        payload_json_bytes=10,
-        payload_total_bytes=10,
-        contains_binary_refs=False,
-        config=config,
-        inline_allowed=False,
-    )
-    assert result is False
-
-
-# ---------------------------------------------------------------------------
 # SQL constants smoke check
 # ---------------------------------------------------------------------------
 def test_insert_artifact_sql_has_returning_clause() -> None:
@@ -475,40 +403,6 @@ def test_persist_artifact_rolls_back_on_error(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 # Metrics wiring tests
 # ---------------------------------------------------------------------------
-def test_persist_artifact_increments_oversize_json_metric(tmp_path: Path) -> None:
-    """persist_artifact increments oversize_json_count for large payloads."""
-    conn = _PersistConnection()
-    # Set threshold very low so our test envelope is considered oversize
-    config = _config(tmp_path, inline_envelope_max_json_bytes=1)
-    metrics = GatewayMetrics()
-
-    handle = persist_artifact(
-        connection=conn,
-        config=config,
-        input_data=_sample_input(),
-        metrics=metrics,
-    )
-
-    assert handle.status == "ok"
-    assert metrics.oversize_json_count.value == 1
-
-
-def test_persist_artifact_no_oversize_for_small_payload(tmp_path: Path) -> None:
-    """persist_artifact does not increment oversize_json_count for small payloads."""
-    conn = _PersistConnection()
-    config = _config(tmp_path, inline_envelope_max_json_bytes=999_999)
-    metrics = GatewayMetrics()
-
-    persist_artifact(
-        connection=conn,
-        config=config,
-        input_data=_sample_input(),
-        metrics=metrics,
-    )
-
-    assert metrics.oversize_json_count.value == 0
-
-
 def test_persist_artifact_increments_binary_blob_writes(tmp_path: Path) -> None:
     """persist_artifact increments binary_blob_writes for each binary hash."""
     conn = _PersistConnection()

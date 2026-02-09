@@ -5,56 +5,35 @@ from __future__ import annotations
 from typing import Any
 
 from mcp_artifact_gateway.constants import RESPONSE_TYPE_ERROR, RESPONSE_TYPE_RESULT
-from mcp_artifact_gateway.envelope.model import Envelope
 
 
-def can_inline_envelope(
+def can_passthrough(
     *,
-    payload_json_bytes: int,
     payload_total_bytes: int,
     contains_binary_refs: bool,
-    inline_allowed: bool,
-    max_json_bytes: int,
-    max_total_bytes: int,
+    passthrough_allowed: bool,
+    max_bytes: int,
 ) -> bool:
+    """Check if a result is eligible for passthrough (raw upstream return)."""
     return (
-        inline_allowed
+        passthrough_allowed
+        and max_bytes > 0
         and not contains_binary_refs
-        and payload_json_bytes <= max_json_bytes
-        and payload_total_bytes <= max_total_bytes
+        and payload_total_bytes < max_bytes
     )
 
 
 def gateway_tool_result(
     *,
     artifact_id: str,
-    envelope: Envelope,
-    payload_json_bytes: int,
-    payload_total_bytes: int,
-    contains_binary_refs: bool,
-    inline_allowed: bool,
-    max_json_bytes: int = 32_768,
-    max_total_bytes: int = 65_536,
     cache_meta: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Create handle-first tool response with optional inline envelope."""
-    inline = can_inline_envelope(
-        payload_json_bytes=payload_json_bytes,
-        payload_total_bytes=payload_total_bytes,
-        contains_binary_refs=contains_binary_refs,
-        inline_allowed=inline_allowed,
-        max_json_bytes=max_json_bytes,
-        max_total_bytes=max_total_bytes,
-    )
-
-    response: dict[str, Any] = {
+    """Create handle-only tool response (artifact_id + cache metadata)."""
+    return {
         "type": RESPONSE_TYPE_RESULT,
         "artifact_id": artifact_id,
-        "meta": {"inline": inline, "cache": cache_meta or {}},
+        "meta": {"cache": cache_meta or {}},
     }
-    if inline:
-        response["envelope"] = envelope.to_dict()
-    return response
 
 
 def gateway_error(
@@ -69,4 +48,3 @@ def gateway_error(
         "message": message,
         "details": details or {},
     }
-
