@@ -64,6 +64,10 @@ def test_serve_check_mode_prints_startup_report(tmp_path: Path, monkeypatch, cap
     assert "fs_ok=True" in captured.out
     assert "db_ok=True" in captured.out
     assert "upstream_ok=True" in captured.out
+    assert "versions:" in captured.out
+    assert "canonicalizer=" in captured.out
+    assert "budgets:" in captured.out
+    assert "max_items=" in captured.out
 
 
 def test_serve_returns_one_when_startup_check_fails(
@@ -117,6 +121,44 @@ def test_serve_runs_bootstrap_and_closes_pool(tmp_path: Path, monkeypatch) -> No
     assert pool.closed is True
     assert app.called is True
     assert app.kwargs == {"show_banner": False}
+
+
+def test_serve_drains_mapping_tasks_on_shutdown(tmp_path: Path, monkeypatch) -> None:
+    config = GatewayConfig(data_dir=tmp_path)
+    report = CheckResult(fs_ok=True, db_ok=True, upstream_ok=True, details=[])
+    pool = _FakePool()
+    app = _FakeApp()
+    drain_called = {"called": False}
+
+    class _DrainableServer:
+        def __init__(self, app_obj: _FakeApp) -> None:
+            self._app = app_obj
+
+        def build_fastmcp_app(self) -> _FakeApp:
+            return self._app
+
+        async def drain_mapping_tasks(self, *, timeout: float = 30.0) -> int:
+            drain_called["called"] = True
+            return 0
+
+    server = _DrainableServer(app)
+
+    monkeypatch.setattr(
+        "mcp_artifact_gateway.main._parse_args",
+        lambda: argparse.Namespace(command=None, check=False, data_dir=None),
+    )
+    monkeypatch.setattr("mcp_artifact_gateway.main.load_gateway_config", lambda **_kwargs: config)
+    monkeypatch.setattr("mcp_artifact_gateway.main.run_startup_check", lambda _config: report)
+    monkeypatch.setattr(
+        "mcp_artifact_gateway.app.build_app",
+        lambda *, config, startup_report: (server, pool),
+    )
+
+    exit_code = serve()
+
+    assert exit_code == 0
+    assert pool.closed is True
+    assert drain_called["called"] is True
 
 
 def test_serve_dispatches_init_command(tmp_path: Path, monkeypatch, capsys) -> None:

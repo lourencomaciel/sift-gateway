@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import sys
 from pathlib import Path
 
@@ -108,9 +109,29 @@ def serve() -> int:
     report = run_startup_check(config)
 
     if args.check:
+        from mcp_artifact_gateway.constants import (
+            CANONICALIZER_VERSION,
+            CURSOR_VERSION,
+            MAPPER_VERSION,
+            PRNG_VERSION,
+            TRAVERSAL_CONTRACT_VERSION,
+        )
+
         print(f"fs_ok={report.fs_ok}")
         print(f"db_ok={report.db_ok}")
         print(f"upstream_ok={report.upstream_ok}")
+        print(
+            f"versions: canonicalizer={CANONICALIZER_VERSION}, "
+            f"mapper={MAPPER_VERSION}, "
+            f"traversal={TRAVERSAL_CONTRACT_VERSION}, "
+            f"cursor={CURSOR_VERSION}, "
+            f"prng={PRNG_VERSION}"
+        )
+        print(
+            f"budgets: max_items={config.max_items}, "
+            f"max_bytes_out={config.max_bytes_out}, "
+            f"max_total_storage_bytes={config.max_total_storage_bytes}"
+        )
         if report.details:
             for item in report.details:
                 print(f"- {item}")
@@ -128,6 +149,10 @@ def serve() -> int:
         app = server.build_fastmcp_app()
         app.run(show_banner=False)
     finally:
+        try:
+            asyncio.run(server.drain_mapping_tasks(timeout=5.0))
+        except Exception:
+            pass
         pool.close()
 
     return 0
