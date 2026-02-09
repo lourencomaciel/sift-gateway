@@ -85,10 +85,6 @@ def test_serve_returns_one_when_startup_check_fails(
     )
     monkeypatch.setattr("mcp_artifact_gateway.main.load_gateway_config", lambda **_kwargs: config)
     monkeypatch.setattr("mcp_artifact_gateway.main.run_startup_check", lambda _config: report)
-    monkeypatch.setattr(
-        "mcp_artifact_gateway.main.create_pool",
-        lambda _config: (_ for _ in ()).throw(AssertionError("create_pool should not run")),
-    )
 
     exit_code = serve()
     captured = capsys.readouterr()
@@ -103,14 +99,6 @@ def test_serve_runs_bootstrap_and_closes_pool(tmp_path: Path, monkeypatch) -> No
     pool = _FakePool()
     app = _FakeApp()
     server = _FakeServer(app)
-    applied_migrations: list[Path] = []
-
-    async def _fake_bootstrap(*_args, **_kwargs) -> _FakeServer:
-        return server
-
-    def _fake_apply_migrations(_connection, migrations_dir: Path) -> list[str]:
-        applied_migrations.append(migrations_dir)
-        return []
 
     monkeypatch.setattr(
         "mcp_artifact_gateway.main._parse_args",
@@ -118,9 +106,10 @@ def test_serve_runs_bootstrap_and_closes_pool(tmp_path: Path, monkeypatch) -> No
     )
     monkeypatch.setattr("mcp_artifact_gateway.main.load_gateway_config", lambda **_kwargs: config)
     monkeypatch.setattr("mcp_artifact_gateway.main.run_startup_check", lambda _config: report)
-    monkeypatch.setattr("mcp_artifact_gateway.main.create_pool", lambda _config: pool)
-    monkeypatch.setattr("mcp_artifact_gateway.main.apply_migrations", _fake_apply_migrations)
-    monkeypatch.setattr("mcp_artifact_gateway.main.bootstrap_server", _fake_bootstrap)
+    monkeypatch.setattr(
+        "mcp_artifact_gateway.app.build_app",
+        lambda *, config, startup_report: (server, pool),
+    )
 
     exit_code = serve()
 
@@ -128,8 +117,6 @@ def test_serve_runs_bootstrap_and_closes_pool(tmp_path: Path, monkeypatch) -> No
     assert pool.closed is True
     assert app.called is True
     assert app.kwargs == {"show_banner": False}
-    assert len(applied_migrations) == 1
-    assert applied_migrations[0].name == "migrations"
 
 
 def test_serve_dispatches_init_command(tmp_path: Path, monkeypatch, capsys) -> None:

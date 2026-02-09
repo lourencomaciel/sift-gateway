@@ -3,16 +3,11 @@
 from __future__ import annotations
 
 import argparse
-import asyncio
 import sys
 from pathlib import Path
 
 from mcp_artifact_gateway.config import load_gateway_config
-from mcp_artifact_gateway.db.conn import create_pool
-from mcp_artifact_gateway.db.migrate import apply_migrations
-from mcp_artifact_gateway.fs.blob_store import BlobStore
 from mcp_artifact_gateway.lifecycle import run_startup_check
-from mcp_artifact_gateway.mcp.server import bootstrap_server
 
 
 def _parse_args() -> argparse.Namespace:
@@ -75,10 +70,6 @@ def _parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def _migrations_dir() -> Path:
-    return Path(__file__).resolve().parent / "db" / "migrations"
-
-
 def _run_init(args: argparse.Namespace) -> int:
     """Handle the ``init`` subcommand."""
     from mcp_artifact_gateway.config.init import (
@@ -130,23 +121,10 @@ def serve() -> int:
             print(f"- {item}", file=sys.stderr)
         return 1
 
-    pool = create_pool(config)
-    try:
-        with pool.connection() as connection:
-            apply_migrations(connection, _migrations_dir())
+    from mcp_artifact_gateway.app import build_app
 
-        server = asyncio.run(
-            bootstrap_server(
-                config,
-                db_pool=pool,
-                blob_store=BlobStore(
-                    config.blobs_bin_dir,
-                    probe_bytes=config.binary_probe_bytes,
-                ),
-                fs_ok=report.fs_ok,
-                db_ok=report.db_ok,
-            )
-        )
+    server, pool = build_app(config=config, startup_report=report)
+    try:
         app = server.build_fastmcp_app()
         app.run(show_banner=False)
     finally:

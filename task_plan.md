@@ -228,7 +228,7 @@ For every mirrored tool call `{prefix}.{tool}(args)`:
     - [x] not deleted, not expired
     - [x] schema hash match if strict reuse enabled
   - [x] response indicates `meta.cache.reused=true` + reason + reused artifact id
-- [ ] Call upstream tool, capture success or failure.
+- [x] Call upstream tool, capture success or failure.
 - [x] Normalize into envelope (always):
   - [x] status ok or error, with error shape present on error
   - [x] content parts support `json`, `text`, `resource_ref`, `binary_ref` (and alias `image_ref`)
@@ -255,7 +255,7 @@ For every mirrored tool call `{prefix}.{tool}(args)`:
 - [x] Return contract (Addendum A):
   - [x] returns a handle-only result by default
   - [x] returns handle+inline envelope only when thresholds satisfied and policy allows
-  - [ ] if gateway itself unhealthy (DB/fs), return `INTERNAL` and do not claim artifact creation
+  - [x] if gateway itself unhealthy (DB/fs), return `INTERNAL` and do not claim artifact creation
 
 ---
 
@@ -553,8 +553,8 @@ When selected JSON part is <= max_full_map_bytes:
   - [x] deletes `binary_blobs` unreferenced by payload_binary_refs
   - [x] removes corresponding filesystem blob files
   - [x] optional reconciliation: detects orphan files on disk and can report/remove
-- [ ] Quota enforcement exists:
-  - [ ] storage cap breach triggers prune behavior (as configured)
+- [x] Quota enforcement exists:
+  - [x] storage cap breach triggers prune behavior (as configured)
 
 ---
 
@@ -652,25 +652,25 @@ Integration tests (strongly recommended to count as done):
 
 ### Root files
 
-- [ ] `pyproject.toml`
-  - [ ] Pins Python `>=3.11`
-  - [ ] Declares deps: `fastmcp`, `psycopg[binary]` or `psycopg3`, `ijson`, `zstandard` (or `gzip` fallback), `structlog`, `orjson` (optional), `pydantic` (optional), `pytest`
-  - [ ] Defines `mcp-gateway` console script entrypoint
+- [x] `pyproject.toml`
+  - [x] Pins Python `>=3.11`
+  - [x] Declares deps: `fastmcp`, `psycopg[binary]` or `psycopg3`, `ijson`, `zstandard` (or `gzip` fallback), `structlog`, `orjson` (optional), `pydantic` (optional), `pytest`
+  - [x] Defines `mcp-gateway` console script entrypoint
 - [x] `README.md`
   - [x] Explains local-only, single-tenant, `DATA_DIR`, Postgres DSN
   - [x] Includes quickstart: run Postgres, migrate, run gateway, call mirrored tool
-- [ ] `docs/spec_v1_9.md` (copy of the spec, locked)
-- [ ] `docs/traversal_contract.md` (explicit ordering rules)
-- [ ] `docs/cursor_contract.md` (payload fields, binding rules, stale rules)
-- [ ] `docs/config.md` (all config keys + defaults)
+- [x] `docs/spec_v1_9.md` (copy of the spec, locked)
+- [x] `docs/traversal_contract.md` (explicit ordering rules)
+- [x] `docs/cursor_contract.md` (payload fields, binding rules, stale rules)
+- [x] `docs/config.md` (all config keys + defaults)
 - [x] `.env.example`
 - [x] `docker-compose.yml` (local Postgres with test DB auto-provisioning)
 
 ### Package layout
 
-- [ ] `src/mcp_artifact_gateway/__init__.py`
-- [ ] `src/mcp_artifact_gateway/main.py` (CLI entry)
-- [ ] `src/mcp_artifact_gateway/app.py` (composition root: config -> db -> fs -> upstreams -> MCP server)
+- [x] `src/mcp_artifact_gateway/__init__.py`
+- [x] `src/mcp_artifact_gateway/main.py` (CLI entry)
+- [x] `src/mcp_artifact_gateway/app.py` (composition root: config -> db -> fs -> upstreams -> MCP server)
 
 ---
 
