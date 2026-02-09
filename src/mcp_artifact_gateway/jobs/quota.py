@@ -133,6 +133,14 @@ def check_breaches(
     )
 
 
+def _hard_delete_cutoff_timestamp(hard_delete_grace_seconds: int) -> str:
+    """Compute hard-delete cutoff timestamp for the current round."""
+    return (
+        dt.datetime.now(dt.timezone.utc)
+        - dt.timedelta(seconds=hard_delete_grace_seconds)
+    ).isoformat()
+
+
 # ---------------------------------------------------------------------------
 # DB functions
 # ---------------------------------------------------------------------------
@@ -263,13 +271,6 @@ def enforce_quota(
     usage_after = usage_before
     breaches_after = breaches_before
 
-    # Hard-delete query uses deleted_at < cutoff; grace must move cutoff
-    # into the past so recently soft-deleted artifacts are retained.
-    grace_cutoff_timestamp = (
-        dt.datetime.now(dt.timezone.utc)
-        - dt.timedelta(seconds=hard_delete_grace_seconds)
-    ).isoformat()
-
     try:
         for _round in range(max_prune_rounds):
             soft_count, _est_bytes = soft_delete_lru_batch(
@@ -280,6 +281,11 @@ def enforce_quota(
             )
             total_soft_deleted += soft_count
 
+            # Recompute cutoff per round so hard-delete can consider artifacts
+            # soft-deleted in this round when grace is 0.
+            grace_cutoff_timestamp = _hard_delete_cutoff_timestamp(
+                hard_delete_grace_seconds
+            )
             hard_result = run_hard_delete_batch(
                 connection,
                 grace_period_timestamp=grace_cutoff_timestamp,

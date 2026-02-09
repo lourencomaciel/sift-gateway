@@ -488,6 +488,64 @@ def test_enforce_quota_uses_past_cutoff_for_hard_delete_grace(monkeypatch) -> No
     assert cutoff >= before - dt.timedelta(seconds=61)
 
 
+def test_enforce_quota_recomputes_cutoff_each_round(monkeypatch) -> None:
+    conn = _FakeConnection(
+        # initial usage + post-round1 + post-round2
+        usage_sequence=[(600, 800, 700), (600, 800, 700), (100, 200, 150)],
+    )
+    captured: list[str] = []
+    cutoff_values = iter(
+        [
+            dt.datetime(2026, 1, 1, 0, 0, 1, tzinfo=dt.timezone.utc).isoformat(),
+            dt.datetime(2026, 1, 1, 0, 0, 4, tzinfo=dt.timezone.utc).isoformat(),
+        ]
+    )
+
+    def _fake_soft_delete(*_args, **_kwargs):
+        return 1, 0
+
+    def _fake_cutoff(hard_delete_grace_seconds: int) -> str:
+        assert hard_delete_grace_seconds == 1
+        return next(cutoff_values)
+
+    def _fake_hard_delete(*_args, **kwargs):
+        captured.append(kwargs["grace_period_timestamp"])
+        return HardDeleteResult(
+            artifacts_deleted=1,
+            payloads_deleted=0,
+            binary_blobs_deleted=0,
+            fs_blobs_removed=0,
+            bytes_reclaimed=0,
+        )
+
+    monkeypatch.setattr(
+        "mcp_artifact_gateway.jobs.quota._hard_delete_cutoff_timestamp",
+        _fake_cutoff,
+    )
+    monkeypatch.setattr(
+        "mcp_artifact_gateway.jobs.quota.soft_delete_lru_batch",
+        _fake_soft_delete,
+    )
+    monkeypatch.setattr(
+        "mcp_artifact_gateway.jobs.quota.run_hard_delete_batch",
+        _fake_hard_delete,
+    )
+
+    result = enforce_quota(
+        conn,
+        max_binary_blob_bytes=500,
+        max_payload_total_bytes=500,
+        max_total_storage_bytes=500,
+        hard_delete_grace_seconds=1,
+        max_prune_rounds=2,
+    )
+    assert result.space_cleared is True
+    assert captured == [
+        "2026-01-01T00:00:01+00:00",
+        "2026-01-01T00:00:04+00:00",
+    ]
+
+
 def test_enforce_quota_rolls_back_on_usage_query_error() -> None:
     conn = _FakeConnection(fail_on_contains="SUM")
     try:
