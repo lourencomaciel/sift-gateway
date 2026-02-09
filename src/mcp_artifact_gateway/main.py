@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 
 from mcp_artifact_gateway.config import load_gateway_config
+from mcp_artifact_gateway.db.backend import PostgresBackend
 from mcp_artifact_gateway.db.conn import create_pool
 from mcp_artifact_gateway.db.migrate import apply_migrations
 from mcp_artifact_gateway.fs.blob_store import BlobStore
@@ -57,8 +58,9 @@ def serve() -> int:
         return 1
 
     pool = create_pool(config)
+    backend = PostgresBackend(pool=pool)
     try:
-        with pool.connection() as connection:
+        with backend.connection() as connection:
             apply_migrations(connection, _migrations_dir())
 
         server = asyncio.run(
@@ -76,7 +78,7 @@ def serve() -> int:
         app = server.build_fastmcp_app()
         app.run(show_banner=False)
     finally:
-        pool.close()
+        backend.close()
 
     return 0
 
