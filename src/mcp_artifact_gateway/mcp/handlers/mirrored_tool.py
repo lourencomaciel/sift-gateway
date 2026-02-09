@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+import psycopg
+
 from mcp_artifact_gateway.artifacts.create import (
     CreateArtifactInput,
     persist_artifact,
@@ -50,6 +52,21 @@ async def handle_mirrored_tool(
     mirrored: MirroredTool,
     arguments: dict[str, Any],
 ) -> dict[str, Any]:
+    # Pre-flight health gate: refuse artifact creation when gateway is unhealthy.
+    # Probe before refusing — the failure that latched db_ok=False may have
+    # been transient (e.g. PoolTimeout).
+    if ctx.db_pool is not None and not ctx.db_ok:
+        if not ctx._probe_db_recovery():
+            return gateway_error(
+                "INTERNAL",
+                "gateway database is unhealthy; cannot create artifact",
+            )
+    if not ctx.fs_ok:
+        return gateway_error(
+            "INTERNAL",
+            "gateway filesystem is unhealthy; cannot create artifact",
+        )
+
     context = extract_gateway_context(arguments)
     session_id = _extract_session_id(context)
     if session_id is None:
@@ -147,48 +164,57 @@ async def handle_mirrored_tool(
         # than an occasional redundant call (persist handles the race via
         # unique artifact IDs).
         if cache_mode != "fresh":
-            with ctx.db_pool.connection() as connection:
-                acquired = await acquire_advisory_lock_async(
-                    connection,
-                    request_key=identity.request_key,
-                    timeout_ms=ctx.config.advisory_lock_timeout_ms,
-                    metrics=ctx.metrics,
-                )
-                if not acquired:
-                    return gateway_error(
-                        "RESOURCE_BUSY",
-                        "advisory lock acquisition timed out",
-                        details={
-                            "timeout_ms": ctx.config.advisory_lock_timeout_ms,
-                        },
+            try:
+                with ctx.db_pool.connection() as connection:
+                    acquired = await acquire_advisory_lock_async(
+                        connection,
+                        request_key=identity.request_key,
+                        timeout_ms=ctx.config.advisory_lock_timeout_ms,
+                        metrics=ctx.metrics,
                     )
-                reuse = ctx._check_reuse_on_connection(
-                    connection,
-                    request_key=identity.request_key,
-                    expected_schema_hash=mirrored.upstream_tool.schema_hash,
-                    strict_schema_reuse=mirrored.upstream.config.strict_schema_reuse,
-                )
-                if reuse.reused and reuse.artifact_id is not None:
-                    ctx._increment_metric("cache_hits")
-                    # TODO: Cache reuse returns the artifact_id without
-                    # creating an artifact_ref for the requesting session.
-                    # This means the caller receives an artifact_id they
-                    # cannot access via get/search/select.  Consider
-                    # inserting an artifact_ref here so the session that
-                    # triggered the reuse can actually retrieve the artifact.
-                    return {
-                        "type": RESPONSE_TYPE_RESULT,
-                        "artifact_id": reuse.artifact_id,
-                        "meta": {
-                            "inline": False,
-                            "cache": {
-                                "reused": True,
-                                "reason": reuse.reason or "request_key_match",
-                                "request_key": identity.request_key,
+                    if not acquired:
+                        return gateway_error(
+                            "RESOURCE_BUSY",
+                            "advisory lock acquisition timed out",
+                            details={
+                                "timeout_ms": ctx.config.advisory_lock_timeout_ms,
                             },
-                        },
-                    }
-                ctx._increment_metric("cache_misses")
+                        )
+                    reuse = ctx._check_reuse_on_connection(
+                        connection,
+                        request_key=identity.request_key,
+                        expected_schema_hash=mirrored.upstream_tool.schema_hash,
+                        strict_schema_reuse=mirrored.upstream.config.strict_schema_reuse,
+                    )
+                    if reuse.reused and reuse.artifact_id is not None:
+                        ctx._increment_metric("cache_hits")
+                        # TODO: Cache reuse returns the artifact_id without
+                        # creating an artifact_ref for the requesting session.
+                        # This means the caller receives an artifact_id they
+                        # cannot access via get/search/select.  Consider
+                        # inserting an artifact_ref here so the session that
+                        # triggered the reuse can actually retrieve the artifact.
+                        return {
+                            "type": RESPONSE_TYPE_RESULT,
+                            "artifact_id": reuse.artifact_id,
+                            "meta": {
+                                "inline": False,
+                                "cache": {
+                                    "reused": True,
+                                    "reason": reuse.reason or "request_key_match",
+                                    "request_key": identity.request_key,
+                                },
+                            },
+                        }
+                    ctx._increment_metric("cache_misses")
+            except (psycopg.OperationalError, psycopg.InterfaceError):
+                ctx.db_ok = False
+                return gateway_error(
+                    "INTERNAL",
+                    "cache check failed; gateway marked unhealthy",
+                )
+            except Exception:
+                pass  # cache is best-effort; skip and proceed to upstream call
 
         # Phase 2: Upstream call — no DB connection held.
         try:
@@ -215,19 +241,40 @@ async def handle_mirrored_tool(
                 str(exc),
             )
 
-        # Phase 3: Persist in a new short-lived connection.
-        with ctx.db_pool.connection() as connection:
-            binary_hashes = ctx._binary_hashes_from_envelope(envelope)
-            handle = persist_artifact(
-                connection=connection,
-                config=ctx.config,
-                input_data=_create_input(envelope),
-                binary_hashes=binary_hashes,
+        # Phase 3: Persist + Phase 4: Mapping in a single connection.
+        # Reusing the same connection avoids a second pool checkout that
+        # could silently fail (e.g. PoolTimeout under load), leaving the
+        # artifact stuck at map_status='pending' indefinitely.
+        try:
+            with ctx.db_pool.connection() as connection:
+                binary_hashes = ctx._binary_hashes_from_envelope(envelope)
+                handle = persist_artifact(
+                    connection=connection,
+                    config=ctx.config,
+                    input_data=_create_input(envelope),
+                    binary_hashes=binary_hashes,
+                )
+                # Mapping runs after the artifact is committed.
+                # Failures here are non-fatal — the artifact exists and
+                # is retrievable.
+                try:
+                    ctx._trigger_mapping_for_artifact(
+                        connection,
+                        handle=handle,
+                        envelope=envelope,
+                    )
+                except Exception:
+                    pass  # mapping is best-effort; artifact already committed
+        except (psycopg.OperationalError, psycopg.InterfaceError):
+            ctx.db_ok = False
+            return gateway_error(
+                "INTERNAL",
+                "artifact persistence failed; gateway marked unhealthy",
             )
-            ctx._trigger_mapping_for_artifact(
-                connection,
-                handle=handle,
-                envelope=envelope,
+        except Exception:
+            return gateway_error(
+                "INTERNAL",
+                "artifact persistence failed",
             )
 
     return gateway_tool_result(

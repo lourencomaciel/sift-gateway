@@ -1270,3 +1270,525 @@ def test_artifact_find_returns_internal_on_sample_corruption(
     )
     assert response["code"] == "INTERNAL"
     assert response["details"]["missing_indices"] == [2]
+
+
+# ---------------------------------------------------------------------------
+# Health gate: INTERNAL on unhealthy DB or FS
+# ---------------------------------------------------------------------------
+
+
+def test_handle_mirrored_tool_returns_internal_when_db_unhealthy(tmp_path: Path) -> None:
+    """When db_pool exists, db_ok=False, and recovery probe fails, return INTERNAL."""
+    import psycopg
+
+    class _DeadPool:
+        def connection(self):
+            raise psycopg.OperationalError("connection refused")
+
+    server = GatewayServer(
+        config=GatewayConfig(data_dir=tmp_path),
+        upstreams=[_upstream()],
+        db_pool=_DeadPool(),  # type: ignore[arg-type]
+        db_ok=False,
+    )
+    mirrored = server.mirrored_tools["demo.echo"]
+    response = asyncio.run(
+        server.handle_mirrored_tool(
+            mirrored,
+            {
+                "_gateway_context": {"session_id": "sess_1"},
+                "message": "hello",
+            },
+        )
+    )
+    assert response["type"] == "gateway_error"
+    assert response["code"] == "INTERNAL"
+    assert "database" in response["message"]
+    assert server.db_ok is False
+
+
+def test_handle_mirrored_tool_recovers_db_ok_on_successful_probe(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    """When db_ok=False but DB probe succeeds, recover and proceed normally."""
+    server = GatewayServer(
+        config=GatewayConfig(data_dir=tmp_path),
+        upstreams=[_upstream()],
+        db_pool=_FakePool(None),  # type: ignore[arg-type]  # probe SELECT 1 succeeds
+        db_ok=False,
+        metrics=GatewayMetrics(),
+    )
+    assert server.db_ok is False
+
+    mirrored = server.mirrored_tools["demo.echo"]
+
+    async def _fake_call(_instance, _tool_name, _arguments):
+        return {
+            "content": [{"type": "text", "text": "ok"}],
+            "structuredContent": {"ok": True},
+            "isError": False,
+            "meta": {},
+        }
+
+    monkeypatch.setattr("mcp_artifact_gateway.mcp.server.call_upstream_tool", _fake_call)
+
+    _fake_handle = ArtifactHandle(
+        artifact_id="art_recovered",
+        created_seq=1,
+        generation=1,
+        session_id="sess_1",
+        source_tool="demo.echo",
+        upstream_instance_id="demo",
+        request_key="rk_1",
+        payload_hash_full="h_1",
+        payload_json_bytes=10,
+        payload_binary_bytes_total=0,
+        payload_total_bytes=10,
+        contains_binary_refs=False,
+        map_kind="none",
+        map_status="pending",
+        index_status="pending",
+        status="ok",
+        error_summary=None,
+    )
+
+    monkeypatch.setattr(
+        "mcp_artifact_gateway.mcp.handlers.mirrored_tool.persist_artifact",
+        lambda connection, config, input_data, binary_hashes: _fake_handle,
+    )
+
+    response = asyncio.run(
+        server.handle_mirrored_tool(
+            mirrored,
+            {
+                "_gateway_context": {"session_id": "sess_1", "cache_mode": "fresh"},
+                "message": "hello",
+            },
+        )
+    )
+    assert response["type"] == "gateway_tool_result"
+    assert response["artifact_id"] == "art_recovered"
+    assert server.db_ok is True  # recovered from transient failure
+
+
+def test_handle_mirrored_tool_returns_internal_when_fs_unhealthy(tmp_path: Path) -> None:
+    """When fs_ok=False, return INTERNAL before calling upstream."""
+    server = GatewayServer(
+        config=GatewayConfig(data_dir=tmp_path),
+        upstreams=[_upstream()],
+        fs_ok=False,
+    )
+    mirrored = server.mirrored_tools["demo.echo"]
+    response = asyncio.run(
+        server.handle_mirrored_tool(
+            mirrored,
+            {
+                "_gateway_context": {"session_id": "sess_1"},
+                "message": "hello",
+            },
+        )
+    )
+    assert response["type"] == "gateway_error"
+    assert response["code"] == "INTERNAL"
+    assert "filesystem" in response["message"]
+
+
+def test_handle_mirrored_tool_returns_internal_on_cache_check_connectivity_failure(
+    tmp_path: Path,
+) -> None:
+    """When Phase 1 cache check hits OperationalError, return INTERNAL and mark db_ok=False."""
+    import psycopg
+
+    class _FailPool:
+        def connection(self):
+            raise psycopg.OperationalError("connection refused")
+
+    server = GatewayServer(
+        config=GatewayConfig(data_dir=tmp_path),
+        upstreams=[_upstream()],
+        db_pool=_FailPool(),  # type: ignore[arg-type]
+        metrics=GatewayMetrics(),
+    )
+    mirrored = server.mirrored_tools["demo.echo"]
+    response = asyncio.run(
+        server.handle_mirrored_tool(
+            mirrored,
+            {
+                "_gateway_context": {"session_id": "sess_1"},
+                "message": "hello",
+            },
+        )
+    )
+    assert response["type"] == "gateway_error"
+    assert response["code"] == "INTERNAL"
+    assert "unhealthy" in response["message"]
+    assert server.db_ok is False
+
+
+def test_handle_mirrored_tool_skips_cache_on_non_connectivity_error(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    """When Phase 1 cache check raises a non-connectivity error, skip cache and proceed."""
+    call_count = 0
+
+    class _FailOnceThenOkPool:
+        """First connection() raises (Phase 1 cache), rest succeed (Phase 3 persist)."""
+
+        def connection(self):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise RuntimeError("unexpected cache error")
+            return _FakeConnectionContext(None)
+
+    server = GatewayServer(
+        config=GatewayConfig(data_dir=tmp_path),
+        upstreams=[_upstream()],
+        db_pool=_FailOnceThenOkPool(),  # type: ignore[arg-type]
+        metrics=GatewayMetrics(),
+    )
+    mirrored = server.mirrored_tools["demo.echo"]
+
+    async def _fake_call(_instance, _tool_name, _arguments):
+        return {
+            "content": [{"type": "text", "text": "ok"}],
+            "structuredContent": {"ok": True},
+            "isError": False,
+            "meta": {},
+        }
+
+    monkeypatch.setattr("mcp_artifact_gateway.mcp.server.call_upstream_tool", _fake_call)
+
+    _fake_handle = ArtifactHandle(
+        artifact_id="art_cache_skip",
+        created_seq=1,
+        generation=1,
+        session_id="sess_1",
+        source_tool="demo.echo",
+        upstream_instance_id="demo",
+        request_key="rk_1",
+        payload_hash_full="h_1",
+        payload_json_bytes=10,
+        payload_binary_bytes_total=0,
+        payload_total_bytes=10,
+        contains_binary_refs=False,
+        map_kind="none",
+        map_status="pending",
+        index_status="pending",
+        status="ok",
+        error_summary=None,
+    )
+
+    monkeypatch.setattr(
+        "mcp_artifact_gateway.mcp.handlers.mirrored_tool.persist_artifact",
+        lambda connection, config, input_data, binary_hashes: _fake_handle,
+    )
+
+    response = asyncio.run(
+        server.handle_mirrored_tool(
+            mirrored,
+            {
+                "_gateway_context": {"session_id": "sess_1"},
+                "message": "hello",
+            },
+        )
+    )
+    assert response["type"] == "gateway_tool_result"
+    assert response["artifact_id"] == "art_cache_skip"
+    assert server.db_ok is True
+    assert call_count >= 2  # Phase 1 failed, Phase 3 succeeded
+
+
+def test_handle_mirrored_tool_returns_internal_on_db_persist_failure(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    """When persist_artifact raises a DB error, return INTERNAL and mark db_ok=False."""
+    import psycopg
+
+    class _FailPool:
+        def connection(self):
+            raise psycopg.OperationalError("connection lost")
+
+    server = GatewayServer(
+        config=GatewayConfig(data_dir=tmp_path),
+        upstreams=[_upstream()],
+        db_pool=_FailPool(),  # type: ignore[arg-type]
+        metrics=GatewayMetrics(),
+    )
+    mirrored = server.mirrored_tools["demo.echo"]
+
+    async def _fake_call(_instance, _tool_name, _arguments):
+        return {
+            "content": [{"type": "text", "text": "ok"}],
+            "structuredContent": {"ok": True},
+            "isError": False,
+            "meta": {},
+        }
+
+    monkeypatch.setattr("mcp_artifact_gateway.mcp.server.call_upstream_tool", _fake_call)
+
+    # Use cache_mode=fresh to skip Phase 1 and go straight to Phase 3 (persist).
+    response = asyncio.run(
+        server.handle_mirrored_tool(
+            mirrored,
+            {
+                "_gateway_context": {"session_id": "sess_1", "cache_mode": "fresh"},
+                "message": "hello",
+            },
+        )
+    )
+    assert response["type"] == "gateway_error"
+    assert response["code"] == "INTERNAL"
+    assert "persistence failed" in response["message"]
+    assert "unhealthy" in response["message"]
+    assert server.db_ok is False
+
+
+def test_handle_mirrored_tool_keeps_db_ok_on_integrity_error(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    """IntegrityError (FK violation, unique conflict) returns INTERNAL but keeps db_ok=True."""
+    import psycopg
+
+    server = GatewayServer(
+        config=GatewayConfig(data_dir=tmp_path),
+        upstreams=[_upstream()],
+        db_pool=_FakePool(None),  # type: ignore[arg-type]
+        metrics=GatewayMetrics(),
+    )
+    mirrored = server.mirrored_tools["demo.echo"]
+
+    async def _fake_call(_instance, _tool_name, _arguments):
+        return {
+            "content": [{"type": "text", "text": "ok"}],
+            "structuredContent": {"ok": True},
+            "isError": False,
+            "meta": {},
+        }
+
+    monkeypatch.setattr("mcp_artifact_gateway.mcp.server.call_upstream_tool", _fake_call)
+
+    def _fk_persist(**_kw):
+        raise psycopg.IntegrityError("violates foreign key constraint")
+
+    monkeypatch.setattr(
+        "mcp_artifact_gateway.mcp.handlers.mirrored_tool.persist_artifact",
+        _fk_persist,
+    )
+
+    response = asyncio.run(
+        server.handle_mirrored_tool(
+            mirrored,
+            {
+                "_gateway_context": {"session_id": "sess_1", "cache_mode": "fresh"},
+                "message": "hello",
+            },
+        )
+    )
+    assert response["type"] == "gateway_error"
+    assert response["code"] == "INTERNAL"
+    assert "persistence failed" in response["message"]
+    assert "unhealthy" not in response["message"]
+    assert server.db_ok is True
+
+
+def test_handle_mirrored_tool_returns_internal_on_non_db_persist_failure(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    """When persist_artifact raises a non-DB error, return INTERNAL but keep db_ok=True."""
+    server = GatewayServer(
+        config=GatewayConfig(data_dir=tmp_path),
+        upstreams=[_upstream()],
+        db_pool=_FakePool(None),  # type: ignore[arg-type]
+        metrics=GatewayMetrics(),
+    )
+    mirrored = server.mirrored_tools["demo.echo"]
+
+    async def _fake_call(_instance, _tool_name, _arguments):
+        return {
+            "content": [{"type": "text", "text": "ok"}],
+            "structuredContent": {"ok": True},
+            "isError": False,
+            "meta": {},
+        }
+
+    monkeypatch.setattr("mcp_artifact_gateway.mcp.server.call_upstream_tool", _fake_call)
+
+    def _bad_persist(**_kw):
+        raise ValueError("canonicalization rejected float")
+
+    monkeypatch.setattr(
+        "mcp_artifact_gateway.mcp.handlers.mirrored_tool.persist_artifact",
+        _bad_persist,
+    )
+
+    response = asyncio.run(
+        server.handle_mirrored_tool(
+            mirrored,
+            {
+                "_gateway_context": {"session_id": "sess_1", "cache_mode": "fresh"},
+                "message": "hello",
+            },
+        )
+    )
+    assert response["type"] == "gateway_error"
+    assert response["code"] == "INTERNAL"
+    assert "persistence failed" in response["message"]
+    assert "unhealthy" not in response["message"]
+    assert server.db_ok is True
+
+
+def test_handle_mirrored_tool_succeeds_when_mapping_fails(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    """When mapping raises after persist succeeds, return success (non-fatal)."""
+    server = GatewayServer(
+        config=GatewayConfig(data_dir=tmp_path),
+        upstreams=[_upstream()],
+        db_pool=_FakePool(None),  # type: ignore[arg-type]
+        metrics=GatewayMetrics(),
+    )
+    mirrored = server.mirrored_tools["demo.echo"]
+
+    async def _fake_call(_instance, _tool_name, _arguments):
+        return {
+            "content": [{"type": "text", "text": "ok"}],
+            "structuredContent": {"ok": True},
+            "isError": False,
+            "meta": {},
+        }
+
+    monkeypatch.setattr("mcp_artifact_gateway.mcp.server.call_upstream_tool", _fake_call)
+
+    _fake_handle = ArtifactHandle(
+        artifact_id="art_mapping_fail",
+        created_seq=1,
+        generation=1,
+        session_id="sess_1",
+        source_tool="demo.echo",
+        upstream_instance_id="demo",
+        request_key="rk_1",
+        payload_hash_full="h_1",
+        payload_json_bytes=10,
+        payload_binary_bytes_total=0,
+        payload_total_bytes=10,
+        contains_binary_refs=False,
+        map_kind="none",
+        map_status="pending",
+        index_status="pending",
+        status="ok",
+        error_summary=None,
+    )
+
+    monkeypatch.setattr(
+        "mcp_artifact_gateway.mcp.handlers.mirrored_tool.persist_artifact",
+        lambda connection, config, input_data, binary_hashes: _fake_handle,
+    )
+
+    def _exploding_mapping(self, connection, *, handle, envelope):
+        raise RuntimeError("mapping exploded")
+
+    monkeypatch.setattr(GatewayServer, "_trigger_mapping_for_artifact", _exploding_mapping)
+
+    response = asyncio.run(
+        server.handle_mirrored_tool(
+            mirrored,
+            {
+                "_gateway_context": {"session_id": "sess_1", "cache_mode": "fresh"},
+                "message": "hello",
+            },
+        )
+    )
+    assert response["type"] == "gateway_tool_result"
+    assert response["artifact_id"] == "art_mapping_fail"
+    assert server.db_ok is True
+
+
+def test_handle_mirrored_tool_triggers_mapping_on_single_connection(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    """Mapping reuses the persist connection — no second pool checkout required."""
+    import psycopg
+
+    checkout_count = 0
+    mapping_called = False
+
+    class _SingleCheckoutPool:
+        """Allow exactly one connection() call; second would raise."""
+
+        def connection(self):
+            nonlocal checkout_count
+            checkout_count += 1
+            if checkout_count > 1:
+                raise psycopg.OperationalError("pool exhausted")
+            return _FakeConnectionContext(None)
+
+    server = GatewayServer(
+        config=GatewayConfig(data_dir=tmp_path),
+        upstreams=[_upstream()],
+        db_pool=_SingleCheckoutPool(),  # type: ignore[arg-type]
+        metrics=GatewayMetrics(),
+    )
+    mirrored = server.mirrored_tools["demo.echo"]
+
+    async def _fake_call(_instance, _tool_name, _arguments):
+        return {
+            "content": [{"type": "text", "text": "ok"}],
+            "structuredContent": {"ok": True},
+            "isError": False,
+            "meta": {},
+        }
+
+    monkeypatch.setattr("mcp_artifact_gateway.mcp.server.call_upstream_tool", _fake_call)
+
+    _fake_handle = ArtifactHandle(
+        artifact_id="art_single_conn",
+        created_seq=1,
+        generation=1,
+        session_id="sess_1",
+        source_tool="demo.echo",
+        upstream_instance_id="demo",
+        request_key="rk_1",
+        payload_hash_full="h_1",
+        payload_json_bytes=10,
+        payload_binary_bytes_total=0,
+        payload_total_bytes=10,
+        contains_binary_refs=False,
+        map_kind="none",
+        map_status="pending",
+        index_status="pending",
+        status="ok",
+        error_summary=None,
+    )
+
+    monkeypatch.setattr(
+        "mcp_artifact_gateway.mcp.handlers.mirrored_tool.persist_artifact",
+        lambda connection, config, input_data, binary_hashes: _fake_handle,
+    )
+
+    def _track_mapping(self, connection, *, handle, envelope):
+        nonlocal mapping_called
+        mapping_called = True
+
+    monkeypatch.setattr(GatewayServer, "_trigger_mapping_for_artifact", _track_mapping)
+
+    response = asyncio.run(
+        server.handle_mirrored_tool(
+            mirrored,
+            {
+                "_gateway_context": {"session_id": "sess_1", "cache_mode": "fresh"},
+                "message": "hello",
+            },
+        )
+    )
+    assert response["type"] == "gateway_tool_result"
+    assert response["artifact_id"] == "art_single_conn"
+    assert checkout_count == 1  # only one connection checkout
+    assert mapping_called is True  # mapping still ran
