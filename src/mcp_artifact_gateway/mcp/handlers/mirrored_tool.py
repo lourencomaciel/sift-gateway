@@ -4,7 +4,14 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-import psycopg
+try:
+    import psycopg
+
+    _PG_OPERATIONAL_ERROR: type = psycopg.OperationalError
+    _PG_INTERFACE_ERROR: type = psycopg.InterfaceError
+except ImportError:
+    _PG_OPERATIONAL_ERROR = type(None)  # type: ignore[assignment,misc]
+    _PG_INTERFACE_ERROR = type(None)  # type: ignore[assignment,misc]
 
 from mcp_artifact_gateway.artifacts.create import (
     CreateArtifactInput,
@@ -207,7 +214,7 @@ async def handle_mirrored_tool(
                             },
                         }
                     ctx._increment_metric("cache_misses")
-            except (psycopg.OperationalError, psycopg.InterfaceError):
+            except (_PG_OPERATIONAL_ERROR, _PG_INTERFACE_ERROR):
                 ctx.db_ok = False
                 return gateway_error(
                     "INTERNAL",
@@ -265,7 +272,7 @@ async def handle_mirrored_tool(
                     )
                 except Exception:
                     pass  # mapping is best-effort; artifact already committed
-        except (psycopg.OperationalError, psycopg.InterfaceError):
+        except (_PG_OPERATIONAL_ERROR, _PG_INTERFACE_ERROR):
             ctx.db_ok = False
             return gateway_error(
                 "INTERNAL",
