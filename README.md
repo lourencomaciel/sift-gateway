@@ -79,6 +79,18 @@ automatically by `tests/integration/conftest.py`. Override it for custom setups:
 MCP_GATEWAY_TEST_POSTGRES_DSN="postgresql://user:pass@host:5432/db" python -m pytest tests/integration/ -v
 ```
 
+### Runtime validation
+
+A standalone smoke-test script exercises the full artifact lifecycle (create,
+search, get, describe, select, cache reuse, error envelopes, partial mapping,
+soft/hard delete) against a fresh DB schema:
+
+```bash
+PYTHONPATH=src python scripts/validate.py
+```
+
+Exits non-zero on any invariant violation.
+
 ### Lint and type-check
 
 ```bash
@@ -114,4 +126,5 @@ tests/
 docker-compose.yml         # local Postgres with test DB init
 scripts/
   init-test-db.sql         # creates mcp_test database on first start
+  validate.py              # done-means-done runtime validation
 ```

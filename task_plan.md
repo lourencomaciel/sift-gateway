@@ -629,17 +629,17 @@ Integration tests (strongly recommended to count as done):
 
 ## 17) Done means done runtime validation script
 
-- [ ] A single command exists that executes a deterministic smoke test suite against a fresh DATA_DIR + fresh DB schema:
-  - [ ] starts gateway
-  - [ ] registers one stub upstream
-  - [ ] exercises:
-    - [ ] caching allow/fresh
-    - [ ] reuse by request_key
-    - [ ] error envelope creation
-    - [ ] oversized JSON offload
-    - [ ] partial mapping + artifact.select sampled-only + cursor continuation
-    - [ ] soft delete then hard delete then verify blobs removed
-  - [ ] exits non-zero on any invariant violation
+- [x] A single command exists that executes a deterministic smoke test suite against a fresh DATA_DIR + fresh DB schema:
+  - [x] starts gateway
+  - [x] registers one stub upstream
+  - [x] exercises:
+    - [x] caching allow/fresh
+    - [x] reuse by request_key
+    - [x] error envelope creation
+    - [x] oversized JSON offload
+    - [x] partial mapping + artifact.select sampled-only + cursor continuation
+    - [x] soft delete then hard delete then verify blobs removed
+  - [x] exits non-zero on any invariant violation
 
 ---
 
