@@ -217,32 +217,9 @@ async def handle_mirrored_tool(
             except Exception:
                 pass  # cache is best-effort; skip and proceed to upstream call
 
-        # Phase 2: Upstream call — no DB connection held.
-        try:
-            upstream_result = await ctx._call_upstream_with_metrics(
-                mirrored=mirrored,
-                forwarded_args=forwarded_args,
-            )
-        except Exception as exc:
-            upstream_result = {
-                "content": [{"type": "text", "text": str(exc)}],
-                "structuredContent": None,
-                "isError": True,
-                "meta": {"exception_type": type(exc).__name__},
-            }
-
-        try:
-            envelope = ctx._envelope_from_upstream_result(
-                mirrored=mirrored,
-                upstream_result=upstream_result,
-            )
-        except ValueError as exc:
-            return gateway_error(
-                "UPSTREAM_RESPONSE_INVALID",
-                str(exc),
-            )
-
-        # Phase 2.5: Quota enforcement — check caps and prune if needed.
+        # Phase 1.5: Quota enforcement preflight.
+        # Rejecting here avoids invoking side-effecting upstream tools when
+        # the workspace is already over hard quota and cannot be cleared.
         # Uses a separate connection (prune needs its own transaction).
         # Best-effort: non-connectivity errors skip the check.
         quota_ok = True
@@ -278,6 +255,31 @@ async def handle_mirrored_tool(
                 details={
                     "max_total_storage_bytes": ctx.config.max_total_storage_bytes,
                 },
+            )
+
+        # Phase 2: Upstream call — no DB connection held.
+        try:
+            upstream_result = await ctx._call_upstream_with_metrics(
+                mirrored=mirrored,
+                forwarded_args=forwarded_args,
+            )
+        except Exception as exc:
+            upstream_result = {
+                "content": [{"type": "text", "text": str(exc)}],
+                "structuredContent": None,
+                "isError": True,
+                "meta": {"exception_type": type(exc).__name__},
+            }
+
+        try:
+            envelope = ctx._envelope_from_upstream_result(
+                mirrored=mirrored,
+                upstream_result=upstream_result,
+            )
+        except ValueError as exc:
+            return gateway_error(
+                "UPSTREAM_RESPONSE_INVALID",
+                str(exc),
             )
 
         # Phase 3: Persist + Phase 4: Mapping in a single connection.

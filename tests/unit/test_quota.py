@@ -1,6 +1,8 @@
 """Tests for quota enforcement module."""
 from __future__ import annotations
 
+import datetime as dt
+
 from mcp_artifact_gateway.constants import WORKSPACE_ID
 from mcp_artifact_gateway.jobs.quota import (
     SOFT_DELETE_LRU_FOR_QUOTA_SQL,
@@ -20,6 +22,7 @@ from mcp_artifact_gateway.jobs.hard_delete import (
     FIND_HARD_DELETE_CANDIDATES_SQL,
     FIND_UNREFERENCED_BLOBS_SQL,
     FIND_UNREFERENCED_PAYLOADS_SQL,
+    HardDeleteResult,
 )
 from mcp_artifact_gateway.obs.metrics import GatewayMetrics
 
@@ -380,6 +383,26 @@ def test_enforce_quota_prune_clears_space_after_multiple_rounds() -> None:
     assert result.pruned is True
 
 
+def test_enforce_quota_runs_hard_delete_with_no_new_soft_deletes() -> None:
+    conn = _FakeConnection(
+        # First usage call: over quota; second (after hard-delete): under quota
+        usage_sequence=[(600, 800, 700), (100, 200, 150)],
+        soft_delete_rows=[],  # nothing newly soft-deleted this round
+        candidate_rows=[("art_deleted", "hash_deleted")],  # already soft-deleted
+        payload_rows=[("hash_deleted", 600)],
+        blob_rows=[],
+    )
+    result = enforce_quota(
+        conn,
+        max_binary_blob_bytes=500,
+        max_payload_total_bytes=500,
+        max_total_storage_bytes=500,
+    )
+    assert result.space_cleared is True
+    assert result.soft_deleted_count == 0
+    assert result.hard_deleted_count == 1
+
+
 def test_enforce_quota_max_rounds_exceeded() -> None:
     conn = _FakeConnection(
         # Always over quota — never clears
@@ -419,6 +442,50 @@ def test_enforce_quota_stops_when_no_candidates_to_prune() -> None:
     assert result.space_cleared is False
     assert result.pruned is True
     assert result.soft_deleted_count == 0
+
+
+def test_enforce_quota_uses_past_cutoff_for_hard_delete_grace(monkeypatch) -> None:
+    conn = _FakeConnection(
+        usage_sequence=[(600, 800, 700), (600, 800, 700)],
+    )
+    captured: dict[str, str] = {}
+
+    def _fake_soft_delete(*_args, **_kwargs):
+        return 1, 0
+
+    def _fake_hard_delete(*_args, **kwargs):
+        captured["grace_period_timestamp"] = kwargs["grace_period_timestamp"]
+        return HardDeleteResult(
+            artifacts_deleted=0,
+            payloads_deleted=0,
+            binary_blobs_deleted=0,
+            fs_blobs_removed=0,
+            bytes_reclaimed=0,
+        )
+
+    monkeypatch.setattr(
+        "mcp_artifact_gateway.jobs.quota.soft_delete_lru_batch",
+        _fake_soft_delete,
+    )
+    monkeypatch.setattr(
+        "mcp_artifact_gateway.jobs.quota.run_hard_delete_batch",
+        _fake_hard_delete,
+    )
+
+    before = dt.datetime.now(dt.timezone.utc)
+    enforce_quota(
+        conn,
+        max_binary_blob_bytes=500,
+        max_payload_total_bytes=500,
+        max_total_storage_bytes=500,
+        hard_delete_grace_seconds=60,
+        max_prune_rounds=1,
+    )
+    after = dt.datetime.now(dt.timezone.utc)
+
+    cutoff = dt.datetime.fromisoformat(captured["grace_period_timestamp"])
+    assert cutoff <= after - dt.timedelta(seconds=59)
+    assert cutoff >= before - dt.timedelta(seconds=61)
 
 
 def test_enforce_quota_rolls_back_on_usage_query_error() -> None:

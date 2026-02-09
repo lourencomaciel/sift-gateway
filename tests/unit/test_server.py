@@ -1864,6 +1864,75 @@ def test_handle_mirrored_tool_quota_exceeded_returns_error(
     assert "quota" in response["message"].lower()
 
 
+def test_handle_mirrored_tool_quota_exceeded_skips_upstream_call(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    """Quota rejection is decided before calling upstream tools."""
+    from mcp_artifact_gateway.jobs.quota import (
+        QuotaBreaches,
+        QuotaEnforcementResult,
+        StorageUsage,
+    )
+
+    server = GatewayServer(
+        config=GatewayConfig(data_dir=tmp_path),
+        upstreams=[_upstream()],
+        db_pool=_FakePool(None),  # type: ignore[arg-type]
+        metrics=GatewayMetrics(),
+    )
+    mirrored = server.mirrored_tools["demo.echo"]
+
+    upstream_called = False
+
+    async def _fake_call(_instance, _tool_name, _arguments):
+        nonlocal upstream_called
+        upstream_called = True
+        return {
+            "content": [{"type": "text", "text": "ok"}],
+            "structuredContent": {"ok": True},
+            "isError": False,
+            "meta": {},
+        }
+
+    monkeypatch.setattr("mcp_artifact_gateway.mcp.server.call_upstream_tool", _fake_call)
+
+    _breaches = QuotaBreaches(
+        binary_blob_exceeded=False,
+        payload_total_exceeded=False,
+        total_storage_exceeded=True,
+    )
+    _usage = StorageUsage(binary_blob_bytes=0, payload_total_bytes=0, total_storage_bytes=999)
+
+    monkeypatch.setattr(
+        "mcp_artifact_gateway.mcp.handlers.mirrored_tool.enforce_quota",
+        lambda *a, **kw: QuotaEnforcementResult(
+            usage_before=_usage,
+            usage_after=_usage,
+            breaches_before=_breaches,
+            breaches_after=_breaches,
+            pruned=True,
+            soft_deleted_count=0,
+            hard_deleted_count=0,
+            bytes_reclaimed=0,
+            space_cleared=False,
+        ),
+    )
+
+    response = asyncio.run(
+        server.handle_mirrored_tool(
+            mirrored,
+            {
+                "_gateway_context": {"session_id": "sess_1", "cache_mode": "fresh"},
+                "message": "hello",
+            },
+        )
+    )
+    assert response["type"] == "gateway_error"
+    assert response["code"] == "QUOTA_EXCEEDED"
+    assert upstream_called is False
+
+
 def test_handle_mirrored_tool_quota_ok_proceeds_to_persist(
     tmp_path: Path,
     monkeypatch,

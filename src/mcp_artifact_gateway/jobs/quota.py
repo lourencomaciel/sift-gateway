@@ -263,9 +263,11 @@ def enforce_quota(
     usage_after = usage_before
     breaches_after = breaches_before
 
-    grace_timestamp = (
+    # Hard-delete query uses deleted_at < cutoff; grace must move cutoff
+    # into the past so recently soft-deleted artifacts are retained.
+    grace_cutoff_timestamp = (
         dt.datetime.now(dt.timezone.utc)
-        + dt.timedelta(seconds=hard_delete_grace_seconds)
+        - dt.timedelta(seconds=hard_delete_grace_seconds)
     ).isoformat()
 
     try:
@@ -278,12 +280,9 @@ def enforce_quota(
             )
             total_soft_deleted += soft_count
 
-            if soft_count == 0:
-                break
-
             hard_result = run_hard_delete_batch(
                 connection,
-                grace_period_timestamp=grace_timestamp,
+                grace_period_timestamp=grace_cutoff_timestamp,
                 batch_size=prune_batch_size,
                 remove_fs_blobs=remove_fs_blobs,
                 metrics=metrics,
@@ -301,6 +300,14 @@ def enforce_quota(
             )
 
             if not breaches_after.any_exceeded:
+                break
+
+            if (
+                soft_count == 0
+                and hard_result.artifacts_deleted == 0
+                and hard_result.payloads_deleted == 0
+                and hard_result.binary_blobs_deleted == 0
+            ):
                 break
     except Exception:
         safe_rollback(connection)
