@@ -59,7 +59,7 @@ def test_where_dsl_rejects_non_comparable_values() -> None:
     try:
         evaluate_where({"n": "3"}, where)
     except WhereDslError as exc:
-        assert "numeric operands" in str(exc)
+        assert "requires numeric operands" in str(exc)
     else:
         raise AssertionError("expected WhereDslError")
 

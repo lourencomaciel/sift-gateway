@@ -171,13 +171,23 @@ def test_validate_missing_required() -> None:
     assert any("missing required argument: query" in w for w in warnings)
 
 
-def test_validate_unknown_arg() -> None:
+def test_validate_unknown_arg_rejected_when_additional_false() -> None:
+    schema = {
+        "type": "object",
+        "properties": {"repo": {"type": "string"}},
+        "additionalProperties": False,
+    }
+    warnings = validate_against_schema({"repo": "test", "extra": 1}, schema)
+    assert any("unknown argument: extra" in w for w in warnings)
+
+
+def test_validate_unknown_arg_allowed_by_default() -> None:
     schema = {
         "type": "object",
         "properties": {"repo": {"type": "string"}},
     }
     warnings = validate_against_schema({"repo": "test", "extra": 1}, schema)
-    assert any("unknown argument: extra" in w for w in warnings)
+    assert warnings == []
 
 
 def test_validate_no_warnings_when_valid() -> None:

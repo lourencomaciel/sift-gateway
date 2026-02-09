@@ -437,7 +437,10 @@ def test_handle_mirrored_tool_returns_busy_when_lock_times_out(
     )
     mirrored = server.mirrored_tools["demo.echo"]
 
-    monkeypatch.setattr("mcp_artifact_gateway.mcp.server.acquire_advisory_lock", lambda *_args, **_kwargs: False)
+    async def _lock_fail(*_args, **_kwargs):
+        return False
+
+    monkeypatch.setattr("mcp_artifact_gateway.mcp.handlers.mirrored_tool.acquire_advisory_lock_async", _lock_fail)
 
     async def _must_not_call(*_args, **_kwargs):
         raise AssertionError("upstream should not be called when lock fails")
@@ -482,7 +485,7 @@ def test_handle_mirrored_tool_runs_inline_mapping_in_sync_mode(
 
     monkeypatch.setattr("mcp_artifact_gateway.mcp.server.call_upstream_tool", _fake_call)
     monkeypatch.setattr(
-        "mcp_artifact_gateway.mcp.server.persist_artifact",
+        "mcp_artifact_gateway.mcp.handlers.mirrored_tool.persist_artifact",
         lambda **_kwargs: _persisted_handle(),
     )
     monkeypatch.setattr(
@@ -535,7 +538,7 @@ def test_handle_mirrored_tool_schedules_background_mapping_in_async_mode(
 
     monkeypatch.setattr("mcp_artifact_gateway.mcp.server.call_upstream_tool", _fake_call)
     monkeypatch.setattr(
-        "mcp_artifact_gateway.mcp.server.persist_artifact",
+        "mcp_artifact_gateway.mcp.handlers.mirrored_tool.persist_artifact",
         lambda **_kwargs: _persisted_handle(),
     )
     monkeypatch.setattr(
@@ -670,7 +673,7 @@ def test_artifact_get_cursor_includes_target_and_jsonpath_binding(
                     1,
                     0,
                     "mbf",
-                    {"items": [{"id": 1}, {"id": 2}]},
+                    {"content": [], "items": [{"id": 1}, {"id": 2}]},
                     "zstd",
                     b"",
                     0,
@@ -726,7 +729,7 @@ def test_artifact_get_cursor_target_mismatch_returns_stale(tmp_path: Path, monke
                     1,
                     0,
                     "mbf",
-                    {"items": [{"id": 1}]},
+                    {"content": [], "items": [{"id": 1}]},
                     "zstd",
                     b"",
                     0,
@@ -1026,8 +1029,8 @@ def test_artifact_find_db_runtime_filters_samples(tmp_path: Path, monkeypatch) -
             ),
             _SeqCursor(
                 all_rows=[
-                    (0, {"id": 1}, 10, "h1"),
-                    (1, {"id": 2}, 10, "h2"),
+                    ("rk_1", 0, {"id": 1}, 10, "h1"),
+                    ("rk_1", 1, {"id": 2}, 10, "h2"),
                 ]
             ),
         ]
@@ -1246,8 +1249,9 @@ def test_artifact_find_returns_internal_on_sample_corruption(
                     ("rk_1", "$.data", 50, None, None, None, None, None, [0, 2])
                 ]
             ),
-            # sample_rows: only index 0 (index 2 missing)
-            _SeqCursor(all_rows=[(0, {"x": 1}, 8, "h0")]),
+            # batch sample_rows: root_key, sample_index, record, record_bytes, record_hash
+            # only index 0 present (index 2 missing)
+            _SeqCursor(all_rows=[("rk_1", 0, {"x": 1}, 8, "h0")]),
         ]
     )
     server = GatewayServer(
