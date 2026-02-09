@@ -6,10 +6,19 @@ from dataclasses import dataclass
 import time
 from typing import Any
 
+from psycopg.types.json import Jsonb
+
 from mcp_artifact_gateway.constants import MAPPER_VERSION, WORKSPACE_ID
 from mcp_artifact_gateway.db.protocols import ConnectionLike, safe_rollback
 from mcp_artifact_gateway.mapping.runner import MappingInput, MappingResult, SampleRecord, run_mapping
 from mcp_artifact_gateway.obs.logging import LogEvents, get_logger
+
+
+def _jsonb(value: Any) -> Any:
+    """Wrap non-None values in Jsonb for psycopg3 JSONB columns."""
+    if value is None:
+        return None
+    return Jsonb(value)
 
 
 @dataclass(frozen=True)
@@ -114,13 +123,13 @@ def _root_insert_params(*, artifact_id: str, root: Any) -> tuple[object, ...]:
         root.root_path,
         root.count_estimate,
         root.inventory_coverage,
-        root.root_summary,
+        _jsonb(root.root_summary),
         root.root_score,
         root.root_shape,
-        root.fields_top,
+        _jsonb(root.fields_top),
         None,
         None,
-        _root_sample_indices(root),
+        _jsonb(_root_sample_indices(root)),
     )
 
 
@@ -131,7 +140,7 @@ def _sample_insert_params(*, artifact_id: str, sample: SampleRecord) -> tuple[ob
         sample.root_key,
         sample.root_path,
         sample.sample_index,
-        sample.record,
+        _jsonb(sample.record),
         sample.record_bytes,
         sample.record_hash,
     )

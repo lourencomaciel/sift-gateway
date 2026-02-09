@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from psycopg.types.json import Jsonb
+
 from mcp_artifact_gateway.constants import WORKSPACE_ID
 
 
@@ -41,7 +43,7 @@ def payload_blob_params(
     return (
         WORKSPACE_ID,
         payload_hash_full,
-        envelope,
+        Jsonb(envelope) if envelope is not None else None,
         encoding,
         canonical_bytes,
         canonical_len,

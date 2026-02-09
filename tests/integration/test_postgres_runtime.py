@@ -163,7 +163,7 @@ def test_mirrored_tool_flow_persists_artifact_with_real_postgres(tmp_path: Path,
             server.handle_mirrored_tool(
                 mirrored,
                 {
-                    "_gateway_context": {"session_id": session_id},
+                    "_gateway_context": {"session_id": session_id, "cache_mode": "fresh"},
                     "message": "hello integration",
                 },
             )
