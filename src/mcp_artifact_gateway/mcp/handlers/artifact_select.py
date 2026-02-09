@@ -18,6 +18,7 @@ from mcp_artifact_gateway.mcp.handlers.common import (
     ENVELOPE_COLUMNS,
     FETCH_ARTIFACT_META_SQL,
     SAMPLE_COLUMNS,
+    extract_json_target,
     row_to_dict,
     rows_to_dicts,
 )
@@ -290,9 +291,14 @@ async def handle_artifact_select(
                     )
                 except ValueError as exc:
                     return gateway_error("INTERNAL_ERROR", f"envelope reconstruction failed: {exc}")
+
+            json_target = extract_json_target(
+                envelope, artifact_row.get("mapped_part_index")
+            )
+
             try:
                 root_values = evaluate_jsonpath(
-                    envelope,
+                    json_target,
                     root_path,
                     max_length=ctx.config.max_jsonpath_length,
                     max_segments=ctx.config.max_path_segments,

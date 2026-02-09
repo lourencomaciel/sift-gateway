@@ -108,3 +108,29 @@ ENVELOPE_COLUMNS = [
     "envelope_canonical_bytes_len",
     "contains_binary_refs",
 ]
+
+
+# ---------------------------------------------------------------------------
+# Envelope helpers
+# ---------------------------------------------------------------------------
+
+
+def extract_json_target(envelope: dict[str, Any], mapped_part_index: int | None) -> Any:
+    """Extract the JSON content part value that mapping root_paths are relative to.
+
+    Mapping creates root_paths relative to the JSON content part value (e.g.
+    ``{"users": [...]}``), not the full envelope wrapper.  This helper extracts
+    that target so callers can evaluate root_path JSONPath expressions against
+    the correct object.
+
+    Returns the full *envelope* when *mapped_part_index* is ``None`` or doesn't
+    point at a valid JSON content part.
+    """
+    if not isinstance(mapped_part_index, int):
+        return envelope
+    content = envelope.get("content", [])
+    if 0 <= mapped_part_index < len(content):
+        part = content[mapped_part_index]
+        if isinstance(part, dict) and part.get("type") == "json" and "value" in part:
+            return part["value"]
+    return envelope

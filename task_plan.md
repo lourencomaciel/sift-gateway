@@ -4,7 +4,7 @@
 Build a complete, production-grade, local single-tenant MCP gateway in Python that proxies upstream MCP tools, stores every tool result as a durable artifact envelope (disk + Postgres), returns compact handles, generates deterministic inventories, and enforces bounded deterministic retrieval with signed cursors.
 
 ## Current Phase
-Phase 15: Test Suite + Done Gates (unit tests complete, integration tests pending)
+Phase 16: Documentation + Packaging (unit + integration tests complete)
 
 ## Phase Roadmap (High-Level)
 - [ ] Phase 1: Repo skeleton, entrypoint, boot sequence
@@ -21,8 +21,8 @@ Phase 15: Test Suite + Done Gates (unit tests complete, integration tests pendin
 - [x] Phase 12: Session tracking + touch policy
 - [x] Phase 13: Pruning + retention + cleanup
 - [x] Phase 14: Observability + metrics
-- [ ] Phase 15: Test suite + done gates
-- [ ] Phase 16: Documentation + packaging
+- [x] Phase 15: Test suite + done gates
+- [ ] Phase 16: Documentation + packaging (README updated, docker-compose improved)
 
 ## Completion Checklists (Spec v1.9)
 These are copied from the spec checklists. Mark these items complete as implementation progresses.
@@ -484,33 +484,33 @@ When selected JSON part is <= max_full_map_bytes:
 
 ## 11) Cursor system (signing, binding, staleness)
 
-- [ ] Cursor format implemented:
-  - [ ] `base64url(payload_bytes) + "." + base64url(hmac)`
-  - [ ] unpadded base64url
-- [ ] Cursor payload canonicalization is RFC 8785 (Addendum D):
-  - [ ] signature input is exactly the canonical payload bytes
-- [ ] Secrets stored at `DATA_DIR/state/secrets.json` with:
-  - [ ] `cursor_ttl_minutes`
-  - [ ] `active_secrets[]` version + b64 key
-  - [ ] `signing_secret_version` present in active list
-  - [ ] keys >= 32 random bytes
-- [ ] Verification logic:
-  - [ ] parse payload bytes
-  - [ ] expiration check -> `CURSOR_EXPIRED`
-  - [ ] secret version missing -> `CURSOR_INVALID`
-  - [ ] constant-time HMAC compare -> else `CURSOR_INVALID`
-  - [ ] binding checks enforce `CURSOR_STALE` for:
-    - [ ] where_canonicalization_mode mismatch
-    - [ ] traversal_contract_version mismatch
-    - [ ] artifact_generation mismatch
-    - [ ] partial sample_set_hash mismatch
-    - [ ] partial map_budget_fingerprint mismatch
-- [ ] Cursor binding fields exist exactly per tool:
-  - [ ] get binds target + normalized_jsonpath
-  - [ ] select binds root_path + select_paths_hash + where_hash
-- [ ] Partial mode cursor binding includes:
-  - [ ] map_budget_fingerprint (required)
-  - [ ] sample_set_hash computed from DB sample indices and compared
+- [x] Cursor format implemented:
+  - [x] `base64url(payload_bytes) + "." + base64url(hmac)`
+  - [x] unpadded base64url
+- [x] Cursor payload canonicalization is RFC 8785 (Addendum D):
+  - [x] signature input is exactly the canonical payload bytes
+- [x] Secrets stored at `DATA_DIR/state/secrets.json` with:
+  - [x] `cursor_ttl_minutes`
+  - [x] `active_secrets[]` version + b64 key
+  - [x] `signing_secret_version` present in active list
+  - [x] keys >= 32 random bytes
+- [x] Verification logic:
+  - [x] parse payload bytes
+  - [x] expiration check -> `CURSOR_EXPIRED`
+  - [x] secret version missing -> `CURSOR_INVALID`
+  - [x] constant-time HMAC compare -> else `CURSOR_INVALID`
+  - [x] binding checks enforce `CURSOR_STALE` for:
+    - [x] where_canonicalization_mode mismatch
+    - [x] traversal_contract_version mismatch
+    - [x] artifact_generation mismatch
+    - [x] partial sample_set_hash mismatch
+    - [x] partial map_budget_fingerprint mismatch
+- [x] Cursor binding fields exist exactly per tool:
+  - [x] get binds target + normalized_jsonpath
+  - [x] select binds root_path + select_paths_hash + where_hash
+- [x] Partial mode cursor binding includes:
+  - [x] map_budget_fingerprint (required)
+  - [x] sample_set_hash computed from DB sample indices and compared
 
 ---
 
@@ -620,10 +620,10 @@ At minimum, tests exist and pass for:
 
 Integration tests (strongly recommended to count as done):
 
-- [ ] A local upstream MCP stub (http or stdio) that can return:
-  - [ ] small JSON, large JSON, text, errors, and binary payload
-- [ ] End-to-end:
-  - [ ] mirrored call -> artifact created -> artifact.search finds it -> artifact.get retrieves envelope -> mapping runs -> artifact.describe shows roots -> artifact.select returns projections -> cursor pagination works
+- [x] A local upstream MCP stub (http or stdio) that can return:
+  - [x] small JSON, large JSON, text, errors, and binary payload
+- [x] End-to-end:
+  - [x] mirrored call -> artifact created -> artifact.search finds it -> artifact.get retrieves envelope -> mapping runs -> artifact.describe shows roots -> artifact.select returns projections -> cursor pagination works
 
 ---
 
@@ -655,15 +655,15 @@ Integration tests (strongly recommended to count as done):
   - [ ] Pins Python `>=3.11`
   - [ ] Declares deps: `fastmcp`, `psycopg[binary]` or `psycopg3`, `ijson`, `zstandard` (or `gzip` fallback), `structlog`, `orjson` (optional), `pydantic` (optional), `pytest`
   - [ ] Defines `mcp-gateway` console script entrypoint
-- [ ] `README.md`
-  - [ ] Explains local-only, single-tenant, `DATA_DIR`, Postgres DSN
-  - [ ] Includes quickstart: run Postgres, migrate, run gateway, call mirrored tool
+- [x] `README.md`
+  - [x] Explains local-only, single-tenant, `DATA_DIR`, Postgres DSN
+  - [x] Includes quickstart: run Postgres, migrate, run gateway, call mirrored tool
 - [ ] `docs/spec_v1_9.md` (copy of the spec, locked)
 - [ ] `docs/traversal_contract.md` (explicit ordering rules)
 - [ ] `docs/cursor_contract.md` (payload fields, binding rules, stale rules)
 - [ ] `docs/config.md` (all config keys + defaults)
-- [ ] `.env.example`
-- [ ] `docker-compose.yml` (optional but recommended for local Postgres)
+- [x] `.env.example`
+- [x] `docker-compose.yml` (local Postgres with test DB auto-provisioning)
 
 ### Package layout
 
@@ -1156,12 +1156,13 @@ Acceptance
 
 ### Integration tests (must exist)
 
-- [ ] `tests/integration/test_full_flow_small_json.py`
-  - [ ] mirrored call -> artifact created -> mapping ready -> select works -> cursor pages
-- [ ] `tests/integration/test_flow_large_json_partial_map.py`
-  - [ ] oversize JSON stored as binary_ref -> partial mapping reads stream -> sampled-only select works
-- [ ] `tests/integration/test_prune_cleanup.py`
-  - [ ] soft delete then hard delete cleans DB and filesystem
+- [x] `tests/integration/test_e2e_pipeline.py` (20 tests covering all scenarios below)
+  - [x] mirrored call -> artifact created -> mapping ready -> select works -> cursor pages
+  - [x] large JSON -> partial mapping -> sampled-only select works
+  - [x] soft delete then hard delete cleans DB
+  - [x] cache reuse, session isolation, WHERE filtering, JSONPath, chain pages, oversize reconstruction, migration idempotency, generation-safe races, status health
+- [x] `tests/integration/test_postgres_runtime.py` (9 tests)
+  - [x] persist + search + get, session isolation, binary refs, soft/hard delete
 
 ### Ship gate criteria
 

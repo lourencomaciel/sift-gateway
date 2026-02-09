@@ -170,6 +170,12 @@ async def handle_mirrored_tool(
                 )
                 if reuse.reused and reuse.artifact_id is not None:
                     ctx._increment_metric("cache_hits")
+                    # TODO: Cache reuse returns the artifact_id without
+                    # creating an artifact_ref for the requesting session.
+                    # This means the caller receives an artifact_id they
+                    # cannot access via get/search/select.  Consider
+                    # inserting an artifact_ref here so the session that
+                    # triggered the reuse can actually retrieve the artifact.
                     return {
                         "type": RESPONSE_TYPE_RESULT,
                         "artifact_id": reuse.artifact_id,

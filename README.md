@@ -1,26 +1,6 @@
 # MCP Artifact Gateway
 
-Local single-tenant MCP gateway (Python) intended to proxy upstream MCP tools, persist every result as a durable artifact envelope, and support bounded deterministic retrieval.
-
-## Status
-
-This repository is an early scaffold.
-
-- Implemented:
-  - package skeleton and module layout
-  - gateway configuration models (`pydantic-settings`)
-  - constants and CLI entrypoint shape
-  - development tooling (`ruff`, `mypy`, `pytest`) and Docker Postgres service
-- Not yet implemented:
-  - serving MCP tools
-  - upstream mirroring/proxy behavior
-  - artifact persistence, mapping, retrieval, and cursor flow
-  - real `--check` health validation (currently a placeholder)
-
-Current CLI behavior:
-
-- `--check` prints `mcp-gateway --check: not yet implemented`
-- default run prints `mcp-gateway serve: not yet implemented`
+Local single-tenant MCP gateway (Python) that proxies upstream MCP tools, persists every result as a durable artifact envelope, and supports bounded deterministic retrieval.
 
 ## Requirements
 
@@ -33,14 +13,20 @@ Current CLI behavior:
 1. Sync dependencies:
 
 ```bash
-UV_CACHE_DIR=.uv-cache uv sync --all-extras
+uv sync --all-extras
 ```
 
 2. Start Postgres:
 
 ```bash
-docker compose up -d postgres
+docker compose up -d
 ```
+
+This provisions two databases: `mcp_gateway` (app) and `mcp_test` (integration tests).
+
+> **Existing containers:** The init script only runs on first start. If you already
+> have the container running without the `mcp_test` database, recreate it:
+> `docker compose down -v && docker compose up -d`
 
 3. Create local env file:
 
@@ -48,61 +34,84 @@ docker compose up -d postgres
 cp .env.example .env
 ```
 
-4. Run the current CLI stub from source:
-
-```bash
-PYTHONPATH=src UV_CACHE_DIR=.uv-cache uv run python -c 'from mcp_artifact_gateway.main import cli; cli()' --check
-```
-
 ## Configuration
 
 Environment variables use the `MCP_GATEWAY_` prefix.
 
-Common values:
-
-- `MCP_GATEWAY_POSTGRES_DSN` (default in code: `postgresql://localhost:5432/mcp_gateway`)
-- `MCP_GATEWAY_DATA_DIR` (default: `.mcp_gateway`)
-- `MCP_GATEWAY_ENVELOPE_JSONB_MODE` (`full | minimal_for_large | none`)
-- `MCP_GATEWAY_ENVELOPE_CANONICAL_ENCODING` (`zstd | gzip | none`)
-- `MCP_GATEWAY_MAX_JSON_PART_PARSE_BYTES` (default: `50000000`)
-- `MCP_GATEWAY_CURSOR_TTL_MINUTES` (default: `60`)
-- `MCP_GATEWAY_WHERE_CANONICALIZATION_MODE` (`raw_string | canonical_ast`)
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `MCP_GATEWAY_POSTGRES_DSN` | `postgresql://localhost:5432/mcp_gateway` | Postgres connection string |
+| `MCP_GATEWAY_DATA_DIR` | `.mcp_gateway` | Root data directory |
+| `MCP_GATEWAY_ENVELOPE_JSONB_MODE` | `full` | `full \| minimal_for_large \| none` |
+| `MCP_GATEWAY_ENVELOPE_CANONICAL_ENCODING` | `zstd` | `zstd \| gzip \| none` |
+| `MCP_GATEWAY_MAX_JSON_PART_PARSE_BYTES` | `50000000` | Max JSON part size before byte-backed offload |
+| `MCP_GATEWAY_CURSOR_TTL_MINUTES` | `60` | Cursor TTL in minutes |
+| `MCP_GATEWAY_WHERE_CANONICALIZATION_MODE` | `raw_string` | `raw_string \| canonical_ast` |
 
 See `.env.example` and `src/mcp_artifact_gateway/config/settings.py` for the full set.
 
 ## Development
 
-Run lint and type-check:
+### Unit tests
+
+Unit tests run without any external dependencies:
 
 ```bash
-UV_CACHE_DIR=.uv-cache uv run ruff check src
-UV_CACHE_DIR=.uv-cache uv run mypy src
+python -m pytest tests/unit/ -q
 ```
 
-Run tests:
+### Integration tests
+
+Integration tests require the Postgres container from docker-compose:
 
 ```bash
-UV_CACHE_DIR=.uv-cache uv run pytest
+# Start Postgres (first time creates the mcp_test database automatically)
+docker compose up -d
+
+# Run integration tests (DSN defaults to docker-compose setup)
+python -m pytest tests/integration/ -v
 ```
 
-Note: this scaffold currently contains no concrete test cases, so `pytest` reports `no tests ran`.
+The default DSN (`postgresql://mcp_gateway:mcp_gateway@localhost:5432/mcp_test`) is set
+automatically by `tests/integration/conftest.py`. Override it for custom setups:
+
+```bash
+MCP_GATEWAY_TEST_POSTGRES_DSN="postgresql://user:pass@host:5432/db" python -m pytest tests/integration/ -v
+```
+
+### Lint and type-check
+
+```bash
+uv run ruff check src
+uv run mypy src
+```
 
 ## Project Layout
 
 ```text
 src/mcp_artifact_gateway/
-  main.py                  # CLI entrypoint (stub)
+  main.py                  # CLI entrypoint
   constants.py             # version/identity/constants
-  config/settings.py       # typed gateway settings
-  ...                      # planned modules (artifacts, db, retrieval, etc.)
+  config/settings.py       # typed gateway settings (pydantic-settings)
+  artifacts/               # artifact creation pipeline
+  cache/                   # advisory locks, stampede control
+  canon/                   # RFC 8785 canonicalizer
+  cursor/                  # HMAC cursors, pagination
+  db/                      # psycopg3 pool, migrations, repos
+  envelope/                # model, normalization, oversize handling
+  fs/                      # content-addressed blob store
+  jobs/                    # soft delete, hard delete, reconcile
+  mapping/                 # full/partial mapping, runner, worker
+  mcp/                     # upstream proxy, mirrored tools, server
+  obs/                     # logging, metrics
+  query/                   # jsonpath, select_paths, where DSL
+  retrieval/               # traversal, response budgets
+  storage/                 # payload store (compress, hash, integrity)
+  tools/                   # status, search, get, select, describe, find, chain_pages
 tests/
-  unit/
-  integration/
-docker-compose.yml         # local Postgres
+  unit/                    # ~800 unit tests (no external deps)
+  integration/             # 20 end-to-end tests (requires Postgres)
+docker-compose.yml         # local Postgres with test DB init
+scripts/
+  init-test-db.sql         # creates mcp_test database on first start
 ```
-
-## Design References
-
-- `MCP Artifact Gateway (Python) Full Implementation  3015bf0c026f80cd9f19f3b71f098cb4.md`
-- `findings.md`
-- `progress.md`
