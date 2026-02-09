@@ -33,18 +33,18 @@ Below is a completion-grade implementation checklist for MCP Artifact Gateway (P
 
 ## 1) Repo shape and bootability
 
-- [ ] A single runnable entrypoint exists (for example `python -m mcp_gateway` or `mcp-gateway serve`) that:
-  - [ ] Loads config.
-  - [ ] Validates filesystem paths.
-  - [ ] Connects Postgres and validates migrations.
-  - [ ] Connects to every configured upstream (stdio and http).
-  - [ ] Discovers upstream tool lists.
-  - [ ] Starts an MCP server exposing:
-    - [ ] mirrored tools `{prefix}.{tool}`
-    - [ ] retrieval tools (`gateway.status`, `artifact.search`, `artifact.get`, `artifact.select`, `artifact.describe`, `artifact.find`, `artifact.chain_pages`)
-- [ ] A fail fast startup mode exists:
-  - [ ] If DB is unreachable or migrations missing: server does not start (or starts with gateway unhealthy and refuses mirrored calls with `INTERNAL`).
-  - [ ] If DATA_DIR or required subdirs cannot be created/written: server does not start (or starts unhealthy and refuses mirrored calls with `INTERNAL`).
+- [x] A single runnable entrypoint exists (for example `python -m mcp_gateway` or `mcp-gateway serve`) that:
+  - [x] Loads config.
+  - [x] Validates filesystem paths.
+  - [x] Connects Postgres and validates migrations.
+  - [x] Connects to every configured upstream (stdio and http).
+  - [x] Discovers upstream tool lists.
+  - [x] Starts an MCP server exposing:
+    - [x] mirrored tools `{prefix}.{tool}`
+    - [x] retrieval tools (`gateway.status`, `artifact.search`, `artifact.get`, `artifact.select`, `artifact.describe`, `artifact.find`, `artifact.chain_pages`)
+- [x] A fail fast startup mode exists:
+  - [x] If DB is unreachable or migrations missing: server does not start (or starts with gateway unhealthy and refuses mirrored calls with `INTERNAL`).
+  - [x] If DATA_DIR or required subdirs cannot be created/written: server does not start (or starts unhealthy and refuses mirrored calls with `INTERNAL`).
 - [x] A clear module boundary exists (names are illustrative, not mandatory):
   - [x] `config/` (schema + loader + defaults)
   - [x] `db/` (psycopg3 pool, migrations, queries)
@@ -61,38 +61,38 @@ Below is a completion-grade implementation checklist for MCP Artifact Gateway (P
 
 ## 2) Configuration and constants
 
-- [ ] A config model exists that includes (at minimum):
-  - [ ] `DATA_DIR` and derived directories (`tmp/`, `logs/`, `state/`, `resources/`, `blobs/bin/...`)
-  - [ ] Postgres DSN + pool sizing + statement timeouts
-  - [ ] Upstream definitions:
-    - [ ] `prefix`, `transport` (http/stdio), endpoint config, semantic salts
-    - [ ] optional tool-level dedupe exclusions (JSONPath subset)
-    - [ ] tool-level reuse gating (strict schema hash match default)
-    - [ ] tool-level inline eligibility (default allow)
-  - [ ] Envelope storage config:
-    - [ ] `envelope_jsonb_mode` = `full|minimal_for_large|none`
-    - [ ] `envelope_jsonb_minimize_threshold_bytes`
-    - [ ] canonical byte compression: `zstd|gzip|none`
-  - [ ] Hard limits / budgets:
-    - [ ] inbound request cap
-    - [ ] upstream error capture cap
-    - [ ] `max_json_part_parse_bytes` (oversized JSON becomes byte-backed)
-    - [ ] `max_full_map_bytes`
-    - [ ] partial map budgets: `max_bytes_read_partial_map`, `max_compute_steps_partial_map`, `max_depth_partial_map`, `max_records_sampled_partial`, `max_record_bytes_partial`, `max_leaf_paths_partial`, `max_root_discovery_depth`
-    - [ ] retrieval budgets: `max_items`, `max_bytes_out`, `max_wildcards`, `max_compute_steps`
-    - [ ] `artifact_search_max_limit`
-    - [ ] storage caps: `max_binary_blob_bytes`, `max_payload_total_bytes`, `max_total_storage_bytes`
-  - [ ] Cursor settings:
-    - [ ] cursor TTL minutes
-    - [ ] active secret versions + signing secret version
-    - [ ] cursor_version constant
-  - [ ] Version constants:
-    - [ ] `canonicalizer_version`
-    - [ ] `mapper_version`
-    - [ ] `traversal_contract_version`
-    - [ ] `where_canonicalization_mode` (`raw_string` default, `canonical_ast` optional)
-    - [ ] `prng_version` constant
-- [ ] The system hardcodes and enforces `workspace_id = "local"` everywhere (no multi-tenant behavior leaks in).
+- [x] A config model exists that includes (at minimum):
+  - [x] `DATA_DIR` and derived directories (`tmp/`, `logs/`, `state/`, `resources/`, `blobs/bin/...`)
+  - [x] Postgres DSN + pool sizing + statement timeouts
+  - [x] Upstream definitions:
+    - [x] `prefix`, `transport` (http/stdio), endpoint config, semantic salts
+    - [x] optional tool-level dedupe exclusions (JSONPath subset)
+    - [x] tool-level reuse gating (strict schema hash match default)
+    - [x] tool-level inline eligibility (default allow)
+  - [x] Envelope storage config:
+    - [x] `envelope_jsonb_mode` = `full|minimal_for_large|none`
+    - [x] `envelope_jsonb_minimize_threshold_bytes`
+    - [x] canonical byte compression: `zstd|gzip|none`
+  - [x] Hard limits / budgets:
+    - [x] inbound request cap
+    - [x] upstream error capture cap
+    - [x] `max_json_part_parse_bytes` (oversized JSON becomes byte-backed)
+    - [x] `max_full_map_bytes`
+    - [x] partial map budgets: `max_bytes_read_partial_map`, `max_compute_steps_partial_map`, `max_depth_partial_map`, `max_records_sampled_partial`, `max_record_bytes_partial`, `max_leaf_paths_partial`, `max_root_discovery_depth`
+    - [x] retrieval budgets: `max_items`, `max_bytes_out`, `max_wildcards`, `max_compute_steps`
+    - [x] `artifact_search_max_limit`
+    - [x] storage caps: `max_binary_blob_bytes`, `max_payload_total_bytes`, `max_total_storage_bytes`
+  - [x] Cursor settings:
+    - [x] cursor TTL minutes
+    - [x] active secret versions + signing secret version
+    - [x] cursor_version constant
+  - [x] Version constants:
+    - [x] `canonicalizer_version`
+    - [x] `mapper_version`
+    - [x] `traversal_contract_version`
+    - [x] `where_canonicalization_mode` (`raw_string` default, `canonical_ast` optional)
+    - [x] `prng_version` constant
+- [x] The system hardcodes and enforces `workspace_id = "local"` everywhere (no multi-tenant behavior leaks in).
 
 ---
 
@@ -109,8 +109,8 @@ Below is a completion-grade implementation checklist for MCP Artifact Gateway (P
   - [x] `artifact_roots`
   - [x] Addendum C table: `artifact_samples`
 - [x] Every PK, FK, unique constraint, and index in the spec exists.
-- [ ] All relevant CHECK constraints exist:
-  - [ ] enum-like fields (`map_kind`, `map_status`, `index_status`, encoding values, non-negative sizes)
+- [x] All relevant CHECK constraints exist:
+  - [x] enum-like fields (`map_kind`, `map_status`, `index_status`, encoding values, non-negative sizes)
 - [x] Migrations are idempotent and ordered; a fresh database can be brought to current schema in one command.
 - [x] Advisory lock usage for request stampede exists (two 32-bit keys derived from `sha256(request_key)`), with timeout and metrics/logging.
 
@@ -303,18 +303,18 @@ For every mirrored tool call `{prefix}.{tool}(args)`:
 
 ### 9.3 JSONPath subset support
 
-- [ ] JSONPath subset grammar implemented exactly:
-  - [ ] `$`, `.name`, `['...']` with escapes, `[n]`, `[*]`
-  - [ ] no filters
-- [ ] Caps enforced:
-  - [ ] max path length
-  - [ ] max segments
-  - [ ] max wildcard expansion total
-- [ ] Deterministic traversal contract implemented:
-  - [ ] arrays ascend
-  - [ ] objects key lex ascend
-  - [ ] wildcard expansions obey above
-  - [ ] partial sample enumeration uses ascending sample indices
+- [x] JSONPath subset grammar implemented exactly:
+  - [x] `$`, `.name`, `['...']` with escapes, `[n]`, `[*]`
+  - [x] no filters
+- [x] Caps enforced:
+  - [x] max path length
+  - [x] max segments
+  - [x] max wildcard expansion total
+- [x] Deterministic traversal contract implemented:
+  - [x] arrays ascend
+  - [x] objects key lex ascend
+  - [x] wildcard expansions obey above
+  - [x] partial sample enumeration uses ascending sample indices
 
 ### 9.4 artifact.get
 
@@ -469,7 +469,7 @@ When selected JSON part is <= max_full_map_bytes:
   - [x] replace sample rows + sample_indices within a transaction per `(artifact_id, root_key)`
 - [x] Partial retrieval depends on artifact_samples:
   - [x] `artifact.select` loads records from artifact_samples
-  - [ ] corruption detection: if indices exist but sample rows missing -> `INTERNAL` with details
+  - [x] corruption detection: if indices exist but sample rows missing -> `INTERNAL` with details
 
 ### 10.8 Worker safety and races
 

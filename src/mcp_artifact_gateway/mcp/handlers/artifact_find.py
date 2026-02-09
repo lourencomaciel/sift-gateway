@@ -177,6 +177,18 @@ async def handle_artifact_find(
                 ).fetchall(),
                 _BATCH_SAMPLE_COLUMNS,
             )
+            # Per-root corruption check
+            samples_by_root: dict[str, list[dict[str, Any]]] = {}
+            for sample in all_sample_rows:
+                rk = sample.get("root_key", "")
+                samples_by_root.setdefault(rk, []).append(sample)
+            for root in roots:
+                rk = root["root_key"]
+                corruption = ctx._check_sample_corruption(
+                    root, samples_by_root.get(rk, []),
+                )
+                if corruption is not None:
+                    return corruption
             for sample in all_sample_rows:
                 record = sample.get("record")
                 if where_expr is not None:

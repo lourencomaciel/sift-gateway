@@ -183,6 +183,9 @@ async def handle_artifact_select(
                 ).fetchall(),
                 SAMPLE_COLUMNS,
             )
+            corruption = ctx._check_sample_corruption(root_row, sample_rows)
+            if corruption is not None:
+                return corruption
 
         if cursor_payload is not None:
             try:
