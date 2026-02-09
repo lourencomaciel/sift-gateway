@@ -22,7 +22,7 @@ from mcp_artifact_gateway.mcp.mirror import (
     strip_reserved_gateway_args,
     validate_against_schema,
 )
-from mcp_artifact_gateway.mcp.upstream import call_upstream_tool
+from mcp_artifact_gateway.jobs.quota import QuotaBreaches, enforce_quota
 from mcp_artifact_gateway.request_identity import compute_request_identity
 
 if TYPE_CHECKING:
@@ -215,6 +215,62 @@ async def handle_mirrored_tool(
                 )
             except Exception:
                 pass  # cache is best-effort; skip and proceed to upstream call
+
+        # Phase 1.5: Quota enforcement preflight.
+        # Rejecting here avoids invoking side-effecting upstream tools when
+        # the workspace is already over hard quota and cannot be cleared.
+        # Uses a separate connection (prune needs its own transaction).
+        # Non-connectivity errors fail closed but do not mark DB unhealthy.
+        quota_ok = True
+        quota_breaches: QuotaBreaches | None = None
+        if ctx.config.quota_enforcement_enabled:
+            try:
+                with ctx.db_pool.connection() as quota_conn:
+                    quota_result = enforce_quota(
+                        quota_conn,
+                        max_binary_blob_bytes=ctx.config.max_binary_blob_bytes,
+                        max_payload_total_bytes=ctx.config.max_payload_total_bytes,
+                        max_total_storage_bytes=ctx.config.max_total_storage_bytes,
+                        prune_batch_size=ctx.config.quota_prune_batch_size,
+                        max_prune_rounds=ctx.config.quota_max_prune_rounds,
+                        hard_delete_grace_seconds=ctx.config.quota_hard_delete_grace_seconds,
+                        remove_fs_blobs=ctx.blob_store is not None,
+                        metrics=ctx.metrics,
+                    )
+                    quota_breaches = quota_result.breaches_after or quota_result.breaches_before
+                    if not quota_result.space_cleared:
+                        quota_ok = False
+            except (psycopg.OperationalError, psycopg.InterfaceError):
+                ctx.db_ok = False
+                return gateway_error(
+                    "INTERNAL",
+                    "quota check failed; gateway marked unhealthy",
+                )
+            except Exception:
+                return gateway_error(
+                    "INTERNAL",
+                    "quota check failed; refusing to create artifact",
+                )
+
+        if not quota_ok:
+            quota_details: dict[str, Any] = {"exceeded_caps": []}
+            if quota_breaches is not None and quota_breaches.binary_blob_exceeded:
+                quota_details["max_binary_blob_bytes"] = ctx.config.max_binary_blob_bytes
+                quota_details["exceeded_caps"].append("max_binary_blob_bytes")
+            if quota_breaches is not None and quota_breaches.payload_total_exceeded:
+                quota_details["max_payload_total_bytes"] = ctx.config.max_payload_total_bytes
+                quota_details["exceeded_caps"].append("max_payload_total_bytes")
+            if quota_breaches is not None and quota_breaches.total_storage_exceeded:
+                quota_details["max_total_storage_bytes"] = ctx.config.max_total_storage_bytes
+                quota_details["exceeded_caps"].append("max_total_storage_bytes")
+            if not quota_details["exceeded_caps"]:
+                quota_details["max_total_storage_bytes"] = ctx.config.max_total_storage_bytes
+                quota_details["exceeded_caps"].append("max_total_storage_bytes")
+            return gateway_error(
+                "QUOTA_EXCEEDED",
+                "workspace storage quota exceeded; prune could not free enough space",
+                details=quota_details,
+            )
 
         # Phase 2: Upstream call — no DB connection held.
         try:
