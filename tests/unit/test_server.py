@@ -1144,3 +1144,125 @@ def test_artifact_chain_pages_db_runtime_returns_cursor_when_truncated(
     assert response["truncated"] is True
     assert response["cursor"] == "cur_next"
     assert response["items"][0]["artifact_id"] == "art_page_1"
+
+
+# ---------------------------------------------------------------------------
+# Sample corruption detection
+# ---------------------------------------------------------------------------
+
+
+def test_check_sample_corruption_returns_none_when_indices_match() -> None:
+    root_row = {"root_key": "rk_1", "sample_indices": [0, 3, 7]}
+    sample_rows = [
+        {"sample_index": 0},
+        {"sample_index": 3},
+        {"sample_index": 7},
+    ]
+    assert GatewayServer._check_sample_corruption(root_row, sample_rows) is None
+
+
+def test_check_sample_corruption_returns_none_when_no_expected_indices() -> None:
+    root_row = {"root_key": "rk_1", "sample_indices": None}
+    assert GatewayServer._check_sample_corruption(root_row, []) is None
+
+    root_row_empty = {"root_key": "rk_1", "sample_indices": []}
+    assert GatewayServer._check_sample_corruption(root_row_empty, []) is None
+
+
+def test_check_sample_corruption_returns_internal_when_rows_missing() -> None:
+    root_row = {"root_key": "rk_1", "sample_indices": [0, 3, 7]}
+    sample_rows = [{"sample_index": 0}]  # indices 3 and 7 missing
+    result = GatewayServer._check_sample_corruption(root_row, sample_rows)
+    assert result is not None
+    assert result["code"] == "INTERNAL"
+    assert "corruption" in result["message"]
+    assert result["details"]["missing_indices"] == [3, 7]
+    assert result["details"]["expected_count"] == 3
+    assert result["details"]["actual_count"] == 1
+
+
+def test_artifact_select_returns_internal_on_sample_corruption(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    # root says sample_indices=[0, 1] but only sample_index=0 exists
+    conn = _SeqConnection(
+        [
+            # artifact_visible
+            _SeqCursor(one=(1,)),
+            # artifact_meta
+            _SeqCursor(one=("art_1", "partial", "ready", "off", None, 1, "mbf")),
+            # root_row with sample_indices=[0, 1]
+            _SeqCursor(
+                one=(
+                    "rk_1",
+                    "$.items",
+                    100,
+                    "array",
+                    {"id": {"number": 1}},
+                    [0, 1],
+                    {"sampled_prefix_len": 9},
+                )
+            ),
+            # sample_rows: only index 0 present
+            _SeqCursor(all_rows=[(0, {"id": 1}, 8, "h0")]),
+        ]
+    )
+    server = GatewayServer(
+        config=GatewayConfig(data_dir=tmp_path),
+        db_pool=_SeqPool(conn),  # type: ignore[arg-type]
+    )
+    monkeypatch.setattr(server, "_safe_touch_for_retrieval", lambda *args, **kwargs: None)
+
+    response = asyncio.run(
+        server.handle_artifact_select(
+            {
+                "_gateway_context": {"session_id": "sess_1"},
+                "artifact_id": "art_1",
+                "root_path": "$.items",
+                "select_paths": ["id"],
+            }
+        )
+    )
+    assert response["code"] == "INTERNAL"
+    assert response["details"]["missing_indices"] == [1]
+
+
+def test_artifact_find_returns_internal_on_sample_corruption(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    conn = _SeqConnection(
+        [
+            # artifact_visible
+            _SeqCursor(one=(1,)),
+            # artifact_meta
+            _SeqCursor(one=("art_1", "partial", "ready", "off", None, 1, "mbf")),
+            # roots: one root with sample_indices=[0, 2]
+            # columns: root_key, root_path, count_estimate, inventory_coverage,
+            #          root_summary, root_score, root_shape, fields_top, sample_indices
+            _SeqCursor(
+                all_rows=[
+                    ("rk_1", "$.data", 50, None, None, None, None, None, [0, 2])
+                ]
+            ),
+            # sample_rows: only index 0 (index 2 missing)
+            _SeqCursor(all_rows=[(0, {"x": 1}, 8, "h0")]),
+        ]
+    )
+    server = GatewayServer(
+        config=GatewayConfig(data_dir=tmp_path),
+        db_pool=_SeqPool(conn),  # type: ignore[arg-type]
+    )
+    monkeypatch.setattr(server, "_safe_touch_for_retrieval", lambda *args, **kwargs: None)
+
+    response = asyncio.run(
+        server.handle_artifact_find(
+            {
+                "_gateway_context": {"session_id": "sess_1"},
+                "artifact_id": "art_1",
+            }
+        )
+    )
+    assert response["code"] == "INTERNAL"
+    assert response["details"]["missing_indices"] == [2]

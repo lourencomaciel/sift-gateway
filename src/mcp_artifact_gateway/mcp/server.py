@@ -542,6 +542,35 @@ class GatewayServer:
         if callable(getattr(connection, "cursor", None)):
             touch_for_search(connection, session_id, artifact_ids)
 
+    @staticmethod
+    def _check_sample_corruption(
+        root_row: dict[str, Any],
+        sample_rows: list[dict[str, Any]],
+    ) -> dict[str, Any] | None:
+        """Return INTERNAL error if expected sample indices are missing rows."""
+        expected_raw = root_row.get("sample_indices")
+        if not isinstance(expected_raw, list) or not expected_raw:
+            return None
+        expected = set(int(i) for i in expected_raw if isinstance(i, int))
+        actual = set(
+            int(row["sample_index"])
+            for row in sample_rows
+            if isinstance(row.get("sample_index"), int)
+        )
+        missing = sorted(expected - actual)
+        if missing:
+            return gateway_error(
+                "INTERNAL",
+                "sample data corruption: expected sample rows missing",
+                details={
+                    "root_key": root_row.get("root_key"),
+                    "missing_indices": missing,
+                    "expected_count": len(expected),
+                    "actual_count": len(actual),
+                },
+            )
+        return None
+
     def _binary_hashes_from_envelope(self, envelope: Envelope) -> list[str]:
         hashes: list[str] = []
         for part in envelope.content:
@@ -1462,6 +1491,9 @@ class GatewayServer:
                     ).fetchall(),
                     _SAMPLE_COLUMNS,
                 )
+                corruption = self._check_sample_corruption(root_row, sample_rows)
+                if corruption is not None:
+                    return corruption
 
             if cursor_payload is not None:
                 try:
@@ -1873,6 +1905,9 @@ class GatewayServer:
                     ).fetchall(),
                     _SAMPLE_COLUMNS,
                 )
+                corruption = self._check_sample_corruption(root, sample_rows)
+                if corruption is not None:
+                    return corruption
                 for sample in sample_rows:
                     record = sample.get("record")
                     if where_expr is not None:
