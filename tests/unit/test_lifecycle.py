@@ -46,6 +46,7 @@ def test_lifecycle_startup_check_invalid_upstream(tmp_path: Path, monkeypatch) -
     monkeypatch.setattr("mcp_artifact_gateway.lifecycle.connect", lambda _config: _FakeConnection())
     config = GatewayConfig(
         data_dir=tmp_path,
+        db_backend="postgres",
         upstreams=[
             UpstreamConfig(prefix="gh", transport="http", url="https://one.example"),
             UpstreamConfig(prefix="gh", transport="http", url="https://two.example"),
@@ -62,6 +63,7 @@ def test_lifecycle_startup_check_does_not_touch_existing_probe_filename(
     monkeypatch.setattr("mcp_artifact_gateway.lifecycle.connect", lambda _config: _FakeConnection())
     config = GatewayConfig(
         data_dir=tmp_path,
+        db_backend="postgres",
         upstreams=[UpstreamConfig(prefix="gh", transport="http", url="https://one.example")],
     )
     ensure_data_dirs(config)
@@ -83,6 +85,7 @@ def test_lifecycle_startup_check_reports_db_connect_failure(tmp_path: Path, monk
 
     config = GatewayConfig(
         data_dir=tmp_path,
+        db_backend="postgres",
         upstreams=[UpstreamConfig(prefix="gh", transport="http", url="https://one.example")],
     )
     report = run_startup_check(config)
@@ -99,6 +102,7 @@ def test_lifecycle_startup_check_reports_db_probe_failure(tmp_path: Path, monkey
 
     config = GatewayConfig(
         data_dir=tmp_path,
+        db_backend="postgres",
         upstreams=[UpstreamConfig(prefix="gh", transport="http", url="https://one.example")],
     )
     report = run_startup_check(config)

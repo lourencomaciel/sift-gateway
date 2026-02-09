@@ -120,6 +120,12 @@ class GatewayConfig(BaseSettings):
         description="Root data directory (default .mcp_gateway/)",
     )
 
+    # --------------- Database backend ---------------
+    db_backend: Literal["sqlite", "postgres"] = Field(
+        "sqlite",
+        description="Database backend: 'sqlite' (default, zero-config) or 'postgres'",
+    )
+
     # --------------- Postgres ---------------
     postgres_dsn: str = Field(
         "postgresql://localhost:5432/mcp_gateway",
@@ -128,6 +134,9 @@ class GatewayConfig(BaseSettings):
     postgres_pool_min: int = Field(2, ge=1)
     postgres_pool_max: int = Field(10, ge=1)
     postgres_statement_timeout_ms: int = Field(30_000, ge=1000)
+
+    # --------------- SQLite ---------------
+    sqlite_busy_timeout_ms: int = Field(5000, ge=100)
 
     # --------------- Upstreams (§4) ---------------
     upstreams: list[UpstreamConfig] = Field(default_factory=list)
@@ -220,6 +229,10 @@ class GatewayConfig(BaseSettings):
     @property
     def secrets_path(self) -> Path:
         return self.state_dir / "secrets.json"
+
+    @property
+    def sqlite_path(self) -> Path:
+        return self.state_dir / "gateway.db"
 
     @property
     def config_json_path(self) -> Path:

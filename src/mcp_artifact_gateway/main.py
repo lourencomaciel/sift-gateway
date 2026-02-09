@@ -8,8 +8,7 @@ import sys
 from pathlib import Path
 
 from mcp_artifact_gateway.config import load_gateway_config
-from mcp_artifact_gateway.db.backend import PostgresBackend
-from mcp_artifact_gateway.db.conn import create_pool
+from mcp_artifact_gateway.db.backend import DatabaseBackend, PostgresBackend, SqliteBackend
 from mcp_artifact_gateway.db.migrate import apply_migrations
 from mcp_artifact_gateway.fs.blob_store import BlobStore
 from mcp_artifact_gateway.lifecycle import run_startup_check
@@ -34,8 +33,23 @@ def _parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def _migrations_dir() -> Path:
-    return Path(__file__).resolve().parent / "db" / "migrations"
+def _migrations_dir(db_backend_name: str) -> Path:
+    base = Path(__file__).resolve().parent / "db"
+    if db_backend_name == "sqlite":
+        return base / "migrations_sqlite"
+    return base / "migrations"
+
+
+def _create_backend(config) -> DatabaseBackend:
+    if config.db_backend == "postgres":
+        from mcp_artifact_gateway.db.conn import create_pool
+
+        pool = create_pool(config)
+        return PostgresBackend(pool=pool)
+    return SqliteBackend(
+        db_path=config.sqlite_path,
+        busy_timeout_ms=config.sqlite_busy_timeout_ms,
+    )
 
 
 def serve() -> int:
@@ -57,16 +71,19 @@ def serve() -> int:
             print(f"- {item}", file=sys.stderr)
         return 1
 
-    pool = create_pool(config)
-    backend = PostgresBackend(pool=pool)
+    backend = _create_backend(config)
     try:
         with backend.connection() as connection:
-            apply_migrations(connection, _migrations_dir())
+            apply_migrations(
+                connection,
+                _migrations_dir(config.db_backend),
+                param_marker=backend.dialect.param_marker,
+            )
 
         server = asyncio.run(
             bootstrap_server(
                 config,
-                db_pool=pool,
+                db_pool=backend,
                 blob_store=BlobStore(
                     config.blobs_bin_dir,
                     probe_bytes=config.binary_probe_bytes,

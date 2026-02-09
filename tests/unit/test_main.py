@@ -4,6 +4,7 @@ import argparse
 from pathlib import Path
 
 from mcp_artifact_gateway.config.settings import GatewayConfig
+from mcp_artifact_gateway.db.backend import Dialect
 from mcp_artifact_gateway.lifecycle import CheckResult
 from mcp_artifact_gateway.main import serve
 
@@ -19,6 +20,7 @@ class _FakeConnectionContext:
 class _FakePool:
     def __init__(self) -> None:
         self.closed = False
+        self.dialect = Dialect.SQLITE
 
     def connection(self) -> _FakeConnectionContext:
         return _FakeConnectionContext()
@@ -84,10 +86,6 @@ def test_serve_returns_one_when_startup_check_fails(
     )
     monkeypatch.setattr("mcp_artifact_gateway.main.load_gateway_config", lambda **_kwargs: config)
     monkeypatch.setattr("mcp_artifact_gateway.main.run_startup_check", lambda _config: report)
-    monkeypatch.setattr(
-        "mcp_artifact_gateway.main.create_pool",
-        lambda _config: (_ for _ in ()).throw(AssertionError("create_pool should not run")),
-    )
 
     exit_code = serve()
     captured = capsys.readouterr()
@@ -96,10 +94,10 @@ def test_serve_returns_one_when_startup_check_fails(
     assert "FS write failed" in captured.err
 
 
-def test_serve_runs_bootstrap_and_closes_pool(tmp_path: Path, monkeypatch) -> None:
+def test_serve_runs_bootstrap_and_closes_backend(tmp_path: Path, monkeypatch) -> None:
     config = GatewayConfig(data_dir=tmp_path)
     report = CheckResult(fs_ok=True, db_ok=True, upstream_ok=True, details=[])
-    pool = _FakePool()
+    backend = _FakePool()
     app = _FakeApp()
     server = _FakeServer(app)
     applied_migrations: list[Path] = []
@@ -107,7 +105,7 @@ def test_serve_runs_bootstrap_and_closes_pool(tmp_path: Path, monkeypatch) -> No
     async def _fake_bootstrap(*_args, **_kwargs) -> _FakeServer:
         return server
 
-    def _fake_apply_migrations(_connection, migrations_dir: Path) -> list[str]:
+    def _fake_apply_migrations(_connection, migrations_dir, **_kw) -> list[str]:
         applied_migrations.append(migrations_dir)
         return []
 
@@ -117,15 +115,15 @@ def test_serve_runs_bootstrap_and_closes_pool(tmp_path: Path, monkeypatch) -> No
     )
     monkeypatch.setattr("mcp_artifact_gateway.main.load_gateway_config", lambda **_kwargs: config)
     monkeypatch.setattr("mcp_artifact_gateway.main.run_startup_check", lambda _config: report)
-    monkeypatch.setattr("mcp_artifact_gateway.main.create_pool", lambda _config: pool)
+    monkeypatch.setattr("mcp_artifact_gateway.main._create_backend", lambda _config: backend)
     monkeypatch.setattr("mcp_artifact_gateway.main.apply_migrations", _fake_apply_migrations)
     monkeypatch.setattr("mcp_artifact_gateway.main.bootstrap_server", _fake_bootstrap)
 
     exit_code = serve()
 
     assert exit_code == 0
-    assert pool.closed is True
+    assert backend.closed is True
     assert app.called is True
     assert app.kwargs == {"show_banner": False}
     assert len(applied_migrations) == 1
-    assert applied_migrations[0].name == "migrations"
+    assert applied_migrations[0].name == "migrations_sqlite"

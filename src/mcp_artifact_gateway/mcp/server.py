@@ -10,7 +10,6 @@ from typing import Any, Awaitable, Callable, Mapping
 
 from fastmcp import FastMCP
 from fastmcp.tools.tool import Tool, ToolResult
-from psycopg_pool import ConnectionPool
 
 from mcp_artifact_gateway.artifacts.create import (
     ArtifactHandle,
@@ -147,7 +146,7 @@ class GatewayServer:
     """
 
     config: GatewayConfig
-    db_pool: ConnectionPool | None = None
+    db_pool: Any = None  # DatabaseBackend | None (Postgres or SQLite)
     blob_store: BlobStore | None = None
     upstreams: list[UpstreamInstance] = field(default_factory=list)
     fs_ok: bool = True
@@ -814,7 +813,7 @@ class GatewayServer:
 async def bootstrap_server(
     config: GatewayConfig,
     *,
-    db_pool: ConnectionPool | None = None,
+    db_pool: Any = None,  # DatabaseBackend | None
     blob_store: BlobStore | None = None,
     fs_ok: bool = True,
     db_ok: bool = True,
