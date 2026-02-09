@@ -1862,6 +1862,85 @@ def test_handle_mirrored_tool_quota_exceeded_returns_error(
     assert response["type"] == "gateway_error"
     assert response["code"] == "QUOTA_EXCEEDED"
     assert "quota" in response["message"].lower()
+    assert response["details"]["exceeded_caps"] == ["max_total_storage_bytes"]
+    assert (
+        response["details"]["max_total_storage_bytes"]
+        == server.config.max_total_storage_bytes
+    )
+
+
+def test_handle_mirrored_tool_quota_exceeded_reports_specific_caps(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    """Quota rejection reports only the cap(s) that are still exceeded."""
+    from mcp_artifact_gateway.jobs.quota import (
+        QuotaBreaches,
+        QuotaEnforcementResult,
+        StorageUsage,
+    )
+
+    server = GatewayServer(
+        config=GatewayConfig(data_dir=tmp_path),
+        upstreams=[_upstream()],
+        db_pool=_FakePool(None),  # type: ignore[arg-type]
+        metrics=GatewayMetrics(),
+    )
+    mirrored = server.mirrored_tools["demo.echo"]
+
+    async def _fake_call(_instance, _tool_name, _arguments):
+        return {
+            "content": [{"type": "text", "text": "ok"}],
+            "structuredContent": {"ok": True},
+            "isError": False,
+            "meta": {},
+        }
+
+    monkeypatch.setattr("mcp_artifact_gateway.mcp.server.call_upstream_tool", _fake_call)
+
+    _breaches = QuotaBreaches(
+        binary_blob_exceeded=True,
+        payload_total_exceeded=True,
+        total_storage_exceeded=False,
+    )
+    _usage = StorageUsage(binary_blob_bytes=999, payload_total_bytes=999, total_storage_bytes=100)
+
+    monkeypatch.setattr(
+        "mcp_artifact_gateway.mcp.handlers.mirrored_tool.enforce_quota",
+        lambda *a, **kw: QuotaEnforcementResult(
+            usage_before=_usage,
+            usage_after=_usage,
+            breaches_before=_breaches,
+            breaches_after=_breaches,
+            pruned=True,
+            soft_deleted_count=0,
+            hard_deleted_count=0,
+            bytes_reclaimed=0,
+            space_cleared=False,
+        ),
+    )
+
+    response = asyncio.run(
+        server.handle_mirrored_tool(
+            mirrored,
+            {
+                "_gateway_context": {"session_id": "sess_1", "cache_mode": "fresh"},
+                "message": "hello",
+            },
+        )
+    )
+    assert response["type"] == "gateway_error"
+    assert response["code"] == "QUOTA_EXCEEDED"
+    assert response["details"]["exceeded_caps"] == [
+        "max_binary_blob_bytes",
+        "max_payload_total_bytes",
+    ]
+    assert response["details"]["max_binary_blob_bytes"] == server.config.max_binary_blob_bytes
+    assert (
+        response["details"]["max_payload_total_bytes"]
+        == server.config.max_payload_total_bytes
+    )
+    assert "max_total_storage_bytes" not in response["details"]
 
 
 def test_handle_mirrored_tool_quota_exceeded_skips_upstream_call(
@@ -2018,11 +2097,11 @@ def test_handle_mirrored_tool_quota_ok_proceeds_to_persist(
     assert response["artifact_id"] == "art_quota_ok"
 
 
-def test_handle_mirrored_tool_quota_check_best_effort_on_generic_error(
+def test_handle_mirrored_tool_quota_check_fails_closed_on_generic_error(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
-    """Non-connectivity error in quota check is best-effort; proceed to persist."""
+    """Non-connectivity quota errors fail closed without marking db unhealthy."""
     server = GatewayServer(
         config=GatewayConfig(data_dir=tmp_path),
         upstreams=[_upstream()],
@@ -2030,8 +2109,12 @@ def test_handle_mirrored_tool_quota_check_best_effort_on_generic_error(
         metrics=GatewayMetrics(),
     )
     mirrored = server.mirrored_tools["demo.echo"]
+    upstream_called = False
+    persist_called = False
 
     async def _fake_call(_instance, _tool_name, _arguments):
+        nonlocal upstream_called
+        upstream_called = True
         return {
             "content": [{"type": "text", "text": "ok"}],
             "structuredContent": {"ok": True},
@@ -2049,29 +2132,14 @@ def test_handle_mirrored_tool_quota_check_best_effort_on_generic_error(
         _exploding_quota,
     )
 
-    _fake_handle = ArtifactHandle(
-        artifact_id="art_quota_skip",
-        created_seq=1,
-        generation=1,
-        session_id="sess_1",
-        source_tool="demo.echo",
-        upstream_instance_id="demo",
-        request_key="rk_1",
-        payload_hash_full="h_1",
-        payload_json_bytes=10,
-        payload_binary_bytes_total=0,
-        payload_total_bytes=10,
-        contains_binary_refs=False,
-        map_kind="none",
-        map_status="pending",
-        index_status="pending",
-        status="ok",
-        error_summary=None,
-    )
+    def _unexpected_persist(*_args, **_kwargs):
+        nonlocal persist_called
+        persist_called = True
+        raise AssertionError("persist_artifact should not be called")
 
     monkeypatch.setattr(
         "mcp_artifact_gateway.mcp.handlers.mirrored_tool.persist_artifact",
-        lambda connection, config, input_data, binary_hashes: _fake_handle,
+        _unexpected_persist,
     )
 
     response = asyncio.run(
@@ -2083,8 +2151,11 @@ def test_handle_mirrored_tool_quota_check_best_effort_on_generic_error(
             },
         )
     )
-    assert response["type"] == "gateway_tool_result"
-    assert response["artifact_id"] == "art_quota_skip"
+    assert response["type"] == "gateway_error"
+    assert response["code"] == "INTERNAL"
+    assert "quota" in response["message"].lower()
+    assert upstream_called is False
+    assert persist_called is False
     assert server.db_ok is True
 
 

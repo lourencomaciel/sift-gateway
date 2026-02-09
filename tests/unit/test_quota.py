@@ -298,7 +298,7 @@ def test_soft_delete_lru_batch_returns_count_and_bytes() -> None:
     count, est_bytes = soft_delete_lru_batch(conn, metrics=metrics)
     assert count == 2
     assert est_bytes == 800
-    assert conn.committed >= 1
+    assert conn.committed == 0
     assert metrics.prune_soft_deletes.value == 2
 
 

@@ -162,6 +162,7 @@ def soft_delete_lru_batch(
     """Soft-delete oldest artifacts by LRU for quota enforcement.
 
     Returns (count, estimated_bytes_freed).
+    Does not commit; caller controls the transaction boundary.
     """
     log = logger or get_logger(component="jobs.quota")
     rows = connection.execute(
@@ -181,7 +182,6 @@ def soft_delete_lru_batch(
         if isinstance(payload_bytes, (int, float)) and payload_bytes > 0:
             estimated_bytes += int(payload_bytes)
 
-    connection.commit()
     increment_metric(metrics, "prune_soft_deletes", count)
     if count > 0:
         log.info(
