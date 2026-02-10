@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import dataclasses
 
-from mcp_artifact_gateway.artifacts.create import (
+from sidepouch_mcp.artifacts.create import (
     ArtifactHandle,
     CreateArtifactInput,
 )
-from mcp_artifact_gateway.envelope.model import Envelope, JsonContentPart
+from sidepouch_mcp.envelope.model import Envelope, JsonContentPart
 
 
 # ---------------------------------------------------------------------------

@@ -5,7 +5,7 @@ from __future__ import annotations
 import io
 import json
 
-from mcp_artifact_gateway.mapping.partial import (
+from sidepouch_mcp.mapping.partial import (
     PartialMappingBudgets,
     PartialMappingConfig,
     compute_map_backend_id,

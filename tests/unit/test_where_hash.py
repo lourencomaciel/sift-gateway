@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from mcp_artifact_gateway.query.where_hash import where_hash
+from sidepouch_mcp.query.where_hash import where_hash
 
 # ---------------------------------------------------------------------------
 # raw_string mode

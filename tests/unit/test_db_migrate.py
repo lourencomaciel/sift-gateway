@@ -5,12 +5,12 @@ import re
 
 import pytest
 
-from mcp_artifact_gateway.db.migrate import apply_migrations, list_migrations
+from sidepouch_mcp.db.migrate import apply_migrations, list_migrations
 
 # ---------------------------------------------------------------------------
 # Helpers for schema content auditing
 # ---------------------------------------------------------------------------
-_MIGRATIONS_DIR = Path("src/mcp_artifact_gateway/db/migrations").resolve()
+_MIGRATIONS_DIR = Path("src/sidepouch_mcp/db/migrations").resolve()
 
 
 def _read_sql(filename: str) -> str:
@@ -55,7 +55,7 @@ class _FakeConnection:
 
 def test_list_migrations_includes_sql_files() -> None:
     migration_paths = list_migrations(
-        Path("src/mcp_artifact_gateway/db/migrations").resolve()
+        Path("src/sidepouch_mcp/db/migrations").resolve()
     )
     names = [path.name for path in migration_paths]
     assert "001_init.sql" in names
@@ -63,7 +63,7 @@ def test_list_migrations_includes_sql_files() -> None:
 
 def test_apply_migrations_idempotent() -> None:
     connection = _FakeConnection()
-    migrations_dir = Path("src/mcp_artifact_gateway/db/migrations").resolve()
+    migrations_dir = Path("src/sidepouch_mcp/db/migrations").resolve()
 
     first = apply_migrations(connection, migrations_dir)
     second = apply_migrations(connection, migrations_dir)

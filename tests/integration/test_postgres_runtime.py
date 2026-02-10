@@ -7,27 +7,27 @@ import uuid
 
 import pytest
 
-from mcp_artifact_gateway.artifacts.create import (
+from sidepouch_mcp.artifacts.create import (
     CreateArtifactInput,
     persist_artifact,
 )
-from mcp_artifact_gateway.config.settings import GatewayConfig, UpstreamConfig
-from mcp_artifact_gateway.constants import WORKSPACE_ID
-from mcp_artifact_gateway.db.conn import create_pool
-from mcp_artifact_gateway.db.migrate import apply_migrations
-from mcp_artifact_gateway.envelope.model import (
+from sidepouch_mcp.config.settings import GatewayConfig, UpstreamConfig
+from sidepouch_mcp.constants import WORKSPACE_ID
+from sidepouch_mcp.db.conn import create_pool
+from sidepouch_mcp.db.migrate import apply_migrations
+from sidepouch_mcp.envelope.model import (
     BinaryRefContentPart,
     Envelope,
     JsonContentPart,
 )
-from mcp_artifact_gateway.jobs.hard_delete import run_hard_delete_batch
-from mcp_artifact_gateway.mcp.server import GatewayServer
-from mcp_artifact_gateway.mcp.upstream import (
+from sidepouch_mcp.jobs.hard_delete import run_hard_delete_batch
+from sidepouch_mcp.mcp.server import GatewayServer
+from sidepouch_mcp.mcp.upstream import (
     UpstreamInstance,
     UpstreamToolSchema,
 )
 
-_POSTGRES_DSN_ENV = "MCP_GATEWAY_TEST_POSTGRES_DSN"
+_POSTGRES_DSN_ENV = "SIDEPOUCH_MCP_TEST_POSTGRES_DSN"
 
 
 def _integration_config(tmp_path: Path) -> GatewayConfig:
@@ -45,7 +45,7 @@ def _migrations_dir() -> Path:
     return (
         Path(__file__).resolve().parents[2]
         / "src"
-        / "mcp_artifact_gateway"
+        / "sidepouch_mcp"
         / "db"
         / "migrations"
     )
@@ -177,7 +177,7 @@ def test_mirrored_tool_flow_persists_artifact_with_real_postgres(
             }
 
         monkeypatch.setattr(
-            "mcp_artifact_gateway.mcp.server.call_upstream_tool", _fake_call
+            "sidepouch_mcp.mcp.server.call_upstream_tool", _fake_call
         )
 
         session_id = f"sess_int_{uuid.uuid4().hex}"

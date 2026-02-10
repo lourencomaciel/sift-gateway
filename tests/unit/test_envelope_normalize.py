@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from mcp_artifact_gateway.envelope.model import BinaryRefContentPart
-from mcp_artifact_gateway.envelope.normalize import (
+from sidepouch_mcp.envelope.model import BinaryRefContentPart
+from sidepouch_mcp.envelope.normalize import (
     normalize_envelope,
     strip_reserved_args,
 )

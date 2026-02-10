@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from mcp_artifact_gateway.query.where_dsl import (
+from sidepouch_mcp.query.where_dsl import (
     WhereComputeLimitExceededError,
     WhereDslError,
     canonicalize_where_ast,

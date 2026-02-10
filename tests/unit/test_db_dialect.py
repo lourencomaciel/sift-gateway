@@ -6,8 +6,8 @@ import json
 
 import pytest
 
-from mcp_artifact_gateway.db.backend import Dialect
-from mcp_artifact_gateway.db.dialect import (
+from sidepouch_mcp.db.backend import Dialect
+from sidepouch_mcp.db.dialect import (
     adapt_params,
     expand_any_clause,
     rewrite_now,

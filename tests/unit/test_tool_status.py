@@ -4,15 +4,15 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from mcp_artifact_gateway.config.settings import GatewayConfig
-from mcp_artifact_gateway.constants import (
+from sidepouch_mcp.config.settings import GatewayConfig
+from sidepouch_mcp.constants import (
     CANONICALIZER_VERSION,
     CURSOR_VERSION,
     MAPPER_VERSION,
     PRNG_VERSION,
     TRAVERSAL_CONTRACT_VERSION,
 )
-from mcp_artifact_gateway.tools.status import (
+from sidepouch_mcp.tools.status import (
     build_status_response,
     build_status_response_with_runtime,
     probe_db,

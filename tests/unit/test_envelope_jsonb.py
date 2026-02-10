@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from mcp_artifact_gateway.envelope.jsonb import envelope_to_jsonb
-from mcp_artifact_gateway.envelope.model import Envelope, JsonContentPart
+from sidepouch_mcp.envelope.jsonb import envelope_to_jsonb
+from sidepouch_mcp.envelope.model import Envelope, JsonContentPart
 
 
 def _sample_envelope() -> Envelope:

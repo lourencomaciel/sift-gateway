@@ -8,7 +8,7 @@ from typing import Any
 
 import pytest
 
-from mcp_artifact_gateway.artifacts.create import (
+from sidepouch_mcp.artifacts.create import (
     INSERT_ARTIFACT_SQL,
     INSERT_PAYLOAD_BINARY_REF_SQL,
     UPSERT_ARTIFACT_REF_SQL,
@@ -19,26 +19,26 @@ from mcp_artifact_gateway.artifacts.create import (
     persist_artifact,
     prepare_envelope_storage,
 )
-from mcp_artifact_gateway.canon.rfc8785 import canonical_bytes
-from mcp_artifact_gateway.config.settings import (
+from sidepouch_mcp.canon.rfc8785 import canonical_bytes
+from sidepouch_mcp.config.settings import (
     EnvelopeJsonbMode,
     GatewayConfig,
 )
-from mcp_artifact_gateway.constants import (
+from sidepouch_mcp.constants import (
     ARTIFACT_ID_PREFIX,
     CANONICALIZER_VERSION,
     MAPPER_VERSION,
     WORKSPACE_ID,
 )
-from mcp_artifact_gateway.envelope.model import (
+from sidepouch_mcp.envelope.model import (
     BinaryRefContentPart,
     Envelope,
     ErrorBlock,
     JsonContentPart,
     TextContentPart,
 )
-from mcp_artifact_gateway.obs.metrics import GatewayMetrics, counter_value
-from mcp_artifact_gateway.util.hashing import sha256_hex
+from sidepouch_mcp.obs.metrics import GatewayMetrics, counter_value
+from sidepouch_mcp.util.hashing import sha256_hex
 
 
 # ---------------------------------------------------------------------------

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 
-from mcp_artifact_gateway.util.hashing import (
+from sidepouch_mcp.util.hashing import (
     advisory_lock_keys,
     binary_hash,
     blob_id,

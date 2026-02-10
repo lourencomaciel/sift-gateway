@@ -2,14 +2,14 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from mcp_artifact_gateway.jobs.reconcile_fs import (
+from sidepouch_mcp.jobs.reconcile_fs import (
     find_missing,
     find_orphans,
     remove_orphan_files,
     run_reconcile,
     scan_blob_directory,
 )
-from mcp_artifact_gateway.obs.metrics import GatewayMetrics, counter_value
+from sidepouch_mcp.obs.metrics import GatewayMetrics, counter_value
 
 
 def _create_blob_tree(base: Path, entries: dict[str, bytes]) -> None:
