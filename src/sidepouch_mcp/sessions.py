@@ -192,6 +192,9 @@ def batch_upsert_artifact_refs(
 ) -> bool:
     """Upsert multiple artifact_refs rows in a single query.
 
+    Uses Postgres ``unnest`` for batch insert when available,
+    falling back to individual inserts for SQLite.
+
     Args:
         conn: Database connection with cursor support.
         session_id: Unique session identifier.
@@ -202,11 +205,22 @@ def batch_upsert_artifact_refs(
     """
     if not artifact_ids:
         return False
-    with conn.cursor() as cur:
-        cur.execute(
-            _BATCH_UPSERT_ARTIFACT_REFS_SQL,
-            (WORKSPACE_ID, session_id, artifact_ids),
-        )
+
+    from sidepouch_mcp.db.backend import _SqliteConnectionProxy
+
+    if isinstance(conn, _SqliteConnectionProxy):
+        with conn.cursor() as cur:
+            for aid in artifact_ids:
+                cur.execute(
+                    _UPSERT_ARTIFACT_REF_SQL,
+                    (WORKSPACE_ID, session_id, aid),
+                )
+    else:
+        with conn.cursor() as cur:
+            cur.execute(
+                _BATCH_UPSERT_ARTIFACT_REFS_SQL,
+                (WORKSPACE_ID, session_id, artifact_ids),
+            )
     return True
 
 

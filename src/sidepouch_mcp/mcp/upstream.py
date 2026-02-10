@@ -14,10 +14,12 @@ Typical usage example::
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from typing import Any
 
 from fastmcp import Client
+from fastmcp.client.transports import StdioTransport
 
 from sidepouch_mcp.canon.rfc8785 import canonical_bytes
 from sidepouch_mcp.config.settings import UpstreamConfig
@@ -66,29 +68,27 @@ class UpstreamInstance:
         return self.config.prefix
 
 
-def _client_transport(config: UpstreamConfig) -> dict[str, Any]:
-    """Build canonical MCP client transport config for ``Client``.
+def _client_transport(config: UpstreamConfig) -> Any:
+    """Build a fastmcp client transport for ``Client``.
 
     Args:
         config: Upstream configuration with transport type and
             connection details.
 
     Returns:
-        Transport dict suitable for ``fastmcp.Client``.
+        A fastmcp transport object suitable for ``Client``.
     """
     if config.transport == "stdio":
-        return {
-            "command": config.command,
-            "args": list(config.args),
-            "env": dict(config.env),
-            "transport": "stdio",
-        }
+        merged_env: dict[str, str] | None = None
+        if config.env:
+            merged_env = {**os.environ, **config.env}
+        return StdioTransport(
+            command=config.command or "",
+            args=list(config.args),
+            env=merged_env,
+        )
 
-    return {
-        "url": config.url,
-        "headers": dict(config.headers),
-        "transport": "http",
-    }
+    return config.url or ""
 
 
 def _client_result_content(result: Any) -> list[dict[str, Any]]:

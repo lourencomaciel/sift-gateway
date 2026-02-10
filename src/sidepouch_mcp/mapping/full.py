@@ -183,8 +183,9 @@ def run_full_mapping(
 
     Discovery rules:
     - Array at root: single root at ``$`` with shape "array".
-    - Object at root: examine top-level keys for nested
-      arrays/objects, scored by size descending.
+    - Object at root: examine top-level keys and one level of
+      nesting for arrays/objects, scored by size descending.
+      JSON-encoded string values are resolved before inspection.
     - Scalar at root: return a single zero-score placeholder.
 
     Args:
@@ -195,6 +196,10 @@ def run_full_mapping(
         A list of up to max_roots RootInventory objects, each
         with exact counts and field type distributions.
     """
+    from sidepouch_mcp.mapping.json_strings import resolve_json_strings
+
+    json_value = resolve_json_strings(json_value)
+
     if isinstance(json_value, list):
         # Root-level array: single root at "$"
         root = _build_root_inventory(
@@ -214,6 +219,18 @@ def run_full_mapping(
                 root_path = f"${path_segment}"
                 score = _score_root(val)
                 candidates.append((score, key, root_path, val))
+
+                # One level deeper: discover arrays inside dict values
+                if isinstance(val, dict):
+                    for sub_key, sub_val in val.items():
+                        if isinstance(sub_val, (list, dict)):
+                            sub_segment = _normalize_path_segment(sub_key)
+                            sub_path = f"{root_path}{sub_segment}"
+                            sub_score = _score_root(sub_val)
+                            sub_sort_key = f"{key}.{sub_key}"
+                            candidates.append(
+                                (sub_score, sub_sort_key, sub_path, sub_val)
+                            )
 
         # Sort by score descending, then by key ascending for determinism
         candidates.sort(key=lambda c: (-c[0], c[1]))
