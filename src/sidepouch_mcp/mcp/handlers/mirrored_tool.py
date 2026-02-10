@@ -30,7 +30,7 @@ from sidepouch_mcp.cache.reuse import (
     acquire_advisory_lock_async,
     release_advisory_lock,
 )
-from sidepouch_mcp.constants import RESPONSE_TYPE_RESULT
+from sidepouch_mcp.constants import WORKSPACE_ID
 from sidepouch_mcp.envelope.model import Envelope
 from sidepouch_mcp.envelope.responses import (
     can_passthrough,
@@ -38,6 +38,11 @@ from sidepouch_mcp.envelope.responses import (
     gateway_tool_result,
 )
 from sidepouch_mcp.jobs.quota import QuotaBreaches, enforce_quota
+from sidepouch_mcp.mcp.handlers.common import (
+    ROOT_COLUMNS,
+    row_to_dict,
+    rows_to_dicts,
+)
 from sidepouch_mcp.mcp.mirror import (
     MirroredTool,
     extract_gateway_context,
@@ -47,6 +52,12 @@ from sidepouch_mcp.mcp.mirror import (
 from sidepouch_mcp.obs.logging import get_logger
 from sidepouch_mcp.request_identity import compute_request_identity
 from sidepouch_mcp.sessions import upsert_artifact_ref
+from sidepouch_mcp.tools.artifact_describe import (
+    FETCH_DESCRIBE_SQL,
+    FETCH_ROOTS_SQL,
+    build_describe_response,
+)
+from sidepouch_mcp.tools.usage_hint import build_usage_hint
 
 if TYPE_CHECKING:
     from sidepouch_mcp.mcp.server import GatewayServer
@@ -86,6 +97,98 @@ def _lookup_cache_mode(context: dict[str, Any] | None) -> str | None:
     if raw in {"allow", "fresh"}:
         return str(raw)
     return None
+
+
+_DESCRIBE_COLUMNS = [
+    "artifact_id",
+    "map_kind",
+    "map_status",
+    "mapper_version",
+    "map_budget_fingerprint",
+    "map_backend_id",
+    "prng_version",
+    "mapped_part_index",
+    "deleted_at",
+    "generation",
+]
+
+
+def _fetch_inline_describe(
+    connection: Any,
+    artifact_id: str,
+) -> tuple[dict[str, Any], str]:
+    """Fetch describe data and build a usage hint on a connection.
+
+    Queries the artifact and roots tables on the already-open
+    *connection* and returns the full describe dict plus a
+    heuristic usage hint string.  Falls back to a minimal
+    describe on any error so callers always get a result.
+
+    Args:
+        connection: Active database connection.
+        artifact_id: The artifact to describe.
+
+    Returns:
+        A ``(describe_dict, usage_hint)`` tuple.
+    """
+    try:
+        artifact_row = row_to_dict(
+            connection.execute(
+                FETCH_DESCRIBE_SQL,
+                (WORKSPACE_ID, artifact_id),
+            ).fetchone(),
+            _DESCRIBE_COLUMNS,
+        )
+        if artifact_row is None:
+            artifact_row = {
+                "artifact_id": artifact_id,
+                "map_kind": "none",
+                "map_status": "pending",
+            }
+        roots = rows_to_dicts(
+            connection.execute(
+                FETCH_ROOTS_SQL,
+                (WORKSPACE_ID, artifact_id),
+            ).fetchall(),
+            ROOT_COLUMNS,
+        )
+        describe = build_describe_response(artifact_row, roots)
+    except Exception:
+        get_logger(component="mcp.handlers").warning(
+            "inline describe fetch failed (best-effort)",
+            exc_info=True,
+        )
+        describe = build_describe_response(
+            {
+                "artifact_id": artifact_id,
+                "map_kind": "none",
+                "map_status": "pending",
+            },
+            [],
+        )
+    return describe, build_usage_hint(artifact_id, describe)
+
+
+def _minimal_describe(
+    artifact_id: str,
+) -> tuple[dict[str, Any], str]:
+    """Build a minimal describe for DB-less or error paths.
+
+    Args:
+        artifact_id: The artifact identifier.
+
+    Returns:
+        A ``(describe_dict, usage_hint)`` tuple with empty roots.
+    """
+    describe = build_describe_response(
+        {
+            "artifact_id": artifact_id,
+            "map_kind": "none",
+            "map_status": "pending",
+        },
+        [],
+    )
+    return describe, build_usage_hint(artifact_id, describe)
 
 
 async def _persist_async(
@@ -265,6 +368,7 @@ async def handle_mirrored_tool(
         handle = ctx._build_non_persisted_handle(
             input_data=_create_input(envelope)
         )
+        desc, hint = _minimal_describe(handle.artifact_id)
     else:
         # Phase 1: Cache check in a short-lived connection.
         # The advisory lock is transaction-scoped and released when this
@@ -313,18 +417,21 @@ async def handle_mirrored_tool(
                                     "artifact_ref upsert on cache hit failed",
                                     exc_info=True,
                                 )
-                            return {
-                                "type": RESPONSE_TYPE_RESULT,
-                                "artifact_id": reuse.artifact_id,
-                                "meta": {
-                                    "cache": {
-                                        "reused": True,
-                                        "reason": reuse.reason
-                                        or "request_key_match",
-                                        "request_key": identity.request_key,
-                                    },
+                            desc, hint = _fetch_inline_describe(
+                                connection,
+                                reuse.artifact_id,
+                            )
+                            return gateway_tool_result(
+                                artifact_id=reuse.artifact_id,
+                                cache_meta={
+                                    "reused": True,
+                                    "reason": reuse.reason
+                                    or "request_key_match",
+                                    "request_key": identity.request_key,
                                 },
-                            }
+                                describe=desc,
+                                usage_hint=hint,
+                            )
                         ctx._increment_metric("cache_misses")
                     finally:
                         release_advisory_lock(
@@ -487,6 +594,11 @@ async def handle_mirrored_tool(
                         "mapping failed (best-effort)",
                         exc_info=True,
                     )
+                # Phase 5: Inline describe — fetch roots on
+                # the same connection (2 indexed lookups).
+                desc, hint = _fetch_inline_describe(
+                    connection, handle.artifact_id
+                )
         except (_PG_OPERATIONAL_ERROR, _PG_INTERFACE_ERROR):
             ctx.db_ok = False
             return gateway_error(
@@ -506,4 +618,6 @@ async def handle_mirrored_tool(
             "reason": reuse.reason,
             "request_key": identity.request_key,
         },
+        describe=desc,
+        usage_hint=hint,
     )

@@ -9,7 +9,7 @@ SidePouch is a local, single-tenant MCP proxy that:
 1. Discovers tools exposed by upstream MCP servers (stdio or HTTP transport).
 2. Mirrors each tool as `{prefix}.{tool}` with identical schema — no injected fields.
 3. Intercepts every tool call, forwards it upstream, and wraps the result in a **durable artifact envelope** stored to Postgres and the local filesystem.
-4. Returns the result to the caller: small payloads are returned raw (**passthrough mode**); large payloads return a compact **handle** (artifact ID + cache metadata).
+4. Returns the result to the caller: small payloads are returned raw (**passthrough mode**); large payloads return a **handle** with artifact ID, inline describe (mapping metadata + discovered roots), and a usage hint.
 5. Generates a **deterministic inventory** (full or partial schema mapping) for each artifact's JSON payload.
 6. Provides bounded, deterministic **retrieval** tools (`artifact.get`, `artifact.select`, `artifact.describe`, `artifact.find`, `artifact.search`, `artifact.chain_pages`) with signed cursor pagination.
 
@@ -175,7 +175,7 @@ The gateway uses a two-tier response model based on payload size:
 | Payload size | Mode | LLM sees | Storage | Mapping |
 |---|---|---|---|---|
 | < `passthrough_max_bytes` (default 8192) | **passthrough** | Raw upstream result (transparent) | Async, best-effort | Skipped |
-| >= `passthrough_max_bytes` | **handle-only** | `artifact_id` + cache metadata | Sync | Yes |
+| >= `passthrough_max_bytes` | **handle-only** | `artifact_id` + cache metadata + inline describe + usage hint | Sync | Yes |
 
 ### 14.1 Passthrough mode
 
@@ -188,4 +188,10 @@ When the normalized envelope payload is smaller than `passthrough_max_bytes`, th
 
 ### 14.2 Handle-only mode
 
-Payloads at or above the passthrough threshold follow the existing handle-only path: the envelope is stored synchronously, the mapping pipeline runs (full or partial depending on payload size), and the caller receives a compact handle containing the `artifact_id` and cache metadata. The LLM uses retrieval tools (`artifact.get`, `artifact.select`, etc.) to access the stored content.
+Payloads at or above the passthrough threshold follow the handle-only path: the envelope is stored synchronously, the mapping pipeline runs (full or partial depending on payload size), and the caller receives a response containing:
+
+- **`artifact_id`** and **cache metadata** (reuse status, request key).
+- **`describe`**: inline mapping metadata and discovered roots (same data as `artifact.describe`), fetched on the same DB connection with no extra round-trip.
+- **`usage_hint`**: a heuristic natural language hint (no LLM) describing what the artifact contains, which fields are available, and which retrieval tool to call next (`artifact.select` for arrays, `artifact.get` for dicts).
+
+This eliminates the need for a separate `artifact.describe` call — the LLM can go directly from the tool response to `artifact.select` or `artifact.find`. The `artifact.describe` tool remains available for backwards compatibility and for inspecting artifacts after the initial response.
