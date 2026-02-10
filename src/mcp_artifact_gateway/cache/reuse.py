@@ -146,7 +146,8 @@ def try_acquire_advisory_lock(connection: Any, *, request_key: str) -> bool:
 def release_advisory_lock(connection: Any, *, request_key: str) -> None:
     """Release advisory lock for request_key.
 
-    For SQLite: releases the per-key threading.Lock.
+    For SQLite: releases and removes the per-key threading.Lock so the
+    dict does not grow unbounded over the process lifetime.
     For Postgres: no-op (advisory locks are transaction-scoped).
     """
     import sqlite3
@@ -154,7 +155,7 @@ def release_advisory_lock(connection: Any, *, request_key: str) -> None:
     if not isinstance(connection, sqlite3.Connection):
         return
     with _sqlite_guard:
-        lock = _sqlite_key_locks.get(request_key)
+        lock = _sqlite_key_locks.pop(request_key, None)
     if lock is not None:
         try:
             lock.release()

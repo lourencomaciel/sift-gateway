@@ -514,3 +514,45 @@ def test_sqlite_lock_acquire_with_timeout_concurrent(monkeypatch) -> None:
     assert acquired is True
     release_advisory_lock(conn, request_key=key)
     conn.close()
+
+
+def test_sqlite_lock_release_removes_from_dict() -> None:
+    """release_advisory_lock removes the key from _sqlite_key_locks (no memory leak)."""
+    import sqlite3
+
+    from mcp_artifact_gateway.cache import reuse
+    from mcp_artifact_gateway.cache.reuse import release_advisory_lock
+
+    conn = sqlite3.connect(":memory:")
+    key = "rk_leak_check"
+
+    assert try_acquire_advisory_lock(conn, request_key=key) is True
+    assert key in reuse._sqlite_key_locks
+
+    release_advisory_lock(conn, request_key=key)
+    assert key not in reuse._sqlite_key_locks
+
+    conn.close()
+
+
+def test_sqlite_lock_dict_does_not_grow_after_release_cycle() -> None:
+    """Acquire/release cycles for many unique keys should not accumulate entries."""
+    import sqlite3
+
+    from mcp_artifact_gateway.cache import reuse
+    from mcp_artifact_gateway.cache.reuse import release_advisory_lock
+
+    conn = sqlite3.connect(":memory:")
+
+    # Record baseline size (other tests may have left entries)
+    baseline = len(reuse._sqlite_key_locks)
+
+    for i in range(100):
+        key = f"rk_growth_{i}"
+        assert try_acquire_advisory_lock(conn, request_key=key) is True
+        release_advisory_lock(conn, request_key=key)
+
+    # After all release cycles, dict should be back to baseline
+    assert len(reuse._sqlite_key_locks) == baseline
+
+    conn.close()
