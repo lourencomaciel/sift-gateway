@@ -51,7 +51,7 @@ Design invariants (from v1.9 spec):
 1. Install dependencies:
 
 ```bash
-uv sync --all-extras
+uv sync
 ```
 
 2. Run the gateway (uses SQLite by default — no external dependencies):
@@ -66,14 +66,20 @@ That's it. The default SQLite backend stores data at `.mcp_gateway/state/gateway
 
 For production deployments or when you need concurrent multi-process access:
 
-1. Copy environment template and set the backend:
+1. Install with the Postgres extra:
+
+```bash
+uv sync --extra postgres
+```
+
+2. Copy environment template and set the backend:
 
 ```bash
 cp .env.example .env
 # Edit .env: set MCP_GATEWAY_DB_BACKEND=postgres
 ```
 
-2. Start Postgres:
+3. Start Postgres:
 
 ```bash
 docker compose up -d
@@ -90,13 +96,13 @@ If the container already existed before the init script mount, recreate it:
 docker compose down -v && docker compose up -d
 ```
 
-3. Run startup checks:
+4. Run startup checks:
 
 ```bash
 uv run mcp-gateway --check
 ```
 
-4. Run the gateway:
+5. Run the gateway:
 
 ```bash
 uv run mcp-gateway

@@ -991,7 +991,6 @@ dependencies = [
     { name = "fastmcp" },
     { name = "ijson" },
     { name = "orjson" },
-    { name = "psycopg", extra = ["binary", "pool"] },
     { name = "pydantic" },
     { name = "pydantic-settings" },
     { name = "structlog" },
@@ -1006,6 +1005,9 @@ dev = [
     { name = "pytest-cov" },
     { name = "ruff" },
 ]
+postgres = [
+    { name = "psycopg", extra = ["binary", "pool"] },
+]
 
 [package.metadata]
 requires-dist = [
@@ -1013,7 +1015,7 @@ requires-dist = [
     { name = "ijson", specifier = ">=3.3.0" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.13.0" },
     { name = "orjson", specifier = ">=3.10.0" },
-    { name = "psycopg", extras = ["binary", "pool"], specifier = ">=3.2.0" },
+    { name = "psycopg", extras = ["binary", "pool"], marker = "extra == 'postgres'", specifier = ">=3.2.0" },
     { name = "pydantic", specifier = ">=2.0.0" },
     { name = "pydantic-settings", specifier = ">=2.0.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0.0" },
@@ -1023,7 +1025,7 @@ requires-dist = [
     { name = "structlog", specifier = ">=24.0.0" },
     { name = "zstandard", specifier = ">=0.23.0" },
 ]
-provides-extras = ["dev"]
+provides-extras = ["postgres", "dev"]
 
 [[package]]
 name = "mdurl"
