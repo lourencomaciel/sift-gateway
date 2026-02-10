@@ -19,8 +19,8 @@ dependencies = [
     # Config & model validation
     "pydantic>=2.0.0",
     "pydantic-settings>=2.0.0",
-    # Fast JSON (optional, used for non-canonical paths)
-    "orjson>=3.10.0",
+    # Prometheus metrics
+    "prometheus_client>=0.20.0",
 ]
 
 [project.optional-dependencies]
@@ -53,3 +53,7 @@ line-length = 100
 [tool.mypy]
 python_version = "3.11"
 strict = true
+
+[[tool.mypy.overrides]]
+module = "prometheus_client.*"
+ignore_missing_imports = true

@@ -35,6 +35,7 @@ def test_sha256_trunc_requires_positive_length() -> None:
 
 # ---- binary_hash ----
 
+
 def test_binary_hash_returns_sha256_hex() -> None:
     data = b"hello world"
     expected = hashlib.sha256(data).hexdigest()
@@ -47,6 +48,7 @@ def test_binary_hash_empty_bytes() -> None:
 
 
 # ---- blob_id ----
+
 
 def test_blob_id_prefix_and_truncation() -> None:
     hex_str = "a" * 64
@@ -62,6 +64,7 @@ def test_blob_id_short_hash() -> None:
 
 
 # ---- advisory_lock_keys ----
+
 
 def test_advisory_lock_keys_returns_two_ints() -> None:
     k1, k2 = advisory_lock_keys("some_request_key")
@@ -93,6 +96,7 @@ def test_advisory_lock_keys_handles_high_bit() -> None:
 
 # ---- payload_hash_full ----
 
+
 def test_payload_hash_full_is_sha256() -> None:
     data = b'{"type":"mcp_envelope"}'
     expected = hashlib.sha256(data).hexdigest()
@@ -101,6 +105,7 @@ def test_payload_hash_full_is_sha256() -> None:
 
 
 # ---- upstream_instance_id ----
+
 
 def test_upstream_instance_id_is_32_chars() -> None:
     data = b"prefix:github|transport:stdio|command:/usr/bin/gh"
@@ -111,6 +116,7 @@ def test_upstream_instance_id_is_32_chars() -> None:
 
 
 # ---- request_key ----
+
 
 def test_request_key_deterministic() -> None:
     result1 = request_key("uid123", "github", "list_repos", b'{"org":"test"}')
@@ -126,12 +132,13 @@ def test_request_key_differs_with_different_args() -> None:
 
 
 def test_request_key_differs_with_different_tool() -> None:
-    r1 = request_key("uid", "prefix", "tool_a", b'{}')
-    r2 = request_key("uid", "prefix", "tool_b", b'{}')
+    r1 = request_key("uid", "prefix", "tool_a", b"{}")
+    r2 = request_key("uid", "prefix", "tool_b", b"{}")
     assert r1 != r2
 
 
 # ---- map_budget_fingerprint ----
+
 
 def test_map_budget_fingerprint_deterministic() -> None:
     kwargs = {
@@ -175,6 +182,7 @@ def test_map_budget_fingerprint_canonical_json_determinism() -> None:
 
 
 # ---- sample_set_hash ----
+
 
 def test_sample_set_hash_deterministic() -> None:
     kwargs = {

@@ -29,8 +29,7 @@ def row_to_dict(
             len(columns),
         )
     return {
-        column: row[index] if index < len(row) else None
-        for index, column in enumerate(columns)
+        column: row[index] if index < len(row) else None for index, column in enumerate(columns)
     }
 
 

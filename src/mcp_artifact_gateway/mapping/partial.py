@@ -1,4 +1,5 @@
 """Partial mapping: streaming JSON analysis with budgets and reservoir sampling."""
+
 from __future__ import annotations
 
 import heapq
@@ -25,6 +26,7 @@ from mcp_artifact_gateway.util.hashing import sha256_hex
 # ---------------------------------------------------------------------------
 # Configuration dataclasses
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class PartialMappingBudgets:
@@ -64,6 +66,7 @@ class StreamingState:
 # ---------------------------------------------------------------------------
 # Deterministic PRNG: Xoshiro256** variant
 # ---------------------------------------------------------------------------
+
 
 class DeterministicPRNG:
     """Simple seeded PRNG for reservoir sampling. Version: prng_xoshiro256ss_v1.
@@ -127,6 +130,7 @@ class DeterministicPRNG:
 # Backend and fingerprint computation
 # ---------------------------------------------------------------------------
 
+
 def compute_map_backend_id() -> str:
     """Compute map_backend_id: sha256("py="+py_ver+"|ijson="+backend+"|ijson_ver="+ver)[:16]."""
     py_ver = f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
@@ -166,6 +170,7 @@ def compute_map_budget_fingerprint(
 # ---------------------------------------------------------------------------
 # Reservoir sampling helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_reservoir_seed(
     payload_hash_full: str,
@@ -212,6 +217,7 @@ class _RootState:
 # JSON type name helper
 # ---------------------------------------------------------------------------
 
+
 def _json_type_name(value: Any) -> str:
     """Return a JSON-style type name for a Python value."""
     if value is None:
@@ -245,6 +251,7 @@ def _update_field_types(
 # Byte-counted stream wrapper
 # ---------------------------------------------------------------------------
 
+
 class _CountingStream:
     """Wrapper around a binary stream that counts bytes read."""
 
@@ -261,6 +268,7 @@ class _CountingStream:
 # ---------------------------------------------------------------------------
 # Streaming partial mapping implementation
 # ---------------------------------------------------------------------------
+
 
 def run_partial_mapping(
     stream: BinaryIO,
@@ -310,11 +318,7 @@ def run_partial_mapping(
                 break
 
             # Root discovery: look for arrays at configurable depth
-            if (
-                not in_element
-                and active_root is None
-                and depth <= budgets.max_root_discovery_depth
-            ):
+            if not in_element and active_root is None and depth <= budgets.max_root_discovery_depth:
                 if event == "start_array":
                     root_path = _prefix_to_jsonpath(prefix)
                     root_key = prefix if prefix else "$"
@@ -393,9 +397,7 @@ def run_partial_mapping(
                         if element_depth == 0:
                             # Element complete
                             record = stack[0] if stack else {}
-                            _finalize_element(
-                                root_state, record, state, budgets
-                            )
+                            _finalize_element(root_state, record, state, budgets)
                             in_element = False
                             current_elements.pop(active_root, None)
                             current_element_keys.pop(active_root, None)
@@ -418,9 +420,7 @@ def run_partial_mapping(
                             # Element complete (array element)
                             record_val = stack[0] if stack else []
                             if isinstance(record_val, dict):
-                                _finalize_element(
-                                    root_state, record_val, state, budgets
-                                )
+                                _finalize_element(root_state, record_val, state, budgets)
                             else:
                                 state.elements_recognized += 1
                                 root_state.elements_seen += 1
@@ -532,6 +532,7 @@ def run_partial_mapping(
 # Internal helpers
 # ---------------------------------------------------------------------------
 
+
 def _prefix_to_jsonpath(prefix: str) -> str:
     """Convert an ijson prefix string to a canonical JSONPath."""
     if not prefix:
@@ -545,6 +546,7 @@ def _prefix_to_jsonpath(prefix: str) -> str:
         else:
             # Use dot notation for valid identifiers
             import re
+
             if re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", segment):
                 parts.append(f".{segment}")
             else:

@@ -46,8 +46,7 @@ _MANY_USERS = {
 
 _LARGE_JSON = {
     "events": [
-        {"id": i, "type": "click", "ts": f"2025-01-{i:02d}T00:00:00Z"}
-        for i in range(1, 51)
+        {"id": i, "type": "click", "ts": f"2025-01-{i:02d}T00:00:00Z"} for i in range(1, 51)
     ],
 }
 
@@ -90,7 +89,9 @@ _UPSTREAM_DISPATCH: dict[str, tuple[str, dict[str, Any]]] = {
     "get_report": (
         "Return text report",
         {
-            "content": [{"type": "text", "text": "Monthly report summary: all systems operational."}],
+            "content": [
+                {"type": "text", "text": "Monthly report summary: all systems operational."}
+            ],
             "structuredContent": None,
             "isError": False,
             "meta": {},
@@ -128,8 +129,7 @@ _UPSTREAM_DISPATCH: dict[str, tuple[str, dict[str, Any]]] = {
             "content": [],
             "structuredContent": {
                 "records": [
-                    {"id": i, "value": f"oversize_item_{i}", "data": "x" * 20}
-                    for i in range(10)
+                    {"id": i, "value": f"oversize_item_{i}", "data": "x" * 20} for i in range(10)
                 ],
                 "oversize_marker": True,
             },
@@ -164,11 +164,7 @@ async def _stub_upstream(
 
 def _migrations_dir() -> Path:
     return (
-        Path(__file__).resolve().parents[2]
-        / "src"
-        / "mcp_artifact_gateway"
-        / "db"
-        / "migrations"
+        Path(__file__).resolve().parents[2] / "src" / "mcp_artifact_gateway" / "db" / "migrations"
     )
 
 
@@ -489,7 +485,14 @@ def test_e2e_binary_payload_artifact(e2e_env):
             VALUES (%s, %s, %s, %s, %s, %s)
             ON CONFLICT DO NOTHING
             """,
-            (WORKSPACE_ID, _BINARY_HASH, _BINARY_BLOB_ID, 4096, "application/octet-stream", "/tmp/fake"),
+            (
+                WORKSPACE_ID,
+                _BINARY_HASH,
+                _BINARY_BLOB_ID,
+                4096,
+                "application/octet-stream",
+                "/tmp/fake",
+            ),
         )
         conn.commit()
 
@@ -1088,9 +1091,7 @@ def test_e2e_generation_safe_mapping_race(e2e_env):
     )
 
     with pool.connection() as conn:
-        persisted = persist_mapping_result(
-            conn, worker_ctx=stale_ctx, result=fake_result
-        )
+        persisted = persist_mapping_result(conn, worker_ctx=stale_ctx, result=fake_result)
         assert persisted is False
 
     # Verify artifact still has stale status (not overwritten)

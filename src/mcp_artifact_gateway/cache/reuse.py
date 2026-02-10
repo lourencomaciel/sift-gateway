@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import threading as _threading
 import time
 from dataclasses import dataclass
 from typing import Any
@@ -10,6 +11,12 @@ from typing import Any
 from mcp_artifact_gateway.db.protocols import increment_metric
 from mcp_artifact_gateway.obs.logging import LogEvents, get_logger
 from mcp_artifact_gateway.util.hashing import advisory_lock_keys
+
+# Per-key locks for SQLite advisory lock emulation.
+# Postgres uses pg_try_advisory_xact_lock (transaction-scoped).
+# SQLite has no equivalent, so we emulate with threading.Lock per request_key.
+_sqlite_key_locks: dict[str, _threading.Lock] = {}
+_sqlite_guard = _threading.Lock()
 
 
 @dataclass(frozen=True)
@@ -121,15 +128,38 @@ def _lock_result(row: tuple[object, ...] | None) -> bool:
 def try_acquire_advisory_lock(connection: Any, *, request_key: str) -> bool:
     """Try to acquire advisory xact lock for request_key.
 
-    Returns True immediately on SQLite (advisory locks not supported).
+    For SQLite: acquires a per-key threading.Lock (non-blocking).
+    For Postgres: uses pg_try_advisory_xact_lock.
     """
     import sqlite3
 
     if isinstance(connection, sqlite3.Connection):
-        return True
+        with _sqlite_guard:
+            lock = _sqlite_key_locks.setdefault(request_key, _threading.Lock())
+        return lock.acquire(blocking=False)
+
     key_a, key_b = advisory_lock_keys(request_key)
     row = connection.execute(ACQUIRE_ADVISORY_LOCK_SQL, (key_a, key_b)).fetchone()
     return _lock_result(row)
+
+
+def release_advisory_lock(connection: Any, *, request_key: str) -> None:
+    """Release advisory lock for request_key.
+
+    For SQLite: releases the per-key threading.Lock.
+    For Postgres: no-op (advisory locks are transaction-scoped).
+    """
+    import sqlite3
+
+    if not isinstance(connection, sqlite3.Connection):
+        return
+    with _sqlite_guard:
+        lock = _sqlite_key_locks.get(request_key)
+    if lock is not None:
+        try:
+            lock.release()
+        except RuntimeError:
+            pass  # lock was not held
 
 
 def acquire_advisory_lock(

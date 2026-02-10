@@ -34,58 +34,76 @@ def test_gateway_tool_result_no_cache_meta() -> None:
 
 
 def test_can_passthrough_small_payload_allowed() -> None:
-    assert can_passthrough(
-        payload_total_bytes=100,
-        contains_binary_refs=False,
-        passthrough_allowed=True,
-        max_bytes=1000,
-    ) is True
+    assert (
+        can_passthrough(
+            payload_total_bytes=100,
+            contains_binary_refs=False,
+            passthrough_allowed=True,
+            max_bytes=1000,
+        )
+        is True
+    )
 
 
 def test_can_passthrough_large_payload() -> None:
-    assert can_passthrough(
-        payload_total_bytes=2000,
-        contains_binary_refs=False,
-        passthrough_allowed=True,
-        max_bytes=1000,
-    ) is False
+    assert (
+        can_passthrough(
+            payload_total_bytes=2000,
+            contains_binary_refs=False,
+            passthrough_allowed=True,
+            max_bytes=1000,
+        )
+        is False
+    )
 
 
 def test_can_passthrough_binary_refs() -> None:
-    assert can_passthrough(
-        payload_total_bytes=100,
-        contains_binary_refs=True,
-        passthrough_allowed=True,
-        max_bytes=1000,
-    ) is False
+    assert (
+        can_passthrough(
+            payload_total_bytes=100,
+            contains_binary_refs=True,
+            passthrough_allowed=True,
+            max_bytes=1000,
+        )
+        is False
+    )
 
 
 def test_can_passthrough_not_allowed() -> None:
-    assert can_passthrough(
-        payload_total_bytes=100,
-        contains_binary_refs=False,
-        passthrough_allowed=False,
-        max_bytes=1000,
-    ) is False
+    assert (
+        can_passthrough(
+            payload_total_bytes=100,
+            contains_binary_refs=False,
+            passthrough_allowed=False,
+            max_bytes=1000,
+        )
+        is False
+    )
 
 
 def test_can_passthrough_max_bytes_zero_disabled() -> None:
-    assert can_passthrough(
-        payload_total_bytes=100,
-        contains_binary_refs=False,
-        passthrough_allowed=True,
-        max_bytes=0,
-    ) is False
+    assert (
+        can_passthrough(
+            payload_total_bytes=100,
+            contains_binary_refs=False,
+            passthrough_allowed=True,
+            max_bytes=0,
+        )
+        is False
+    )
 
 
 def test_can_passthrough_exactly_at_boundary() -> None:
     """payload_total_bytes == max_bytes is False (strict less-than)."""
-    assert can_passthrough(
-        payload_total_bytes=1000,
-        contains_binary_refs=False,
-        passthrough_allowed=True,
-        max_bytes=1000,
-    ) is False
+    assert (
+        can_passthrough(
+            payload_total_bytes=1000,
+            contains_binary_refs=False,
+            passthrough_allowed=True,
+            max_bytes=1000,
+        )
+        is False
+    )
 
 
 # -- gateway_error (unchanged) --

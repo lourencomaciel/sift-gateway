@@ -1,4 +1,5 @@
 """Quota enforcement: check storage caps and prune if breached."""
+
 from __future__ import annotations
 
 import datetime as dt
@@ -18,6 +19,7 @@ from mcp_artifact_gateway.obs.logging import LogEvents, get_logger
 @dataclass(frozen=True)
 class StorageUsage:
     """Current storage usage for a workspace."""
+
     binary_blob_bytes: int
     payload_total_bytes: int
     total_storage_bytes: int  # payload_json_bytes + binary_blob_bytes
@@ -26,6 +28,7 @@ class StorageUsage:
 @dataclass(frozen=True)
 class QuotaBreaches:
     """Which storage caps are exceeded."""
+
     binary_blob_exceeded: bool
     payload_total_exceeded: bool
     total_storage_exceeded: bool
@@ -33,15 +36,14 @@ class QuotaBreaches:
     @property
     def any_exceeded(self) -> bool:
         return (
-            self.binary_blob_exceeded
-            or self.payload_total_exceeded
-            or self.total_storage_exceeded
+            self.binary_blob_exceeded or self.payload_total_exceeded or self.total_storage_exceeded
         )
 
 
 @dataclass(frozen=True)
 class QuotaEnforcementResult:
     """Result of a quota enforcement pass."""
+
     usage_before: StorageUsage
     usage_after: StorageUsage | None
     breaches_before: QuotaBreaches
@@ -138,8 +140,7 @@ def check_breaches(
 def _hard_delete_cutoff_timestamp(hard_delete_grace_seconds: int) -> str:
     """Compute hard-delete cutoff timestamp for the current round."""
     return (
-        dt.datetime.now(dt.timezone.utc)
-        - dt.timedelta(seconds=hard_delete_grace_seconds)
+        dt.datetime.now(dt.timezone.utc) - dt.timedelta(seconds=hard_delete_grace_seconds)
     ).isoformat()
 
 
@@ -285,9 +286,7 @@ def enforce_quota(
 
             # Recompute cutoff per round so hard-delete can consider artifacts
             # soft-deleted in this round when grace is 0.
-            grace_cutoff_timestamp = _hard_delete_cutoff_timestamp(
-                hard_delete_grace_seconds
-            )
+            grace_cutoff_timestamp = _hard_delete_cutoff_timestamp(hard_delete_grace_seconds)
             hard_result = run_hard_delete_batch(
                 connection,
                 grace_period_timestamp=grace_cutoff_timestamp,

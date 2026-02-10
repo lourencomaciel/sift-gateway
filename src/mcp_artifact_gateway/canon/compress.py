@@ -51,4 +51,3 @@ def decompress_bytes(data: bytes, encoding: str) -> bytes:
 
     msg = f"unsupported encoding: {encoding}"
     raise ValueError(msg)
-

@@ -13,6 +13,7 @@ from mcp_artifact_gateway.util.hashing import sha256_hex
 
 # ---- compute_request_identity ----
 
+
 def test_request_identity_deterministic() -> None:
     ri1 = compute_request_identity(
         upstream_instance_id="inst_abc",
@@ -128,6 +129,7 @@ def test_request_identity_preserves_metadata() -> None:
 
 # ---- compute_dedupe_hash ----
 
+
 def test_dedupe_hash_no_exclusions() -> None:
     args_bytes = canonical_bytes({"query": "test", "repo": "acme/app"})
     h = compute_dedupe_hash(args_bytes)
@@ -160,6 +162,7 @@ def test_dedupe_hash_missing_exclusion_key_is_noop() -> None:
 
 
 # ---- Decimal safety in dedupe hash ----
+
 
 def test_dedupe_hash_preserves_decimal_through_exclusion() -> None:
     """Dedupe hash with exclusions must preserve Decimal values (no float drift).

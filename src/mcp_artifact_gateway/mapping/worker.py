@@ -1,4 +1,5 @@
 """Mapping worker: schedules and executes mapping with race-safe writes."""
+
 from __future__ import annotations
 
 from collections import defaultdict
@@ -13,7 +14,12 @@ except ImportError:  # SQLite-only install — no psycopg
 
 from mcp_artifact_gateway.constants import MAPPER_VERSION, WORKSPACE_ID
 from mcp_artifact_gateway.db.protocols import ConnectionLike, safe_rollback
-from mcp_artifact_gateway.mapping.runner import MappingInput, MappingResult, SampleRecord, run_mapping
+from mcp_artifact_gateway.mapping.runner import (
+    MappingInput,
+    MappingResult,
+    SampleRecord,
+    run_mapping,
+)
 from mcp_artifact_gateway.obs.logging import LogEvents, get_logger
 
 
@@ -29,8 +35,8 @@ class WorkerContext:
     """Context for a mapping worker run."""
 
     artifact_id: str
-    generation: int       # snapshot at start
-    map_status: str       # must be "pending" or "stale"
+    generation: int  # snapshot at start
+    map_status: str  # must be "pending" or "stale"
 
 
 # SQL for conditional mapping update (race-safe)
@@ -348,25 +354,24 @@ def _record_mapping_metrics(
 
     if result.map_status == "failed":
         counter = getattr(metrics, "mapping_failed_count", None)
-        increment = getattr(counter, "increment", None)
+        increment = getattr(counter, "inc", None)
         if callable(increment):
             increment()
     elif result.map_kind == "full":
         counter = getattr(metrics, "mapping_full_count", None)
-        increment = getattr(counter, "increment", None)
+        increment = getattr(counter, "inc", None)
         if callable(increment):
             increment()
     elif result.map_kind == "partial":
         counter = getattr(metrics, "mapping_partial_count", None)
-        increment = getattr(counter, "increment", None)
+        increment = getattr(counter, "inc", None)
         if callable(increment):
             increment()
 
     if result.map_kind != "partial":
         return
     stop_reasons = {
-        root.stop_reason if isinstance(root.stop_reason, str) else "none"
-        for root in result.roots
+        root.stop_reason if isinstance(root.stop_reason, str) else "none" for root in result.roots
     }
     if not stop_reasons:
         stop_reasons = {"none"}

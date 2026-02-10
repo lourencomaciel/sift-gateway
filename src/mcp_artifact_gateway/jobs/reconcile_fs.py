@@ -1,4 +1,5 @@
 """Filesystem reconciliation: detect and optionally remove orphan files."""
+
 from __future__ import annotations
 
 import os
@@ -13,10 +14,11 @@ from mcp_artifact_gateway.obs.logging import LogEvents, get_logger
 @dataclass(frozen=True)
 class ReconcileResult:
     """Result of filesystem reconciliation."""
-    orphan_files: list[str]        # paths not in DB
-    missing_files: list[str]       # DB references without files
+
+    orphan_files: list[str]  # paths not in DB
+    missing_files: list[str]  # DB references without files
     orphan_bytes: int
-    removed_count: int             # only if remove=True
+    removed_count: int  # only if remove=True
 
 
 # SQL to get all known blob paths
@@ -58,11 +60,7 @@ def find_missing(
     db_paths: dict[str, str],
 ) -> list[str]:
     """Find DB references with missing files."""
-    return [
-        binary_hash
-        for binary_hash, fs_path in db_paths.items()
-        if not Path(fs_path).exists()
-    ]
+    return [binary_hash for binary_hash, fs_path in db_paths.items() if not Path(fs_path).exists()]
 
 
 def remove_orphan_files(orphans: list[Path]) -> int:
@@ -87,7 +85,7 @@ def _increment_metric(metrics: Any | None, attr: str, amount: int = 1) -> None:
     if metrics is None:
         return
     counter = getattr(metrics, attr, None)
-    increment = getattr(counter, "increment", None)
+    increment = getattr(counter, "inc", None)
     if callable(increment):
         increment(amount)
 

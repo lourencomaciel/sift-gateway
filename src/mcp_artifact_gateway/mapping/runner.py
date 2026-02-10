@@ -1,4 +1,5 @@
 """Mapping orchestrator: picks JSON part, decides full vs partial."""
+
 from __future__ import annotations
 
 import json
@@ -249,9 +250,7 @@ def run_mapping(mapping_input: MappingInput) -> MappingResult:
                 prng_version=PRNG_VERSION,
                 map_error="selected JSON part is missing structured value for partial mapping",
             )
-        serialized_bytes = json.dumps(
-            value, separators=(",", ":"), sort_keys=True
-        ).encode("utf-8")
+        serialized_bytes = json.dumps(value, separators=(",", ":"), sort_keys=True).encode("utf-8")
         stream = io.BytesIO(serialized_bytes)
 
     try:

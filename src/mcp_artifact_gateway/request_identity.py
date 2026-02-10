@@ -1,4 +1,5 @@
 """Request identity computation for artifact deduplication and caching."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass

@@ -34,4 +34,3 @@ def assert_sample_set_hash_binding(cursor_payload: dict[str, object], expected_h
     if actual != expected_hash:
         msg = "cursor sample_set_hash mismatch"
         raise SampleSetHashBindingError(msg)
-

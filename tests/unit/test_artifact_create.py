@@ -1,4 +1,5 @@
 """Tests for the artifact creation pipeline."""
+
 from __future__ import annotations
 
 import json
@@ -38,7 +39,7 @@ from mcp_artifact_gateway.envelope.model import (
     JsonContentPart,
     TextContentPart,
 )
-from mcp_artifact_gateway.obs.metrics import GatewayMetrics
+from mcp_artifact_gateway.obs.metrics import GatewayMetrics, counter_value
 from mcp_artifact_gateway.util.hashing import sha256_hex
 
 
@@ -140,14 +141,10 @@ def test_compute_payload_sizes_mixed_content() -> None:
     binary_part = _binary_ref_part(byte_count=512)
     text_part = TextContentPart(text="hello")
 
-    envelope = _ok_envelope(
-        content=[JsonContentPart(value=json_value), binary_part, text_part]
-    )
+    envelope = _ok_envelope(content=[JsonContentPart(value=json_value), binary_part, text_part])
     json_bytes, binary_bytes, total_bytes = compute_payload_sizes(envelope)
 
-    expected_json_from_value = len(
-        json.dumps(json_value, ensure_ascii=False).encode("utf-8")
-    )
+    expected_json_from_value = len(json.dumps(json_value, ensure_ascii=False).encode("utf-8"))
     expected_json_from_text = len(
         json.dumps(text_part.to_dict(), ensure_ascii=False).encode("utf-8")
     )
@@ -417,4 +414,4 @@ def test_persist_artifact_increments_binary_blob_writes(tmp_path: Path) -> None:
         metrics=metrics,
     )
 
-    assert metrics.binary_blob_writes.value == 2
+    assert counter_value(metrics.binary_blob_writes) == 2

@@ -6,7 +6,12 @@ import hmac
 from hashlib import sha256
 
 from mcp_artifact_gateway.constants import CURSOR_VERSION
-from mcp_artifact_gateway.cursor.hmac import CursorExpiredError, CursorTokenError, sign_cursor_payload, verify_cursor_token
+from mcp_artifact_gateway.cursor.hmac import (
+    CursorExpiredError,
+    CursorTokenError,
+    sign_cursor_payload,
+    verify_cursor_token,
+)
 from mcp_artifact_gateway.cursor.secrets import CursorSecrets
 
 

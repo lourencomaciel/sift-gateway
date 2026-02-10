@@ -41,4 +41,3 @@ def update_map_status_params(
         WORKSPACE_ID,
         artifact_id,
     )
-

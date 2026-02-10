@@ -15,4 +15,3 @@ DO UPDATE SET last_seen_at = EXCLUDED.last_seen_at
 
 def upsert_session_params(session_id: str) -> tuple[str, str]:
     return (WORKSPACE_ID, session_id)
-

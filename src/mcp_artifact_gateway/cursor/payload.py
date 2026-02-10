@@ -104,6 +104,9 @@ def assert_cursor_binding(
         msg = "cursor mapper_version mismatch"
         raise CursorStaleError(msg)
 
-    if expected_where_mode is not None and payload.get("where_canonicalization_mode") != expected_where_mode:
+    if (
+        expected_where_mode is not None
+        and payload.get("where_canonicalization_mode") != expected_where_mode
+    ):
         msg = "cursor where_canonicalization_mode mismatch"
         raise CursorStaleError(msg)

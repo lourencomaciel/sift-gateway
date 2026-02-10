@@ -4,32 +4,42 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 
 import pytest
+from prometheus_client import CollectorRegistry
 
-from mcp_artifact_gateway.obs.metrics import Counter, GatewayMetrics, Histogram, get_metrics
+from mcp_artifact_gateway.obs.metrics import (
+    GatewayMetrics,
+    Histogram,
+    counter_reset,
+    counter_value,
+    get_metrics,
+)
 
 
 def test_counter_increment_and_value() -> None:
-    c = Counter()
-    assert c.value == 0
-    c.increment()
-    assert c.value == 1
-    c.increment(5)
-    assert c.value == 6
+    m = GatewayMetrics(registry=CollectorRegistry())
+    c = m.cache_hits
+    assert counter_value(c) == 0
+    c.inc()
+    assert counter_value(c) == 1
+    c.inc(5)
+    assert counter_value(c) == 6
 
 
 def test_counter_reset_returns_previous_value() -> None:
-    c = Counter()
-    c.increment(10)
-    val = c.reset()
+    m = GatewayMetrics(registry=CollectorRegistry())
+    c = m.cache_hits
+    c.inc(10)
+    val = counter_reset(c)
     assert val == 10
-    assert c.value == 0
+    assert counter_value(c) == 0
 
 
 def test_counter_reset_when_zero() -> None:
-    c = Counter()
-    val = c.reset()
+    m = GatewayMetrics(registry=CollectorRegistry())
+    c = m.cache_hits
+    val = counter_reset(c)
     assert val == 0
-    assert c.value == 0
+    assert counter_value(c) == 0
 
 
 def test_histogram_observe_and_snapshot() -> None:
@@ -68,28 +78,28 @@ def test_histogram_reset() -> None:
 
 
 def test_gateway_metrics_record_stop_reason_all() -> None:
-    m = GatewayMetrics()
+    m = GatewayMetrics(registry=CollectorRegistry())
 
     reasons = ["none", "max_bytes", "max_compute", "max_depth", "parse_error"]
     for reason in reasons:
         m.record_stop_reason(reason)
 
-    assert m.mapping_stop_none.value == 1
-    assert m.mapping_stop_max_bytes.value == 1
-    assert m.mapping_stop_max_compute.value == 1
-    assert m.mapping_stop_max_depth.value == 1
-    assert m.mapping_stop_parse_error.value == 1
+    assert counter_value(m.mapping_stop_none) == 1
+    assert counter_value(m.mapping_stop_max_bytes) == 1
+    assert counter_value(m.mapping_stop_max_compute) == 1
+    assert counter_value(m.mapping_stop_max_depth) == 1
+    assert counter_value(m.mapping_stop_parse_error) == 1
 
 
 def test_gateway_metrics_record_stop_reason_unknown_ignored() -> None:
-    m = GatewayMetrics()
+    m = GatewayMetrics(registry=CollectorRegistry())
     m.record_stop_reason("unknown_reason")
     # Should not raise and all counters should remain 0
-    assert m.mapping_stop_none.value == 0
+    assert counter_value(m.mapping_stop_none) == 0
 
 
 def test_gateway_metrics_record_cursor_stale_reason() -> None:
-    m = GatewayMetrics()
+    m = GatewayMetrics(registry=CollectorRegistry())
 
     reasons = [
         "sample_set_mismatch",
@@ -101,24 +111,24 @@ def test_gateway_metrics_record_cursor_stale_reason() -> None:
     for reason in reasons:
         m.record_cursor_stale_reason(reason)
 
-    assert m.cursor_stale_sample_set.value == 1
-    assert m.cursor_stale_map_budget.value == 1
-    assert m.cursor_stale_where_mode.value == 1
-    assert m.cursor_stale_traversal.value == 1
-    assert m.cursor_stale_generation.value == 1
+    assert counter_value(m.cursor_stale_sample_set) == 1
+    assert counter_value(m.cursor_stale_map_budget) == 1
+    assert counter_value(m.cursor_stale_where_mode) == 1
+    assert counter_value(m.cursor_stale_traversal) == 1
+    assert counter_value(m.cursor_stale_generation) == 1
 
 
 def test_gateway_metrics_record_cursor_stale_reason_unknown_ignored() -> None:
-    m = GatewayMetrics()
+    m = GatewayMetrics(registry=CollectorRegistry())
     m.record_cursor_stale_reason("nonexistent")
-    assert m.cursor_stale_sample_set.value == 0
+    assert counter_value(m.cursor_stale_sample_set) == 0
 
 
 def test_gateway_metrics_snapshot_returns_complete_dict() -> None:
-    m = GatewayMetrics()
-    m.cache_hits.increment(3)
-    m.upstream_calls.increment(1)
-    m.prune_soft_deletes.increment(5)
+    m = GatewayMetrics(registry=CollectorRegistry())
+    m.cache_hits.inc(3)
+    m.upstream_calls.inc(1)
+    m.prune_soft_deletes.inc(5)
 
     snap = m.snapshot()
 
@@ -145,20 +155,21 @@ def test_gateway_metrics_snapshot_returns_complete_dict() -> None:
 
 def test_counter_thread_safety() -> None:
     """Test that concurrent increments produce correct total."""
-    c = Counter()
+    m = GatewayMetrics(registry=CollectorRegistry())
+    c = m.cache_hits
     num_threads = 10
     increments_per_thread = 1000
 
     def worker() -> None:
         for _ in range(increments_per_thread):
-            c.increment()
+            c.inc()
 
     with ThreadPoolExecutor(max_workers=num_threads) as executor:
         futures = [executor.submit(worker) for _ in range(num_threads)]
         for f in futures:
             f.result()
 
-    assert c.value == num_threads * increments_per_thread
+    assert counter_value(c) == num_threads * increments_per_thread
 
 
 def test_histogram_thread_safety() -> None:
@@ -211,15 +222,15 @@ def test_get_metrics_thread_safe_singleton_creation(monkeypatch: "pytest.MonkeyP
 
 def test_gateway_metrics_reset_returns_snapshot_and_clears() -> None:
     """GatewayMetrics.reset() should return a snapshot and zero all counters."""
-    m = GatewayMetrics()
-    m.cache_hits.increment(5)
-    m.upstream_calls.increment(2)
+    m = GatewayMetrics(registry=CollectorRegistry())
+    m.cache_hits.inc(5)
+    m.upstream_calls.inc(2)
     m.upstream_latency.observe(100.0)
-    m.prune_soft_deletes.increment(3)
-    m.mapping_full_count.increment(1)
-    m.cursor_stale_sample_set.increment(7)
-    m.advisory_lock_timeouts.increment(4)
-    m.oversize_json_count.increment(6)
+    m.prune_soft_deletes.inc(3)
+    m.mapping_full_count.inc(1)
+    m.cursor_stale_sample_set.inc(7)
+    m.advisory_lock_timeouts.inc(4)
+    m.oversize_json_count.inc(6)
 
     snap = m.reset()
 
@@ -248,7 +259,7 @@ def test_gateway_metrics_reset_returns_snapshot_and_clears() -> None:
 
 def test_gateway_metrics_reset_has_same_keys_as_snapshot() -> None:
     """GatewayMetrics.reset() should return the same top-level structure as snapshot()."""
-    m = GatewayMetrics()
+    m = GatewayMetrics(registry=CollectorRegistry())
     snap_keys = set(m.snapshot().keys())
     reset_keys = set(m.reset().keys())
     assert snap_keys == reset_keys
@@ -256,7 +267,7 @@ def test_gateway_metrics_reset_has_same_keys_as_snapshot() -> None:
 
 def test_gateway_metrics_reset_empty_is_safe() -> None:
     """GatewayMetrics.reset() on a fresh instance should not raise."""
-    m = GatewayMetrics()
+    m = GatewayMetrics(registry=CollectorRegistry())
     snap = m.reset()
     assert snap["cache"]["hits"] == 0
     assert snap["upstream"]["latency"]["count"] == 0

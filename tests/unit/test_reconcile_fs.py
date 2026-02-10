@@ -10,7 +10,7 @@ from mcp_artifact_gateway.jobs.reconcile_fs import (
     run_reconcile,
     scan_blob_directory,
 )
-from mcp_artifact_gateway.obs.metrics import GatewayMetrics
+from mcp_artifact_gateway.obs.metrics import GatewayMetrics, counter_value
 
 
 def _create_blob_tree(base: Path, entries: dict[str, bytes]) -> None:
@@ -195,10 +195,13 @@ def test_run_reconcile_detects_orphans_report_only(tmp_path: Path) -> None:
     """run_reconcile with remove=False should detect orphans but not remove them."""
     blobs_dir = tmp_path / "blobs" / "bin"
     # Create files on disk: hash_a is in DB, hash_orphan is not
-    _create_blob_tree(blobs_dir, {
-        "aabb1111aaaa": b"known_data",
-        "ccdd2222bbbb": b"orphan_data",
-    })
+    _create_blob_tree(
+        blobs_dir,
+        {
+            "aabb1111aaaa": b"known_data",
+            "ccdd2222bbbb": b"orphan_data",
+        },
+    )
     # DB only knows about hash_a
     db_rows = [
         ("aabb1111aaaa", str(blobs_dir / "aa" / "bb" / "aabb1111aaaa"), 10),
@@ -219,10 +222,13 @@ def test_run_reconcile_detects_orphans_report_only(tmp_path: Path) -> None:
 def test_run_reconcile_removes_orphans(tmp_path: Path) -> None:
     """run_reconcile with remove=True should remove orphan files."""
     blobs_dir = tmp_path / "blobs" / "bin"
-    _create_blob_tree(blobs_dir, {
-        "aabb1111aaaa": b"known",
-        "ccdd2222bbbb": b"orphan",
-    })
+    _create_blob_tree(
+        blobs_dir,
+        {
+            "aabb1111aaaa": b"known",
+            "ccdd2222bbbb": b"orphan",
+        },
+    )
     db_rows = [
         ("aabb1111aaaa", str(blobs_dir / "aa" / "bb" / "aabb1111aaaa"), 5),
     ]
@@ -290,8 +296,11 @@ def test_run_reconcile_updates_metrics(tmp_path: Path) -> None:
     metrics = GatewayMetrics()
 
     result = run_reconcile(
-        connection, blobs_bin_dir=blobs_dir, remove=True, metrics=metrics,
+        connection,
+        blobs_bin_dir=blobs_dir,
+        remove=True,
+        metrics=metrics,
     )
 
     assert result.removed_count == 1
-    assert metrics.prune_fs_orphans_removed.value == 1
+    assert counter_value(metrics.prune_fs_orphans_removed) == 1

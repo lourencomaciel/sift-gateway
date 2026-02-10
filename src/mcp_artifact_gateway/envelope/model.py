@@ -54,7 +54,11 @@ class ResourceRefContentPart:
     type: Literal["resource_ref"] = "resource_ref"
 
     def to_dict(self) -> dict[str, Any]:
-        payload: dict[str, Any] = {"type": self.type, "uri": self.uri, "durability": self.durability}
+        payload: dict[str, Any] = {
+            "type": self.type,
+            "uri": self.uri,
+            "durability": self.durability,
+        }
         if self.mime is not None:
             payload["mime"] = self.mime
         if self.name is not None:
@@ -111,4 +115,3 @@ class Envelope:
     @property
     def contains_binary_refs(self) -> bool:
         return any(isinstance(part, BinaryRefContentPart) for part in self.content)
-

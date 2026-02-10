@@ -53,9 +53,7 @@ class _FakeConnection:
 
 
 def test_list_migrations_includes_sql_files() -> None:
-    migration_paths = list_migrations(
-        Path("src/mcp_artifact_gateway/db/migrations").resolve()
-    )
+    migration_paths = list_migrations(Path("src/mcp_artifact_gateway/db/migrations").resolve())
     names = [path.name for path in migration_paths]
     assert "001_init.sql" in names
 

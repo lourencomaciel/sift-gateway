@@ -22,6 +22,7 @@ from mcp_artifact_gateway.artifacts.create import (
 from mcp_artifact_gateway.cache.reuse import (
     ReuseResult,
     acquire_advisory_lock_async,
+    release_advisory_lock,
 )
 from mcp_artifact_gateway.constants import RESPONSE_TYPE_RESULT
 from mcp_artifact_gateway.envelope.model import Envelope
@@ -30,6 +31,7 @@ from mcp_artifact_gateway.envelope.responses import (
     gateway_error,
     gateway_tool_result,
 )
+from mcp_artifact_gateway.obs.logging import get_logger
 from mcp_artifact_gateway.mcp.mirror import (
     MirroredTool,
     extract_gateway_context,
@@ -38,6 +40,7 @@ from mcp_artifact_gateway.mcp.mirror import (
 )
 from mcp_artifact_gateway.jobs.quota import QuotaBreaches, enforce_quota
 from mcp_artifact_gateway.request_identity import compute_request_identity
+from mcp_artifact_gateway.sessions import upsert_artifact_ref
 
 if TYPE_CHECKING:
     from mcp_artifact_gateway.mcp.server import GatewayServer
@@ -79,7 +82,10 @@ async def _persist_async(
                 binary_hashes=binary_hashes,
             )
     except Exception:
-        pass  # best-effort; fire-and-forget
+        get_logger(component="mcp.handlers").warning(
+            "persist_artifact failed (best-effort)",
+            exc_info=True,
+        )
 
 
 async def handle_mirrored_tool(
@@ -225,32 +231,44 @@ async def handle_mirrored_tool(
                                 "timeout_ms": ctx.config.advisory_lock_timeout_ms,
                             },
                         )
-                    reuse = ctx._check_reuse_on_connection(
-                        connection,
-                        request_key=identity.request_key,
-                        expected_schema_hash=mirrored.upstream_tool.schema_hash,
-                        strict_schema_reuse=mirrored.upstream.config.strict_schema_reuse,
-                    )
-                    if reuse.reused and reuse.artifact_id is not None:
-                        ctx._increment_metric("cache_hits")
-                        # TODO: Cache reuse returns the artifact_id without
-                        # creating an artifact_ref for the requesting session.
-                        # This means the caller receives an artifact_id they
-                        # cannot access via get/search/select.  Consider
-                        # inserting an artifact_ref here so the session that
-                        # triggered the reuse can actually retrieve the artifact.
-                        return {
-                            "type": RESPONSE_TYPE_RESULT,
-                            "artifact_id": reuse.artifact_id,
-                            "meta": {
-                                "cache": {
-                                    "reused": True,
-                                    "reason": reuse.reason or "request_key_match",
-                                    "request_key": identity.request_key,
+                    try:
+                        reuse = ctx._check_reuse_on_connection(
+                            connection,
+                            request_key=identity.request_key,
+                            expected_schema_hash=mirrored.upstream_tool.schema_hash,
+                            strict_schema_reuse=mirrored.upstream.config.strict_schema_reuse,
+                        )
+                        if reuse.reused and reuse.artifact_id is not None:
+                            ctx._increment_metric("cache_hits")
+                            try:
+                                upsert_artifact_ref(
+                                    connection,
+                                    session_id,
+                                    reuse.artifact_id,
+                                )
+                                connection.commit()
+                            except Exception:
+                                get_logger(component="mcp.handlers").warning(
+                                    "artifact_ref upsert on cache hit failed",
+                                    exc_info=True,
+                                )
+                            return {
+                                "type": RESPONSE_TYPE_RESULT,
+                                "artifact_id": reuse.artifact_id,
+                                "meta": {
+                                    "cache": {
+                                        "reused": True,
+                                        "reason": reuse.reason or "request_key_match",
+                                        "request_key": identity.request_key,
+                                    },
                                 },
-                            },
-                        }
-                    ctx._increment_metric("cache_misses")
+                            }
+                        ctx._increment_metric("cache_misses")
+                    finally:
+                        release_advisory_lock(
+                            connection,
+                            request_key=identity.request_key,
+                        )
             except (_PG_OPERATIONAL_ERROR, _PG_INTERFACE_ERROR):
                 ctx.db_ok = False
                 return gateway_error(
@@ -258,7 +276,10 @@ async def handle_mirrored_tool(
                     "cache check failed; gateway marked unhealthy",
                 )
             except Exception:
-                pass  # cache is best-effort; skip and proceed to upstream call
+                get_logger(component="mcp.handlers").warning(
+                    "cache check failed (best-effort)",
+                    exc_info=True,
+                )
 
         # Phase 1.5: Quota enforcement preflight.
         # Rejecting here avoids invoking side-effecting upstream tools when
@@ -377,7 +398,10 @@ async def handle_mirrored_tool(
                         envelope=envelope,
                     )
                 except Exception:
-                    pass  # mapping is best-effort; artifact already committed
+                    get_logger(component="mcp.handlers").warning(
+                        "mapping failed (best-effort)",
+                        exc_info=True,
+                    )
         except (_PG_OPERATIONAL_ERROR, _PG_INTERFACE_ERROR):
             ctx.db_ok = False
             return gateway_error(

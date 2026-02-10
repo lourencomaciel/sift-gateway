@@ -50,9 +50,9 @@ def _make_mock_conn(*, rowcount: int = 1, touch_rowcount: int | None = None) -> 
     # First two cursor() calls are session + artifact_ref (rowcount=1 normally).
     # Third call is the artifact touch (variable rowcount).
     cursors = [
-        _make_cursor(rowcount),       # upsert_session
-        _make_cursor(rowcount),       # upsert_artifact_ref
-        _make_cursor(touch_rowcount), # touch_artifact
+        _make_cursor(rowcount),  # upsert_session
+        _make_cursor(rowcount),  # upsert_artifact_ref
+        _make_cursor(touch_rowcount),  # touch_artifact
     ]
     # Extra cursors if more calls happen (e.g., search with multiple refs)
     conn.cursor.side_effect = lambda: cursors.pop(0) if cursors else _make_cursor(rowcount)
@@ -60,6 +60,7 @@ def _make_mock_conn(*, rowcount: int = 1, touch_rowcount: int | None = None) -> 
 
 
 # ---- SQL structure verification ----
+
 
 def test_upsert_session_sql_contains_on_conflict() -> None:
     assert "ON CONFLICT" in _UPSERT_SESSION_SQL
@@ -79,6 +80,7 @@ def test_touch_artifact_sql_checks_not_deleted() -> None:
 
 # ---- TouchResult structure ----
 
+
 def test_touch_result_is_frozen() -> None:
     result = TouchResult(session_updated=True, artifact_ref_updated=True, artifact_touched=True)
     try:
@@ -89,6 +91,7 @@ def test_touch_result_is_frozen() -> None:
 
 
 # ---- touch_for_creation ----
+
 
 def test_touch_for_creation_touches_all_three() -> None:
     """Creation must touch session, artifact_ref, AND artifact.last_referenced_at."""
@@ -107,6 +110,7 @@ def test_touch_for_creation_executes_three_statements() -> None:
 
 
 # ---- touch_for_retrieval ----
+
 
 def test_touch_for_retrieval_touches_all_three() -> None:
     """Retrieval touches session + refs + artifact (if not deleted)."""
@@ -127,6 +131,7 @@ def test_touch_for_retrieval_artifact_not_touched_when_deleted() -> None:
 
 
 # ---- touch_for_search ----
+
 
 def test_touch_for_search_never_touches_artifact() -> None:
     """Search must NEVER touch artifacts.last_referenced_at."""

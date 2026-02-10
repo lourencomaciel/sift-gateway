@@ -23,4 +23,3 @@ def test_none_roundtrip() -> None:
     compressed = compress_bytes(data, "none")
     assert compressed.data == data
     assert decompress_bytes(compressed.data, compressed.encoding) == data
-

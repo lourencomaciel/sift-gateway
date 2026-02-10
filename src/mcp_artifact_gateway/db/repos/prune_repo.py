@@ -18,4 +18,3 @@ WHERE workspace_id = %s
 
 def soft_delete_expired_params() -> tuple[str]:
     return (WORKSPACE_ID,)
-

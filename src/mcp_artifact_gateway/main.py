@@ -152,7 +152,7 @@ def serve() -> int:
         try:
             asyncio.run(server.drain_mapping_tasks(timeout=5.0))
         except Exception:
-            pass
+            print("drain_mapping_tasks failed during shutdown", file=sys.stderr)
         pool.close()
 
     return 0

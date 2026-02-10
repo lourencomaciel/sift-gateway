@@ -1,4 +1,5 @@
 """Shared database protocols and helpers used across modules."""
+
 from __future__ import annotations
 
 from typing import Any, Protocol
@@ -34,6 +35,6 @@ def increment_metric(metrics: Any | None, attr: str, amount: int = 1) -> None:
     if metrics is None:
         return
     counter = getattr(metrics, attr, None)
-    inc = getattr(counter, "increment", None)
+    inc = getattr(counter, "inc", None)
     if callable(inc):
         inc(amount)

@@ -10,4 +10,3 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 if str(UNIT) not in sys.path:
     sys.path.insert(0, str(UNIT))
-
