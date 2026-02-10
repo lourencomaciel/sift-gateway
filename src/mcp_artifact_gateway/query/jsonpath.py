@@ -1,9 +1,17 @@
-"""Minimal JSONPath subset parser/evaluator for retrieval tools."""
+"""Parse and evaluate a minimal JSONPath subset for retrieval.
+
+Support dotted fields, bracket-quoted fields, integer array
+indices, and the ``[*]`` wildcard operator.  Provide parsing
+into ``Segment`` lists, canonical round-trip rendering, and
+evaluation against a JSON document.  Key exports are
+``parse_jsonpath``, ``evaluate_jsonpath``,
+``canonicalize_jsonpath``, ``Segment``, and ``JsonPathError``.
+"""
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
+import re
 from typing import Any, Literal
 
 _IDENT_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
@@ -17,11 +25,23 @@ _BRACKET_ESCAPES = {
 
 
 class JsonPathError(ValueError):
-    """Raised when JSONPath expression is outside supported subset."""
+    """Raised when a JSONPath expression is outside the supported subset.
+
+    Covers syntax errors, unsupported operators, and limit
+    violations (max length, max segments, wildcard expansion).
+    """
 
 
 @dataclass(frozen=True)
 class Segment:
+    """Single parsed segment of a JSONPath expression.
+
+    Attributes:
+        kind: "field" for named keys, "index" for integer
+            array positions, "wildcard" for ``[*]``.
+        value: Key string, integer index, or None for wildcard.
+    """
+
     kind: Literal["field", "index", "wildcard"]
     value: str | int | None
 
@@ -32,6 +52,23 @@ def parse_jsonpath(
     max_length: int | None = None,
     max_segments: int | None = None,
 ) -> list[Segment]:
+    """Parse a JSONPath string into a list of segments.
+
+    Support dotted fields, bracket-quoted fields, integer
+    array indices, and the ``[*]`` wildcard operator.
+
+    Args:
+        path: JSONPath expression starting with ``$``.
+        max_length: Optional cap on path string length.
+        max_segments: Optional cap on parsed segment count.
+
+    Returns:
+        Ordered list of parsed Segment objects.
+
+    Raises:
+        JsonPathError: If the path is syntactically invalid
+            or exceeds the configured limits.
+    """
     if max_length is not None and len(path) > max_length:
         msg = f"JSONPath exceeds max length ({max_length})"
         raise JsonPathError(msg)
@@ -81,7 +118,11 @@ def parse_jsonpath(
                     escape_char = path[i]
                     unescaped = _BRACKET_ESCAPES.get(escape_char)
                     if unescaped is None:
-                        msg = f"unsupported escape sequence '\\{escape_char}' in bracket field"
+                        msg = (
+                            f"unsupported escape sequence"
+                            f" '\\{escape_char}'"
+                            " in bracket field"
+                        )
                         raise JsonPathError(msg)
                     out.append(unescaped)
                     i += 1
@@ -123,8 +164,28 @@ def canonicalize_jsonpath(
     max_length: int | None = None,
     max_segments: int | None = None,
 ) -> str:
+    """Render a JSONPath in canonical bracket/dot notation.
+
+    Parse the path and re-emit each segment in a
+    deterministic form: dotted for simple identifiers,
+    bracket-quoted for special-character keys.
+
+    Args:
+        path: JSONPath expression starting with ``$``.
+        max_length: Optional cap on path string length.
+        max_segments: Optional cap on parsed segment count.
+
+    Returns:
+        Canonical string representation of the path.
+
+    Raises:
+        JsonPathError: If the path is syntactically invalid
+            or exceeds the configured limits.
+    """
     parts = ["$"]
-    for seg in parse_jsonpath(path, max_length=max_length, max_segments=max_segments):
+    for seg in parse_jsonpath(
+        path, max_length=max_length, max_segments=max_segments
+    ):
         if seg.kind == "field":
             name = str(seg.value)
             if _IDENT_RE.fullmatch(name):
@@ -153,9 +214,32 @@ def evaluate_jsonpath(
     max_segments: int | None = None,
     max_wildcard_expansion_total: int | None = None,
 ) -> list[Any]:
+    """Evaluate a JSONPath against a document and return matches.
+
+    Walk the document tree segment by segment, expanding
+    wildcards into sorted-key object entries or list items.
+
+    Args:
+        document: JSON-compatible Python value to query.
+        path: JSONPath expression starting with ``$``.
+        max_length: Optional cap on path string length.
+        max_segments: Optional cap on parsed segment count.
+        max_wildcard_expansion_total: Optional cumulative cap
+            on the number of nodes produced by wildcard
+            expansion across all segments.
+
+    Returns:
+        List of matched values (may be empty).
+
+    Raises:
+        JsonPathError: If the path is invalid or wildcard
+            expansion exceeds the configured limit.
+    """
     nodes = [document]
     wildcard_expansion_total = 0
-    for seg in parse_jsonpath(path, max_length=max_length, max_segments=max_segments):
+    for seg in parse_jsonpath(
+        path, max_length=max_length, max_segments=max_segments
+    ):
         next_nodes: list[Any] = []
         if seg.kind == "field":
             field = str(seg.value)

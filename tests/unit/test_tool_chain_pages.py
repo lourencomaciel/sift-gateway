@@ -9,7 +9,6 @@ from mcp_artifact_gateway.tools.artifact_chain_pages import (
     validate_chain_pages_args,
 )
 
-
 # ---- validate_chain_pages_args ----
 
 
@@ -21,7 +20,9 @@ def test_validate_chain_pages_args_requires_session_id() -> None:
 
 
 def test_validate_chain_pages_args_requires_parent_artifact_id() -> None:
-    result = validate_chain_pages_args({"_gateway_context": {"session_id": "sess_1"}})
+    result = validate_chain_pages_args(
+        {"_gateway_context": {"session_id": "sess_1"}}
+    )
     assert result is not None
     assert result["code"] == "INVALID_ARGUMENT"
     assert "parent_artifact_id" in result["message"]

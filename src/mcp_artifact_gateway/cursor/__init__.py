@@ -1,4 +1,4 @@
-"""Cursor payload/signing helpers."""
+"""Re-export cursor signing, payload, and secret management API."""
 
 from mcp_artifact_gateway.cursor.hmac import (
     CursorExpiredError,

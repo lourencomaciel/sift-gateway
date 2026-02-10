@@ -12,13 +12,23 @@ _VALID_INDEX_STATUS = {"off", "pending", "ready", "partial", "failed"}
 
 
 def validate_artifact_row(row: Mapping[str, Any]) -> None:
+    """Validate an artifact row against invariant constraints.
+
+    Args:
+        row: Artifact row as a mapping.
+
+    Raises:
+        ValueError: If any field fails validation.
+    """
     workspace_id = row.get("workspace_id")
     if workspace_id != WORKSPACE_ID:
         msg = f"workspace_id must be '{WORKSPACE_ID}'"
         raise ValueError(msg)
 
     artifact_id = row.get("artifact_id")
-    if not isinstance(artifact_id, str) or not artifact_id.startswith(ARTIFACT_ID_PREFIX):
+    if not isinstance(artifact_id, str) or not artifact_id.startswith(
+        ARTIFACT_ID_PREFIX
+    ):
         msg = f"artifact_id must start with '{ARTIFACT_ID_PREFIX}'"
         raise ValueError(msg)
 
@@ -37,7 +47,11 @@ def validate_artifact_row(row: Mapping[str, Any]) -> None:
         msg = f"invalid index_status: {index_status}"
         raise ValueError(msg)
 
-    for key in ("payload_json_bytes", "payload_binary_bytes_total", "payload_total_bytes"):
+    for key in (
+        "payload_json_bytes",
+        "payload_binary_bytes_total",
+        "payload_total_bytes",
+    ):
         value = row.get(key, 0)
         if not isinstance(value, int) or value < 0:
             msg = f"{key} must be a non-negative integer"

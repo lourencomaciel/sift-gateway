@@ -1,4 +1,16 @@
-"""Upstream MCP client connections and tool discovery."""
+"""Connect to upstream MCP servers and discover their tools.
+
+Manage client transport configuration, tool schema hashing, and
+stable upstream identity computation.  Exports ``UpstreamInstance``,
+``connect_upstreams``, and ``call_upstream_tool``.
+
+Typical usage example::
+
+    upstreams = await connect_upstreams(config.upstreams)
+    result = await call_upstream_tool(
+        upstreams[0], "list_repos", {"org": "acme"}
+    )
+"""
 
 from __future__ import annotations
 
@@ -14,7 +26,14 @@ from mcp_artifact_gateway.util.hashing import sha256_trunc
 
 @dataclass(frozen=True)
 class UpstreamToolSchema:
-    """Discovered tool from an upstream."""
+    """Schema descriptor for a single tool discovered from upstream.
+
+    Attributes:
+        name: Tool name as reported by the upstream server.
+        description: Human-readable tool description.
+        input_schema: JSON Schema dict for the tool's arguments.
+        schema_hash: Truncated SHA-256 of the canonical schema.
+    """
 
     name: str
     description: str
@@ -24,7 +43,17 @@ class UpstreamToolSchema:
 
 @dataclass(frozen=True)
 class UpstreamInstance:
-    """Represents a connected upstream MCP server."""
+    """Immutable runtime descriptor for a connected upstream server.
+
+    Created during upstream discovery and held for the lifetime of
+    the gateway process.
+
+    Attributes:
+        config: Original upstream configuration.
+        instance_id: Stable identity hash for cache keying.
+        tools: Discovered tool schemas from the upstream.
+        auth_fingerprint: Optional hash of auth-relevant values.
+    """
 
     config: UpstreamConfig
     instance_id: str  # upstream_instance_id
@@ -33,11 +62,20 @@ class UpstreamInstance:
 
     @property
     def prefix(self) -> str:
+        """The upstream namespace prefix."""
         return self.config.prefix
 
 
 def _client_transport(config: UpstreamConfig) -> dict[str, Any]:
-    """Build canonical MCP client transport config for fastmcp.Client."""
+    """Build canonical MCP client transport config for ``Client``.
+
+    Args:
+        config: Upstream configuration with transport type and
+            connection details.
+
+    Returns:
+        Transport dict suitable for ``fastmcp.Client``.
+    """
     if config.transport == "stdio":
         return {
             "command": config.command,
@@ -54,6 +92,17 @@ def _client_transport(config: UpstreamConfig) -> dict[str, Any]:
 
 
 def _client_result_content(result: Any) -> list[dict[str, Any]]:
+    """Normalize content blocks from an MCP client result.
+
+    Handles raw dicts, Pydantic models with ``model_dump``,
+    and fallback string coercion.
+
+    Args:
+        result: Raw MCP tool call result object.
+
+    Returns:
+        List of normalized content block dicts.
+    """
     content_blocks = getattr(result, "content", None)
     if not isinstance(content_blocks, list):
         return []
@@ -72,10 +121,18 @@ def _client_result_content(result: Any) -> list[dict[str, Any]]:
 
 
 def compute_upstream_instance_id(config: UpstreamConfig) -> str:
-    """Compute upstream_instance_id = sha256(canonical_semantic_identity)[:32].
+    """Compute a stable upstream instance identity hash.
 
-    Includes: transport, stable endpoint identity, prefix/name, optional semantic salt.
-    Excludes: rotating auth headers, tokens, secret env values, private key paths.
+    The identity includes transport type, stable endpoint data,
+    prefix, and optional semantic salt values. It excludes
+    rotating auth headers, tokens, and secret env values.
+
+    Args:
+        config: Upstream configuration.
+
+    Returns:
+        Truncated SHA-256 hex string (32 chars) suitable for
+        cache keying.
     """
     identity: dict[str, Any] = {
         "transport": config.transport,
@@ -99,10 +156,17 @@ def compute_upstream_instance_id(config: UpstreamConfig) -> str:
 
 
 def compute_auth_fingerprint(config: UpstreamConfig) -> str | None:
-    """Optional auth fingerprint for debugging (excluded from request identity).
+    """Compute an optional auth fingerprint for diagnostics.
 
-    Hashes non-salt headers and env values for debugging only.
-    Returns None if there are no auth-relevant values to fingerprint.
+    Hashes non-salt headers and env values. Excluded from the
+    request identity used for caching.
+
+    Args:
+        config: Upstream configuration.
+
+    Returns:
+        Truncated SHA-256 hex string (16 chars), or ``None``
+        when no auth-relevant values exist.
     """
     auth_values: dict[str, str] = {}
 
@@ -124,7 +188,15 @@ def compute_auth_fingerprint(config: UpstreamConfig) -> str | None:
 
 
 async def discover_tools(config: UpstreamConfig) -> list[UpstreamToolSchema]:
-    """Fetch and normalize tool list from an upstream MCP server."""
+    """Fetch and normalize tool list from an upstream server.
+
+    Args:
+        config: Upstream configuration with transport details.
+
+    Returns:
+        List of ``UpstreamToolSchema`` descriptors with hashed
+        input schemas.
+    """
     transport = _client_transport(config)
     async with Client(transport, timeout=30.0) as client:
         tools = await client.list_tools()
@@ -145,7 +217,15 @@ async def discover_tools(config: UpstreamConfig) -> list[UpstreamToolSchema]:
 
 
 async def connect_upstream(config: UpstreamConfig) -> UpstreamInstance:
-    """Discover one upstream and return its immutable runtime descriptor."""
+    """Discover one upstream and build its runtime descriptor.
+
+    Args:
+        config: Upstream configuration.
+
+    Returns:
+        Immutable ``UpstreamInstance`` with discovered tools,
+        computed instance ID, and optional auth fingerprint.
+    """
     tools = await discover_tools(config)
     return UpstreamInstance(
         config=config,
@@ -155,8 +235,18 @@ async def connect_upstream(config: UpstreamConfig) -> UpstreamInstance:
     )
 
 
-async def connect_upstreams(configs: list[UpstreamConfig]) -> list[UpstreamInstance]:
-    """Discover all configured upstreams sequentially."""
+async def connect_upstreams(
+    configs: list[UpstreamConfig],
+) -> list[UpstreamInstance]:
+    """Discover all configured upstreams sequentially.
+
+    Args:
+        configs: List of upstream configurations.
+
+    Returns:
+        List of connected ``UpstreamInstance`` descriptors in
+        the same order as *configs*.
+    """
     upstreams: list[UpstreamInstance] = []
     for config in configs:
         upstreams.append(await connect_upstream(config))
@@ -170,7 +260,15 @@ async def call_upstream_tool(
 ) -> dict[str, Any]:
     """Call a tool on the upstream and return the raw response.
 
-    Returns a dict with keys: content (list), isError (bool), optionally error details.
+    Args:
+        instance: Connected upstream runtime descriptor.
+        tool_name: Name of the tool to invoke on the upstream.
+        arguments: Forwarded tool arguments (reserved keys
+            already stripped).
+
+    Returns:
+        Dict with ``content`` (list), ``structuredContent``,
+        ``isError`` (bool), and ``meta`` keys.
     """
     transport = _client_transport(instance.config)
     async with Client(transport, timeout=30.0) as client:

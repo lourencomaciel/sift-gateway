@@ -33,6 +33,16 @@ async def handle_artifact_describe(
     ctx: GatewayServer,
     arguments: dict[str, Any],
 ) -> dict[str, Any]:
+    """Handle the ``artifact.describe`` tool call.
+
+    Args:
+        ctx: Gateway server instance providing DB and cursor helpers.
+        arguments: Tool arguments including ``artifact_id``.
+
+    Returns:
+        Describe response with artifact metadata and roots, or a
+        gateway error.
+    """
     from mcp_artifact_gateway.tools.artifact_describe import (
         FETCH_DESCRIBE_SQL,
         FETCH_ROOTS_SQL,

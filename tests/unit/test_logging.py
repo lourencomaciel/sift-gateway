@@ -3,7 +3,11 @@ from __future__ import annotations
 import pytest
 import structlog
 
-from mcp_artifact_gateway.obs.logging import LogEvents, configure_logging, get_logger
+from mcp_artifact_gateway.obs.logging import (
+    LogEvents,
+    configure_logging,
+    get_logger,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -32,7 +36,10 @@ def test_get_logger_returns_bound_logger() -> None:
 
 def test_log_events_startup_events() -> None:
     assert LogEvents.STARTUP_BEGIN == "gateway.startup.begin"
-    assert LogEvents.STARTUP_UPSTREAM_DISCOVERED == "gateway.startup.upstream_discovered"
+    assert (
+        LogEvents.STARTUP_UPSTREAM_DISCOVERED
+        == "gateway.startup.upstream_discovered"
+    )
     assert LogEvents.STARTUP_COMPLETE == "gateway.startup.complete"
     assert LogEvents.STARTUP_FAILED == "gateway.startup.failed"
 
@@ -46,10 +53,18 @@ def test_log_events_request_events() -> None:
 
 def test_log_events_artifact_events() -> None:
     assert LogEvents.ARTIFACT_CREATED == "gateway.artifact.created"
-    assert LogEvents.ARTIFACT_ENVELOPE_SIZES == "gateway.artifact.envelope_sizes"
+    assert (
+        LogEvents.ARTIFACT_ENVELOPE_SIZES == "gateway.artifact.envelope_sizes"
+    )
     assert LogEvents.ARTIFACT_OVERSIZE_JSON == "gateway.artifact.oversize_json"
-    assert LogEvents.ARTIFACT_BINARY_BLOB_WRITE == "gateway.artifact.binary_blob_write"
-    assert LogEvents.ARTIFACT_BINARY_BLOB_DEDUPE == "gateway.artifact.binary_blob_dedupe"
+    assert (
+        LogEvents.ARTIFACT_BINARY_BLOB_WRITE
+        == "gateway.artifact.binary_blob_write"
+    )
+    assert (
+        LogEvents.ARTIFACT_BINARY_BLOB_DEDUPE
+        == "gateway.artifact.binary_blob_dedupe"
+    )
 
 
 def test_log_events_mapping_events() -> None:
@@ -85,7 +100,9 @@ def test_log_events_all_start_with_gateway_prefix() -> None:
             continue
         value = getattr(LogEvents, attr_name)
         assert isinstance(value, str), f"{attr_name} is not a string"
-        assert value.startswith("gateway."), f"{attr_name}={value!r} missing gateway. prefix"
+        assert value.startswith("gateway."), (
+            f"{attr_name}={value!r} missing gateway. prefix"
+        )
 
 
 def test_get_logger_binds_correlation_fields() -> None:

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from mcp_artifact_gateway.constants import WORKSPACE_ID
 
-
 UPDATE_MAP_STATUS_SQL = """
 UPDATE artifacts
 SET map_kind = %s,
@@ -30,6 +29,21 @@ def update_map_status_params(
     prng_version: str | None,
     map_error: str | None,
 ) -> tuple[object, ...]:
+    """Build parameter tuple for the map status UPDATE.
+
+    Args:
+        artifact_id: Target artifact identifier.
+        map_kind: Mapping kind (none, full, partial).
+        map_status: New mapping status.
+        mapper_version: Version of the mapper used.
+        map_budget_fingerprint: Budget fingerprint hash.
+        map_backend_id: Backend identifier for the mapper.
+        prng_version: PRNG version for reproducibility.
+        map_error: Error message if mapping failed.
+
+    Returns:
+        Positional parameter tuple for the SQL statement.
+    """
     return (
         map_kind,
         map_status,

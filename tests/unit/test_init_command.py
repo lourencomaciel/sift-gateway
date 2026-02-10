@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
+import json
 from pathlib import Path
 from unittest.mock import patch
 
@@ -22,7 +22,11 @@ def _claude_desktop_config() -> dict:
             },
             "filesystem": {
                 "command": "npx",
-                "args": ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"],
+                "args": [
+                    "-y",
+                    "@modelcontextprotocol/server-filesystem",
+                    "/tmp",
+                ],
             },
         },
         "someOtherKey": "preserved",
@@ -32,7 +36,9 @@ def _claude_desktop_config() -> dict:
 class TestRunInit:
     def test_migrates_servers_to_gateway_config(self, tmp_path: Path) -> None:
         source = tmp_path / "claude_desktop_config.json"
-        source.write_text(json.dumps(_claude_desktop_config()), encoding="utf-8")
+        source.write_text(
+            json.dumps(_claude_desktop_config()), encoding="utf-8"
+        )
         data_dir = tmp_path / "gateway"
 
         summary = run_init(source, data_dir=data_dir)
@@ -43,11 +49,16 @@ class TestRunInit:
         gw_config = json.loads(Path(summary["gateway_config_path"]).read_text())
         assert "github" in gw_config["mcpServers"]
         assert "filesystem" in gw_config["mcpServers"]
-        assert gw_config["mcpServers"]["github"]["env"]["GITHUB_TOKEN"] == "ghp_secret123"
+        assert (
+            gw_config["mcpServers"]["github"]["env"]["GITHUB_TOKEN"]
+            == "ghp_secret123"
+        )
 
     def test_rewrites_source_with_gateway_only(self, tmp_path: Path) -> None:
         source = tmp_path / "claude_desktop_config.json"
-        source.write_text(json.dumps(_claude_desktop_config()), encoding="utf-8")
+        source.write_text(
+            json.dumps(_claude_desktop_config()), encoding="utf-8"
+        )
         data_dir = tmp_path / "gateway"
 
         run_init(source, data_dir=data_dir)
@@ -56,11 +67,16 @@ class TestRunInit:
         rewritten = json.loads(source.read_text())
         assert "artifact-gateway" in rewritten["mcpServers"]
         assert len(rewritten["mcpServers"]) == 1
-        assert rewritten["mcpServers"]["artifact-gateway"]["command"] == "mcp-gateway"
+        assert (
+            rewritten["mcpServers"]["artifact-gateway"]["command"]
+            == "mcp-gateway"
+        )
 
     def test_preserves_non_mcp_keys_in_source(self, tmp_path: Path) -> None:
         source = tmp_path / "config.json"
-        source.write_text(json.dumps(_claude_desktop_config()), encoding="utf-8")
+        source.write_text(
+            json.dumps(_claude_desktop_config()), encoding="utf-8"
+        )
         data_dir = tmp_path / "gateway"
 
         run_init(source, data_dir=data_dir)
@@ -82,7 +98,9 @@ class TestRunInit:
 
     def test_custom_gateway_name(self, tmp_path: Path) -> None:
         source = tmp_path / "config.json"
-        source.write_text(json.dumps(_claude_desktop_config()), encoding="utf-8")
+        source.write_text(
+            json.dumps(_claude_desktop_config()), encoding="utf-8"
+        )
         data_dir = tmp_path / "gateway"
 
         run_init(source, data_dir=data_dir, gateway_name="my-gateway")
@@ -110,7 +128,8 @@ class TestRunInit:
     def test_existing_gateway_config_preserved(self, tmp_path: Path) -> None:
         source = tmp_path / "config.json"
         source.write_text(
-            json.dumps({"mcpServers": {"new_tool": {"command": "new-tool"}}}), encoding="utf-8"
+            json.dumps({"mcpServers": {"new_tool": {"command": "new-tool"}}}),
+            encoding="utf-8",
         )
 
         data_dir = tmp_path / "gateway"
@@ -144,12 +163,15 @@ class TestRunInit:
 
     def test_missing_source_raises(self, tmp_path: Path) -> None:
         with pytest.raises(FileNotFoundError):
-            run_init(tmp_path / "nonexistent.json", data_dir=tmp_path / "gateway")
+            run_init(
+                tmp_path / "nonexistent.json", data_dir=tmp_path / "gateway"
+            )
 
     def test_vscode_format_source(self, tmp_path: Path) -> None:
         source = tmp_path / "mcp.json"
         source.write_text(
-            json.dumps({"mcp": {"servers": {"github": {"command": "gh"}}}}), encoding="utf-8"
+            json.dumps({"mcp": {"servers": {"github": {"command": "gh"}}}}),
+            encoding="utf-8",
         )
         data_dir = tmp_path / "gateway"
 
@@ -164,7 +186,10 @@ class TestRunInit:
     def test_tilde_expansion(self, tmp_path: Path, monkeypatch) -> None:
         monkeypatch.setenv("HOME", str(tmp_path))
         source = tmp_path / "config.json"
-        source.write_text(json.dumps({"mcpServers": {"gh": {"command": "gh"}}}), encoding="utf-8")
+        source.write_text(
+            json.dumps({"mcpServers": {"gh": {"command": "gh"}}}),
+            encoding="utf-8",
+        )
 
         summary = run_init(Path("~/config.json"), data_dir=tmp_path / "gateway")
         assert summary["servers_migrated"] == ["gh"]
@@ -223,7 +248,9 @@ def _source_with_servers(tmp_path: Path) -> Path:
 class TestInitDockerProvisioning:
     """Tests for Docker auto-provisioning integration in run_init."""
 
-    def test_triggers_docker_when_no_dsn(self, tmp_path: Path, monkeypatch) -> None:
+    def test_triggers_docker_when_no_dsn(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
         monkeypatch.delenv("MCP_GATEWAY_POSTGRES_DSN", raising=False)
         source = _source_with_servers(tmp_path)
         fake_result = _FakeDockerResult(
@@ -245,7 +272,9 @@ class TestInitDockerProvisioning:
         assert gw_config["postgres_dsn"] == fake_result.dsn
         assert summary["docker_postgres"]["container"] == "mcp-gateway-postgres"
 
-    def test_skips_docker_when_cli_dsn_provided(self, tmp_path: Path, monkeypatch) -> None:
+    def test_skips_docker_when_cli_dsn_provided(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
         monkeypatch.delenv("MCP_GATEWAY_POSTGRES_DSN", raising=False)
         source = _source_with_servers(tmp_path)
 
@@ -262,8 +291,12 @@ class TestInitDockerProvisioning:
         gw_config = json.loads(Path(summary["gateway_config_path"]).read_text())
         assert gw_config["postgres_dsn"] == "postgresql://explicit:pass@host/db"
 
-    def test_skips_docker_when_env_var_set(self, tmp_path: Path, monkeypatch) -> None:
-        monkeypatch.setenv("MCP_GATEWAY_POSTGRES_DSN", "postgresql://env@host/db")
+    def test_skips_docker_when_env_var_set(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        monkeypatch.setenv(
+            "MCP_GATEWAY_POSTGRES_DSN", "postgresql://env@host/db"
+        )
         source = _source_with_servers(tmp_path)
 
         with patch(
@@ -275,7 +308,9 @@ class TestInitDockerProvisioning:
         gw_config = json.loads(Path(summary["gateway_config_path"]).read_text())
         assert gw_config["postgres_dsn"] == "postgresql://env@host/db"
 
-    def test_skips_docker_when_dsn_in_existing_config(self, tmp_path: Path, monkeypatch) -> None:
+    def test_skips_docker_when_dsn_in_existing_config(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
         monkeypatch.delenv("MCP_GATEWAY_POSTGRES_DSN", raising=False)
         source = _source_with_servers(tmp_path)
         data_dir = tmp_path / "gw"
@@ -298,11 +333,15 @@ class TestInitDockerProvisioning:
         gw_config = json.loads(Path(summary["gateway_config_path"]).read_text())
         assert gw_config["postgres_dsn"] == "postgresql://existing@host/db"
 
-    def test_docker_not_found_falls_back_gracefully(self, tmp_path: Path, monkeypatch) -> None:
+    def test_docker_not_found_falls_back_gracefully(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
         monkeypatch.delenv("MCP_GATEWAY_POSTGRES_DSN", raising=False)
         source = _source_with_servers(tmp_path)
 
-        from mcp_artifact_gateway.config.docker_postgres import DockerNotFoundError
+        from mcp_artifact_gateway.config.docker_postgres import (
+            DockerNotFoundError,
+        )
 
         with patch(
             "mcp_artifact_gateway.config.docker_postgres.provision_postgres",
@@ -314,7 +353,9 @@ class TestInitDockerProvisioning:
         gw_config = json.loads(Path(summary["gateway_config_path"]).read_text())
         assert "postgres_dsn" not in gw_config
 
-    def test_dry_run_passes_through_to_docker(self, tmp_path: Path, monkeypatch) -> None:
+    def test_dry_run_passes_through_to_docker(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
         monkeypatch.delenv("MCP_GATEWAY_POSTGRES_DSN", raising=False)
         source = _source_with_servers(tmp_path)
         fake_result = _FakeDockerResult(

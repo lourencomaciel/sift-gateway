@@ -2,7 +2,10 @@ from __future__ import annotations
 
 from decimal import Decimal
 
-from mcp_artifact_gateway.retrieval.response import apply_output_budgets, build_retrieval_response
+from mcp_artifact_gateway.retrieval.response import (
+    apply_output_budgets,
+    build_retrieval_response,
+)
 
 
 def test_retrieval_response_requires_cursor_when_truncated() -> None:

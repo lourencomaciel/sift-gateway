@@ -6,9 +6,9 @@ from pathlib import Path
 
 import pytest
 
+from mcp_artifact_gateway.cache.reuse import try_acquire_advisory_lock
 from mcp_artifact_gateway.db.backend import SqliteBackend
 from mcp_artifact_gateway.db.migrate import apply_migrations
-from mcp_artifact_gateway.cache.reuse import try_acquire_advisory_lock
 
 
 @pytest.fixture()
@@ -52,7 +52,9 @@ class TestSqliteSmoke:
             }
             assert expected.issubset(tables)
 
-    def test_insert_and_query_session(self, sqlite_backend: SqliteBackend) -> None:
+    def test_insert_and_query_session(
+        self, sqlite_backend: SqliteBackend
+    ) -> None:
         with sqlite_backend.connection() as conn:
             conn.execute(
                 "INSERT INTO sessions (workspace_id, session_id) VALUES (?, ?)",
@@ -85,7 +87,9 @@ class TestSqliteSmoke:
             count = conn.execute("SELECT COUNT(*) FROM sessions").fetchone()[0]
             assert count == 1
 
-    def test_foreign_key_enforcement(self, sqlite_backend: SqliteBackend) -> None:
+    def test_foreign_key_enforcement(
+        self, sqlite_backend: SqliteBackend
+    ) -> None:
         """Inserting artifact without session should fail due to FK constraint."""
         with sqlite_backend.connection() as conn:
             with pytest.raises(Exception):
@@ -113,7 +117,9 @@ class TestSqliteSmoke:
                     ),
                 )
 
-    def test_advisory_lock_noop_on_sqlite(self, sqlite_backend: SqliteBackend) -> None:
+    def test_advisory_lock_noop_on_sqlite(
+        self, sqlite_backend: SqliteBackend
+    ) -> None:
         """Advisory lock should always return True on SQLite."""
         with sqlite_backend.connection() as conn:
             result = try_acquire_advisory_lock(conn, request_key="test-key")
@@ -155,7 +161,9 @@ class TestSqliteSmoke:
             assert row[0] == {"key": "value", "nested": [1, 2]}
             assert isinstance(row[0], dict)
 
-    def test_created_seq_auto_increment(self, sqlite_backend: SqliteBackend) -> None:
+    def test_created_seq_auto_increment(
+        self, sqlite_backend: SqliteBackend
+    ) -> None:
         """Verify the trigger auto-generates created_seq for artifacts."""
         with sqlite_backend.connection() as conn:
             conn.execute(

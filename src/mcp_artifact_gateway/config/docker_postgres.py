@@ -10,14 +10,13 @@ The generated DSN is written to the gateway config so subsequent
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 import json
 import secrets
 import socket
 import subprocess
 import time
-from dataclasses import dataclass
 from typing import Any
-
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -89,7 +88,8 @@ def _run_docker(
         )
     except FileNotFoundError:
         raise DockerNotFoundError(
-            "Docker CLI not found. Install Docker Desktop or set --postgres-dsn."
+            "Docker CLI not found. Install Docker Desktop"
+            " or set --postgres-dsn."
         ) from None
     except subprocess.CalledProcessError as exc:
         if not check:
@@ -171,7 +171,12 @@ def _get_container_host_port(container_name: str) -> int:
     if info is None or not info:
         msg = f"container '{container_name}' not found"
         raise DockerCommandError(msg)
-    bindings = info[0].get("HostConfig", {}).get("PortBindings", {}).get("5432/tcp", [])
+    bindings = (
+        info[0]
+        .get("HostConfig", {})
+        .get("PortBindings", {})
+        .get("5432/tcp", [])
+    )
     if not bindings:
         msg = f"no port binding for 5432/tcp on container '{container_name}'"
         raise DockerCommandError(msg)
@@ -190,7 +195,8 @@ def _find_available_port(preferred: int = DEFAULT_PORT) -> int:
                 return port
             except OSError:
                 continue
-    msg = f"no available port in range {preferred}-{preferred + PORT_SCAN_RANGE - 1}"
+    end = preferred + PORT_SCAN_RANGE - 1
+    msg = f"no available port in range {preferred}-{end}"
     raise PortConflictError(msg)
 
 
@@ -261,10 +267,16 @@ def _wait_for_healthy(
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         info = _inspect_container(container_name)
-        if info and info[0].get("State", {}).get("Health", {}).get("Status") == "healthy":
+        if (
+            info
+            and info[0].get("State", {}).get("Health", {}).get("Status")
+            == "healthy"
+        ):
             return
         time.sleep(interval)
-    msg = f"container '{container_name}' did not become healthy within {timeout}s"
+    msg = (
+        f"container '{container_name}' did not become healthy within {timeout}s"
+    )
     raise DockerHealthCheckError(msg)
 
 
@@ -301,7 +313,8 @@ def provision_postgres(
     """
     if not check_docker_available():
         raise DockerNotFoundError(
-            "Docker not found. Install Docker Desktop or provide --postgres-dsn."
+            "Docker not found. Install Docker Desktop"
+            " or provide --postgres-dsn."
         )
 
     if dry_run:

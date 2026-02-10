@@ -11,9 +11,9 @@ from __future__ import annotations
 
 import asyncio
 import os
-import uuid
 from pathlib import Path
 from typing import Any
+import uuid
 
 import pytest
 
@@ -22,7 +22,10 @@ from mcp_artifact_gateway.constants import WORKSPACE_ID
 from mcp_artifact_gateway.db.conn import create_pool
 from mcp_artifact_gateway.db.migrate import apply_migrations
 from mcp_artifact_gateway.mcp.server import GatewayServer
-from mcp_artifact_gateway.mcp.upstream import UpstreamInstance, UpstreamToolSchema
+from mcp_artifact_gateway.mcp.upstream import (
+    UpstreamInstance,
+    UpstreamToolSchema,
+)
 
 _POSTGRES_DSN_ENV = "MCP_GATEWAY_TEST_POSTGRES_DSN"
 
@@ -41,12 +44,15 @@ _SMALL_JSON = {
 }
 
 _MANY_USERS = {
-    "users": [{"id": i, "name": f"user_{i}", "role": "member"} for i in range(1, 21)],
+    "users": [
+        {"id": i, "name": f"user_{i}", "role": "member"} for i in range(1, 21)
+    ],
 }
 
 _LARGE_JSON = {
     "events": [
-        {"id": i, "type": "click", "ts": f"2025-01-{i:02d}T00:00:00Z"} for i in range(1, 51)
+        {"id": i, "type": "click", "ts": f"2025-01-{i:02d}T00:00:00Z"}
+        for i in range(1, 51)
     ],
 }
 
@@ -90,7 +96,10 @@ _UPSTREAM_DISPATCH: dict[str, tuple[str, dict[str, Any]]] = {
         "Return text report",
         {
             "content": [
-                {"type": "text", "text": "Monthly report summary: all systems operational."}
+                {
+                    "type": "text",
+                    "text": "Monthly report summary: all systems operational.",
+                }
             ],
             "structuredContent": None,
             "isError": False,
@@ -100,7 +109,9 @@ _UPSTREAM_DISPATCH: dict[str, tuple[str, dict[str, Any]]] = {
     "failing_tool": (
         "Always fails",
         {
-            "content": [{"type": "text", "text": "upstream connection refused"}],
+            "content": [
+                {"type": "text", "text": "upstream connection refused"}
+            ],
             "structuredContent": None,
             "isError": True,
             "meta": {"exception_type": "ConnectionError"},
@@ -129,7 +140,8 @@ _UPSTREAM_DISPATCH: dict[str, tuple[str, dict[str, Any]]] = {
             "content": [],
             "structuredContent": {
                 "records": [
-                    {"id": i, "value": f"oversize_item_{i}", "data": "x" * 20} for i in range(10)
+                    {"id": i, "value": f"oversize_item_{i}", "data": "x" * 20}
+                    for i in range(10)
                 ],
                 "oversize_marker": True,
             },
@@ -164,7 +176,11 @@ async def _stub_upstream(
 
 def _migrations_dir() -> Path:
     return (
-        Path(__file__).resolve().parents[2] / "src" / "mcp_artifact_gateway" / "db" / "migrations"
+        Path(__file__).resolve().parents[2]
+        / "src"
+        / "mcp_artifact_gateway"
+        / "db"
+        / "migrations"
     )
 
 
@@ -197,7 +213,9 @@ def _build_upstream() -> UpstreamInstance:
         for name, desc_and_resp in _UPSTREAM_DISPATCH.items()
     ]
     return UpstreamInstance(
-        config=UpstreamConfig(prefix="test", transport="stdio", command="/bin/echo"),
+        config=UpstreamConfig(
+            prefix="test", transport="stdio", command="/bin/echo"
+        ),
         instance_id="upstream_e2e_test",
         tools=tools,
     )
@@ -213,7 +231,10 @@ def _call_mirrored(
 ) -> dict[str, Any]:
     mirrored = server.mirrored_tools[tool_qualified_name]
     args: dict[str, Any] = {
-        "_gateway_context": {"session_id": session_id, "cache_mode": cache_mode},
+        "_gateway_context": {
+            "session_id": session_id,
+            "cache_mode": cache_mode,
+        },
     }
     if extra_args:
         args.update(extra_args)
@@ -335,7 +356,9 @@ def e2e_env(tmp_path, monkeypatch):
             apply_migrations(conn, _migrations_dir())
 
         upstream = _build_upstream()
-        server = GatewayServer(config=config, db_pool=pool, upstreams=[upstream])
+        server = GatewayServer(
+            config=config, db_pool=pool, upstreams=[upstream]
+        )
         monkeypatch.setattr(
             "mcp_artifact_gateway.mcp.server.call_upstream_tool",
             _stub_upstream,
@@ -701,7 +724,9 @@ def test_e2e_session_isolation(e2e_env):
 
     # Session B cannot find it via search
     search_b = _search(server, session_b)
-    assert not any(item["artifact_id"] == artifact_id for item in search_b["items"])
+    assert not any(
+        item["artifact_id"] == artifact_id for item in search_b["items"]
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -766,7 +791,9 @@ def e2e_env_oversize(tmp_path, monkeypatch):
         with pool.connection() as conn:
             apply_migrations(conn, _migrations_dir())
         upstream = _build_upstream()
-        server = GatewayServer(config=config, db_pool=pool, upstreams=[upstream])
+        server = GatewayServer(
+            config=config, db_pool=pool, upstreams=[upstream]
+        )
         monkeypatch.setattr(
             "mcp_artifact_gateway.mcp.server.call_upstream_tool",
             _stub_upstream,
@@ -783,7 +810,9 @@ def e2e_env_oversize(tmp_path, monkeypatch):
 
 def test_e2e_soft_delete_hard_delete_lifecycle(e2e_env):
     from mcp_artifact_gateway.jobs.hard_delete import run_hard_delete_batch
-    from mcp_artifact_gateway.jobs.soft_delete import run_soft_delete_unreferenced
+    from mcp_artifact_gateway.jobs.soft_delete import (
+        run_soft_delete_unreferenced,
+    )
 
     server, _config, pool = e2e_env
     session_id = f"sess_{uuid.uuid4().hex}"
@@ -1047,7 +1076,10 @@ def test_e2e_migration_idempotency(e2e_env):
 
 def test_e2e_generation_safe_mapping_race(e2e_env):
     from mcp_artifact_gateway.mapping.runner import MappingResult
-    from mcp_artifact_gateway.mapping.worker import WorkerContext, persist_mapping_result
+    from mcp_artifact_gateway.mapping.worker import (
+        WorkerContext,
+        persist_mapping_result,
+    )
 
     server, _config, pool = e2e_env
     session_id = f"sess_{uuid.uuid4().hex}"
@@ -1091,7 +1123,9 @@ def test_e2e_generation_safe_mapping_race(e2e_env):
     )
 
     with pool.connection() as conn:
-        persisted = persist_mapping_result(conn, worker_ctx=stale_ctx, result=fake_result)
+        persisted = persist_mapping_result(
+            conn, worker_ctx=stale_ctx, result=fake_result
+        )
         assert persisted is False
 
     # Verify artifact still has stale status (not overwritten)
@@ -1176,7 +1210,9 @@ def test_e2e_multi_session_cache_sharing(e2e_env):
     assert any(item["artifact_id"] == artifact_id for item in search_a["items"])
 
     search_b = _search(server, session_b)
-    assert not any(item["artifact_id"] == artifact_id for item in search_b["items"])
+    assert not any(
+        item["artifact_id"] == artifact_id for item in search_b["items"]
+    )
 
     # Manually insert artifact_ref for session B to verify access works with ref
     with pool.connection() as conn:

@@ -64,14 +64,19 @@ def test_build_status_response_contains_all_budget_fields() -> None:
     assert budgets["max_bytes_out"] == config.max_bytes_out
     assert budgets["max_wildcards"] == config.max_wildcards
     assert budgets["max_compute_steps"] == config.max_compute_steps
-    assert budgets["artifact_search_max_limit"] == config.artifact_search_max_limit
+    assert (
+        budgets["artifact_search_max_limit"] == config.artifact_search_max_limit
+    )
 
 
 def test_build_status_response_includes_where_canonicalization_mode() -> None:
     config = _default_config()
     result = build_status_response(config)
 
-    assert result["where_canonicalization_mode"] == config.where_canonicalization_mode.value
+    assert (
+        result["where_canonicalization_mode"]
+        == config.where_canonicalization_mode.value
+    )
 
 
 def test_build_status_response_includes_mapping_mode() -> None:
@@ -113,7 +118,10 @@ def test_build_status_response_defaults_db_and_fs_to_not_probed() -> None:
 def test_build_status_response_with_runtime_uses_provided_health() -> None:
     config = _default_config()
     db_health = {"ok": True}
-    fs_health = {"ok": True, "paths": {"data_dir": True, "state_dir": True, "blobs_bin_dir": True}}
+    fs_health = {
+        "ok": True,
+        "paths": {"data_dir": True, "state_dir": True, "blobs_bin_dir": True},
+    }
     result = build_status_response_with_runtime(
         config,
         db_health=db_health,
@@ -123,7 +131,9 @@ def test_build_status_response_with_runtime_uses_provided_health() -> None:
     assert result["fs"] == fs_health
 
 
-def test_build_status_response_with_runtime_includes_cursor_secrets_info() -> None:
+def test_build_status_response_with_runtime_includes_cursor_secrets_info() -> (
+    None
+):
     config = _default_config()
     secrets_info = {
         "signing_version": "v2",
@@ -139,7 +149,9 @@ def test_build_status_response_with_runtime_includes_cursor_secrets_info() -> No
     assert cursor["active_versions"] == ["v1", "v2"]
 
 
-def test_build_status_response_without_cursor_secrets_omits_secret_fields() -> None:
+def test_build_status_response_without_cursor_secrets_omits_secret_fields() -> (
+    None
+):
     config = _default_config()
     result = build_status_response_with_runtime(config)
     cursor = result["cursor"]
@@ -151,7 +163,12 @@ def test_build_status_response_without_cursor_secrets_omits_secret_fields() -> N
 def test_build_status_response_with_runtime_upstreams() -> None:
     config = _default_config()
     upstreams = [
-        {"prefix": "demo", "instance_id": "inst_demo", "connected": True, "tool_count": 2},
+        {
+            "prefix": "demo",
+            "instance_id": "inst_demo",
+            "connected": True,
+            "tool_count": 2,
+        },
     ]
     result = build_status_response_with_runtime(config, upstreams=upstreams)
     assert result["upstreams"] == upstreams

@@ -1,24 +1,34 @@
-"""artifact.get tool implementation.
+"""Validate arguments and check preconditions for ``artifact.get``.
 
-Retrieval targets:
+Support two retrieval targets: ``"envelope"`` returns the raw
+envelope optionally filtered by JSONPath, and ``"mapped"`` returns
+mapped root metadata.  Exports ``validate_get_args``,
+``check_get_preconditions``, and fetch SQL constants.
 
-- ``target="envelope"`` -- returns the raw envelope, optionally filtered by
-  a JSONPath expression.  Traversal uses ``traverse_deterministic`` ordering
-  (arrays ascending index, objects lexicographic key).
-- ``target="mapped"`` -- returns mapped root metadata.  When the artifact
-  has ``map_kind="partial"``, responses carry ``sampled_only=True`` and the
-  enumerated data covers only the sampled indices (ascending order).
+Typical usage example::
+
+    error = validate_get_args(arguments)
+    if error:
+        return error
+    row = conn.execute(FETCH_ARTIFACT_SQL, params).fetchone()
+    error = check_get_preconditions(row, target="envelope")
 """
 
 from __future__ import annotations
 
 from typing import Any
 
-from mcp_artifact_gateway.constants import WORKSPACE_ID
-
 
 def validate_get_args(arguments: dict[str, Any]) -> dict[str, Any] | None:
-    """Validate artifact.get arguments. Returns error dict or None if valid."""
+    """Validate ``artifact.get`` arguments.
+
+    Args:
+        arguments: Raw tool arguments including gateway context,
+            ``artifact_id``, and optional ``target``.
+
+    Returns:
+        Error dict on validation failure, ``None`` when valid.
+    """
     ctx = arguments.get("_gateway_context")
     if not isinstance(ctx, dict) or not ctx.get("session_id"):
         return {
@@ -32,7 +42,10 @@ def validate_get_args(arguments: dict[str, Any]) -> dict[str, Any] | None:
 
     target = arguments.get("target", "envelope")
     if target not in ("envelope", "mapped"):
-        return {"code": "INVALID_ARGUMENT", "message": f"invalid target: {target}"}
+        return {
+            "code": "INVALID_ARGUMENT",
+            "message": f"invalid target: {target}",
+        }
 
     return None
 
@@ -60,7 +73,14 @@ WHERE workspace_id = %s AND artifact_id = %s AND deleted_at IS NULL
 
 
 def is_sampled_only(artifact_row: dict[str, Any]) -> bool:
-    """Return True if the artifact was partially mapped (sampled-only data)."""
+    """Return ``True`` if the artifact uses partial mapping.
+
+    Args:
+        artifact_row: Artifact database row dict.
+
+    Returns:
+        ``True`` when ``map_kind`` equals ``"partial"``.
+    """
     return str(artifact_row.get("map_kind", "none")) == "partial"
 
 
@@ -68,7 +88,21 @@ def check_get_preconditions(
     artifact_row: dict[str, Any] | None,
     target: str,
 ) -> dict[str, Any] | None:
-    """Check preconditions for artifact.get. Returns error dict or None."""
+    """Check preconditions for ``artifact.get`` retrieval.
+
+    Verifies the artifact exists, is not deleted, and has the
+    required mapping status when *target* is ``"mapped"``.
+
+    Args:
+        artifact_row: Artifact database row dict, or ``None``
+            if the artifact was not found.
+        target: Retrieval target (``"envelope"`` or
+            ``"mapped"``).
+
+    Returns:
+        Error dict on precondition failure, ``None`` when all
+        checks pass.
+    """
     if artifact_row is None:
         return {"code": "NOT_FOUND", "message": "artifact not found"}
 

@@ -9,7 +9,6 @@ except ImportError:  # SQLite-only install — no psycopg
 
 from mcp_artifact_gateway.constants import WORKSPACE_ID
 
-
 INSERT_PAYLOAD_BLOB_SQL = """
 INSERT INTO payload_blobs (
     workspace_id,
@@ -43,6 +42,23 @@ def payload_blob_params(
     payload_total_bytes: int,
     contains_binary_refs: bool,
 ) -> tuple[object, ...]:
+    """Build parameter tuple for the payload blob INSERT.
+
+    Args:
+        payload_hash_full: Full SHA-256 payload hash.
+        envelope: Envelope dict or None.
+        encoding: Canonical encoding name.
+        canonical_bytes: Canonical byte representation.
+        canonical_len: Length of canonical bytes.
+        canonicalizer_version: Canonicalizer version string.
+        payload_json_bytes: Size of JSON content in bytes.
+        payload_binary_bytes_total: Total binary ref bytes.
+        payload_total_bytes: Total payload bytes.
+        contains_binary_refs: Whether binary refs exist.
+
+    Returns:
+        Positional parameter tuple for the SQL statement.
+    """
     return (
         WORKSPACE_ID,
         payload_hash_full,

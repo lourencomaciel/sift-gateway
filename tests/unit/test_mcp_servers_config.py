@@ -14,7 +14,6 @@ from mcp_artifact_gateway.config.mcp_servers import (
 )
 from mcp_artifact_gateway.config.settings import load_gateway_config
 
-
 # ---------------------------------------------------------------------------
 # extract_mcp_servers
 # ---------------------------------------------------------------------------
@@ -76,7 +75,9 @@ class TestTransportInference:
         assert configs[0]["prefix"] == "gh"
 
     def test_url_infers_http(self) -> None:
-        configs = to_upstream_configs({"api": {"url": "https://example.com/mcp"}})
+        configs = to_upstream_configs(
+            {"api": {"url": "https://example.com/mcp"}}
+        )
         assert configs[0]["transport"] == "http"
 
     def test_both_command_and_url_raises(self) -> None:
@@ -275,7 +276,11 @@ class TestLoadGatewayConfigMcpServers:
             json.dumps(
                 {
                     "upstreams": [
-                        {"prefix": "gh", "transport": "http", "url": "https://example.com"},
+                        {
+                            "prefix": "gh",
+                            "transport": "http",
+                            "url": "https://example.com",
+                        },
                     ]
                 }
             )
@@ -291,7 +296,9 @@ class TestLoadGatewayConfigMcpServers:
             json.dumps(
                 {
                     "mcpServers": {"gh": {"command": "gh"}},
-                    "upstreams": [{"prefix": "x", "transport": "http", "url": "http://x"}],
+                    "upstreams": [
+                        {"prefix": "x", "transport": "http", "url": "http://x"}
+                    ],
                 }
             )
         )

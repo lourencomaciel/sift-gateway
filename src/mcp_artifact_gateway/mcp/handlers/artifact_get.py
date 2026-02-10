@@ -5,7 +5,10 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from mcp_artifact_gateway.constants import WORKSPACE_ID
-from mcp_artifact_gateway.cursor.hmac import CursorExpiredError, CursorTokenError
+from mcp_artifact_gateway.cursor.hmac import (
+    CursorExpiredError,
+    CursorTokenError,
+)
 from mcp_artifact_gateway.cursor.payload import CursorStaleError
 from mcp_artifact_gateway.envelope.responses import gateway_error
 from mcp_artifact_gateway.mcp.handlers.common import (
@@ -30,6 +33,16 @@ async def handle_artifact_get(
     ctx: GatewayServer,
     arguments: dict[str, Any],
 ) -> dict[str, Any]:
+    """Handle the ``artifact.get`` tool call.
+
+    Args:
+        ctx: Gateway server instance providing DB and cursor helpers.
+        arguments: Tool arguments including ``artifact_id``, optional
+            ``target``, ``jsonpath``, ``cursor``, and ``limit``.
+
+    Returns:
+        Envelope or mapped-view response dict, or a gateway error.
+    """
     from mcp_artifact_gateway.tools.artifact_describe import FETCH_ROOTS_SQL
     from mcp_artifact_gateway.tools.artifact_get import (
         FETCH_ARTIFACT_SQL,
@@ -111,12 +124,17 @@ async def handle_artifact_get(
                 commit = getattr(connection, "commit", None)
                 if callable(commit):
                     commit()
-            return gateway_error(str(precondition["code"]), str(precondition["message"]))
+            return gateway_error(
+                str(precondition["code"]), str(precondition["message"])
+            )
 
-        assert row is not None
+        if row is None:
+            return gateway_error("NOT_FOUND", "artifact not found")
         if cursor_payload is not None:
             try:
-                ctx._assert_cursor_field(cursor_payload, field="target", expected=target)
+                ctx._assert_cursor_field(
+                    cursor_payload, field="target", expected=target
+                )
                 ctx._assert_cursor_field(
                     cursor_payload,
                     field="normalized_jsonpath",
@@ -164,16 +182,22 @@ async def handle_artifact_get(
         if isinstance(envelope_value, dict) and "content" in envelope_value:
             envelope = envelope_value
         elif canonical_bytes_raw is None:
-            return gateway_error("INTERNAL_ERROR", "missing canonical bytes for artifact")
+            return gateway_error(
+                "INTERNAL_ERROR", "missing canonical bytes for artifact"
+            )
         else:
             try:
                 envelope = reconstruct_envelope(
                     compressed_bytes=bytes(canonical_bytes_raw),
-                    encoding=str(row.get("envelope_canonical_encoding", "none")),
+                    encoding=str(
+                        row.get("envelope_canonical_encoding", "none")
+                    ),
                     expected_hash=str(row.get("payload_hash_full", "")),
                 )
             except ValueError as exc:
-                return gateway_error("INTERNAL_ERROR", f"envelope reconstruction failed: {exc}")
+                return gateway_error(
+                    "INTERNAL_ERROR", f"envelope reconstruction failed: {exc}"
+                )
 
         if jsonpath is not None:
             values = evaluate_jsonpath(

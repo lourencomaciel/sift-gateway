@@ -1,18 +1,16 @@
-"""artifact.find tool implementation.
+"""Validate arguments and build responses for ``artifact.find``.
 
-``artifact.find`` searches sample rows across mapped roots.  It operates
-in *sampled-only* mode unless a full-text index is available (``index_status
-== "ready"``).
+Search sample rows across mapped roots in sampled-only mode (unless
+a full-text index is ready).  Sample rows are fetched in ascending
+``sample_index`` order per the traversal_v1 contract.  Exports
+``validate_find_args``, ``build_find_response``, and helpers.
 
-In sampled-only mode the traversal contract is:
+Typical usage example::
 
-- Sample rows are fetched ``ORDER BY sample_index ASC`` (SQL guarantee).
-- The ``sampled_only`` flag is set on the response so callers know only a
-  subset of the data was searched.
-
-This ensures determinism consistent with the traversal_v1 contract:
-sampled indices ascending, same as ``traverse_sampled`` in
-``retrieval.traversal``.
+    error = validate_find_args(arguments)
+    if error:
+        return error
+    response = build_find_response(items=matches, truncated=False)
 """
 
 from __future__ import annotations
@@ -21,7 +19,15 @@ from typing import Any, Sequence
 
 
 def validate_find_args(arguments: dict[str, Any]) -> dict[str, Any] | None:
-    """Validate artifact.find arguments."""
+    """Validate ``artifact.find`` arguments.
+
+    Args:
+        arguments: Raw tool arguments including gateway context
+            and ``artifact_id``.
+
+    Returns:
+        Error dict on validation failure, ``None`` when valid.
+    """
     ctx = arguments.get("_gateway_context")
     if not isinstance(ctx, dict) or not ctx.get("session_id"):
         return {
@@ -35,15 +41,26 @@ def validate_find_args(arguments: dict[str, Any]) -> dict[str, Any] | None:
     return None
 
 
-def sampled_indices_from_rows(sample_rows: Sequence[dict[str, Any]]) -> list[int]:
-    """Extract sample indices in ascending order from find sample rows.
+def sampled_indices_from_rows(
+    sample_rows: Sequence[dict[str, Any]],
+) -> list[int]:
+    """Extract sample indices in ascending order.
 
-    This mirrors the same ascending-order guarantee used by
+    Mirrors the ascending-order guarantee of
     ``artifact_select.sampled_indices_ascending`` and the SQL
     ``ORDER BY sample_index ASC``.
+
+    Args:
+        sample_rows: Sequence of sample row dicts, each
+            containing a ``sample_index`` key.
+
+    Returns:
+        Sorted list of integer sample indices.
     """
     return sorted(
-        int(idx) for row in sample_rows if isinstance((idx := row.get("sample_index")), int)
+        int(idx)
+        for row in sample_rows
+        if isinstance((idx := row.get("sample_index")), int)
     )
 
 
@@ -56,9 +73,21 @@ def build_find_response(
     index_status: str = "off",
     determinism: dict[str, str] | None = None,
 ) -> dict[str, Any]:
-    """Build artifact.find response.
+    """Build the ``artifact.find`` response dict.
 
-    Works in sample-only mode unless indexing is enabled.
+    Operates in sample-only mode unless a full-text index is
+    ready (``index_status == "ready"``).
+
+    Args:
+        items: Matched records from the find operation.
+        truncated: Whether the result set was truncated.
+        cursor: Opaque pagination cursor, or ``None``.
+        sampled_only: Whether results come from sampled data.
+        index_status: Full-text index readiness status.
+        determinism: Dict with determinism contract metadata.
+
+    Returns:
+        Structured response dict for ``artifact.find``.
     """
     result: dict[str, Any] = {
         "items": items,

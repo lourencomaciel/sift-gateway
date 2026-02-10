@@ -1,15 +1,28 @@
-"""MCP server setup and runtime tool registration."""
+"""Configure the MCP server and register runtime tools.
+
+Provide ``GatewayServer``, the central runtime object that holds
+database, blob store, upstream connections, and metrics state.
+Handler methods delegate to ``mcp.handlers.*`` modules.  Exports
+``bootstrap_server`` to connect upstreams and build the server.
+
+Typical usage example::
+
+    server = await bootstrap_server(config, db_pool=backend)
+    app = server.build_fastmcp_app()
+    app.run()
+"""
 
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass, field
 import json
 import time
-from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Mapping
 
 from fastmcp import FastMCP
 from fastmcp.tools.tool import Tool, ToolResult
+
 from mcp_artifact_gateway.artifacts.create import (
     ArtifactHandle,
     CreateArtifactInput,
@@ -35,7 +48,10 @@ from mcp_artifact_gateway.cursor.payload import (
     assert_cursor_binding,
     build_cursor_payload,
 )
-from mcp_artifact_gateway.cursor.secrets import CursorSecrets, load_or_create_cursor_secrets
+from mcp_artifact_gateway.cursor.secrets import (
+    CursorSecrets,
+    load_or_create_cursor_secrets,
+)
 from mcp_artifact_gateway.envelope.model import BinaryRefContentPart, Envelope
 from mcp_artifact_gateway.envelope.normalize import normalize_envelope
 from mcp_artifact_gateway.envelope.oversize import replace_oversized_json_parts
@@ -76,19 +92,133 @@ _BUILTIN_TOOL_DESCRIPTIONS = {
     "gateway.status": "Gateway health and configuration snapshot.",
     "artifact.search": "Search artifacts visible to a session.",
     "artifact.get": "Load a stored artifact envelope or mapped value.",
-    "artifact.select": "Project and filter artifact data with bounded traversal.",
+    "artifact.select": "Project and filter data with bounded traversal.",
     "artifact.describe": "Describe mapped roots and retrieval affordances.",
     "artifact.find": "Find matching records under mapped roots.",
     "artifact.chain_pages": "Return chain-ordered child artifacts.",
 }
 
 
+def _not_implemented(tool_name: str) -> dict[str, Any]:
+    """Return a NOT_IMPLEMENTED gateway error for a tool.
+
+    Args:
+        tool_name: Qualified name of the unimplemented tool.
+
+    Returns:
+        Gateway error dict with code NOT_IMPLEMENTED.
+    """
+    return gateway_error(
+        "NOT_IMPLEMENTED",
+        f"{tool_name} is not wired to persistence yet",
+    )
+
+
+def _cursor_position(payload: dict[str, Any]) -> dict[str, Any]:
+    """Extract position_state dict from cursor payload.
+
+    Args:
+        payload: Decoded cursor payload dictionary.
+
+    Returns:
+        The position_state sub-dictionary.
+
+    Raises:
+        CursorTokenError: If position_state is missing or not
+            a dict.
+    """
+    position = payload.get("position_state")
+    if not isinstance(position, dict):
+        msg = "cursor missing position_state"
+        raise CursorTokenError(msg)
+    return position
+
+
+def _assert_cursor_field(
+    payload: Mapping[str, Any],
+    *,
+    field: str,
+    expected: object,
+) -> None:
+    """Raise CursorStaleError if a cursor field does not match.
+
+    Args:
+        payload: Decoded cursor payload mapping.
+        field: Key to look up in the payload.
+        expected: Value the field must equal.
+
+    Raises:
+        CursorStaleError: If the actual value differs from
+            expected.
+    """
+    actual = payload.get(field)
+    if actual != expected:
+        msg = f"cursor {field} mismatch"
+        raise CursorStaleError(msg)
+
+
+def _check_sample_corruption(
+    root_row: dict[str, Any],
+    sample_rows: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    """Return INTERNAL error if expected sample indices are missing rows.
+
+    Args:
+        root_row: Mapping root row containing sample_indices.
+        sample_rows: Fetched sample rows to verify against.
+
+    Returns:
+        Gateway error dict if corruption detected, else None.
+    """
+    expected_raw = root_row.get("sample_indices")
+    if not isinstance(expected_raw, list) or not expected_raw:
+        return None
+    expected = {int(i) for i in expected_raw if isinstance(i, int)}
+    actual = {
+        int(row["sample_index"])
+        for row in sample_rows
+        if isinstance(row.get("sample_index"), int)
+    }
+    missing = sorted(expected - actual)
+    if missing:
+        return gateway_error(
+            "INTERNAL",
+            "sample data corruption: expected sample rows missing",
+            details={
+                "root_key": root_row.get("root_key"),
+                "missing_indices": missing,
+                "expected_count": len(expected),
+                "actual_count": len(actual),
+            },
+        )
+    return None
+
+
 class RuntimeTool(Tool):
-    """Custom FastMCP tool that accepts raw argument dicts."""
+    """FastMCP tool subclass that accepts raw argument dicts.
+
+    Bypasses FastMCP's Pydantic argument parsing so that gateway
+    tools and mirrored upstream tools receive the raw ``dict``
+    directly.
+
+    Attributes:
+        handler: Async callable that processes the raw arguments
+            and returns a structured result dict.
+    """
 
     handler: Callable[[dict[str, Any]], Awaitable[dict[str, Any]]]
 
     async def run(self, arguments: dict[str, Any]) -> ToolResult:
+        """Execute the handler with raw arguments.
+
+        Args:
+            arguments: Raw argument dict passed by the MCP
+                client.
+
+        Returns:
+            ToolResult wrapping the handler's structured
+            content dict.
+        """
         result = await self.handler(arguments)
         return ToolResult(structured_content=result)
 
@@ -103,6 +233,14 @@ _CANDIDATE_COLUMNS = [
 
 
 def _upstream_error_message(result: dict[str, Any]) -> str:
+    """Extract a human-readable error message from an upstream result.
+
+    Args:
+        result: Upstream tool call result dict.
+
+    Returns:
+        First non-empty text block, or a generic fallback string.
+    """
     content = result.get("content")
     if isinstance(content, list):
         for block in content:
@@ -118,6 +256,19 @@ def _normalize_upstream_content(
     content: list[dict[str, Any]] | None,
     structured_content: Any,
 ) -> list[Mapping[str, Any]]:
+    """Normalize upstream content blocks into envelope parts.
+
+    Converts structured content and MCP content blocks into
+    the canonical part types recognised by the envelope model.
+
+    Args:
+        content: List of MCP content blocks, or None.
+        structured_content: Optional structured JSON content
+            returned by the upstream tool.
+
+    Returns:
+        List of normalized content-part mappings.
+    """
     normalized: list[Mapping[str, Any]] = []
     if isinstance(structured_content, dict):
         normalized.append({"type": "json", "value": structured_content})
@@ -141,11 +292,24 @@ def _normalize_upstream_content(
 
 @dataclass
 class GatewayServer:
-    """Holds runtime state and provides executable tool handlers.
+    """Hold runtime state and provide executable tool handlers.
 
-    Handler logic is implemented in ``mcp.handlers.*`` modules.
-    Each ``handle_*`` method delegates to the corresponding handler function,
-    passing ``self`` as the context.
+    Central object wiring configuration, database pool, blob store,
+    upstream connections, and metrics.  Handler logic lives in
+    ``mcp.handlers.*`` modules; each ``handle_*`` method delegates
+    to the corresponding handler function passing ``self``.
+
+    Attributes:
+        config: Gateway configuration.
+        db_pool: Database backend (Postgres or SQLite), or None.
+        blob_store: Content-addressed binary blob store.
+        upstreams: Connected upstream MCP server instances.
+        fs_ok: True if filesystem passed startup checks.
+        db_ok: True if database passed startup checks.
+        metrics: Prometheus-style gateway metrics.
+        cursor_secrets: HMAC signing secrets for cursors.
+        upstream_errors: Map of prefix to connection error.
+        mirrored_tools: Qualified name to MirroredTool mapping.
     """
 
     config: GatewayConfig
@@ -160,7 +324,7 @@ class GatewayServer:
     mirrored_tools: dict[str, MirroredTool] = field(default_factory=dict)
     _mapping_tasks: set[asyncio.Task[None]] = field(default_factory=set)
 
-    def __post_init__(self) -> None:
+    def __post_init__(self) -> None:  # noqa: D105
         if not self.mirrored_tools and self.upstreams:
             self.mirrored_tools = build_mirrored_tools(self.upstreams)
 
@@ -169,11 +333,15 @@ class GatewayServer:
     # ------------------------------------------------------------------
 
     def _probe_db_recovery(self) -> bool:
-        """Probe DB pool and recover ``db_ok`` if the connection is healthy again.
+        """Probe DB pool and recover db_ok if healthy.
 
         Called by the preflight health gate so that a transient
-        ``OperationalError`` (e.g. ``PoolTimeout``) does not permanently
+        OperationalError (e.g. PoolTimeout) does not permanently
         disable mirrored tool calls.
+
+        Returns:
+            True if the database connection is healthy and
+            db_ok was restored, False otherwise.
         """
         if self.db_pool is None:
             return False
@@ -185,14 +353,24 @@ class GatewayServer:
         except Exception:
             return False
 
-    @staticmethod
-    def _not_implemented(tool_name: str) -> dict[str, Any]:
-        return gateway_error(
-            "NOT_IMPLEMENTED",
-            f"{tool_name} is not wired to persistence yet",
-        )
+    def _not_implemented(self, tool_name: str) -> dict[str, Any]:
+        """Return a NOT_IMPLEMENTED error for a tool.
+
+        Args:
+            tool_name: Qualified name of the unimplemented tool.
+
+        Returns:
+            Gateway error dict with code NOT_IMPLEMENTED.
+        """
+        return _not_implemented(tool_name)
 
     def _status_upstreams(self) -> list[dict[str, Any]]:
+        """Build upstream status entries for the status response.
+
+        Returns:
+            List of dicts describing each upstream's connection
+            state, tool count, and any errors.
+        """
         payload: list[dict[str, Any]] = []
         for upstream in self.upstreams:
             payload.append(
@@ -216,17 +394,37 @@ class GatewayServer:
         return payload
 
     def _bounded_limit(self, raw_limit: Any) -> int:
+        """Clamp a user-supplied limit to the configured maximum.
+
+        Args:
+            raw_limit: Limit value from the request arguments.
+
+        Returns:
+            Positive integer capped at config.max_items.
+        """
         if isinstance(raw_limit, int) and raw_limit > 0:
             return min(raw_limit, self.config.max_items)
         return min(50, self.config.max_items)
 
     def _increment_metric(self, attr: str, amount: int = 1) -> None:
+        """Increment a counter metric by the given amount.
+
+        Args:
+            attr: Attribute name on GatewayMetrics.
+            amount: Increment value. Defaults to 1.
+        """
         counter = getattr(self.metrics, attr, None)
         increment = getattr(counter, "inc", None)
         if callable(increment):
             increment(amount)
 
     def _observe_metric(self, attr: str, value: float) -> None:
+        """Record an observation on a histogram metric.
+
+        Args:
+            attr: Attribute name on GatewayMetrics.
+            value: Observation value (e.g. latency in ms).
+        """
         histogram = getattr(self.metrics, attr, None)
         observe = getattr(histogram, "observe", None)
         if callable(observe):
@@ -238,6 +436,15 @@ class GatewayServer:
         mirrored: MirroredTool,
         forwarded_args: dict[str, Any],
     ) -> dict[str, Any]:
+        """Call an upstream tool and record timing and error metrics.
+
+        Args:
+            mirrored: Mirrored tool descriptor.
+            forwarded_args: Arguments to forward to the upstream.
+
+        Returns:
+            Raw result dict from the upstream tool call.
+        """
         self._increment_metric("upstream_calls")
         started_at = time.monotonic()
         try:
@@ -261,6 +468,11 @@ class GatewayServer:
     # -- Cursor helpers --
 
     def _record_cursor_stale_reason(self, message: str) -> None:
+        """Log and record the stale-cursor reason from an error message.
+
+        Args:
+            message: CursorStaleError message string.
+        """
         reason: str | None = None
         if "sample_set_hash mismatch" in message:
             reason = "sample_set_mismatch"
@@ -300,10 +512,32 @@ class GatewayServer:
         if callable(recorder):
             recorder(reason)
 
-    def _cursor_session_artifact_id(self, session_id: str, order_by: str) -> str:
+    def _cursor_session_artifact_id(
+        self, session_id: str, order_by: str
+    ) -> str:
+        """Build a synthetic artifact ID for session-scoped cursors.
+
+        Args:
+            session_id: Active session identifier.
+            order_by: Sort key used in the search query.
+
+        Returns:
+            Composite string used as the cursor's artifact
+            binding.
+        """
         return f"session:{session_id}:{order_by}"
 
     def _cursor_error(self, token_error: Exception) -> dict[str, Any]:
+        """Convert a cursor exception into a gateway error response.
+
+        Records the appropriate metric counter before returning.
+
+        Args:
+            token_error: Exception from cursor verification.
+
+        Returns:
+            Gateway error dict with the matching error code.
+        """
         if isinstance(token_error, CursorExpiredError):
             self._increment_metric("cursor_expired")
             return gateway_error("CURSOR_EXPIRED", "cursor expired")
@@ -314,8 +548,16 @@ class GatewayServer:
         return gateway_error("INVALID_ARGUMENT", "invalid cursor")
 
     def _get_cursor_secrets(self) -> CursorSecrets:
+        """Load or return cached HMAC signing secrets.
+
+        Returns:
+            CursorSecrets used for signing and verifying
+            cursor tokens.
+        """
         if self.cursor_secrets is None:
-            self.cursor_secrets = load_or_create_cursor_secrets(self.config.secrets_path)
+            self.cursor_secrets = load_or_create_cursor_secrets(
+                self.config.secrets_path
+            )
         return self.cursor_secrets
 
     def _issue_cursor(
@@ -326,6 +568,17 @@ class GatewayServer:
         position_state: dict[str, Any],
         extra: dict[str, Any] | None = None,
     ) -> str:
+        """Build and sign a new cursor token.
+
+        Args:
+            tool: Tool name the cursor is bound to.
+            artifact_id: Artifact the cursor is bound to.
+            position_state: Pagination position state dict.
+            extra: Optional additional payload fields.
+
+        Returns:
+            HMAC-signed cursor token string.
+        """
         payload = build_cursor_payload(
             tool=tool,
             artifact_id=artifact_id,
@@ -343,6 +596,21 @@ class GatewayServer:
         tool: str,
         artifact_id: str,
     ) -> dict[str, Any]:
+        """Verify a cursor token and return its position state.
+
+        Args:
+            token: Signed cursor token string.
+            tool: Expected tool binding.
+            artifact_id: Expected artifact binding.
+
+        Returns:
+            Position state dict extracted from the cursor.
+
+        Raises:
+            CursorTokenError: If the token is invalid.
+            CursorExpiredError: If the token has expired.
+            CursorStaleError: If bindings do not match.
+        """
         payload = self._verify_cursor_payload(
             token=token,
             tool=tool,
@@ -357,6 +625,23 @@ class GatewayServer:
         tool: str,
         artifact_id: str,
     ) -> dict[str, Any]:
+        """Verify a cursor token and return the full payload.
+
+        Args:
+            token: Signed cursor token string.
+            tool: Expected tool binding.
+            artifact_id: Expected artifact binding.
+
+        Returns:
+            Full decoded cursor payload dict including
+            position_state.
+
+        Raises:
+            CursorTokenError: If the token or payload is
+                invalid.
+            CursorExpiredError: If the token has expired.
+            CursorStaleError: If bindings do not match.
+        """
         payload = verify_cursor_token(token, self._get_cursor_secrets())
         assert_cursor_binding(
             payload,
@@ -370,25 +655,40 @@ class GatewayServer:
             raise CursorTokenError(msg)
         return payload
 
-    @staticmethod
-    def _cursor_position(payload: dict[str, Any]) -> dict[str, Any]:
-        position = payload.get("position_state")
-        if not isinstance(position, dict):
-            msg = "cursor missing position_state"
-            raise CursorTokenError(msg)
-        return position
+    def _cursor_position(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Extract position_state from a cursor payload.
 
-    @staticmethod
+        Args:
+            payload: Decoded cursor payload dictionary.
+
+        Returns:
+            The position_state sub-dictionary.
+
+        Raises:
+            CursorTokenError: If position_state is missing or
+                not a dict.
+        """
+        return _cursor_position(payload)
+
     def _assert_cursor_field(
+        self,
         payload: Mapping[str, Any],
         *,
         field: str,
         expected: object,
     ) -> None:
-        actual = payload.get(field)
-        if actual != expected:
-            msg = f"cursor {field} mismatch"
-            raise CursorStaleError(msg)
+        """Assert a cursor payload field matches the expected value.
+
+        Args:
+            payload: Decoded cursor payload mapping.
+            field: Key to check in the payload.
+            expected: Required value for the field.
+
+        Raises:
+            CursorStaleError: If the actual value differs from
+                expected.
+        """
+        _assert_cursor_field(payload, field=field, expected=expected)
 
     # -- DB / visibility helpers --
 
@@ -399,7 +699,19 @@ class GatewayServer:
         session_id: str,
         artifact_id: str,
     ) -> bool:
-        from mcp_artifact_gateway.mcp.handlers.common import VISIBLE_ARTIFACT_SQL
+        """Check whether an artifact is visible to a session.
+
+        Args:
+            connection: Active database connection.
+            session_id: Session to check visibility for.
+            artifact_id: Artifact identifier to look up.
+
+        Returns:
+            True if the artifact is visible to the session.
+        """
+        from mcp_artifact_gateway.mcp.handlers.common import (
+            VISIBLE_ARTIFACT_SQL,
+        )
 
         row = connection.execute(
             VISIBLE_ARTIFACT_SQL,
@@ -414,6 +726,13 @@ class GatewayServer:
         session_id: str,
         artifact_id: str,
     ) -> None:
+        """Record a retrieval touch if the connection supports it.
+
+        Args:
+            connection: Active database connection.
+            session_id: Session performing the retrieval.
+            artifact_id: Artifact being retrieved.
+        """
         if callable(getattr(connection, "cursor", None)):
             touch_for_retrieval(connection, session_id, artifact_id)
 
@@ -424,41 +743,45 @@ class GatewayServer:
         session_id: str,
         artifact_ids: list[str],
     ) -> None:
+        """Record a search touch if the connection supports it.
+
+        Args:
+            connection: Active database connection.
+            session_id: Session performing the search.
+            artifact_ids: Artifacts returned in the results.
+        """
         if callable(getattr(connection, "cursor", None)):
             touch_for_search(connection, session_id, artifact_ids)
 
-    @staticmethod
     def _check_sample_corruption(
+        self,
         root_row: dict[str, Any],
         sample_rows: list[dict[str, Any]],
     ) -> dict[str, Any] | None:
-        """Return INTERNAL error if expected sample indices are missing rows."""
-        expected_raw = root_row.get("sample_indices")
-        if not isinstance(expected_raw, list) or not expected_raw:
-            return None
-        expected = set(int(i) for i in expected_raw if isinstance(i, int))
-        actual = set(
-            int(row["sample_index"])
-            for row in sample_rows
-            if isinstance(row.get("sample_index"), int)
-        )
-        missing = sorted(expected - actual)
-        if missing:
-            return gateway_error(
-                "INTERNAL",
-                "sample data corruption: expected sample rows missing",
-                details={
-                    "root_key": root_row.get("root_key"),
-                    "missing_indices": missing,
-                    "expected_count": len(expected),
-                    "actual_count": len(actual),
-                },
-            )
-        return None
+        """Detect missing sample rows for a mapping root.
+
+        Args:
+            root_row: Mapping root row with sample_indices.
+            sample_rows: Fetched sample rows to verify.
+
+        Returns:
+            Gateway INTERNAL error dict if corruption found,
+            else None.
+        """
+        return _check_sample_corruption(root_row, sample_rows)
 
     # -- Envelope / binary helpers --
 
     def _binary_hashes_from_envelope(self, envelope: Envelope) -> list[str]:
+        """Collect binary blob hashes from an envelope's content.
+
+        Args:
+            envelope: Envelope whose content parts to inspect.
+
+        Returns:
+            List of binary_hash strings from BinaryRefContentPart
+            entries.
+        """
         hashes: list[str] = []
         for part in envelope.content:
             if isinstance(part, BinaryRefContentPart):
@@ -474,6 +797,16 @@ class GatewayServer:
         payload_hash_full: str,
         envelope: Envelope,
     ) -> MappingInput:
+        """Build a MappingInput from an artifact and its envelope.
+
+        Args:
+            artifact_id: Unique artifact identifier.
+            payload_hash_full: Full payload content hash.
+            envelope: Normalized envelope for the artifact.
+
+        Returns:
+            MappingInput ready for the mapping worker.
+        """
         open_binary_stream = None
         if self.blob_store is not None:
             open_binary_stream = self.blob_store.open_stream
@@ -492,6 +825,16 @@ class GatewayServer:
         handle: ArtifactHandle,
         envelope: Envelope,
     ) -> bool:
+        """Run the mapping worker synchronously on this connection.
+
+        Args:
+            connection: Active database connection.
+            handle: Artifact handle with metadata.
+            envelope: Normalized envelope to map.
+
+        Returns:
+            True if the mapping worker completed successfully.
+        """
         worker_ctx = WorkerContext(
             artifact_id=handle.artifact_id,
             generation=handle.generation,
@@ -514,6 +857,15 @@ class GatewayServer:
         handle: ArtifactHandle,
         envelope: Envelope,
     ) -> None:
+        """Run the mapping worker in a background thread.
+
+        Opens a fresh database connection from the pool and
+        executes the mapping worker via asyncio.to_thread.
+
+        Args:
+            handle: Artifact handle with metadata.
+            envelope: Normalized envelope to map.
+        """
         if self.db_pool is None:
             return
 
@@ -542,6 +894,14 @@ class GatewayServer:
         await asyncio.to_thread(_execute)
 
     def _consume_mapping_task(self, task: asyncio.Task[None]) -> None:
+        """Handle completion of a background mapping task.
+
+        Removes the task from the pending set and logs any
+        exception that occurred during execution.
+
+        Args:
+            task: Completed asyncio task to consume.
+        """
         self._mapping_tasks.discard(task)
         try:
             task.result()
@@ -558,14 +918,27 @@ class GatewayServer:
         handle: ArtifactHandle,
         envelope: Envelope,
     ) -> None:
-        task = asyncio.create_task(self._run_mapping_background(handle=handle, envelope=envelope))
+        """Schedule a mapping worker as a background asyncio task.
+
+        Args:
+            handle: Artifact handle with metadata.
+            envelope: Normalized envelope to map.
+        """
+        task = asyncio.create_task(
+            self._run_mapping_background(handle=handle, envelope=envelope)
+        )
         self._mapping_tasks.add(task)
         task.add_done_callback(self._consume_mapping_task)
 
     async def drain_mapping_tasks(self, *, timeout: float = 30.0) -> int:
         """Await all pending background mapping tasks.
 
-        Returns the number of tasks that were still pending.
+        Args:
+            timeout: Maximum seconds to wait for tasks to
+                complete. Defaults to 30.
+
+        Returns:
+            Number of tasks still pending after the timeout.
         """
         pending = set(self._mapping_tasks)
         if not pending:
@@ -580,11 +953,24 @@ class GatewayServer:
         handle: ArtifactHandle,
         envelope: Envelope,
     ) -> None:
+        """Trigger mapping for an artifact based on configured mode.
+
+        Runs inline for sync/hybrid modes or schedules a
+        background task for async mode.  No-ops if the
+        artifact's map_status does not require mapping.
+
+        Args:
+            connection: Active database connection.
+            handle: Artifact handle with metadata.
+            envelope: Normalized envelope to map.
+        """
         if not should_run_mapping(handle.map_status):
             return
         mode = self.config.mapping_mode.value
         if mode in {"sync", "hybrid"}:
-            self._run_mapping_inline(connection, handle=handle, envelope=envelope)
+            self._run_mapping_inline(
+                connection, handle=handle, envelope=envelope
+            )
             return
         self._schedule_background_mapping(handle=handle, envelope=envelope)
 
@@ -598,6 +984,19 @@ class GatewayServer:
         expected_schema_hash: str | None,
         strict_schema_reuse: bool,
     ) -> ReuseResult:
+        """Check if an existing artifact can be reused for a request.
+
+        Args:
+            connection: Active database connection.
+            request_key: Hash key identifying the request.
+            expected_schema_hash: Expected upstream tool schema
+                hash, or None to skip the check.
+            strict_schema_reuse: If True, reject reuse when
+                the schema hash differs.
+
+        Returns:
+            ReuseResult indicating whether reuse is possible.
+        """
         row = connection.execute(
             FIND_REUSABLE_BY_REQUEST_KEY_SQL,
             (WORKSPACE_ID, request_key),
@@ -619,6 +1018,20 @@ class GatewayServer:
         mirrored: MirroredTool,
         upstream_result: dict[str, Any],
     ) -> Envelope:
+        """Convert a raw upstream result into a normalized envelope.
+
+        Handles error extraction, content normalization, and
+        oversized JSON part replacement when a blob store is
+        available.
+
+        Args:
+            mirrored: Mirrored tool descriptor.
+            upstream_result: Raw result dict from the upstream
+                tool call.
+
+        Returns:
+            Normalized Envelope ready for persistence.
+        """
         is_error = bool(upstream_result.get("isError", False))
         content = upstream_result.get("content")
         structured_content = upstream_result.get("structuredContent")
@@ -662,7 +1075,8 @@ class GatewayServer:
             oversize_count = sum(
                 1
                 for warning in warnings
-                if isinstance(warning, dict) and warning.get("code") == "oversized_json_part"
+                if isinstance(warning, dict)
+                and warning.get("code") == "oversized_json_part"
             )
             if oversize_count > 0:
                 self._increment_metric("oversize_json_count", oversize_count)
@@ -673,9 +1087,25 @@ class GatewayServer:
         *,
         input_data: CreateArtifactInput,
     ) -> ArtifactHandle:
-        payload_hash, _, _, _ = prepare_envelope_storage(input_data.envelope, self.config)
-        payload_json_bytes, payload_binary_bytes_total, payload_total_bytes = compute_payload_sizes(
-            input_data.envelope
+        """Build an ArtifactHandle without database persistence.
+
+        Used when the database is unavailable to construct a
+        handle with computed hashes and sizes for passthrough
+        responses.
+
+        Args:
+            input_data: Artifact creation input with envelope
+                and metadata.
+
+        Returns:
+            ArtifactHandle with computed payload hashes and
+            size fields.
+        """
+        payload_hash, _, _, _ = prepare_envelope_storage(
+            input_data.envelope, self.config
+        )
+        payload_json_bytes, payload_binary_bytes_total, payload_total_bytes = (
+            compute_payload_sizes(input_data.envelope)
         )
         return ArtifactHandle(
             artifact_id=generate_artifact_id(),
@@ -697,12 +1127,20 @@ class GatewayServer:
             error_summary=(
                 None
                 if input_data.envelope.error is None
-                else f"{input_data.envelope.error.code}: {input_data.envelope.error.message}"
+                else (
+                    f"{input_data.envelope.error.code}"
+                    f": {input_data.envelope.error.message}"
+                )
             ),
         )
 
     def _cursor_secrets_info(self) -> dict[str, Any] | None:
-        """Return cursor secret metadata for the status response, or None."""
+        """Return cursor secret metadata for the status response.
+
+        Returns:
+            Dict with signing_version and active_versions, or
+            None if cursor secrets are not loaded.
+        """
         secrets = self.cursor_secrets
         if secrets is None:
             return None
@@ -718,6 +1156,12 @@ class GatewayServer:
     def register_tools(
         self,
     ) -> dict[str, Callable[[dict[str, Any]], Awaitable[dict[str, Any]]]]:
+        """Return a mapping of built-in tool names to handlers.
+
+        Returns:
+            Dict mapping qualified tool names to their async
+            handler callables.
+        """
         return {
             "gateway.status": self.handle_status,
             "artifact.search": self.handle_artifact_search,
@@ -731,7 +1175,19 @@ class GatewayServer:
     def register_mirrored_tools(
         self,
     ) -> dict[str, Callable[[dict[str, Any]], Awaitable[dict[str, Any]]]]:
-        handlers: dict[str, Callable[[dict[str, Any]], Awaitable[dict[str, Any]]]] = {}
+        """Return a mapping of mirrored tool names to handlers.
+
+        Creates a closure per mirrored tool that delegates to
+        handle_mirrored_tool with the correct MirroredTool
+        descriptor.
+
+        Returns:
+            Dict mapping qualified mirrored tool names to their
+            async handler callables.
+        """
+        handlers: dict[
+            str, Callable[[dict[str, Any]], Awaitable[dict[str, Any]]]
+        ] = {}
         for qualified_name, mirrored in self.mirrored_tools.items():
 
             async def _handler(
@@ -744,13 +1200,23 @@ class GatewayServer:
         return handlers
 
     def build_fastmcp_app(self) -> FastMCP:
+        """Build a FastMCP application with all registered tools.
+
+        Registers both built-in gateway tools and mirrored
+        upstream tools as RuntimeTool instances.
+
+        Returns:
+            Configured FastMCP application ready to run.
+        """
         app = FastMCP(name="mcp-artifact-gateway")
 
         for tool_name, handler in self.register_tools().items():
             app.add_tool(
                 RuntimeTool(
                     name=tool_name,
-                    description=_BUILTIN_TOOL_DESCRIPTIONS.get(tool_name, "Gateway tool"),
+                    description=_BUILTIN_TOOL_DESCRIPTIONS.get(
+                        tool_name, "Gateway tool"
+                    ),
                     parameters=dict(_GENERIC_ARGS_SCHEMA),
                     handler=handler,
                 )
@@ -779,6 +1245,17 @@ class GatewayServer:
         mirrored: MirroredTool,
         arguments: dict[str, Any],
     ) -> dict[str, Any]:
+        """Handle a call to a mirrored upstream tool.
+
+        Delegates to the mirrored_tool handler module.
+
+        Args:
+            mirrored: Mirrored tool descriptor.
+            arguments: Raw arguments from the MCP client.
+
+        Returns:
+            Structured result dict for the tool response.
+        """
         from mcp_artifact_gateway.mcp.handlers.mirrored_tool import (
             handle_mirrored_tool as _handle,
         )
@@ -786,46 +1263,116 @@ class GatewayServer:
         return await _handle(self, mirrored, arguments)
 
     async def handle_status(self, arguments: dict[str, Any]) -> dict[str, Any]:
-        from mcp_artifact_gateway.mcp.handlers.status import handle_status as _handle
+        """Handle the gateway.status tool call.
+
+        Args:
+            arguments: Raw arguments from the MCP client.
+
+        Returns:
+            Status snapshot dict with health and config info.
+        """
+        from mcp_artifact_gateway.mcp.handlers.status import (
+            handle_status as _handle,
+        )
 
         return await _handle(self, arguments)
 
-    async def handle_artifact_search(self, arguments: dict[str, Any]) -> dict[str, Any]:
+    async def handle_artifact_search(
+        self, arguments: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Handle the artifact.search tool call.
+
+        Args:
+            arguments: Raw arguments from the MCP client.
+
+        Returns:
+            Search results dict with matching artifacts.
+        """
         from mcp_artifact_gateway.mcp.handlers.artifact_search import (
             handle_artifact_search as _handle,
         )
 
         return await _handle(self, arguments)
 
-    async def handle_artifact_get(self, arguments: dict[str, Any]) -> dict[str, Any]:
+    async def handle_artifact_get(
+        self, arguments: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Handle the artifact.get tool call.
+
+        Args:
+            arguments: Raw arguments from the MCP client.
+
+        Returns:
+            Artifact envelope or mapped value dict.
+        """
         from mcp_artifact_gateway.mcp.handlers.artifact_get import (
             handle_artifact_get as _handle,
         )
 
         return await _handle(self, arguments)
 
-    async def handle_artifact_select(self, arguments: dict[str, Any]) -> dict[str, Any]:
+    async def handle_artifact_select(
+        self, arguments: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Handle the artifact.select tool call.
+
+        Args:
+            arguments: Raw arguments from the MCP client.
+
+        Returns:
+            Projected and filtered artifact data dict.
+        """
         from mcp_artifact_gateway.mcp.handlers.artifact_select import (
             handle_artifact_select as _handle,
         )
 
         return await _handle(self, arguments)
 
-    async def handle_artifact_describe(self, arguments: dict[str, Any]) -> dict[str, Any]:
+    async def handle_artifact_describe(
+        self, arguments: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Handle the artifact.describe tool call.
+
+        Args:
+            arguments: Raw arguments from the MCP client.
+
+        Returns:
+            Mapped root descriptions and retrieval affordances.
+        """
         from mcp_artifact_gateway.mcp.handlers.artifact_describe import (
             handle_artifact_describe as _handle,
         )
 
         return await _handle(self, arguments)
 
-    async def handle_artifact_find(self, arguments: dict[str, Any]) -> dict[str, Any]:
+    async def handle_artifact_find(
+        self, arguments: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Handle the artifact.find tool call.
+
+        Args:
+            arguments: Raw arguments from the MCP client.
+
+        Returns:
+            Matching records under mapped roots.
+        """
         from mcp_artifact_gateway.mcp.handlers.artifact_find import (
             handle_artifact_find as _handle,
         )
 
         return await _handle(self, arguments)
 
-    async def handle_artifact_chain_pages(self, arguments: dict[str, Any]) -> dict[str, Any]:
+    async def handle_artifact_chain_pages(
+        self, arguments: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Handle the artifact.chain_pages tool call.
+
+        Args:
+            arguments: Raw arguments from the MCP client.
+
+        Returns:
+            Chain-ordered child artifacts dict.
+        """
         from mcp_artifact_gateway.mcp.handlers.artifact_chain_pages import (
             handle_artifact_chain_pages as _handle,
         )
@@ -841,7 +1388,20 @@ async def bootstrap_server(
     fs_ok: bool = True,
     db_ok: bool = True,
 ) -> GatewayServer:
-    """Connect upstreams and return a ready-to-run server instance."""
+    """Connect upstreams and return a ready-to-run server instance.
+
+    Args:
+        config: Gateway configuration.
+        db_pool: Optional pre-configured database backend
+            (Postgres or SQLite).
+        blob_store: Optional content-addressed blob store.
+        fs_ok: Whether the filesystem passed startup checks.
+        db_ok: Whether the database passed startup checks.
+
+    Returns:
+        A fully initialized GatewayServer with connected
+        upstreams.
+    """
     upstreams = await connect_upstreams(config.upstreams)
     return GatewayServer(
         config=config,

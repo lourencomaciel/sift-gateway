@@ -3,7 +3,6 @@ from __future__ import annotations
 from pathlib import Path
 
 from mcp_artifact_gateway.jobs.reconcile_fs import (
-    FETCH_ALL_BLOB_PATHS_SQL,
     find_missing,
     find_orphans,
     remove_orphan_files,
@@ -187,7 +186,9 @@ class _FakeConnection:
     def __init__(self, rows: list[tuple[object, ...]] | None = None) -> None:
         self.rows = list(rows or [])
 
-    def execute(self, _query: str, _params: tuple[object, ...] | None = None) -> _FakeCursor:
+    def execute(
+        self, _query: str, _params: tuple[object, ...] | None = None
+    ) -> _FakeCursor:
         return _FakeCursor(self.rows)
 
 

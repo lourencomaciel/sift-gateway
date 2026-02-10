@@ -46,7 +46,9 @@ class _FakeServer:
         return self._app
 
 
-def test_serve_check_mode_prints_startup_report(tmp_path: Path, monkeypatch, capsys) -> None:
+def test_serve_check_mode_prints_startup_report(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
     config = GatewayConfig(data_dir=tmp_path)
     report = CheckResult(fs_ok=True, db_ok=True, upstream_ok=True, details=[])
 
@@ -54,8 +56,13 @@ def test_serve_check_mode_prints_startup_report(tmp_path: Path, monkeypatch, cap
         "mcp_artifact_gateway.main._parse_args",
         lambda: argparse.Namespace(command=None, check=True, data_dir=None),
     )
-    monkeypatch.setattr("mcp_artifact_gateway.main.load_gateway_config", lambda **_kwargs: config)
-    monkeypatch.setattr("mcp_artifact_gateway.main.run_startup_check", lambda _config: report)
+    monkeypatch.setattr(
+        "mcp_artifact_gateway.main.load_gateway_config",
+        lambda **_kwargs: config,
+    )
+    monkeypatch.setattr(
+        "mcp_artifact_gateway.main.run_startup_check", lambda _config: report
+    )
 
     exit_code = serve()
     captured = capsys.readouterr()
@@ -87,8 +94,13 @@ def test_serve_returns_one_when_startup_check_fails(
         "mcp_artifact_gateway.main._parse_args",
         lambda: argparse.Namespace(command=None, check=False, data_dir=None),
     )
-    monkeypatch.setattr("mcp_artifact_gateway.main.load_gateway_config", lambda **_kwargs: config)
-    monkeypatch.setattr("mcp_artifact_gateway.main.run_startup_check", lambda _config: report)
+    monkeypatch.setattr(
+        "mcp_artifact_gateway.main.load_gateway_config",
+        lambda **_kwargs: config,
+    )
+    monkeypatch.setattr(
+        "mcp_artifact_gateway.main.run_startup_check", lambda _config: report
+    )
 
     exit_code = serve()
     captured = capsys.readouterr()
@@ -97,7 +109,9 @@ def test_serve_returns_one_when_startup_check_fails(
     assert "FS write failed" in captured.err
 
 
-def test_serve_runs_bootstrap_and_closes_pool(tmp_path: Path, monkeypatch) -> None:
+def test_serve_runs_bootstrap_and_closes_pool(
+    tmp_path: Path, monkeypatch
+) -> None:
     config = GatewayConfig(data_dir=tmp_path)
     report = CheckResult(fs_ok=True, db_ok=True, upstream_ok=True, details=[])
     pool = _FakePool()
@@ -108,8 +122,13 @@ def test_serve_runs_bootstrap_and_closes_pool(tmp_path: Path, monkeypatch) -> No
         "mcp_artifact_gateway.main._parse_args",
         lambda: argparse.Namespace(command=None, check=False, data_dir=None),
     )
-    monkeypatch.setattr("mcp_artifact_gateway.main.load_gateway_config", lambda **_kwargs: config)
-    monkeypatch.setattr("mcp_artifact_gateway.main.run_startup_check", lambda _config: report)
+    monkeypatch.setattr(
+        "mcp_artifact_gateway.main.load_gateway_config",
+        lambda **_kwargs: config,
+    )
+    monkeypatch.setattr(
+        "mcp_artifact_gateway.main.run_startup_check", lambda _config: report
+    )
     monkeypatch.setattr(
         "mcp_artifact_gateway.app.build_app",
         lambda *, config, startup_report: (server, pool),
@@ -123,7 +142,9 @@ def test_serve_runs_bootstrap_and_closes_pool(tmp_path: Path, monkeypatch) -> No
     assert app.kwargs == {"show_banner": False}
 
 
-def test_serve_drains_mapping_tasks_on_shutdown(tmp_path: Path, monkeypatch) -> None:
+def test_serve_drains_mapping_tasks_on_shutdown(
+    tmp_path: Path, monkeypatch
+) -> None:
     config = GatewayConfig(data_dir=tmp_path)
     report = CheckResult(fs_ok=True, db_ok=True, upstream_ok=True, details=[])
     pool = _FakePool()
@@ -147,8 +168,13 @@ def test_serve_drains_mapping_tasks_on_shutdown(tmp_path: Path, monkeypatch) -> 
         "mcp_artifact_gateway.main._parse_args",
         lambda: argparse.Namespace(command=None, check=False, data_dir=None),
     )
-    monkeypatch.setattr("mcp_artifact_gateway.main.load_gateway_config", lambda **_kwargs: config)
-    monkeypatch.setattr("mcp_artifact_gateway.main.run_startup_check", lambda _config: report)
+    monkeypatch.setattr(
+        "mcp_artifact_gateway.main.load_gateway_config",
+        lambda **_kwargs: config,
+    )
+    monkeypatch.setattr(
+        "mcp_artifact_gateway.main.run_startup_check", lambda _config: report
+    )
     monkeypatch.setattr(
         "mcp_artifact_gateway.app.build_app",
         lambda *, config, startup_report: (server, pool),
@@ -161,7 +187,9 @@ def test_serve_drains_mapping_tasks_on_shutdown(tmp_path: Path, monkeypatch) -> 
     assert drain_called["called"] is True
 
 
-def test_serve_dispatches_init_command(tmp_path: Path, monkeypatch, capsys) -> None:
+def test_serve_dispatches_init_command(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
     source = tmp_path / "claude_desktop_config.json"
     source.write_text(
         json.dumps(
@@ -195,7 +223,9 @@ def test_serve_dispatches_init_command(tmp_path: Path, monkeypatch, capsys) -> N
     assert json.loads(source.read_text())["mcpServers"]["gh"]["command"] == "gh"
 
 
-def test_init_accepts_postgres_dsn_flag(tmp_path: Path, monkeypatch, capsys) -> None:
+def test_init_accepts_postgres_dsn_flag(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
     source = tmp_path / "config.json"
     source.write_text(
         json.dumps(
@@ -255,13 +285,17 @@ def test_gateway_config_sqlite_busy_timeout_default(tmp_path: Path) -> None:
     assert config.sqlite_busy_timeout_ms == 5000
 
 
-def test_gateway_config_sqlite_busy_timeout_customizable(tmp_path: Path) -> None:
+def test_gateway_config_sqlite_busy_timeout_customizable(
+    tmp_path: Path,
+) -> None:
     """sqlite_busy_timeout_ms can be overridden."""
     config = GatewayConfig(data_dir=tmp_path, sqlite_busy_timeout_ms=10000)
     assert config.sqlite_busy_timeout_ms == 10000
 
 
-def test_gateway_config_db_backend_env_override(tmp_path: Path, monkeypatch) -> None:
+def test_gateway_config_db_backend_env_override(
+    tmp_path: Path, monkeypatch
+) -> None:
     """MCP_GATEWAY_DB_BACKEND env var overrides default."""
     monkeypatch.setenv("MCP_GATEWAY_DB_BACKEND", "postgres")
     from mcp_artifact_gateway.config.settings import load_gateway_config

@@ -9,20 +9,16 @@ structures are returned.
 from __future__ import annotations
 
 import dataclasses
-from typing import Any
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock
 
 from mcp_artifact_gateway.sessions import (
-    TouchResult,
     _TOUCH_ARTIFACT_SQL,
     _UPSERT_ARTIFACT_REF_SQL,
     _UPSERT_SESSION_SQL,
+    TouchResult,
     touch_for_creation,
     touch_for_retrieval,
     touch_for_search,
-    upsert_artifact_ref,
-    upsert_session,
-    touch_artifact,
 )
 
 
@@ -35,7 +31,9 @@ def _make_cursor(rowcount: int = 1) -> MagicMock:
     return cursor
 
 
-def _make_mock_conn(*, rowcount: int = 1, touch_rowcount: int | None = None) -> MagicMock:
+def _make_mock_conn(
+    *, rowcount: int = 1, touch_rowcount: int | None = None
+) -> MagicMock:
     """Create a mock connection returning distinct cursors per call.
 
     Each conn.cursor() call returns a fresh cursor. ``rowcount`` applies to
@@ -55,7 +53,9 @@ def _make_mock_conn(*, rowcount: int = 1, touch_rowcount: int | None = None) -> 
         _make_cursor(touch_rowcount),  # touch_artifact
     ]
     # Extra cursors if more calls happen (e.g., search with multiple refs)
-    conn.cursor.side_effect = lambda: cursors.pop(0) if cursors else _make_cursor(rowcount)
+    conn.cursor.side_effect = lambda: (
+        cursors.pop(0) if cursors else _make_cursor(rowcount)
+    )
     return conn
 
 
@@ -82,7 +82,9 @@ def test_touch_artifact_sql_checks_not_deleted() -> None:
 
 
 def test_touch_result_is_frozen() -> None:
-    result = TouchResult(session_updated=True, artifact_ref_updated=True, artifact_touched=True)
+    result = TouchResult(
+        session_updated=True, artifact_ref_updated=True, artifact_touched=True
+    )
     try:
         result.session_updated = False  # type: ignore[misc]
         raise AssertionError("expected FrozenInstanceError")  # pragma: no cover

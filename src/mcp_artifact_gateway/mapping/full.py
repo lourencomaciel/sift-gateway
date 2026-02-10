@@ -1,4 +1,10 @@
-"""Full mapping: parse fully, discover roots, build inventory."""
+"""Perform full in-memory mapping of parsed JSON values.
+
+Walk the complete JSON structure to discover collection roots
+(arrays and top-level object keys), score them by size, and
+build ``RootInventory`` objects with exact counts and field
+type distributions.  Key export is ``run_full_mapping``.
+"""
 
 from __future__ import annotations
 
@@ -14,7 +20,17 @@ _FIELD_SAMPLE_LIMIT = 50
 
 
 def _normalize_path_segment(key: str) -> str:
-    """Normalize a key to canonical JSONPath segment form."""
+    """Normalize a key to canonical JSONPath segment form.
+
+    Simple identifiers use dot notation (e.g. ``.foo``).
+    Others use bracket-quote notation (e.g. ``['my key']``).
+
+    Args:
+        key: Object key string.
+
+    Returns:
+        A JSONPath segment string.
+    """
     if _IDENT_RE.match(key):
         return f".{key}"
     escaped = (
@@ -30,8 +46,15 @@ def _normalize_path_segment(key: str) -> str:
 def _json_type_name(value: Any) -> str:
     """Return a JSON-style type name for a Python value.
 
-    Uses "number" for both int and float, matching the JSON spec
-    (which has no separate integer type).
+    Use "number" for both int and float, matching the JSON
+    spec which has no separate integer type.
+
+    Args:
+        value: Any Python value to classify.
+
+    Returns:
+        One of "null", "boolean", "number", "string",
+        "array", "object", or the Python type name.
     """
     if value is None:
         return "null"
@@ -49,9 +72,18 @@ def _json_type_name(value: Any) -> str:
 
 
 def _build_fields_top(
-    elements: list[Any], sample_limit: int = _FIELD_SAMPLE_LIMIT
+    elements: list[Any],
+    sample_limit: int = _FIELD_SAMPLE_LIMIT,
 ) -> dict[str, Any]:
-    """Build fields_top from sampled elements: field -> {type -> count}."""
+    """Build field type distributions from sampled elements.
+
+    Args:
+        elements: List of elements (dicts are inspected).
+        sample_limit: Maximum elements to sample.
+
+    Returns:
+        A dict mapping field names to {type_name: count} dicts.
+    """
     field_types: dict[str, dict[str, int]] = {}
     sampled = elements[:sample_limit]
 
@@ -68,7 +100,18 @@ def _build_fields_top(
 
 
 def _score_root(value: Any) -> float:
-    """Score a root by size/relevance. Larger collections score higher."""
+    """Score a root by collection size.
+
+    Larger collections score higher.  Non-collection values
+    score zero.
+
+    Args:
+        value: Any JSON value to score.
+
+    Returns:
+        A float score (element count for collections, 0.0
+        for scalars).
+    """
     if isinstance(value, list):
         return float(len(value))
     if isinstance(value, dict):
@@ -81,7 +124,16 @@ def _build_root_inventory(
     root_path: str,
     value: Any,
 ) -> RootInventory:
-    """Build a RootInventory for a discovered root."""
+    """Build a RootInventory for a discovered root.
+
+    Args:
+        root_key: Key identifying this root.
+        root_path: Canonical JSONPath to the root.
+        value: The JSON value at this root.
+
+    Returns:
+        A RootInventory with exact counts and field types.
+    """
     if isinstance(value, list):
         count = len(value)
         shape = "array"
@@ -127,13 +179,21 @@ def run_full_mapping(
     *,
     max_roots: int = 3,
 ) -> list[RootInventory]:
-    """Parse JSON value fully and discover up to K roots.
+    """Walk a parsed JSON value and discover collection roots.
 
-    Root discovery rules:
-    - If value is an array: root at "$" with shape "array"
-    - If value is an object: check top-level keys for arrays/objects
-    - Discover up to max_roots roots, scored by size/relevance
-    - Each root gets full inventory: count, fields_top, etc.
+    Discovery rules:
+    - Array at root: single root at ``$`` with shape "array".
+    - Object at root: examine top-level keys for nested
+      arrays/objects, scored by size descending.
+    - Scalar at root: return a single zero-score placeholder.
+
+    Args:
+        json_value: Fully parsed JSON value to analyze.
+        max_roots: Maximum number of roots to return.
+
+    Returns:
+        A list of up to max_roots RootInventory objects, each
+        with exact counts and field type distributions.
     """
     if isinstance(json_value, list):
         # Root-level array: single root at "$"

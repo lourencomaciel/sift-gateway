@@ -1,4 +1,4 @@
-"""Envelope modeling and normalization utilities."""
+"""Re-export envelope models, normalization, and response helpers."""
 
 from mcp_artifact_gateway.envelope.jsonb import envelope_to_jsonb
 from mcp_artifact_gateway.envelope.model import (
@@ -10,9 +10,15 @@ from mcp_artifact_gateway.envelope.model import (
     ResourceRefContentPart,
     TextContentPart,
 )
-from mcp_artifact_gateway.envelope.normalize import normalize_envelope, strip_reserved_args
+from mcp_artifact_gateway.envelope.normalize import (
+    normalize_envelope,
+    strip_reserved_args,
+)
 from mcp_artifact_gateway.envelope.oversize import replace_oversized_json_parts
-from mcp_artifact_gateway.envelope.responses import gateway_error, gateway_tool_result
+from mcp_artifact_gateway.envelope.responses import (
+    gateway_error,
+    gateway_tool_result,
+)
 
 __all__ = [
     "BinaryRefContentPart",

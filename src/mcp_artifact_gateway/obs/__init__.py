@@ -1,6 +1,10 @@
-"""Observability: structured logging and metrics."""
+"""Re-export structured logging and metrics primitives."""
 
-from mcp_artifact_gateway.obs.logging import LogEvents, configure_logging, get_logger
+from mcp_artifact_gateway.obs.logging import (
+    LogEvents,
+    configure_logging,
+    get_logger,
+)
 from mcp_artifact_gateway.obs.metrics import (
     GatewayMetrics,
     counter_reset,

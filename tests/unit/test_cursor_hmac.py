@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import base64
 import datetime as dt
-import hmac
 from hashlib import sha256
+import hmac
 
 from mcp_artifact_gateway.constants import CURSOR_VERSION
 from mcp_artifact_gateway.cursor.hmac import (
@@ -51,7 +51,11 @@ def test_cursor_hmac_detects_expired() -> None:
     }
     token = sign_cursor_payload(payload, _secrets())
     try:
-        verify_cursor_token(token, _secrets(), now=dt.datetime(2026, 1, 1, tzinfo=dt.timezone.utc))
+        verify_cursor_token(
+            token,
+            _secrets(),
+            now=dt.datetime(2026, 1, 1, tzinfo=dt.timezone.utc),
+        )
     except CursorExpiredError:
         pass
     else:
@@ -83,8 +87,12 @@ def test_cursor_hmac_rejects_non_object_payload() -> None:
     payload_bytes = b'["not-an-object"]'
     secret = _secrets().current_secret().encode("utf-8")
     signature = hmac.new(secret, payload_bytes, sha256).digest()
-    payload_b64 = base64.urlsafe_b64encode(payload_bytes).decode("ascii").rstrip("=")
-    signature_b64 = base64.urlsafe_b64encode(signature).decode("ascii").rstrip("=")
+    payload_b64 = (
+        base64.urlsafe_b64encode(payload_bytes).decode("ascii").rstrip("=")
+    )
+    signature_b64 = (
+        base64.urlsafe_b64encode(signature).decode("ascii").rstrip("=")
+    )
     token = f"cur.v1.{payload_b64}.{signature_b64}"
 
     try:
@@ -101,5 +109,7 @@ def test_cursor_hmac_accepts_naive_now_for_comparison() -> None:
         "expires_at": "2099-01-01T00:00:00Z",
     }
     token = sign_cursor_payload(payload, _secrets())
-    verified = verify_cursor_token(token, _secrets(), now=dt.datetime(2026, 1, 1))
+    verified = verify_cursor_token(
+        token, _secrets(), now=dt.datetime(2026, 1, 1)
+    )
     assert verified["expires_at"] == "2099-01-01T00:00:00Z"

@@ -10,7 +10,6 @@ from mcp_artifact_gateway.query.jsonpath import (
     parse_jsonpath,
 )
 
-
 # ---------------------------------------------------------------------------
 # Existing tests (preserved)
 # ---------------------------------------------------------------------------
@@ -113,12 +112,18 @@ def test_parse_bracket_string_field() -> None:
 
 def test_parse_array_index() -> None:
     segments = parse_jsonpath("$.items[0]")
-    assert segments == [Segment(kind="field", value="items"), Segment(kind="index", value=0)]
+    assert segments == [
+        Segment(kind="field", value="items"),
+        Segment(kind="index", value=0),
+    ]
 
 
 def test_parse_wildcard() -> None:
     segments = parse_jsonpath("$.items[*]")
-    assert segments == [Segment(kind="field", value="items"), Segment(kind="wildcard", value=None)]
+    assert segments == [
+        Segment(kind="field", value="items"),
+        Segment(kind="wildcard", value=None),
+    ]
 
 
 def test_parse_complex_path() -> None:
@@ -133,7 +138,10 @@ def test_parse_complex_path() -> None:
 
 def test_parse_multiple_brackets() -> None:
     segments = parse_jsonpath("$['a']['b']")
-    assert segments == [Segment(kind="field", value="a"), Segment(kind="field", value="b")]
+    assert segments == [
+        Segment(kind="field", value="a"),
+        Segment(kind="field", value="b"),
+    ]
 
 
 def test_parse_rejects_empty_string() -> None:
@@ -192,13 +200,17 @@ def test_parse_max_segments_exceeded() -> None:
 def test_evaluate_wildcard_expansion_at_boundary() -> None:
     """Expansion exactly at limit should succeed."""
     doc = {"items": [1, 2]}
-    result = evaluate_jsonpath(doc, "$.items[*]", max_wildcard_expansion_total=2)
+    result = evaluate_jsonpath(
+        doc, "$.items[*]", max_wildcard_expansion_total=2
+    )
     assert result == [1, 2]
 
 
 def test_evaluate_wildcard_expansion_exceeded() -> None:
     doc = {"items": [1, 2, 3]}
-    with pytest.raises(JsonPathError, match="wildcard expansion exceeds max total"):
+    with pytest.raises(
+        JsonPathError, match="wildcard expansion exceeds max total"
+    ):
         evaluate_jsonpath(doc, "$.items[*]", max_wildcard_expansion_total=2)
 
 
@@ -207,13 +219,17 @@ def test_evaluate_wildcard_expansion_cumulative() -> None:
     doc = {"a": [{"b": [1, 2]}, {"b": [3]}]}
     # First wildcard expands 2 items, second wildcard expands 2+1=3 more
     # Total = 2 + 3 = 5
-    result = evaluate_jsonpath(doc, "$.a[*].b[*]", max_wildcard_expansion_total=5)
+    result = evaluate_jsonpath(
+        doc, "$.a[*].b[*]", max_wildcard_expansion_total=5
+    )
     assert sorted(result) == [1, 2, 3]
 
 
 def test_evaluate_wildcard_expansion_cumulative_exceeds() -> None:
     doc = {"a": [{"b": [1, 2]}, {"b": [3]}]}
-    with pytest.raises(JsonPathError, match="wildcard expansion exceeds max total"):
+    with pytest.raises(
+        JsonPathError, match="wildcard expansion exceeds max total"
+    ):
         evaluate_jsonpath(doc, "$.a[*].b[*]", max_wildcard_expansion_total=3)
 
 
@@ -262,7 +278,10 @@ def test_canonicalize_idempotent() -> None:
 
 
 def test_canonicalize_mixed_notation() -> None:
-    assert canonicalize_jsonpath("$['data'][0]['items'][*]['name']") == "$.data[0].items[*].name"
+    assert (
+        canonicalize_jsonpath("$['data'][0]['items'][*]['name']")
+        == "$.data[0].items[*].name"
+    )
 
 
 # ---------------------------------------------------------------------------

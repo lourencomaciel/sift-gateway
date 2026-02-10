@@ -25,7 +25,9 @@ def test_create_pool_uses_pool_sizes(monkeypatch) -> None:
         def __init__(self, **kwargs) -> None:
             captured.update(kwargs)
 
-    monkeypatch.setattr("mcp_artifact_gateway.db.conn.ConnectionPool", _FakePool)
+    monkeypatch.setattr(
+        "mcp_artifact_gateway.db.conn.ConnectionPool", _FakePool
+    )
 
     config = GatewayConfig(
         postgres_dsn="postgresql://localhost/test",

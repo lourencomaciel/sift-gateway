@@ -1,12 +1,11 @@
 from __future__ import annotations
 
-import re
 from pathlib import Path
+import re
 
 import pytest
 
 from mcp_artifact_gateway.db.migrate import apply_migrations, list_migrations
-
 
 # ---------------------------------------------------------------------------
 # Helpers for schema content auditing
@@ -40,7 +39,9 @@ class _FakeConnection:
     def execute(self, query: str, params=None):
         self.queries.append(query)
         normalized = " ".join(query.lower().split())
-        if normalized.startswith("select migration_name from schema_migrations"):
+        if normalized.startswith(
+            "select migration_name from schema_migrations"
+        ):
             return _FakeResult([(name,) for name in sorted(self.applied)])
         if normalized.startswith("insert into schema_migrations"):
             assert params is not None
@@ -53,7 +54,9 @@ class _FakeConnection:
 
 
 def test_list_migrations_includes_sql_files() -> None:
-    migration_paths = list_migrations(Path("src/mcp_artifact_gateway/db/migrations").resolve())
+    migration_paths = list_migrations(
+        Path("src/mcp_artifact_gateway/db/migrations").resolve()
+    )
     names = [path.name for path in migration_paths]
     assert "001_init.sql" in names
 
@@ -70,7 +73,9 @@ def test_apply_migrations_idempotent() -> None:
     assert connection.commit_calls == 2
 
 
-def test_list_migrations_fails_when_directory_has_no_sql(tmp_path: Path) -> None:
+def test_list_migrations_fails_when_directory_has_no_sql(
+    tmp_path: Path,
+) -> None:
     with pytest.raises(FileNotFoundError):
         list_migrations(tmp_path)
 
@@ -83,7 +88,9 @@ def test_list_migrations_fails_on_version_gap(tmp_path: Path) -> None:
         list_migrations(tmp_path)
 
 
-def test_list_migrations_fails_on_missing_numeric_prefix(tmp_path: Path) -> None:
+def test_list_migrations_fails_on_missing_numeric_prefix(
+    tmp_path: Path,
+) -> None:
     (tmp_path / "first.sql").write_text("SELECT 1;", encoding="utf-8")
     with pytest.raises(ValueError, match="numeric prefix"):
         list_migrations(tmp_path)
@@ -117,7 +124,9 @@ class TestSchemaTablesExist:
     @pytest.mark.parametrize("table", _EXPECTED_TABLES)
     def test_table_created(self, table: str) -> None:
         pattern = f"CREATE TABLE IF NOT EXISTS {table}"
-        assert pattern.lower() in self.sql.lower(), f"missing CREATE TABLE for {table}"
+        assert pattern.lower() in self.sql.lower(), (
+            f"missing CREATE TABLE for {table}"
+        )
 
 
 class TestPrimaryKeysIncludeWorkspaceId:
@@ -151,7 +160,9 @@ class TestPrimaryKeysIncludeWorkspaceId:
         pk_match = re.search(r"primary key\s*\(([^)]+)\)", rest)
         assert pk_match is not None, f"no PRIMARY KEY found for {table}"
         pk_cols = pk_match.group(1)
-        assert "workspace_id" in pk_cols, f"workspace_id missing from PK of {table}"
+        assert "workspace_id" in pk_cols, (
+            f"workspace_id missing from PK of {table}"
+        )
 
 
 class TestForeignKeysExist:
@@ -162,10 +173,16 @@ class TestForeignKeysExist:
         self.sql = _normalize(_read_sql("001_init.sql")).lower()
 
     def test_payload_hash_aliases_fk_to_payload_blobs(self) -> None:
-        assert "references payload_blobs (workspace_id, payload_hash_full)" in self.sql
+        assert (
+            "references payload_blobs (workspace_id, payload_hash_full)"
+            in self.sql
+        )
 
     def test_payload_binary_refs_fk_to_payload_blobs(self) -> None:
-        assert "references payload_blobs (workspace_id, payload_hash_full)" in self.sql
+        assert (
+            "references payload_blobs (workspace_id, payload_hash_full)"
+            in self.sql
+        )
 
     def test_payload_binary_refs_fk_to_binary_blobs(self) -> None:
         assert "references binary_blobs (workspace_id, binary_hash)" in self.sql
@@ -175,7 +192,10 @@ class TestForeignKeysExist:
 
     def test_artifacts_fk_to_payload_blobs(self) -> None:
         # This FK is in the artifacts table definition
-        assert "references payload_blobs (workspace_id, payload_hash_full)" in self.sql
+        assert (
+            "references payload_blobs (workspace_id, payload_hash_full)"
+            in self.sql
+        )
 
     def test_artifacts_self_fk_parent(self) -> None:
         assert "references artifacts (workspace_id, artifact_id)" in self.sql
@@ -190,7 +210,10 @@ class TestForeignKeysExist:
         assert "references artifacts (workspace_id, artifact_id)" in self.sql
 
     def test_artifact_samples_fk_to_artifact_roots(self) -> None:
-        assert "references artifact_roots (workspace_id, artifact_id, root_key)" in self.sql
+        assert (
+            "references artifact_roots (workspace_id, artifact_id, root_key)"
+            in self.sql
+        )
 
 
 class TestCreatedSeqIsIdentity:
@@ -351,7 +374,10 @@ class TestArtifactSamplesTable:
         assert "sample_index" in pk_cols
 
     def test_fk_to_artifact_roots(self) -> None:
-        assert "references artifact_roots (workspace_id, artifact_id, root_key)" in self.sql
+        assert (
+            "references artifact_roots (workspace_id, artifact_id, root_key)"
+            in self.sql
+        )
 
     def test_root_path_index(self) -> None:
         assert "idx_artifact_samples_root_path" in self.sql

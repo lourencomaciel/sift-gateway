@@ -1,4 +1,12 @@
-"""Request identity computation for artifact deduplication and caching."""
+"""Compute request identity for artifact deduplication and caching.
+
+Combines upstream instance identity, prefix, tool name, and
+RFC 8785 canonical arguments into a deterministic request key.
+Also provides a dedupe hash that optionally excludes specified
+JSON paths for reuse lookups.  Exports ``RequestIdentity`` as
+a frozen dataclass and the ``compute_request_identity`` and
+``compute_dedupe_hash`` helper functions.
+"""
 
 from __future__ import annotations
 
@@ -13,11 +21,30 @@ from mcp_artifact_gateway.util.hashing import sha256_hex
 
 @dataclass(frozen=True)
 class RequestIdentity:
-    """Computed identity for a tool call request."""
+    """Computed identity for a tool call request.
+
+    Encapsulates the sha256-based request key together with
+    the constituent parts used to derive it, enabling both
+    cache lookups and diagnostic logging.
+
+    Attributes:
+        request_key: SHA-256 hex digest of the full identity.
+        request_args_hash: SHA-256 hex digest of canonical args.
+        request_args_prefix: First N chars of canonical args
+            (capped at REQUEST_ARGS_PREFIX_CAP) for debugging.
+        upstream_instance_id: Identity of the upstream server.
+        prefix: Tool namespace prefix.
+        tool_name: Name of the upstream tool invoked.
+        canonical_args: Raw RFC 8785 canonical arg bytes.
+        REQUEST_ARGS_PREFIX_CAP: Maximum length of the
+            request_args_prefix field (class constant).
+    """
 
     request_key: str  # sha256 hex of full identity
     request_args_hash: str  # sha256 hex of canonical args
-    request_args_prefix: str  # first N chars of canonical args for debugging (capped)
+    request_args_prefix: (
+        str  # first N chars of canonical args for debugging (capped)
+    )
     upstream_instance_id: str
     prefix: str
     tool_name: str
@@ -33,9 +60,21 @@ def compute_request_identity(
     tool_name: str,
     forwarded_args: dict[str, Any],
 ) -> RequestIdentity:
-    """Compute request_key from upstream identity + tool + canonical args.
+    """Compute request_key from upstream identity and tool args.
 
-    request_key = sha256(upstream_instance_id|prefix|tool|canonical_args_bytes)
+    Derives a deterministic SHA-256 request key from the
+    upstream instance, prefix, tool name, and RFC 8785
+    canonical arguments.
+
+    Args:
+        upstream_instance_id: Identity of the upstream server.
+        prefix: Tool namespace prefix.
+        tool_name: Name of the upstream tool.
+        forwarded_args: Arguments dict to canonicalize.
+
+    Returns:
+        A RequestIdentity with the computed request key and
+        constituent parts.
     """
     canonical_args = canonical_bytes(forwarded_args)
     args_hash = sha256_hex(canonical_args)
@@ -68,9 +107,19 @@ def compute_dedupe_hash(
     *,
     exclusion_paths: list[str] | None = None,
 ) -> str:
-    """Compute dedupe hash, optionally with JSONPath exclusions applied.
+    """Compute dedupe hash with optional JSONPath exclusions.
 
-    This hash is used for reuse lookup only. It does NOT define storage identity.
+    Used for reuse lookup only; does NOT define storage
+    identity.
+
+    Args:
+        canonical_args: RFC 8785 canonical arg bytes.
+        exclusion_paths: Optional list of top-level key paths
+            (e.g. ``$.key``) to exclude before hashing.
+
+    Returns:
+        SHA-256 hex digest of the (possibly filtered)
+        canonical args.
     """
     if not exclusion_paths:
         return sha256_hex(canonical_args)

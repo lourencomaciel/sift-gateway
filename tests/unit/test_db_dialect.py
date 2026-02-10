@@ -70,12 +70,16 @@ class TestStripSkipLocked:
 
 class TestExpandAnyClause:
     def test_single_value(self):
-        sql, params = expand_any_clause("WHERE id = ANY(%s)", (["abc"],), any_param_index=0)
+        sql, params = expand_any_clause(
+            "WHERE id = ANY(%s)", (["abc"],), any_param_index=0
+        )
         assert sql == "WHERE id IN (?)"
         assert params == ("abc",)
 
     def test_multiple_values(self):
-        sql, params = expand_any_clause("WHERE id = ANY(%s)", (["a", "b", "c"],), any_param_index=0)
+        sql, params = expand_any_clause(
+            "WHERE id = ANY(%s)", (["a", "b", "c"],), any_param_index=0
+        )
         assert sql == "WHERE id IN (?, ?, ?)"
         assert params == ("a", "b", "c")
 
@@ -89,13 +93,17 @@ class TestExpandAnyClause:
         assert params == ("local", "a", "b")
 
     def test_empty_list_raises(self):
-        sql, params = expand_any_clause("WHERE id = ANY(%s)", ([],), any_param_index=0)
+        sql, params = expand_any_clause(
+            "WHERE id = ANY(%s)", ([],), any_param_index=0
+        )
         assert sql == "WHERE id IN ()"
         assert params == ()
 
     def test_non_list_raises(self):
         with pytest.raises(TypeError, match="must be a list"):
-            expand_any_clause("WHERE id = ANY(%s)", ("not_a_list",), any_param_index=0)
+            expand_any_clause(
+                "WHERE id = ANY(%s)", ("not_a_list",), any_param_index=0
+            )
 
 
 class TestAdaptParams:
@@ -110,7 +118,9 @@ class TestAdaptParams:
     def test_sqlite_full_transform(self):
         sql = "SELECT * FROM t WHERE id = %s AND ts > NOW()"
         out_sql, out_params = adapt_params(sql, ("val",), Dialect.SQLITE)
-        assert out_sql == "SELECT * FROM t WHERE id = ? AND ts > datetime('now')"
+        assert (
+            out_sql == "SELECT * FROM t WHERE id = ? AND ts > datetime('now')"
+        )
         assert out_params == ("val",)
 
 

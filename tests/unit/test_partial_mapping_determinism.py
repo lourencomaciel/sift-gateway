@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
+from _helpers import make_json_stream, make_partial_budgets, make_partial_config
+
 from mcp_artifact_gateway.mapping.partial import (
     compute_map_backend_id,
     compute_map_budget_fingerprint,
     run_partial_mapping,
 )
-
-from _helpers import make_json_stream, make_partial_budgets, make_partial_config
 
 
 def test_same_payload_same_budgets_produces_identical_sample_indices() -> None:

@@ -4,7 +4,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from mcp_artifact_gateway.cursor.hmac import CursorExpiredError, CursorTokenError
+from mcp_artifact_gateway.cursor.hmac import (
+    CursorExpiredError,
+    CursorTokenError,
+)
 from mcp_artifact_gateway.cursor.payload import CursorStaleError
 from mcp_artifact_gateway.envelope.responses import gateway_error
 from mcp_artifact_gateway.mcp.handlers.common import rows_to_dicts
@@ -31,6 +34,17 @@ async def handle_artifact_search(
     ctx: GatewayServer,
     arguments: dict[str, Any],
 ) -> dict[str, Any]:
+    """Handle the ``artifact.search`` tool call.
+
+    Args:
+        ctx: Gateway server instance providing DB and cursor helpers.
+        arguments: Tool arguments including session context, optional
+            filters, ``order_by``, ``limit``, and ``cursor``.
+
+    Returns:
+        Paginated search response with artifact summaries, or a
+        gateway error.
+    """
     from mcp_artifact_gateway.tools.artifact_search import (
         build_search_query,
         validate_search_args,
@@ -55,7 +69,9 @@ async def handle_artifact_search(
             position = ctx._verify_cursor(
                 token=cursor_token,
                 tool="artifact.search",
-                artifact_id=ctx._cursor_session_artifact_id(session_id, order_by),
+                artifact_id=ctx._cursor_session_artifact_id(
+                    session_id, order_by
+                ),
             )
         except (CursorTokenError, CursorExpiredError, CursorStaleError) as exc:
             return ctx._cursor_error(exc)
@@ -78,7 +94,9 @@ async def handle_artifact_search(
         page_rows = mapped_rows[:limit]
         truncated = len(mapped_rows) > limit
         artifact_ids = [
-            str(row["artifact_id"]) for row in page_rows if isinstance(row.get("artifact_id"), str)
+            str(row["artifact_id"])
+            for row in page_rows
+            if isinstance(row.get("artifact_id"), str)
         ]
         ctx._safe_touch_for_search(
             connection,
@@ -103,10 +121,14 @@ async def handle_artifact_search(
                 "artifact_id": row["artifact_id"],
                 "created_seq": row["created_seq"],
                 "created_at": (
-                    str(row["created_at"]) if row.get("created_at") is not None else None
+                    str(row["created_at"])
+                    if row.get("created_at") is not None
+                    else None
                 ),
                 "last_seen_at": (
-                    str(row["last_seen_at"]) if row.get("last_seen_at") is not None else None
+                    str(row["last_seen_at"])
+                    if row.get("last_seen_at") is not None
+                    else None
                 ),
                 "source_tool": row["source_tool"],
                 "upstream_instance_id": row["upstream_instance_id"],

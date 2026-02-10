@@ -7,7 +7,10 @@ from mcp_artifact_gateway.mcp.mirror import (
     strip_reserved_gateway_args,
     validate_against_schema,
 )
-from mcp_artifact_gateway.mcp.upstream import UpstreamInstance, UpstreamToolSchema
+from mcp_artifact_gateway.mcp.upstream import (
+    UpstreamInstance,
+    UpstreamToolSchema,
+)
 
 
 def _make_upstream(
@@ -162,7 +165,9 @@ def test_strip_combined() -> None:
 
 
 def test_extract_gateway_context_present() -> None:
-    ctx = extract_gateway_context({"_gateway_context": {"session": "s1"}, "q": "test"})
+    ctx = extract_gateway_context(
+        {"_gateway_context": {"session": "s1"}, "q": "test"}
+    )
     assert ctx == {"session": "s1"}
 
 

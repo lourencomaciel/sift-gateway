@@ -9,17 +9,15 @@ from typing import Any
 import pytest
 
 from mcp_artifact_gateway.artifacts.create import (
+    INSERT_ARTIFACT_SQL,
+    INSERT_PAYLOAD_BINARY_REF_SQL,
+    UPSERT_ARTIFACT_REF_SQL,
+    CreateArtifactInput,
     build_artifact_row,
     compute_payload_sizes,
     generate_artifact_id,
     persist_artifact,
     prepare_envelope_storage,
-)
-from mcp_artifact_gateway.artifacts.create import (
-    CreateArtifactInput,
-    INSERT_ARTIFACT_SQL,
-    INSERT_PAYLOAD_BINARY_REF_SQL,
-    UPSERT_ARTIFACT_REF_SQL,
 )
 from mcp_artifact_gateway.canon.rfc8785 import canonical_bytes
 from mcp_artifact_gateway.config.settings import (
@@ -141,10 +139,14 @@ def test_compute_payload_sizes_mixed_content() -> None:
     binary_part = _binary_ref_part(byte_count=512)
     text_part = TextContentPart(text="hello")
 
-    envelope = _ok_envelope(content=[JsonContentPart(value=json_value), binary_part, text_part])
+    envelope = _ok_envelope(
+        content=[JsonContentPart(value=json_value), binary_part, text_part]
+    )
     json_bytes, binary_bytes, total_bytes = compute_payload_sizes(envelope)
 
-    expected_json_from_value = len(json.dumps(json_value, ensure_ascii=False).encode("utf-8"))
+    expected_json_from_value = len(
+        json.dumps(json_value, ensure_ascii=False).encode("utf-8")
+    )
     expected_json_from_text = len(
         json.dumps(text_part.to_dict(), ensure_ascii=False).encode("utf-8")
     )
@@ -162,7 +164,9 @@ def test_prepare_envelope_storage_full_jsonb_mode(tmp_path: Path) -> None:
     config = _config(tmp_path, envelope_jsonb_mode=EnvelopeJsonbMode.full)
     envelope = _ok_envelope()
 
-    p_hash, uncompressed, compressed, jsonb = prepare_envelope_storage(envelope, config)
+    p_hash, uncompressed, compressed, jsonb = prepare_envelope_storage(
+        envelope, config
+    )
 
     assert isinstance(p_hash, str) and len(p_hash) == 64
     assert isinstance(uncompressed, bytes)
@@ -171,7 +175,9 @@ def test_prepare_envelope_storage_full_jsonb_mode(tmp_path: Path) -> None:
     assert jsonb["content"][0]["type"] == "json"
 
 
-def test_prepare_envelope_storage_minimal_for_large_small(tmp_path: Path) -> None:
+def test_prepare_envelope_storage_minimal_for_large_small(
+    tmp_path: Path,
+) -> None:
     """Small envelope => full JSONB under minimal_for_large mode."""
     config = _config(
         tmp_path,
@@ -187,7 +193,9 @@ def test_prepare_envelope_storage_minimal_for_large_small(tmp_path: Path) -> Non
     assert "content" in jsonb
 
 
-def test_prepare_envelope_storage_minimal_for_large_large(tmp_path: Path) -> None:
+def test_prepare_envelope_storage_minimal_for_large_large(
+    tmp_path: Path,
+) -> None:
     """Large envelope => minimal JSONB under minimal_for_large mode."""
     big_value = {"data": "x" * 500}
     config = _config(
@@ -352,7 +360,10 @@ class _PersistConnection:
         params: tuple[object, ...] | None = None,
     ) -> _PersistCursor:
         self.calls.append((query, params))
-        if self.fail_on_call is not None and len(self.calls) == self.fail_on_call:
+        if (
+            self.fail_on_call is not None
+            and len(self.calls) == self.fail_on_call
+        ):
             raise RuntimeError("simulated execute failure")
         if "RETURNING created_seq" in query:
             return _PersistCursor((42,))

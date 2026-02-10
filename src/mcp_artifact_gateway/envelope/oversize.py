@@ -1,4 +1,11 @@
-"""Oversized JSON handling for envelope ingest."""
+"""Replace oversized JSON content parts with binary blob refs.
+
+Scan envelope content parts during ingest and replace any
+``JsonContentPart`` whose canonical encoding exceeds the
+configured byte threshold with a ``BinaryRefContentPart``
+pointing to the blob store.  Emit warnings in the envelope
+meta for each replaced part.
+"""
 
 from __future__ import annotations
 
@@ -6,7 +13,11 @@ from dataclasses import replace
 from typing import Any
 
 from mcp_artifact_gateway.canon.rfc8785 import canonical_bytes
-from mcp_artifact_gateway.envelope.model import BinaryRefContentPart, Envelope, JsonContentPart
+from mcp_artifact_gateway.envelope.model import (
+    BinaryRefContentPart,
+    Envelope,
+    JsonContentPart,
+)
 from mcp_artifact_gateway.fs.blob_store import BlobStore
 
 
@@ -16,7 +27,24 @@ def replace_oversized_json_parts(
     max_json_part_parse_bytes: int,
     blob_store: BlobStore,
 ) -> Envelope:
-    """Replace oversized JSON parts with binary refs and emit warnings."""
+    """Replace oversized JSON parts with binary blob refs.
+
+    Scan each JsonContentPart and, if its canonical encoding
+    exceeds the byte threshold, store the bytes in the blob
+    store and substitute a BinaryRefContentPart.  Append an
+    ``oversized_json_part`` warning to ``meta.warnings`` for
+    each replacement.
+
+    Args:
+        envelope: Source envelope (not mutated).
+        max_json_part_parse_bytes: Byte threshold above which
+            a JSON part is considered oversized.
+        blob_store: Blob store for writing oversized content.
+
+    Returns:
+        A new Envelope with oversized parts replaced and
+        warnings appended.
+    """
     warnings: list[dict[str, Any]] = list(envelope.meta.get("warnings", []))
     next_content = []
 
@@ -24,7 +52,9 @@ def replace_oversized_json_parts(
         if isinstance(part, JsonContentPart):
             encoded = canonical_bytes(part.value)
             if len(encoded) > max_json_part_parse_bytes:
-                blob_ref = blob_store.put_bytes(encoded, mime="application/json")
+                blob_ref = blob_store.put_bytes(
+                    encoded, mime="application/json"
+                )
                 next_content.append(
                     BinaryRefContentPart(
                         blob_id=blob_ref.blob_id,
