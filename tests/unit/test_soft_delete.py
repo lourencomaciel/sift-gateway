@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 from mcp_artifact_gateway.constants import WORKSPACE_ID
+from mcp_artifact_gateway.db.backend import Dialect
 from mcp_artifact_gateway.jobs.soft_delete import (
     SOFT_DELETE_BATCH_SQL,
+    SOFT_DELETE_BATCH_SQLITE_SQL,
     SOFT_DELETE_UNREFERENCED_SQL,
+    SOFT_DELETE_UNREFERENCED_SQLITE_SQL,
     run_soft_delete_expired,
     run_soft_delete_unreferenced,
     soft_delete_expired_params,
@@ -143,3 +146,57 @@ def test_run_soft_delete_unreferenced_updates_metrics() -> None:
     )
     assert result.deleted_count == 3
     assert metrics.prune_soft_deletes.value == 3
+
+
+# ---- SQLite dialect tests ----
+
+
+def test_soft_delete_batch_sqlite_sql_no_skip_locked() -> None:
+    """SQLite variant must not contain SKIP LOCKED."""
+    assert "SKIP LOCKED" not in SOFT_DELETE_BATCH_SQLITE_SQL
+
+
+def test_soft_delete_batch_sqlite_sql_uses_datetime() -> None:
+    """SQLite variant uses datetime() instead of NOW()."""
+    assert "datetime(" in SOFT_DELETE_BATCH_SQLITE_SQL
+    assert "NOW()" not in SOFT_DELETE_BATCH_SQLITE_SQL
+
+
+def test_soft_delete_batch_sqlite_sql_uses_question_mark_params() -> None:
+    """SQLite variant uses ? parameter markers."""
+    assert "?" in SOFT_DELETE_BATCH_SQLITE_SQL
+    assert "%s" not in SOFT_DELETE_BATCH_SQLITE_SQL
+
+
+def test_soft_delete_unreferenced_sqlite_sql_no_skip_locked() -> None:
+    """SQLite unreferenced variant must not contain SKIP LOCKED."""
+    assert "SKIP LOCKED" not in SOFT_DELETE_UNREFERENCED_SQLITE_SQL
+
+
+def test_soft_delete_unreferenced_sqlite_sql_uses_datetime() -> None:
+    """SQLite unreferenced variant uses datetime() instead of NOW()."""
+    assert "datetime(" in SOFT_DELETE_UNREFERENCED_SQLITE_SQL
+    assert "NOW()" not in SOFT_DELETE_UNREFERENCED_SQLITE_SQL
+
+
+def test_run_soft_delete_expired_with_sqlite_dialect() -> None:
+    """Soft delete expired uses SQLite SQL when dialect is SQLITE."""
+    connection = _FakeConnection(rows_sequence=[[("art_s1",), ("art_s2",)]])
+    result = run_soft_delete_expired(connection, batch_size=5, dialect=Dialect.SQLITE)
+    assert result.deleted_count == 2
+    assert result.artifact_ids == ["art_s1", "art_s2"]
+    assert connection.committed is True
+
+
+def test_run_soft_delete_unreferenced_with_sqlite_dialect() -> None:
+    """Soft delete unreferenced uses SQLite SQL when dialect is SQLITE."""
+    connection = _FakeConnection(rows_sequence=[[("art_u1",)]])
+    result = run_soft_delete_unreferenced(
+        connection,
+        threshold_timestamp="2025-01-01T00:00:00Z",
+        batch_size=10,
+        dialect=Dialect.SQLITE,
+    )
+    assert result.deleted_count == 1
+    assert result.artifact_ids == ["art_u1"]
+    assert connection.committed is True

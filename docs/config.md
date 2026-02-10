@@ -26,6 +26,31 @@ Environment variables (`MCP_GATEWAY_*`) > `DATA_DIR/state/config.json` > compile
 | `secrets_path` | `{data_dir}/state/secrets.json` |
 | `config_json_path` | `{data_dir}/state/config.json` |
 
+## Database backend
+
+| Key | Type | Default | Env var | Description |
+|-----|------|---------|---------|-------------|
+| `db_backend` | enum | `sqlite` | `MCP_GATEWAY_DB_BACKEND` | Database backend: `sqlite` (default, zero-config) or `postgres` |
+
+The gateway supports two database backends:
+
+- **SQLite** (default) — zero-dependency, stores data at `{state_dir}/gateway.db`. Suitable for local development and single-user deployments.
+- **PostgreSQL** — production-grade, requires a running Postgres instance. Set `db_backend=postgres` and configure the DSN below.
+
+## SQLite
+
+| Key | Type | Default | Env var | Description |
+|-----|------|---------|---------|-------------|
+| `sqlite_busy_timeout_ms` | int | 5000 | `MCP_GATEWAY_SQLITE_BUSY_TIMEOUT_MS` | SQLite BUSY retry timeout (ms) |
+
+**Derived paths:**
+
+| Path | Derivation |
+|------|-----------|
+| `sqlite_path` | `{state_dir}/gateway.db` |
+
+SQLite uses WAL mode for concurrent read access. Advisory locks are no-op (always acquired). `SKIP LOCKED` clauses are stripped automatically.
+
 ## Postgres
 
 | Key | Type | Default | Env var | Description |

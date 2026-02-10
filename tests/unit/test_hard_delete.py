@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from mcp_artifact_gateway.constants import WORKSPACE_ID
+from mcp_artifact_gateway.db.backend import Dialect
 from mcp_artifact_gateway.jobs.hard_delete import (
     DELETE_ARTIFACTS_BATCH_SQL,
     DELETE_BLOBS_BATCH_SQL,
@@ -176,3 +177,116 @@ def test_run_hard_delete_batch_no_candidates_zero_metrics() -> None:
     assert result.bytes_reclaimed == 0
     assert metrics.prune_hard_deletes.value == 0
     assert metrics.prune_bytes_reclaimed.value == 0
+
+
+# ---- SQLite dialect tests ----
+
+
+class _SqliteFakeConnection:
+    """Fake connection that matches queries by keyword rather than exact SQL."""
+
+    def __init__(
+        self,
+        *,
+        candidate_rows: list[tuple[object, ...]] | None = None,
+        payload_rows: list[tuple[object, ...]] | None = None,
+        blob_rows: list[tuple[object, ...]] | None = None,
+    ) -> None:
+        self.candidate_rows = list(candidate_rows or [])
+        self.payload_rows = list(payload_rows or [])
+        self.blob_rows = list(blob_rows or [])
+        self.executed: list[str] = []
+        self.committed = False
+        self.rolled_back = False
+
+    def execute(self, query: str, _params: tuple[object, ...] | None = None) -> "_SqliteFakeCursor":
+        self.executed.append(query.strip())
+        normalized = query.strip().upper()
+        if "DELETED_AT IS NOT NULL" in normalized and "SELECT" in normalized:
+            return _SqliteFakeCursor(self.candidate_rows)
+        if "NOT EXISTS" in normalized and "PAYLOAD_BLOBS" in normalized:
+            return _SqliteFakeCursor(self.payload_rows)
+        if "NOT EXISTS" in normalized and "BINARY_BLOBS" in normalized:
+            return _SqliteFakeCursor(self.blob_rows)
+        return _SqliteFakeCursor([])
+
+    def commit(self) -> None:
+        self.committed = True
+
+    def rollback(self) -> None:
+        self.rolled_back = True
+
+
+class _SqliteFakeCursor:
+    def __init__(self, rows: list[tuple[object, ...]]) -> None:
+        self._rows = rows
+
+    def fetchall(self) -> list[tuple[object, ...]]:
+        return list(self._rows)
+
+
+def test_run_hard_delete_batch_sqlite_strips_skip_locked() -> None:
+    """Hard delete with SQLite dialect strips SKIP LOCKED from queries."""
+    connection = _SqliteFakeConnection(
+        candidate_rows=[("art_sq1",)],
+        payload_rows=[],
+        blob_rows=[],
+    )
+    metrics = GatewayMetrics()
+    result = run_hard_delete_batch(
+        connection,
+        grace_period_timestamp="2025-01-01T00:00:00Z",
+        batch_size=5,
+        dialect=Dialect.SQLITE,
+        metrics=metrics,
+    )
+    assert result.artifacts_deleted == 1
+    assert connection.committed is True
+    # Verify no executed SQL contains SKIP LOCKED
+    for sql in connection.executed:
+        assert "SKIP LOCKED" not in sql
+
+
+def test_run_hard_delete_batch_sqlite_expands_any_clause() -> None:
+    """Hard delete with SQLite dialect expands ANY() to IN placeholders."""
+    connection = _SqliteFakeConnection(
+        candidate_rows=[("art_a1",), ("art_a2",)],
+        payload_rows=[("pay_1", 200)],
+        blob_rows=[("blob_1", "bin_1", "/tmp/b.bin", 50)],
+    )
+    metrics = GatewayMetrics()
+    result = run_hard_delete_batch(
+        connection,
+        grace_period_timestamp="2025-01-01T00:00:00Z",
+        batch_size=10,
+        dialect=Dialect.SQLITE,
+        remove_fs_blobs=False,
+        metrics=metrics,
+    )
+    assert result.artifacts_deleted == 2
+    assert result.payloads_deleted == 1
+    assert result.binary_blobs_deleted == 1
+    assert connection.committed is True
+    # Verify ANY() was expanded to IN(?, ?) in the delete queries
+    delete_sqls = [s for s in connection.executed if "DELETE" in s.upper()]
+    for sql in delete_sqls:
+        assert "ANY(" not in sql
+
+
+def test_run_hard_delete_batch_sqlite_no_candidates() -> None:
+    """Hard delete with SQLite dialect and no candidates produces zero results."""
+    connection = _SqliteFakeConnection(
+        candidate_rows=[],
+        payload_rows=[],
+        blob_rows=[],
+    )
+    result = run_hard_delete_batch(
+        connection,
+        grace_period_timestamp="2025-01-01T00:00:00Z",
+        batch_size=10,
+        dialect=Dialect.SQLITE,
+    )
+    assert result.artifacts_deleted == 0
+    assert result.payloads_deleted == 0
+    assert result.binary_blobs_deleted == 0
+    assert connection.committed is True

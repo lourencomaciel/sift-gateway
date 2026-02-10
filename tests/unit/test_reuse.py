@@ -19,6 +19,7 @@ from mcp_artifact_gateway.obs.metrics import GatewayMetrics
 
 # ---- check_reuse_candidate ----
 
+
 def test_check_reuse_none_candidate() -> None:
     result = check_reuse_candidate(None, expected_schema_hash="abc123")
     assert result.reused is False
@@ -92,6 +93,7 @@ def test_check_reuse_no_expected_schema_hash() -> None:
 
 
 # ---- ReuseResult ----
+
 
 def test_reuse_result_frozen() -> None:
     r = ReuseResult(reused=True, artifact_id="art_1", reason="request_key_match")
@@ -186,6 +188,7 @@ def test_acquire_advisory_lock_with_timeout_failure(monkeypatch) -> None:
 
 # ---- check_reuse_candidate metrics wiring ----
 
+
 def test_check_reuse_candidate_increments_cache_hit_metric() -> None:
     """check_reuse_candidate increments cache_hits on successful reuse."""
     metrics = GatewayMetrics()
@@ -242,6 +245,7 @@ def test_check_reuse_candidate_increments_cache_miss_on_schema_mismatch() -> Non
 
 # ---- acquire_advisory_lock_async ----
 
+
 def test_acquire_advisory_lock_async_success(monkeypatch) -> None:
     conn = _LockConnection([False, False, True])
     metrics = _Metrics()
@@ -282,3 +286,27 @@ def test_acquire_advisory_lock_async_timeout(monkeypatch) -> None:
     assert acquired is False
     assert metrics.advisory_lock_acquired.value == 0
     assert metrics.advisory_lock_timeouts.value == 1
+
+
+# ---- SQLite advisory lock bypass tests ----
+
+
+def test_try_acquire_advisory_lock_sqlite_returns_true() -> None:
+    """Advisory lock with real SQLite connection always returns True."""
+    import sqlite3
+
+    conn = sqlite3.connect(":memory:")
+    result = try_acquire_advisory_lock(conn, request_key="rk_sqlite_1")
+    assert result is True
+    conn.close()
+
+
+def test_try_acquire_advisory_lock_sqlite_no_sql_executed() -> None:
+    """SQLite advisory lock returns True without executing any SQL."""
+    import sqlite3
+
+    conn = sqlite3.connect(":memory:")
+    # If it tried to execute pg_try_advisory_xact_lock, it would raise
+    result = try_acquire_advisory_lock(conn, request_key="rk_sqlite_2")
+    assert result is True
+    conn.close()
