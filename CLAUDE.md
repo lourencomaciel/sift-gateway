@@ -21,6 +21,7 @@
 - `constants.py` — Version strings, WORKSPACE_ID, reserved keys
 - Tests: `tests/unit/`, fixtures in `conftest.py`
 - Docs: `docs/` — spec_v1_9.md, traversal_contract.md, cursor_contract.md, config.md
+- Local dev: `local/` — gitignored; place ad-hoc validation scripts, scratch files, and test data here (not in `scripts/` which is tracked)
 
 ## Task Plan Workflow
 - `task_plan.md` contains a section-numbered completion checklist (sections 0-15b)
