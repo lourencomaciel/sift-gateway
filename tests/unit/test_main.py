@@ -163,9 +163,14 @@ def test_serve_drains_mapping_tasks_on_shutdown(tmp_path: Path, monkeypatch) -> 
 
 def test_serve_dispatches_init_command(tmp_path: Path, monkeypatch, capsys) -> None:
     source = tmp_path / "claude_desktop_config.json"
-    source.write_text(json.dumps({
-        "mcpServers": {"gh": {"command": "gh"}},
-    }), encoding="utf-8")
+    source.write_text(
+        json.dumps(
+            {
+                "mcpServers": {"gh": {"command": "gh"}},
+            }
+        ),
+        encoding="utf-8",
+    )
     data_dir = tmp_path / "gateway"
 
     monkeypatch.setattr(
@@ -192,9 +197,14 @@ def test_serve_dispatches_init_command(tmp_path: Path, monkeypatch, capsys) -> N
 
 def test_init_accepts_postgres_dsn_flag(tmp_path: Path, monkeypatch, capsys) -> None:
     source = tmp_path / "config.json"
-    source.write_text(json.dumps({
-        "mcpServers": {"gh": {"command": "gh"}},
-    }), encoding="utf-8")
+    source.write_text(
+        json.dumps(
+            {
+                "mcpServers": {"gh": {"command": "gh"}},
+            }
+        ),
+        encoding="utf-8",
+    )
     data_dir = tmp_path / "gateway"
 
     monkeypatch.setattr(
@@ -213,7 +223,48 @@ def test_init_accepts_postgres_dsn_flag(tmp_path: Path, monkeypatch, capsys) -> 
     exit_code = serve()
 
     assert exit_code == 0
-    gw_config = json.loads(
-        (data_dir / "state" / "config.json").read_text()
-    )
+    gw_config = json.loads((data_dir / "state" / "config.json").read_text())
     assert gw_config["postgres_dsn"] == "postgresql://custom:pass@host:5432/db"
+
+
+# ---- Database backend configuration tests ----
+
+
+def test_gateway_config_default_backend_is_sqlite(tmp_path: Path) -> None:
+    """Default db_backend is 'sqlite' (zero-config)."""
+    config = GatewayConfig(data_dir=tmp_path)
+    assert config.db_backend == "sqlite"
+
+
+def test_gateway_config_postgres_backend(tmp_path: Path) -> None:
+    """db_backend can be set to 'postgres'."""
+    config = GatewayConfig(data_dir=tmp_path, db_backend="postgres")
+    assert config.db_backend == "postgres"
+
+
+def test_gateway_config_sqlite_path_derived(tmp_path: Path) -> None:
+    """sqlite_path property resolves to {state_dir}/gateway.db."""
+    config = GatewayConfig(data_dir=tmp_path)
+    expected = tmp_path / "state" / "gateway.db"
+    assert config.sqlite_path == expected
+
+
+def test_gateway_config_sqlite_busy_timeout_default(tmp_path: Path) -> None:
+    """sqlite_busy_timeout_ms defaults to 5000."""
+    config = GatewayConfig(data_dir=tmp_path)
+    assert config.sqlite_busy_timeout_ms == 5000
+
+
+def test_gateway_config_sqlite_busy_timeout_customizable(tmp_path: Path) -> None:
+    """sqlite_busy_timeout_ms can be overridden."""
+    config = GatewayConfig(data_dir=tmp_path, sqlite_busy_timeout_ms=10000)
+    assert config.sqlite_busy_timeout_ms == 10000
+
+
+def test_gateway_config_db_backend_env_override(tmp_path: Path, monkeypatch) -> None:
+    """MCP_GATEWAY_DB_BACKEND env var overrides default."""
+    monkeypatch.setenv("MCP_GATEWAY_DB_BACKEND", "postgres")
+    from mcp_artifact_gateway.config.settings import load_gateway_config
+
+    config = load_gateway_config(data_dir_override=str(tmp_path))
+    assert config.db_backend == "postgres"

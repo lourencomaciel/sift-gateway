@@ -38,11 +38,12 @@ def load_migrations(migrations_dir: Path) -> list[Migration]:
 
 
 def _ensure_schema_migrations(connection: ConnectionLike) -> None:
+    # Use CURRENT_TIMESTAMP which works on both Postgres and SQLite.
     connection.execute(
         """
         CREATE TABLE IF NOT EXISTS schema_migrations (
             migration_name TEXT PRIMARY KEY,
-            applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
         )
         """
     )
@@ -74,7 +75,16 @@ def _validate_migration_sequence(paths: list[Path]) -> None:
         raise ValueError(msg)
 
 
-def apply_migrations(connection: ConnectionLike, migrations_dir: Path) -> list[str]:
+def apply_migrations(
+    connection: ConnectionLike,
+    migrations_dir: Path,
+    *,
+    param_marker: str = "%s",
+) -> list[str]:
+    """Apply pending migrations.
+
+    *param_marker* should be ``%s`` for Postgres or ``?`` for SQLite.
+    """
     _ensure_schema_migrations(connection)
     applied = _applied_set(connection)
     newly_applied: list[str] = []
@@ -82,9 +92,14 @@ def apply_migrations(connection: ConnectionLike, migrations_dir: Path) -> list[s
     for migration in load_migrations(migrations_dir):
         if migration.name in applied:
             continue
-        connection.execute(migration.sql)
+        # SQLite's execute() only supports one statement at a time;
+        # use executescript() when available for multi-statement DDL.
+        if hasattr(connection, "executescript"):
+            connection.executescript(migration.sql)
+        else:
+            connection.execute(migration.sql)
         connection.execute(
-            "INSERT INTO schema_migrations (migration_name) VALUES (%s)",
+            f"INSERT INTO schema_migrations (migration_name) VALUES ({param_marker})",
             (migration.name,),
         )
         newly_applied.append(migration.name)

@@ -44,7 +44,7 @@ Design invariants (from v1.9 spec):
 
 - Python `>=3.11`
 - [`uv`](https://docs.astral.sh/uv/)
-- Docker (recommended for local Postgres)
+- Docker (only needed for PostgreSQL backend)
 
 ## Quick start
 
@@ -54,13 +54,26 @@ Design invariants (from v1.9 spec):
 uv sync --all-extras
 ```
 
-2. Copy environment template:
+2. Run the gateway (uses SQLite by default — no external dependencies):
+
+```bash
+uv run mcp-gateway
+```
+
+That's it. The default SQLite backend stores data at `.mcp_gateway/state/gateway.db` and requires no setup.
+
+### Using PostgreSQL instead
+
+For production deployments or when you need concurrent multi-process access:
+
+1. Copy environment template and set the backend:
 
 ```bash
 cp .env.example .env
+# Edit .env: set MCP_GATEWAY_DB_BACKEND=postgres
 ```
 
-3. Start Postgres:
+2. Start Postgres:
 
 ```bash
 docker compose up -d
@@ -77,13 +90,13 @@ If the container already existed before the init script mount, recreate it:
 docker compose down -v && docker compose up -d
 ```
 
-4. Run startup checks:
+3. Run startup checks:
 
 ```bash
 uv run mcp-gateway --check
 ```
 
-5. Run the gateway:
+4. Run the gateway:
 
 ```bash
 uv run mcp-gateway
@@ -161,6 +174,7 @@ Precedence:
 
 Key defaults:
 
+- `MCP_GATEWAY_DB_BACKEND=sqlite`
 - `MCP_GATEWAY_POSTGRES_DSN=postgresql://localhost:5432/mcp_gateway`
 - `MCP_GATEWAY_DATA_DIR=.mcp_gateway`
 - `MCP_GATEWAY_MAPPING_MODE=hybrid`
