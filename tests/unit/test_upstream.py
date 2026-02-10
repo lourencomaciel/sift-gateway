@@ -246,9 +246,11 @@ async def test_discover_tools_fetches_and_hashes_tool_schemas(
     assert all(len(tool.schema_hash) == 32 for tool in tools)
     assert _FakeClient.instances
     created = _FakeClient.instances[0]
-    assert created.transport["transport"] == "stdio"
-    assert created.transport["command"] == cfg.command
-    assert created.transport["args"] == cfg.args
+    from fastmcp.client.transports import StdioTransport
+
+    assert isinstance(created.transport, StdioTransport)
+    assert created.transport.command == cfg.command
+    assert created.transport.args == cfg.args
 
 
 @pytest.mark.asyncio
@@ -267,8 +269,8 @@ async def test_call_upstream_tool_normalizes_result(monkeypatch) -> None:
     assert result["content"] == [{"type": "text", "text": "ok"}]
     assert result["meta"] == {"trace_id": "t-1"}
     created = _FakeClient.instances[0]
-    assert created.transport["transport"] == "http"
-    assert created.transport["url"] == cfg.url
+    assert isinstance(created.transport, str)
+    assert created.transport == cfg.url
     assert created.calls == [("tool_a", {"x": 1})]
 
 
