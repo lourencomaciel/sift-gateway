@@ -25,9 +25,7 @@ SEARCH_FILTERS = {
 }
 
 
-def validate_search_args(
-    arguments: dict[str, Any], *, max_limit: int
-) -> dict[str, Any]:
+def validate_search_args(arguments: dict[str, Any], *, max_limit: int) -> dict[str, Any]:
     """Validate and normalize search arguments.
 
     Requires _gateway_context.session_id.

@@ -19,4 +19,3 @@ def test_cursor_sample_set_hash_binding_rejects_mismatch() -> None:
         assert "mismatch" in str(exc)
     else:
         raise AssertionError("expected SampleSetHashBindingError")
-

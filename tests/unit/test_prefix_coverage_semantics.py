@@ -1,4 +1,5 @@
 """Tests for prefix coverage semantics in partial mapping."""
+
 from __future__ import annotations
 
 from mcp_artifact_gateway.mapping.partial import run_partial_mapping

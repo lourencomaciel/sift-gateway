@@ -1,4 +1,5 @@
 """Shared test fixtures for partial mapping tests."""
+
 from __future__ import annotations
 
 import io

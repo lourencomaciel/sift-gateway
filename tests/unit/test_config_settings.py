@@ -3,7 +3,12 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from mcp_artifact_gateway.config.settings import _SparseList, _deep_merge, GatewayConfig, load_gateway_config
+from mcp_artifact_gateway.config.settings import (
+    _SparseList,
+    _deep_merge,
+    GatewayConfig,
+    load_gateway_config,
+)
 
 
 def test_gateway_config_derived_paths(tmp_path: Path) -> None:

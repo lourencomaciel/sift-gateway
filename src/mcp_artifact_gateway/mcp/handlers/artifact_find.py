@@ -185,7 +185,8 @@ async def handle_artifact_find(
             for root in roots:
                 rk = root["root_key"]
                 corruption = ctx._check_sample_corruption(
-                    root, samples_by_root.get(rk, []),
+                    root,
+                    samples_by_root.get(rk, []),
                 )
                 if corruption is not None:
                     return corruption

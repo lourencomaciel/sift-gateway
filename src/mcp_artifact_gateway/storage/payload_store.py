@@ -95,10 +95,7 @@ def prepare_payload(
     roundtrip = decompress_bytes(compressed.data, compressed.encoding)
     roundtrip_hash = sha256_hex(roundtrip)
     if roundtrip_hash != p_hash:
-        msg = (
-            f"compression integrity check failed: "
-            f"expected {p_hash}, got {roundtrip_hash}"
-        )
+        msg = f"compression integrity check failed: expected {p_hash}, got {roundtrip_hash}"
         raise ValueError(msg)
 
     # 5. Compute sizes from envelope content parts
@@ -133,10 +130,7 @@ def reconstruct_envelope(
     decompressed = decompress_bytes(compressed_bytes, encoding)
     actual_hash = sha256_hex(decompressed)
     if actual_hash != expected_hash:
-        msg = (
-            f"envelope integrity check failed: "
-            f"expected {expected_hash}, got {actual_hash}"
-        )
+        msg = f"envelope integrity check failed: expected {expected_hash}, got {actual_hash}"
         raise ValueError(msg)
     try:
         # Use loads_decimal to preserve Decimal values (no Python float drift)

@@ -26,13 +26,15 @@ from typing import Any
 
 
 # Gateway extension fields that live under ``_gateway`` in each server entry.
-_GATEWAY_EXTENSION_FIELDS = frozenset({
-    "semantic_salt_headers",
-    "semantic_salt_env_keys",
-    "strict_schema_reuse",
-    "passthrough_allowed",
-    "dedupe_exclusions",
-})
+_GATEWAY_EXTENSION_FIELDS = frozenset(
+    {
+        "semantic_salt_headers",
+        "semantic_salt_env_keys",
+        "strict_schema_reuse",
+        "passthrough_allowed",
+        "dedupe_exclusions",
+    }
+)
 
 
 def extract_mcp_servers(raw: dict[str, Any]) -> dict[str, dict[str, Any]]:

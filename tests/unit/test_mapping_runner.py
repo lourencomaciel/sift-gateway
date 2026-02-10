@@ -1,4 +1,5 @@
 """Tests for mapping runner orchestration."""
+
 from __future__ import annotations
 
 import io
@@ -88,10 +89,14 @@ def test_run_mapping_fails_for_json_binary_ref_without_stream_support(tmp_path: 
 def test_mapped_part_index_none_when_no_json_part(tmp_path: Path) -> None:
     """mapped_part_index is None when no JSON content part exists."""
     envelope = {"content": [{"type": "text", "text": "hello"}]}
-    result = run_mapping(MappingInput(
-        artifact_id="a1", payload_hash_full="p1",
-        envelope=envelope, config=_config(tmp_path),
-    ))
+    result = run_mapping(
+        MappingInput(
+            artifact_id="a1",
+            payload_hash_full="p1",
+            envelope=envelope,
+            config=_config(tmp_path),
+        )
+    )
     assert result.map_status == "failed"
     assert result.mapped_part_index is None
 
@@ -100,10 +105,14 @@ def test_small_json_triggers_full_mapping(tmp_path: Path) -> None:
     """JSON below max_full_map_bytes triggers full mapping."""
     data = [{"id": 1}, {"id": 2}]
     envelope = {"content": [{"type": "json", "value": data}]}
-    result = run_mapping(MappingInput(
-        artifact_id="a_full", payload_hash_full="p_full",
-        envelope=envelope, config=_config(tmp_path, max_full_map_bytes=10_000_000),
-    ))
+    result = run_mapping(
+        MappingInput(
+            artifact_id="a_full",
+            payload_hash_full="p_full",
+            envelope=envelope,
+            config=_config(tmp_path, max_full_map_bytes=10_000_000),
+        )
+    )
     assert result.map_kind == "full"
     assert result.map_status == "ready"
     assert result.mapped_part_index == 0
@@ -117,10 +126,14 @@ def test_large_json_triggers_partial_mapping(tmp_path: Path) -> None:
     """JSON value exceeding max_full_map_bytes triggers partial mapping."""
     data = [{"id": i, "v": "x" * 100} for i in range(100)]
     envelope = {"content": [{"type": "json", "value": data}]}
-    result = run_mapping(MappingInput(
-        artifact_id="a_p", payload_hash_full="p_p",
-        envelope=envelope, config=_config(tmp_path, max_full_map_bytes=100),
-    ))
+    result = run_mapping(
+        MappingInput(
+            artifact_id="a_p",
+            payload_hash_full="p_p",
+            envelope=envelope,
+            config=_config(tmp_path, max_full_map_bytes=100),
+        )
+    )
     assert result.map_kind == "partial"
     assert result.map_status == "ready"
     assert result.map_budget_fingerprint is not None
@@ -130,10 +143,16 @@ def test_large_json_triggers_partial_mapping(tmp_path: Path) -> None:
 
 def test_select_json_part_binary_ref_json_mime() -> None:
     """select_json_part recognizes binary_ref with application/json mime."""
-    envelope = {"content": [
-        {"type": "binary_ref", "mime": "application/json",
-         "binary_hash": "abc", "byte_count": 5000}
-    ]}
+    envelope = {
+        "content": [
+            {
+                "type": "binary_ref",
+                "mime": "application/json",
+                "binary_hash": "abc",
+                "byte_count": 5000,
+            }
+        ]
+    }
     sel = select_json_part(envelope)
     assert sel is not None
     assert sel.binary_hash == "abc"
@@ -142,10 +161,11 @@ def test_select_json_part_binary_ref_json_mime() -> None:
 
 def test_select_json_part_ignores_non_json_binary() -> None:
     """binary_ref with non-JSON mime is ignored."""
-    envelope = {"content": [
-        {"type": "binary_ref", "mime": "image/png",
-         "binary_hash": "abc", "byte_count": 5000}
-    ]}
+    envelope = {
+        "content": [
+            {"type": "binary_ref", "mime": "image/png", "binary_hash": "abc", "byte_count": 5000}
+        ]
+    }
     assert select_json_part(envelope) is None
 
 
@@ -157,11 +177,17 @@ def test_select_json_part_none_for_empty() -> None:
 
 def test_select_json_part_mixed_picks_largest() -> None:
     """Largest part wins across json and binary_ref."""
-    envelope = {"content": [
-        {"type": "json", "value": {"a": 1}},
-        {"type": "binary_ref", "mime": "application/json",
-         "binary_hash": "big", "byte_count": 1_000_000},
-    ]}
+    envelope = {
+        "content": [
+            {"type": "json", "value": {"a": 1}},
+            {
+                "type": "binary_ref",
+                "mime": "application/json",
+                "binary_hash": "big",
+                "byte_count": 1_000_000,
+            },
+        ]
+    }
     sel = select_json_part(envelope)
     assert sel is not None
     assert sel.part_index == 1
@@ -178,28 +204,41 @@ def test_run_mapping_closes_binary_stream(tmp_path: Path) -> None:
             closed.append(True)
             super().close()
 
-    envelope = {"content": [
-        {"type": "binary_ref", "mime": "application/json",
-         "binary_hash": "h1", "byte_count": len(payload_bytes)}
-    ]}
-    result = run_mapping(MappingInput(
-        artifact_id="a_c", payload_hash_full="p_c",
-        envelope=envelope, config=_config(tmp_path),
-        open_binary_stream=lambda _h: TS(payload_bytes),
-    ))
+    envelope = {
+        "content": [
+            {
+                "type": "binary_ref",
+                "mime": "application/json",
+                "binary_hash": "h1",
+                "byte_count": len(payload_bytes),
+            }
+        ]
+    }
+    result = run_mapping(
+        MappingInput(
+            artifact_id="a_c",
+            payload_hash_full="p_c",
+            envelope=envelope,
+            config=_config(tmp_path),
+            open_binary_stream=lambda _h: TS(payload_bytes),
+        )
+    )
     assert result.map_status == "ready"
     assert len(closed) == 1
 
 
 def test_full_mapping_object_discovers_roots(tmp_path: Path) -> None:
     """Full mapping of object discovers multiple roots sorted by score."""
-    data = {"users": [{"id": 1}, {"id": 2}],
-            "orders": [{"oid": 1}, {"oid": 2}, {"oid": 3}]}
+    data = {"users": [{"id": 1}, {"id": 2}], "orders": [{"oid": 1}, {"oid": 2}, {"oid": 3}]}
     envelope = {"content": [{"type": "json", "value": data}]}
-    result = run_mapping(MappingInput(
-        artifact_id="a_o", payload_hash_full="p_o",
-        envelope=envelope, config=_config(tmp_path, max_full_map_bytes=10_000_000),
-    ))
+    result = run_mapping(
+        MappingInput(
+            artifact_id="a_o",
+            payload_hash_full="p_o",
+            envelope=envelope,
+            config=_config(tmp_path, max_full_map_bytes=10_000_000),
+        )
+    )
     assert result.map_kind == "full"
     assert result.map_status == "ready"
     assert len(result.roots) == 2

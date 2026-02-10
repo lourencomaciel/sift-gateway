@@ -2,7 +2,11 @@ from __future__ import annotations
 
 import datetime as dt
 
-from mcp_artifact_gateway.cursor.payload import CursorStaleError, assert_cursor_binding, build_cursor_payload
+from mcp_artifact_gateway.cursor.payload import (
+    CursorStaleError,
+    assert_cursor_binding,
+    build_cursor_payload,
+)
 
 
 def test_cursor_payload_has_required_fields() -> None:

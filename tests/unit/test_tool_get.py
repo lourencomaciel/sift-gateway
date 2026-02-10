@@ -11,6 +11,7 @@ from mcp_artifact_gateway.tools.artifact_get import (
 
 # ---- validate_get_args ----
 
+
 def test_validate_get_args_requires_session_id() -> None:
     result = validate_get_args({})
     assert result is not None
@@ -19,9 +20,7 @@ def test_validate_get_args_requires_session_id() -> None:
 
 
 def test_validate_get_args_requires_artifact_id() -> None:
-    result = validate_get_args(
-        {"_gateway_context": {"session_id": "sess_1"}}
-    )
+    result = validate_get_args({"_gateway_context": {"session_id": "sess_1"}})
     assert result is not None
     assert result["code"] == "INVALID_ARGUMENT"
     assert "artifact_id" in result["message"]
@@ -73,6 +72,7 @@ def test_validate_get_args_defaults_to_envelope_target() -> None:
 
 
 # ---- check_get_preconditions ----
+
 
 def test_check_get_preconditions_returns_not_found_for_none() -> None:
     result = check_get_preconditions(None, "envelope")
@@ -142,6 +142,7 @@ def test_check_get_preconditions_passes_for_envelope_target() -> None:
 
 
 # ---- is_sampled_only ----
+
 
 def test_is_sampled_only_partial() -> None:
     assert is_sampled_only({"map_kind": "partial"}) is True

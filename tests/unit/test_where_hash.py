@@ -84,10 +84,13 @@ def test_where_hash_canonical_ast_nested_sorting() -> None:
     a = {
         "op": "and",
         "clauses": [
-            {"op": "or", "clauses": [
-                {"path": "$.b", "op": "eq", "value": 2},
-                {"path": "$.a", "op": "eq", "value": 1},
-            ]},
+            {
+                "op": "or",
+                "clauses": [
+                    {"path": "$.b", "op": "eq", "value": 2},
+                    {"path": "$.a", "op": "eq", "value": 1},
+                ],
+            },
             {"path": "$.c", "op": "eq", "value": 3},
         ],
     }
@@ -95,10 +98,13 @@ def test_where_hash_canonical_ast_nested_sorting() -> None:
         "op": "and",
         "clauses": [
             {"path": "$.c", "op": "eq", "value": 3},
-            {"op": "or", "clauses": [
-                {"path": "$.a", "op": "eq", "value": 1},
-                {"path": "$.b", "op": "eq", "value": 2},
-            ]},
+            {
+                "op": "or",
+                "clauses": [
+                    {"path": "$.a", "op": "eq", "value": 1},
+                    {"path": "$.b", "op": "eq", "value": 2},
+                ],
+            },
         ],
     }
     assert where_hash(a, mode="canonical_ast") == where_hash(b, mode="canonical_ast")

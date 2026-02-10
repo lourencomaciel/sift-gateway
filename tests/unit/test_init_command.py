@@ -109,17 +109,21 @@ class TestRunInit:
 
     def test_existing_gateway_config_preserved(self, tmp_path: Path) -> None:
         source = tmp_path / "config.json"
-        source.write_text(json.dumps({
-            "mcpServers": {"new_tool": {"command": "new-tool"}}
-        }), encoding="utf-8")
+        source.write_text(
+            json.dumps({"mcpServers": {"new_tool": {"command": "new-tool"}}}), encoding="utf-8"
+        )
 
         data_dir = tmp_path / "gateway"
         state_dir = data_dir / "state"
         state_dir.mkdir(parents=True)
-        (state_dir / "config.json").write_text(json.dumps({
-            "mcpServers": {"existing": {"command": "existing-cmd"}},
-            "postgres_dsn": "postgresql://localhost/db",
-        }))
+        (state_dir / "config.json").write_text(
+            json.dumps(
+                {
+                    "mcpServers": {"existing": {"command": "existing-cmd"}},
+                    "postgres_dsn": "postgresql://localhost/db",
+                }
+            )
+        )
 
         run_init(source, data_dir=data_dir)
 
@@ -144,9 +148,9 @@ class TestRunInit:
 
     def test_vscode_format_source(self, tmp_path: Path) -> None:
         source = tmp_path / "mcp.json"
-        source.write_text(json.dumps({
-            "mcp": {"servers": {"github": {"command": "gh"}}}
-        }), encoding="utf-8")
+        source.write_text(
+            json.dumps({"mcp": {"servers": {"github": {"command": "gh"}}}}), encoding="utf-8"
+        )
         data_dir = tmp_path / "gateway"
 
         summary = run_init(source, data_dir=data_dir)
@@ -160,9 +164,7 @@ class TestRunInit:
     def test_tilde_expansion(self, tmp_path: Path, monkeypatch) -> None:
         monkeypatch.setenv("HOME", str(tmp_path))
         source = tmp_path / "config.json"
-        source.write_text(json.dumps({
-            "mcpServers": {"gh": {"command": "gh"}}
-        }), encoding="utf-8")
+        source.write_text(json.dumps({"mcpServers": {"gh": {"command": "gh"}}}), encoding="utf-8")
 
         summary = run_init(Path("~/config.json"), data_dir=tmp_path / "gateway")
         assert summary["servers_migrated"] == ["gh"]
@@ -207,9 +209,14 @@ class _FakeDockerResult:
 
 def _source_with_servers(tmp_path: Path) -> Path:
     source = tmp_path / "config.json"
-    source.write_text(json.dumps({
-        "mcpServers": {"gh": {"command": "gh"}},
-    }), encoding="utf-8")
+    source.write_text(
+        json.dumps(
+            {
+                "mcpServers": {"gh": {"command": "gh"}},
+            }
+        ),
+        encoding="utf-8",
+    )
     return source
 
 
@@ -274,9 +281,13 @@ class TestInitDockerProvisioning:
         data_dir = tmp_path / "gw"
         state_dir = data_dir / "state"
         state_dir.mkdir(parents=True)
-        (state_dir / "config.json").write_text(json.dumps({
-            "postgres_dsn": "postgresql://existing@host/db",
-        }))
+        (state_dir / "config.json").write_text(
+            json.dumps(
+                {
+                    "postgres_dsn": "postgresql://existing@host/db",
+                }
+            )
+        )
 
         with patch(
             "mcp_artifact_gateway.config.docker_postgres.provision_postgres",

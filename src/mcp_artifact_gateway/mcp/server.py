@@ -222,7 +222,7 @@ class GatewayServer:
 
     def _increment_metric(self, attr: str, amount: int = 1) -> None:
         counter = getattr(self.metrics, attr, None)
-        increment = getattr(counter, "increment", None)
+        increment = getattr(counter, "inc", None)
         if callable(increment):
             increment(amount)
 

@@ -43,4 +43,3 @@ def ensure_no_floats(value: Any, path: str = "$") -> None:
     if isinstance(value, (list, tuple)):
         for index, item in enumerate(value):
             ensure_no_floats(item, f"{path}[{index}]")
-

@@ -40,4 +40,3 @@ def test_artifacts_repo_validation_rejects_negative_size() -> None:
         assert "non-negative" in str(exc)
     else:
         raise AssertionError("expected ValueError")
-

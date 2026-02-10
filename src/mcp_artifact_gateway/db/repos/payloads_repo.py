@@ -56,4 +56,3 @@ def payload_blob_params(
         payload_total_bytes,
         contains_binary_refs,
     )
-

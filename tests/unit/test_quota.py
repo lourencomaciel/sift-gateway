@@ -1,4 +1,5 @@
 """Tests for quota enforcement module."""
+
 from __future__ import annotations
 
 import datetime as dt
@@ -25,7 +26,7 @@ from mcp_artifact_gateway.jobs.hard_delete import (
     FIND_UNREFERENCED_PAYLOADS_SQL,
     HardDeleteResult,
 )
-from mcp_artifact_gateway.obs.metrics import GatewayMetrics
+from mcp_artifact_gateway.obs.metrics import GatewayMetrics, counter_value
 
 
 # ---------------------------------------------------------------------------
@@ -299,7 +300,7 @@ def test_soft_delete_lru_batch_returns_count_and_bytes() -> None:
     assert count == 2
     assert est_bytes == 800
     assert conn.committed == 0
-    assert metrics.prune_soft_deletes.value == 2
+    assert counter_value(metrics.prune_soft_deletes) == 2
 
 
 def test_soft_delete_lru_batch_empty_result() -> None:
@@ -339,9 +340,9 @@ def test_enforce_quota_no_breach_returns_immediately() -> None:
     assert result.bytes_reclaimed == 0
     assert result.usage_after is None
     assert result.breaches_after is None
-    assert metrics.quota_checks.value == 1
-    assert metrics.quota_breaches.value == 0
-    assert metrics.quota_prune_triggered.value == 0
+    assert counter_value(metrics.quota_checks) == 1
+    assert counter_value(metrics.quota_breaches) == 0
+    assert counter_value(metrics.quota_prune_triggered) == 0
 
 
 # ---------------------------------------------------------------------------
@@ -367,9 +368,9 @@ def test_enforce_quota_breach_triggers_prune() -> None:
     assert result.space_cleared is True
     assert result.pruned is True
     assert result.soft_deleted_count == 1
-    assert metrics.quota_checks.value == 1
-    assert metrics.quota_breaches.value == 1
-    assert metrics.quota_prune_triggered.value == 1
+    assert counter_value(metrics.quota_checks) == 1
+    assert counter_value(metrics.quota_breaches) == 1
+    assert counter_value(metrics.quota_prune_triggered) == 1
 
 
 def test_enforce_quota_prune_clears_space_after_multiple_rounds() -> None:
@@ -578,7 +579,7 @@ def test_enforce_quota_increments_quota_checks() -> None:
         max_total_storage_bytes=500,
         metrics=metrics,
     )
-    assert metrics.quota_checks.value == 1
+    assert counter_value(metrics.quota_checks) == 1
 
 
 def test_enforce_quota_increments_quota_breaches_only_when_breached() -> None:
@@ -591,7 +592,7 @@ def test_enforce_quota_increments_quota_breaches_only_when_breached() -> None:
         max_total_storage_bytes=500,
         metrics=metrics,
     )
-    assert metrics.quota_breaches.value == 0
+    assert counter_value(metrics.quota_breaches) == 0
 
 
 def test_enforce_quota_returns_usage_before() -> None:

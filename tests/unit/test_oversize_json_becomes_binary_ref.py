@@ -24,4 +24,3 @@ def test_oversized_json_part_becomes_binary_ref(tmp_path) -> None:
     assert isinstance(rewritten.content[0], BinaryRefContentPart)
     assert rewritten.meta["warnings"]
     assert rewritten.meta["warnings"][0]["code"] == "oversized_json_part"
-

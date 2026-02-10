@@ -19,6 +19,7 @@ from mcp_artifact_gateway.config.settings import load_gateway_config
 # extract_mcp_servers
 # ---------------------------------------------------------------------------
 
+
 class TestExtractMcpServers:
     def test_claude_desktop_format(self) -> None:
         raw = {
@@ -67,6 +68,7 @@ class TestExtractMcpServers:
 # Transport inference
 # ---------------------------------------------------------------------------
 
+
 class TestTransportInference:
     def test_command_infers_stdio(self) -> None:
         configs = to_upstream_configs({"gh": {"command": "/usr/bin/gh"}})
@@ -94,15 +96,18 @@ class TestTransportInference:
 # to_upstream_configs — field mapping
 # ---------------------------------------------------------------------------
 
+
 class TestToUpstreamConfigs:
     def test_stdio_fields_mapped(self) -> None:
-        configs = to_upstream_configs({
-            "gh": {
-                "command": "/usr/bin/gh",
-                "args": ["mcp", "--mode", "prod"],
-                "env": {"GITHUB_TOKEN": "secret"},
+        configs = to_upstream_configs(
+            {
+                "gh": {
+                    "command": "/usr/bin/gh",
+                    "args": ["mcp", "--mode", "prod"],
+                    "env": {"GITHUB_TOKEN": "secret"},
+                }
             }
-        })
+        )
         c = configs[0]
         assert c["prefix"] == "gh"
         assert c["transport"] == "stdio"
@@ -111,12 +116,14 @@ class TestToUpstreamConfigs:
         assert c["env"] == {"GITHUB_TOKEN": "secret"}
 
     def test_http_fields_mapped(self) -> None:
-        configs = to_upstream_configs({
-            "api": {
-                "url": "https://api.example.com/mcp",
-                "headers": {"Authorization": "Bearer tok"},
+        configs = to_upstream_configs(
+            {
+                "api": {
+                    "url": "https://api.example.com/mcp",
+                    "headers": {"Authorization": "Bearer tok"},
+                }
             }
-        })
+        )
         c = configs[0]
         assert c["prefix"] == "api"
         assert c["transport"] == "http"
@@ -124,17 +131,19 @@ class TestToUpstreamConfigs:
         assert c["headers"] == {"Authorization": "Bearer tok"}
 
     def test_gateway_extensions_promoted(self) -> None:
-        configs = to_upstream_configs({
-            "gh": {
-                "command": "gh",
-                "_gateway": {
-                    "semantic_salt_env_keys": ["GITHUB_ORG"],
-                    "strict_schema_reuse": False,
-                    "passthrough_allowed": False,
-                    "dedupe_exclusions": ["$.meta.timestamp"],
-                },
+        configs = to_upstream_configs(
+            {
+                "gh": {
+                    "command": "gh",
+                    "_gateway": {
+                        "semantic_salt_env_keys": ["GITHUB_ORG"],
+                        "strict_schema_reuse": False,
+                        "passthrough_allowed": False,
+                        "dedupe_exclusions": ["$.meta.timestamp"],
+                    },
+                }
             }
-        })
+        )
         c = configs[0]
         assert c["semantic_salt_env_keys"] == ["GITHUB_ORG"]
         assert c["strict_schema_reuse"] is False
@@ -152,10 +161,12 @@ class TestToUpstreamConfigs:
         assert "strict_schema_reuse" not in c
 
     def test_multiple_servers_preserved(self) -> None:
-        configs = to_upstream_configs({
-            "alpha": {"command": "a"},
-            "beta": {"url": "https://b.example.com"},
-        })
+        configs = to_upstream_configs(
+            {
+                "alpha": {"command": "a"},
+                "beta": {"url": "https://b.example.com"},
+            }
+        )
         prefixes = {c["prefix"] for c in configs}
         assert prefixes == {"alpha", "beta"}
 
@@ -163,6 +174,7 @@ class TestToUpstreamConfigs:
 # ---------------------------------------------------------------------------
 # resolve_mcp_servers_config — full pipeline
 # ---------------------------------------------------------------------------
+
 
 class TestResolveMcpServersConfig:
     def test_returns_none_for_legacy_format(self) -> None:
@@ -196,23 +208,28 @@ class TestResolveMcpServersConfig:
 # Integration with load_gateway_config
 # ---------------------------------------------------------------------------
 
+
 class TestLoadGatewayConfigMcpServers:
     def test_mcp_servers_format_loads(self, tmp_path: Path) -> None:
         state_dir = tmp_path / "state"
         state_dir.mkdir(parents=True)
-        (state_dir / "config.json").write_text(json.dumps({
-            "mcpServers": {
-                "github": {
-                    "command": "/usr/bin/gh",
-                    "args": ["mcp"],
-                    "env": {"GITHUB_TOKEN": "secret"},
-                },
-                "api": {
-                    "url": "https://api.example.com/mcp",
-                    "headers": {"Authorization": "Bearer tok"},
-                },
-            }
-        }))
+        (state_dir / "config.json").write_text(
+            json.dumps(
+                {
+                    "mcpServers": {
+                        "github": {
+                            "command": "/usr/bin/gh",
+                            "args": ["mcp"],
+                            "env": {"GITHUB_TOKEN": "secret"},
+                        },
+                        "api": {
+                            "url": "https://api.example.com/mcp",
+                            "headers": {"Authorization": "Bearer tok"},
+                        },
+                    }
+                }
+            )
+        )
         config = load_gateway_config(data_dir_override=str(tmp_path))
         assert len(config.upstreams) == 2
         prefixes = {u.prefix for u in config.upstreams}
@@ -231,17 +248,21 @@ class TestLoadGatewayConfigMcpServers:
     def test_mcp_servers_with_gateway_extensions(self, tmp_path: Path) -> None:
         state_dir = tmp_path / "state"
         state_dir.mkdir(parents=True)
-        (state_dir / "config.json").write_text(json.dumps({
-            "mcpServers": {
-                "github": {
-                    "command": "gh",
-                    "_gateway": {
-                        "semantic_salt_env_keys": ["GITHUB_ORG"],
-                        "strict_schema_reuse": False,
-                    },
-                },
-            }
-        }))
+        (state_dir / "config.json").write_text(
+            json.dumps(
+                {
+                    "mcpServers": {
+                        "github": {
+                            "command": "gh",
+                            "_gateway": {
+                                "semantic_salt_env_keys": ["GITHUB_ORG"],
+                                "strict_schema_reuse": False,
+                            },
+                        },
+                    }
+                }
+            )
+        )
         config = load_gateway_config(data_dir_override=str(tmp_path))
         gh = config.upstreams[0]
         assert gh.semantic_salt_env_keys == ["GITHUB_ORG"]
@@ -250,11 +271,15 @@ class TestLoadGatewayConfigMcpServers:
     def test_legacy_upstreams_still_works(self, tmp_path: Path) -> None:
         state_dir = tmp_path / "state"
         state_dir.mkdir(parents=True)
-        (state_dir / "config.json").write_text(json.dumps({
-            "upstreams": [
-                {"prefix": "gh", "transport": "http", "url": "https://example.com"},
-            ]
-        }))
+        (state_dir / "config.json").write_text(
+            json.dumps(
+                {
+                    "upstreams": [
+                        {"prefix": "gh", "transport": "http", "url": "https://example.com"},
+                    ]
+                }
+            )
+        )
         config = load_gateway_config(data_dir_override=str(tmp_path))
         assert len(config.upstreams) == 1
         assert config.upstreams[0].prefix == "gh"
@@ -262,18 +287,20 @@ class TestLoadGatewayConfigMcpServers:
     def test_mixed_format_raises(self, tmp_path: Path) -> None:
         state_dir = tmp_path / "state"
         state_dir.mkdir(parents=True)
-        (state_dir / "config.json").write_text(json.dumps({
-            "mcpServers": {"gh": {"command": "gh"}},
-            "upstreams": [{"prefix": "x", "transport": "http", "url": "http://x"}],
-        }))
+        (state_dir / "config.json").write_text(
+            json.dumps(
+                {
+                    "mcpServers": {"gh": {"command": "gh"}},
+                    "upstreams": [{"prefix": "x", "transport": "http", "url": "http://x"}],
+                }
+            )
+        )
         with pytest.raises(ValueError, match="use one format or the other"):
             load_gateway_config(data_dir_override=str(tmp_path))
 
     def test_empty_mcp_servers_ok(self, tmp_path: Path) -> None:
         state_dir = tmp_path / "state"
         state_dir.mkdir(parents=True)
-        (state_dir / "config.json").write_text(json.dumps({
-            "mcpServers": {}
-        }))
+        (state_dir / "config.json").write_text(json.dumps({"mcpServers": {}}))
         config = load_gateway_config(data_dir_override=str(tmp_path))
         assert config.upstreams == []

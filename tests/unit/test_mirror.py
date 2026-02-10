@@ -37,6 +37,7 @@ def _make_upstream(
 
 # ---- build_mirrored_tools ----
 
+
 def test_build_mirrored_tools_qualified_names() -> None:
     upstream = _make_upstream("github", ["search_issues", "create_pr"])
     result = build_mirrored_tools([upstream])
@@ -74,67 +75,82 @@ def test_build_mirrored_tools_empty() -> None:
 
 # ---- strip_reserved_gateway_args ----
 
+
 def test_strip_removes_gateway_context() -> None:
-    result = strip_reserved_gateway_args({
-        "_gateway_context": {"session": "s1"},
-        "query": "test",
-    })
+    result = strip_reserved_gateway_args(
+        {
+            "_gateway_context": {"session": "s1"},
+            "query": "test",
+        }
+    )
     assert result == {"query": "test"}
 
 
 def test_strip_removes_gateway_parent_artifact_id() -> None:
-    result = strip_reserved_gateway_args({
-        "_gateway_parent_artifact_id": "art_1",
-        "query": "test",
-    })
+    result = strip_reserved_gateway_args(
+        {
+            "_gateway_parent_artifact_id": "art_1",
+            "query": "test",
+        }
+    )
     assert result == {"query": "test"}
 
 
 def test_strip_removes_gateway_chain_seq() -> None:
-    result = strip_reserved_gateway_args({
-        "_gateway_chain_seq": 3,
-        "query": "test",
-    })
+    result = strip_reserved_gateway_args(
+        {
+            "_gateway_chain_seq": 3,
+            "query": "test",
+        }
+    )
     assert result == {"query": "test"}
 
 
 def test_strip_removes_any_gateway_prefix_key() -> None:
-    result = strip_reserved_gateway_args({
-        "_gateway_anything": "val",
-        "_gateway_custom_field": 42,
-        "query": "test",
-    })
+    result = strip_reserved_gateway_args(
+        {
+            "_gateway_anything": "val",
+            "_gateway_custom_field": 42,
+            "query": "test",
+        }
+    )
     assert result == {"query": "test"}
 
 
 def test_strip_keeps_gateway_url() -> None:
     """gateway_url does NOT start with _gateway_ prefix - must be kept."""
-    result = strip_reserved_gateway_args({
-        "gateway_url": "https://example.com",
-        "query": "test",
-    })
+    result = strip_reserved_gateway_args(
+        {
+            "gateway_url": "https://example.com",
+            "query": "test",
+        }
+    )
     assert result == {"gateway_url": "https://example.com", "query": "test"}
 
 
 def test_strip_keeps_gatewa_without_y() -> None:
     """_gatewa (missing final 'y_') does NOT match prefix - must be kept."""
-    result = strip_reserved_gateway_args({
-        "_gatewa": "val",
-        "query": "test",
-    })
+    result = strip_reserved_gateway_args(
+        {
+            "_gatewa": "val",
+            "query": "test",
+        }
+    )
     assert result == {"_gatewa": "val", "query": "test"}
 
 
 def test_strip_combined() -> None:
     """Full combined test matching spec."""
-    forwarded = strip_reserved_gateway_args({
-        "_gateway_context": {"session_id": "s1"},
-        "_gateway_parent_artifact_id": "art_1",
-        "_gateway_custom": 1,
-        "gateway_url": "keep-me",
-        "_gatewa": "keep-me-too",
-        "query": "open issues",
-    })
+    forwarded = strip_reserved_gateway_args(
+        {
+            "_gateway_context": {"session_id": "s1"},
+            "_gateway_parent_artifact_id": "art_1",
+            "_gateway_custom": 1,
+            "gateway_url": "keep-me",
+            "_gatewa": "keep-me-too",
+            "query": "open issues",
+        }
+    )
     assert forwarded == {
         "gateway_url": "keep-me",
         "_gatewa": "keep-me-too",
@@ -143,6 +159,7 @@ def test_strip_combined() -> None:
 
 
 # ---- extract_gateway_context ----
+
 
 def test_extract_gateway_context_present() -> None:
     ctx = extract_gateway_context({"_gateway_context": {"session": "s1"}, "q": "test"})
@@ -160,6 +177,7 @@ def test_extract_gateway_context_non_dict_ignored() -> None:
 
 
 # ---- validate_against_schema ----
+
 
 def test_validate_missing_required() -> None:
     schema = {

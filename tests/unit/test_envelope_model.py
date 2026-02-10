@@ -16,4 +16,3 @@ def test_envelope_to_dict_shape() -> None:
     assert payload["status"] == "ok"
     assert payload["content"][0]["type"] == "json"
     assert payload["content"][0]["value"] == {"x": 1}
-

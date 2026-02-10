@@ -64,7 +64,12 @@ def _tokenize(where: str) -> list[_Token]:
         if ch.isspace():
             i += 1
             continue
-        if where.startswith(">=", i) or where.startswith("<=", i) or where.startswith("!=", i) or where.startswith("==", i):
+        if (
+            where.startswith(">=", i)
+            or where.startswith("<=", i)
+            or where.startswith("!=", i)
+            or where.startswith("==", i)
+        ):
             tokens.append(_Token(kind="OP", value=where[i : i + 2], offset=i))
             i += 2
             continue

@@ -46,6 +46,7 @@ _SELECT_ROOT_COLUMNS = [
     "root_summary",
 ]
 
+
 async def handle_artifact_select(
     ctx: GatewayServer,
     arguments: dict[str, Any],
@@ -292,9 +293,7 @@ async def handle_artifact_select(
                 except ValueError as exc:
                     return gateway_error("INTERNAL_ERROR", f"envelope reconstruction failed: {exc}")
 
-            json_target = extract_json_target(
-                envelope, artifact_row.get("mapped_part_index")
-            )
+            json_target = extract_json_target(envelope, artifact_row.get("mapped_part_index"))
 
             try:
                 root_values = evaluate_jsonpath(
@@ -405,9 +404,7 @@ async def handle_artifact_select(
         from mcp_artifact_gateway.constants import TRAVERSAL_CONTRACT_VERSION
 
         all_sample_indices = sorted(
-            int(si)
-            for sample in sample_rows
-            if isinstance((si := sample.get("sample_index")), int)
+            int(si) for sample in sample_rows if isinstance((si := sample.get("sample_index")), int)
         )
         ssh = compute_sample_set_hash(
             root_path=root_path,

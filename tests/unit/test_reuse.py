@@ -11,7 +11,7 @@ from mcp_artifact_gateway.cache.reuse import (
     check_reuse_candidate,
     try_acquire_advisory_lock,
 )
-from mcp_artifact_gateway.obs.metrics import GatewayMetrics
+from mcp_artifact_gateway.obs.metrics import GatewayMetrics, counter_value
 
 # advisory_lock_keys is tested comprehensively in test_hashing.py
 # (canonical location: util.hashing, re-exported via cache.reuse)
@@ -132,7 +132,7 @@ class _Counter:
     def __init__(self) -> None:
         self.value = 0
 
-    def increment(self, amount: int = 1) -> None:
+    def inc(self, amount: int = 1) -> None:
         self.value += amount
 
 
@@ -205,8 +205,8 @@ def test_check_reuse_candidate_increments_cache_hit_metric() -> None:
         metrics=metrics,
     )
     assert result.reused is True
-    assert metrics.cache_hits.value == 1
-    assert metrics.cache_misses.value == 0
+    assert counter_value(metrics.cache_hits) == 1
+    assert counter_value(metrics.cache_misses) == 0
 
 
 def test_check_reuse_candidate_increments_cache_miss_on_none() -> None:
@@ -218,8 +218,8 @@ def test_check_reuse_candidate_increments_cache_miss_on_none() -> None:
         metrics=metrics,
     )
     assert result.reused is False
-    assert metrics.cache_misses.value == 1
-    assert metrics.cache_hits.value == 0
+    assert counter_value(metrics.cache_misses) == 1
+    assert counter_value(metrics.cache_hits) == 0
 
 
 def test_check_reuse_candidate_increments_cache_miss_on_schema_mismatch() -> None:
@@ -239,8 +239,8 @@ def test_check_reuse_candidate_increments_cache_miss_on_schema_mismatch() -> Non
         metrics=metrics,
     )
     assert result.reused is False
-    assert metrics.cache_misses.value == 1
-    assert metrics.cache_hits.value == 0
+    assert counter_value(metrics.cache_misses) == 1
+    assert counter_value(metrics.cache_hits) == 0
 
 
 # ---- acquire_advisory_lock_async ----
@@ -288,25 +288,271 @@ def test_acquire_advisory_lock_async_timeout(monkeypatch) -> None:
     assert metrics.advisory_lock_timeouts.value == 1
 
 
-# ---- SQLite advisory lock bypass tests ----
+# ---- SQLite advisory lock tests ----
 
 
 def test_try_acquire_advisory_lock_sqlite_returns_true() -> None:
-    """Advisory lock with real SQLite connection always returns True."""
+    """Advisory lock with real SQLite connection acquires per-key lock."""
     import sqlite3
+
+    from mcp_artifact_gateway.cache.reuse import release_advisory_lock
 
     conn = sqlite3.connect(":memory:")
     result = try_acquire_advisory_lock(conn, request_key="rk_sqlite_1")
     assert result is True
+    release_advisory_lock(conn, request_key="rk_sqlite_1")
     conn.close()
 
 
 def test_try_acquire_advisory_lock_sqlite_no_sql_executed() -> None:
-    """SQLite advisory lock returns True without executing any SQL."""
+    """SQLite advisory lock acquires without executing any SQL."""
     import sqlite3
+
+    from mcp_artifact_gateway.cache.reuse import release_advisory_lock
 
     conn = sqlite3.connect(":memory:")
     # If it tried to execute pg_try_advisory_xact_lock, it would raise
     result = try_acquire_advisory_lock(conn, request_key="rk_sqlite_2")
     assert result is True
+    release_advisory_lock(conn, request_key="rk_sqlite_2")
+    conn.close()
+
+
+def test_try_acquire_advisory_lock_sqlite_second_acquire_fails() -> None:
+    """Second acquire for same key on SQLite returns False (lock held)."""
+    import sqlite3
+
+    from mcp_artifact_gateway.cache.reuse import release_advisory_lock
+
+    conn = sqlite3.connect(":memory:")
+    assert try_acquire_advisory_lock(conn, request_key="rk_dup") is True
+    assert try_acquire_advisory_lock(conn, request_key="rk_dup") is False
+    release_advisory_lock(conn, request_key="rk_dup")
+    conn.close()
+
+
+def test_try_acquire_advisory_lock_sqlite_release_then_reacquire() -> None:
+    """After release, acquire succeeds again on SQLite."""
+    import sqlite3
+
+    from mcp_artifact_gateway.cache.reuse import release_advisory_lock
+
+    conn = sqlite3.connect(":memory:")
+    assert try_acquire_advisory_lock(conn, request_key="rk_rel") is True
+    release_advisory_lock(conn, request_key="rk_rel")
+    assert try_acquire_advisory_lock(conn, request_key="rk_rel") is True
+    release_advisory_lock(conn, request_key="rk_rel")
+    conn.close()
+
+
+def test_try_acquire_advisory_lock_sqlite_different_keys() -> None:
+    """Different keys can both acquire on SQLite (per-key granularity)."""
+    import sqlite3
+
+    from mcp_artifact_gateway.cache.reuse import release_advisory_lock
+
+    conn = sqlite3.connect(":memory:")
+    assert try_acquire_advisory_lock(conn, request_key="rk_a") is True
+    assert try_acquire_advisory_lock(conn, request_key="rk_b") is True
+    release_advisory_lock(conn, request_key="rk_a")
+    release_advisory_lock(conn, request_key="rk_b")
+    conn.close()
+
+
+def test_release_advisory_lock_noop_for_postgres() -> None:
+    """release_advisory_lock is a no-op for non-SQLite connections."""
+    from mcp_artifact_gateway.cache.reuse import release_advisory_lock
+
+    conn = _LockConnection([True])
+    # Should not raise
+    release_advisory_lock(conn, request_key="rk_pg")
+
+
+# ---- SQLite lock contention under concurrent access ----
+
+
+def test_sqlite_lock_contention_only_one_thread_wins() -> None:
+    """When multiple threads race for the same key, exactly one acquires."""
+    import sqlite3
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+
+    from mcp_artifact_gateway.cache.reuse import release_advisory_lock
+
+    conn = sqlite3.connect(":memory:")
+    key = "rk_contention_1"
+    num_threads = 20
+    barrier = threading.Barrier(num_threads)
+    results: list[bool] = []
+    lock = threading.Lock()
+
+    def worker() -> None:
+        barrier.wait()
+        acquired = try_acquire_advisory_lock(conn, request_key=key)
+        with lock:
+            results.append(acquired)
+
+    with ThreadPoolExecutor(max_workers=num_threads) as executor:
+        futures = [executor.submit(worker) for _ in range(num_threads)]
+        for f in futures:
+            f.result()
+
+    assert results.count(True) == 1, (
+        f"Expected exactly 1 winner, got {results.count(True)} out of {num_threads}"
+    )
+    assert results.count(False) == num_threads - 1
+    release_advisory_lock(conn, request_key=key)
+    conn.close()
+
+
+def test_sqlite_lock_contention_different_keys_independent() -> None:
+    """Threads competing for different keys should all succeed."""
+    import sqlite3
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+
+    from mcp_artifact_gateway.cache.reuse import release_advisory_lock
+
+    conn = sqlite3.connect(":memory:")
+    num_threads = 10
+    barrier = threading.Barrier(num_threads)
+    results: list[tuple[str, bool]] = []
+    lock = threading.Lock()
+
+    def worker(idx: int) -> None:
+        key = f"rk_independent_{idx}"
+        barrier.wait()
+        acquired = try_acquire_advisory_lock(conn, request_key=key)
+        with lock:
+            results.append((key, acquired))
+
+    with ThreadPoolExecutor(max_workers=num_threads) as executor:
+        futures = [executor.submit(worker, i) for i in range(num_threads)]
+        for f in futures:
+            f.result()
+
+    # All should win since keys are unique
+    assert all(acquired for _, acquired in results), (
+        f"Expected all threads to acquire, got: {results}"
+    )
+    for i in range(num_threads):
+        release_advisory_lock(conn, request_key=f"rk_independent_{i}")
+    conn.close()
+
+
+def test_sqlite_lock_release_unblocks_next_acquirer() -> None:
+    """After thread A releases, thread B can acquire the same key."""
+    import sqlite3
+    import threading
+
+    from mcp_artifact_gateway.cache.reuse import release_advisory_lock
+
+    conn = sqlite3.connect(":memory:")
+    key = "rk_release_unblock"
+    b_acquired = threading.Event()
+    b_result: list[bool] = []
+
+    # Thread A acquires
+    assert try_acquire_advisory_lock(conn, request_key=key) is True
+
+    def thread_b() -> None:
+        # Poll until we can acquire (thread A will release)
+        for _ in range(100):
+            if try_acquire_advisory_lock(conn, request_key=key):
+                b_result.append(True)
+                b_acquired.set()
+                return
+            threading.Event().wait(0.01)
+        b_result.append(False)
+        b_acquired.set()
+
+    t = threading.Thread(target=thread_b)
+    t.start()
+
+    # Give thread B a moment to fail its first attempt
+    threading.Event().wait(0.05)
+    # Release so thread B can acquire
+    release_advisory_lock(conn, request_key=key)
+
+    b_acquired.wait(timeout=5.0)
+    t.join(timeout=5.0)
+
+    assert b_result == [True], "Thread B should have acquired after A released"
+    release_advisory_lock(conn, request_key=key)
+    conn.close()
+
+
+def test_sqlite_lock_acquire_with_timeout_concurrent(monkeypatch) -> None:
+    """acquire_advisory_lock with timeout works under contention."""
+    import sqlite3
+
+    from mcp_artifact_gateway.cache.reuse import release_advisory_lock
+
+    conn = sqlite3.connect(":memory:")
+    key = "rk_timeout_contention"
+
+    # Hold the lock
+    assert try_acquire_advisory_lock(conn, request_key=key) is True
+
+    # Another attempt with 0ms timeout should fail immediately
+    acquired = acquire_advisory_lock(
+        conn,
+        request_key=key,
+        timeout_ms=0,
+        poll_interval_ms=1,
+    )
+    assert acquired is False
+
+    # Release and try again — should succeed
+    release_advisory_lock(conn, request_key=key)
+    acquired = acquire_advisory_lock(
+        conn,
+        request_key=key,
+        timeout_ms=1000,
+        poll_interval_ms=1,
+    )
+    assert acquired is True
+    release_advisory_lock(conn, request_key=key)
+    conn.close()
+
+
+def test_sqlite_lock_release_removes_from_dict() -> None:
+    """release_advisory_lock removes the key from _sqlite_key_locks (no memory leak)."""
+    import sqlite3
+
+    from mcp_artifact_gateway.cache import reuse
+    from mcp_artifact_gateway.cache.reuse import release_advisory_lock
+
+    conn = sqlite3.connect(":memory:")
+    key = "rk_leak_check"
+
+    assert try_acquire_advisory_lock(conn, request_key=key) is True
+    assert key in reuse._sqlite_key_locks
+
+    release_advisory_lock(conn, request_key=key)
+    assert key not in reuse._sqlite_key_locks
+
+    conn.close()
+
+
+def test_sqlite_lock_dict_does_not_grow_after_release_cycle() -> None:
+    """Acquire/release cycles for many unique keys should not accumulate entries."""
+    import sqlite3
+
+    from mcp_artifact_gateway.cache import reuse
+    from mcp_artifact_gateway.cache.reuse import release_advisory_lock
+
+    conn = sqlite3.connect(":memory:")
+
+    # Record baseline size (other tests may have left entries)
+    baseline = len(reuse._sqlite_key_locks)
+
+    for i in range(100):
+        key = f"rk_growth_{i}"
+        assert try_acquire_advisory_lock(conn, request_key=key) is True
+        release_advisory_lock(conn, request_key=key)
+
+    # After all release cycles, dict should be back to baseline
+    assert len(reuse._sqlite_key_locks) == baseline
+
     conn.close()

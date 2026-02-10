@@ -2,7 +2,11 @@ from __future__ import annotations
 
 from decimal import Decimal
 
-from mcp_artifact_gateway.canon.decimal_json import NonFiniteNumberError, ensure_no_floats, loads_decimal
+from mcp_artifact_gateway.canon.decimal_json import (
+    NonFiniteNumberError,
+    ensure_no_floats,
+    loads_decimal,
+)
 
 
 def test_loads_decimal_parses_float_as_decimal() -> None:
@@ -27,4 +31,3 @@ def test_ensure_no_floats_detects_nested_float() -> None:
         assert "$.a[1]" in str(exc)
     else:
         raise AssertionError("expected TypeError")
-

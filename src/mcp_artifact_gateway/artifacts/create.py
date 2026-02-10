@@ -1,4 +1,5 @@
 """Artifact creation pipeline for mirrored tool calls."""
+
 from __future__ import annotations
 
 import datetime as dt
@@ -102,17 +103,13 @@ def compute_payload_sizes(envelope: Envelope) -> tuple[int, int, int]:
         if isinstance(part, JsonContentPart):
             # Approximate JSON size from UTF-8 encoded value
             if part.value is not None:
-                json_bytes += len(
-                    json.dumps(part.value, ensure_ascii=False).encode("utf-8")
-                )
+                json_bytes += len(json.dumps(part.value, ensure_ascii=False).encode("utf-8"))
         elif isinstance(part, BinaryRefContentPart):
             binary_bytes += part.byte_count
         else:
             # Text and resource ref contribute to json bytes
             part_dict = part.to_dict()
-            json_bytes += len(
-                json.dumps(part_dict, ensure_ascii=False).encode("utf-8")
-            )
+            json_bytes += len(json.dumps(part_dict, ensure_ascii=False).encode("utf-8"))
 
     return json_bytes, binary_bytes, json_bytes + binary_bytes
 
@@ -158,9 +155,7 @@ def build_artifact_row(
     """Build the artifact row dict for DB insertion."""
     error_summary = None
     if input_data.envelope.status == "error" and input_data.envelope.error is not None:
-        error_summary = (
-            f"{input_data.envelope.error.code}: {input_data.envelope.error.message}"
-        )
+        error_summary = f"{input_data.envelope.error.code}: {input_data.envelope.error.message}"
 
     return {
         "workspace_id": WORKSPACE_ID,
@@ -220,7 +215,6 @@ INSERT INTO payload_binary_refs (workspace_id, payload_hash_full, binary_hash)
 VALUES (%s, %s, %s)
 ON CONFLICT (workspace_id, payload_hash_full, binary_hash) DO NOTHING
 """
-
 
 
 def _artifact_insert_params(row: dict[str, Any]) -> tuple[object, ...]:

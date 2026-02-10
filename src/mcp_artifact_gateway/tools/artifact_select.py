@@ -77,9 +77,7 @@ def sampled_indices_ascending(sample_rows: Sequence[dict[str, Any]]) -> list[int
     sampled indices are always enumerated in ascending order.
     """
     return sorted(
-        int(idx)
-        for row in sample_rows
-        if isinstance((idx := row.get("sample_index")), int)
+        int(idx) for row in sample_rows if isinstance((idx := row.get("sample_index")), int)
     )
 
 

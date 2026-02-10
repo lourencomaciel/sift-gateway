@@ -47,4 +47,3 @@ def replace_oversized_json_parts(
     next_meta = dict(envelope.meta)
     next_meta["warnings"] = warnings
     return replace(envelope, content=next_content, meta=next_meta)
-
