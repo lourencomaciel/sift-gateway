@@ -43,7 +43,7 @@ def test_lifecycle_ensure_data_dirs(tmp_path: Path) -> None:
 
 
 def test_lifecycle_startup_check_invalid_upstream(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setattr("mcp_artifact_gateway.lifecycle.connect", lambda _config: _FakeConnection())
+    monkeypatch.setattr("mcp_artifact_gateway.db.conn.connect", lambda _config: _FakeConnection())
     config = GatewayConfig(
         data_dir=tmp_path,
         db_backend="postgres",
@@ -60,7 +60,7 @@ def test_lifecycle_startup_check_invalid_upstream(tmp_path: Path, monkeypatch) -
 def test_lifecycle_startup_check_does_not_touch_existing_probe_filename(
     tmp_path: Path, monkeypatch
 ) -> None:
-    monkeypatch.setattr("mcp_artifact_gateway.lifecycle.connect", lambda _config: _FakeConnection())
+    monkeypatch.setattr("mcp_artifact_gateway.db.conn.connect", lambda _config: _FakeConnection())
     config = GatewayConfig(
         data_dir=tmp_path,
         db_backend="postgres",
@@ -81,7 +81,7 @@ def test_lifecycle_startup_check_reports_db_connect_failure(tmp_path: Path, monk
     def _raise(_config):
         raise RuntimeError("connect failed")
 
-    monkeypatch.setattr("mcp_artifact_gateway.lifecycle.connect", _raise)
+    monkeypatch.setattr("mcp_artifact_gateway.db.conn.connect", _raise)
 
     config = GatewayConfig(
         data_dir=tmp_path,
@@ -96,7 +96,7 @@ def test_lifecycle_startup_check_reports_db_connect_failure(tmp_path: Path, monk
 
 def test_lifecycle_startup_check_reports_db_probe_failure(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(
-        "mcp_artifact_gateway.lifecycle.connect",
+        "mcp_artifact_gateway.db.conn.connect",
         lambda _config: _FakeConnection(fail_probe=True),
     )
 

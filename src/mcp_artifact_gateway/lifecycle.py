@@ -8,7 +8,6 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from mcp_artifact_gateway.config.settings import GatewayConfig
-from mcp_artifact_gateway.db.conn import connect
 
 _logger = logging.getLogger(__name__)
 
@@ -103,6 +102,8 @@ def _check_sqlite(config: GatewayConfig) -> tuple[bool, list[str]]:
 
 
 def _check_postgres(config: GatewayConfig) -> tuple[bool, list[str]]:
+    from mcp_artifact_gateway.db.conn import connect
+
     details: list[str] = []
     if not config.postgres_dsn.strip():
         details.append("postgres_dsn is empty")
