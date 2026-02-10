@@ -7,12 +7,12 @@ from pathlib import Path
 
 import pytest
 
-from mcp_artifact_gateway.config.mcp_servers import (
+from sidepouch_mcp.config.mcp_servers import (
     extract_mcp_servers,
     resolve_mcp_servers_config,
     to_upstream_configs,
 )
-from mcp_artifact_gateway.config.settings import load_gateway_config
+from sidepouch_mcp.config.settings import load_gateway_config
 
 # ---------------------------------------------------------------------------
 # extract_mcp_servers

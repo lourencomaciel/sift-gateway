@@ -1,6 +1,8 @@
-# MCP Artifact Gateway
+# SidePouch
 
-Local single-tenant MCP proxy that keeps long MCP responses out of prompt context by storing them as durable artifacts and exposing bounded deterministic retrieval.
+MCP Artifact Gateway
+
+Keep big MCP responses out of your context window. Query them.
 
 ## Why this exists
 
@@ -12,9 +14,9 @@ Standard MCP tool calls are great for immediate answers, but long responses can 
 - follow-up queries need deterministic pagination and bounded traversal;
 - upstream errors are usually not captured as first-class artifacts.
 
-This gateway exists to move bulky MCP output out of context, keep it durable, and make retrieval deterministic without changing upstream tool schemas.
+SidePouch moves bulky MCP output out of context, keeps it durable, and makes retrieval deterministic without changing upstream tool schemas.
 
-## What the gateway does
+## What SidePouch does
 
 1. Connects to configured upstream MCP servers (stdio or HTTP).
 2. Mirrors each upstream tool as `{prefix}.{tool}`.
@@ -54,13 +56,13 @@ Design invariants (from v1.9 spec):
 uv sync
 ```
 
-2. Run the gateway (uses SQLite by default — no external dependencies):
+2. Run SidePouch (uses SQLite by default — no external dependencies):
 
 ```bash
-uv run mcp-gateway
+uv run sidepouch-mcp
 ```
 
-That's it. The default SQLite backend stores data at `.mcp_gateway/state/gateway.db` and requires no setup.
+That's it. The default SQLite backend stores data at `.sidepouch-mcp/state/gateway.db` and requires no setup.
 
 ### Using PostgreSQL instead
 
@@ -76,7 +78,7 @@ uv sync --extra postgres
 
 ```bash
 cp .env.example .env
-# Edit .env: set MCP_GATEWAY_DB_BACKEND=postgres
+# Edit .env: set SIDEPOUCH_MCP_DB_BACKEND=postgres
 ```
 
 3. Start Postgres:
@@ -87,8 +89,8 @@ docker compose up -d
 
 `docker compose` provisions:
 
-- `mcp_gateway` (app runtime DB)
-- `mcp_test` (integration test DB; created by `scripts/init-test-db.sql` on first container init)
+- `sidepouch` (app runtime DB)
+- `sidepouch_test` (integration test DB; created by `scripts/init-test-db.sql` on first container init)
 
 If the container already existed before the init script mount, recreate it:
 
@@ -99,41 +101,41 @@ docker compose down -v && docker compose up -d
 4. Run startup checks:
 
 ```bash
-uv run mcp-gateway --check
+uv run sidepouch-mcp --check
 ```
 
-5. Run the gateway:
+5. Run SidePouch:
 
 ```bash
-uv run mcp-gateway
+uv run sidepouch-mcp
 ```
 
 ## Configure upstream MCP servers
 
-The gateway accepts the standard `mcpServers` format used by Claude Desktop, Cursor, and Claude Code.
+SidePouch accepts the standard `mcpServers` format used by Claude Desktop, Cursor, and Claude Code.
 
 ### Migrate an existing config
 
 ```bash
-uv run mcp-gateway init --from ~/Library/Application\ Support/Claude/claude_desktop_config.json
+uv run sidepouch-mcp init --from ~/Library/Application\ Support/Claude/claude_desktop_config.json
 ```
 
 This command:
 
-1. copies source `mcpServers` into `.mcp_gateway/state/config.json`;
+1. copies source `mcpServers` into `.sidepouch-mcp/state/config.json`;
 2. writes a backup to `<source>.backup`;
-3. rewrites the source config to point to the gateway only.
+3. rewrites the source config to point to SidePouch only.
 
 Preview:
 
 ```bash
-uv run mcp-gateway init --from ~/Library/Application\ Support/Claude/claude_desktop_config.json --dry-run
+uv run sidepouch-mcp init --from ~/Library/Application\ Support/Claude/claude_desktop_config.json --dry-run
 ```
 
 Revert:
 
 ```bash
-uv run mcp-gateway init --from ~/Library/Application\ Support/Claude/claude_desktop_config.json --revert
+uv run sidepouch-mcp init --from ~/Library/Application\ Support/Claude/claude_desktop_config.json --revert
 ```
 
 ### Manual config (`mcpServers`)
@@ -174,28 +176,28 @@ Notes:
 
 Precedence:
 
-1. `MCP_GATEWAY_*` environment variables
+1. `SIDEPOUCH_MCP_*` environment variables
 2. `DATA_DIR/state/config.json`
 3. compiled defaults
 
 Key defaults:
 
-- `MCP_GATEWAY_DB_BACKEND=sqlite`
-- `MCP_GATEWAY_POSTGRES_DSN=postgresql://localhost:5432/mcp_gateway`
-- `MCP_GATEWAY_DATA_DIR=.mcp_gateway`
-- `MCP_GATEWAY_MAPPING_MODE=hybrid`
-- `MCP_GATEWAY_ENVELOPE_JSONB_MODE=full`
-- `MCP_GATEWAY_ENVELOPE_CANONICAL_ENCODING=zstd`
-- `MCP_GATEWAY_MAX_FULL_MAP_BYTES=10000000`
-- `MCP_GATEWAY_MAX_ITEMS=1000`
-- `MCP_GATEWAY_MAX_BYTES_OUT=5000000`
-- `MCP_GATEWAY_CURSOR_TTL_MINUTES=60`
-- `MCP_GATEWAY_WHERE_CANONICALIZATION_MODE=raw_string`
+- `SIDEPOUCH_MCP_DB_BACKEND=sqlite`
+- `SIDEPOUCH_MCP_POSTGRES_DSN=postgresql://localhost:5432/sidepouch`
+- `SIDEPOUCH_MCP_DATA_DIR=.sidepouch-mcp`
+- `SIDEPOUCH_MCP_MAPPING_MODE=hybrid`
+- `SIDEPOUCH_MCP_ENVELOPE_JSONB_MODE=full`
+- `SIDEPOUCH_MCP_ENVELOPE_CANONICAL_ENCODING=zstd`
+- `SIDEPOUCH_MCP_MAX_FULL_MAP_BYTES=10000000`
+- `SIDEPOUCH_MCP_MAX_ITEMS=1000`
+- `SIDEPOUCH_MCP_MAX_BYTES_OUT=5000000`
+- `SIDEPOUCH_MCP_CURSOR_TTL_MINUTES=60`
+- `SIDEPOUCH_MCP_WHERE_CANONICALIZATION_MODE=raw_string`
 
 For the full key/type/default reference, see:
 
 - `docs/config.md`
-- `src/mcp_artifact_gateway/config/settings.py`
+- `src/sidepouch_mcp/config/settings.py`
 
 ## Docs map
 
@@ -220,12 +222,12 @@ uv run pytest tests/integration -v
 ```
 
 Default test DSN is provided by `tests/integration/conftest.py`:
-`postgresql://mcp_gateway:mcp_gateway@localhost:5432/mcp_test`
+`postgresql://sidepouch:sidepouch@localhost:5432/sidepouch_test`
 
 Override:
 
 ```bash
-MCP_GATEWAY_TEST_POSTGRES_DSN="postgresql://user:pass@host:5432/db" uv run pytest tests/integration -v
+SIDEPOUCH_MCP_TEST_POSTGRES_DSN="postgresql://user:pass@host:5432/db" uv run pytest tests/integration -v
 ```
 
 ### Runtime validation
@@ -244,7 +246,7 @@ uv run mypy src
 ## Project layout
 
 ```text
-src/mcp_artifact_gateway/
+src/sidepouch_mcp/
   main.py                  # CLI entrypoint
   app.py                   # app composition root
   config/                  # settings, mcpServers parser, init migration

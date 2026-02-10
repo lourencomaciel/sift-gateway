@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from mcp_artifact_gateway.cursor.payload import (
+from sidepouch_mcp.cursor.payload import (
     CursorStaleError,
     assert_cursor_binding,
     build_cursor_payload,

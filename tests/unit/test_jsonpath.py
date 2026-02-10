@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from mcp_artifact_gateway.query.jsonpath import (
+from sidepouch_mcp.query.jsonpath import (
     JsonPathError,
     Segment,
     canonicalize_jsonpath,

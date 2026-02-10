@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import pytest
 
-from mcp_artifact_gateway.config.settings import UpstreamConfig
-from mcp_artifact_gateway.mcp.upstream import (
+from sidepouch_mcp.config.settings import UpstreamConfig
+from sidepouch_mcp.mcp.upstream import (
     UpstreamInstance,
     call_upstream_tool,
     compute_auth_fingerprint,
@@ -237,7 +237,7 @@ async def test_discover_tools_fetches_and_hashes_tool_schemas(
             {"type": "object", "properties": {}},
         ),
     ]
-    monkeypatch.setattr("mcp_artifact_gateway.mcp.upstream.Client", _FakeClient)
+    monkeypatch.setattr("sidepouch_mcp.mcp.upstream.Client", _FakeClient)
 
     cfg = _stdio_config()
     tools = await discover_tools(cfg)
@@ -255,7 +255,7 @@ async def test_discover_tools_fetches_and_hashes_tool_schemas(
 async def test_call_upstream_tool_normalizes_result(monkeypatch) -> None:
     _FakeClient.instances.clear()
     _FakeClient.tools = []
-    monkeypatch.setattr("mcp_artifact_gateway.mcp.upstream.Client", _FakeClient)
+    monkeypatch.setattr("sidepouch_mcp.mcp.upstream.Client", _FakeClient)
 
     cfg = _http_config()
     instance = UpstreamInstance(config=cfg, instance_id="inst1", tools=[])
@@ -276,7 +276,7 @@ async def test_call_upstream_tool_normalizes_result(monkeypatch) -> None:
 async def test_connect_upstream_builds_instance(monkeypatch) -> None:
     _FakeClient.instances.clear()
     _FakeClient.tools = [_FakeTool("search", "Search", {"type": "object"})]
-    monkeypatch.setattr("mcp_artifact_gateway.mcp.upstream.Client", _FakeClient)
+    monkeypatch.setattr("sidepouch_mcp.mcp.upstream.Client", _FakeClient)
 
     cfg = _stdio_config()
     instance = await connect_upstream(cfg)
@@ -290,7 +290,7 @@ async def test_connect_upstream_builds_instance(monkeypatch) -> None:
 async def test_connect_upstreams_preserves_config_order(monkeypatch) -> None:
     _FakeClient.instances.clear()
     _FakeClient.tools = [_FakeTool("search", "Search", {"type": "object"})]
-    monkeypatch.setattr("mcp_artifact_gateway.mcp.upstream.Client", _FakeClient)
+    monkeypatch.setattr("sidepouch_mcp.mcp.upstream.Client", _FakeClient)
 
     cfg1 = _stdio_config(prefix="gh")
     cfg2 = _http_config(prefix="jira")

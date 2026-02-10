@@ -6,8 +6,8 @@ import io
 import json
 from pathlib import Path
 
-from mcp_artifact_gateway.config.settings import GatewayConfig
-from mcp_artifact_gateway.mapping.runner import (
+from sidepouch_mcp.config.settings import GatewayConfig
+from sidepouch_mcp.mapping.runner import (
     MappingInput,
     run_mapping,
     select_json_part,

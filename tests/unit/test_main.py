@@ -4,9 +4,9 @@ import argparse
 import json
 from pathlib import Path
 
-from mcp_artifact_gateway.config.settings import GatewayConfig
-from mcp_artifact_gateway.lifecycle import CheckResult
-from mcp_artifact_gateway.main import serve
+from sidepouch_mcp.config.settings import GatewayConfig
+from sidepouch_mcp.lifecycle import CheckResult
+from sidepouch_mcp.main import serve
 
 
 class _FakeConnectionContext:
@@ -53,15 +53,15 @@ def test_serve_check_mode_prints_startup_report(
     report = CheckResult(fs_ok=True, db_ok=True, upstream_ok=True, details=[])
 
     monkeypatch.setattr(
-        "mcp_artifact_gateway.main._parse_args",
+        "sidepouch_mcp.main._parse_args",
         lambda: argparse.Namespace(command=None, check=True, data_dir=None),
     )
     monkeypatch.setattr(
-        "mcp_artifact_gateway.main.load_gateway_config",
+        "sidepouch_mcp.main.load_gateway_config",
         lambda **_kwargs: config,
     )
     monkeypatch.setattr(
-        "mcp_artifact_gateway.main.run_startup_check", lambda _config: report
+        "sidepouch_mcp.main.run_startup_check", lambda _config: report
     )
 
     exit_code = serve()
@@ -91,15 +91,15 @@ def test_serve_returns_one_when_startup_check_fails(
     )
 
     monkeypatch.setattr(
-        "mcp_artifact_gateway.main._parse_args",
+        "sidepouch_mcp.main._parse_args",
         lambda: argparse.Namespace(command=None, check=False, data_dir=None),
     )
     monkeypatch.setattr(
-        "mcp_artifact_gateway.main.load_gateway_config",
+        "sidepouch_mcp.main.load_gateway_config",
         lambda **_kwargs: config,
     )
     monkeypatch.setattr(
-        "mcp_artifact_gateway.main.run_startup_check", lambda _config: report
+        "sidepouch_mcp.main.run_startup_check", lambda _config: report
     )
 
     exit_code = serve()
@@ -119,18 +119,18 @@ def test_serve_runs_bootstrap_and_closes_pool(
     server = _FakeServer(app)
 
     monkeypatch.setattr(
-        "mcp_artifact_gateway.main._parse_args",
+        "sidepouch_mcp.main._parse_args",
         lambda: argparse.Namespace(command=None, check=False, data_dir=None),
     )
     monkeypatch.setattr(
-        "mcp_artifact_gateway.main.load_gateway_config",
+        "sidepouch_mcp.main.load_gateway_config",
         lambda **_kwargs: config,
     )
     monkeypatch.setattr(
-        "mcp_artifact_gateway.main.run_startup_check", lambda _config: report
+        "sidepouch_mcp.main.run_startup_check", lambda _config: report
     )
     monkeypatch.setattr(
-        "mcp_artifact_gateway.app.build_app",
+        "sidepouch_mcp.app.build_app",
         lambda *, config, startup_report: (server, pool),
     )
 
@@ -165,18 +165,18 @@ def test_serve_drains_mapping_tasks_on_shutdown(
     server = _DrainableServer(app)
 
     monkeypatch.setattr(
-        "mcp_artifact_gateway.main._parse_args",
+        "sidepouch_mcp.main._parse_args",
         lambda: argparse.Namespace(command=None, check=False, data_dir=None),
     )
     monkeypatch.setattr(
-        "mcp_artifact_gateway.main.load_gateway_config",
+        "sidepouch_mcp.main.load_gateway_config",
         lambda **_kwargs: config,
     )
     monkeypatch.setattr(
-        "mcp_artifact_gateway.main.run_startup_check", lambda _config: report
+        "sidepouch_mcp.main.run_startup_check", lambda _config: report
     )
     monkeypatch.setattr(
-        "mcp_artifact_gateway.app.build_app",
+        "sidepouch_mcp.app.build_app",
         lambda *, config, startup_report: (server, pool),
     )
 
@@ -202,7 +202,7 @@ def test_serve_dispatches_init_command(
     data_dir = tmp_path / "gateway"
 
     monkeypatch.setattr(
-        "mcp_artifact_gateway.main._parse_args",
+        "sidepouch_mcp.main._parse_args",
         lambda: argparse.Namespace(
             command="init",
             source=str(source),
@@ -238,7 +238,7 @@ def test_init_accepts_postgres_dsn_flag(
     data_dir = tmp_path / "gateway"
 
     monkeypatch.setattr(
-        "mcp_artifact_gateway.main._parse_args",
+        "sidepouch_mcp.main._parse_args",
         lambda: argparse.Namespace(
             command="init",
             source=str(source),
@@ -296,9 +296,9 @@ def test_gateway_config_sqlite_busy_timeout_customizable(
 def test_gateway_config_db_backend_env_override(
     tmp_path: Path, monkeypatch
 ) -> None:
-    """MCP_GATEWAY_DB_BACKEND env var overrides default."""
-    monkeypatch.setenv("MCP_GATEWAY_DB_BACKEND", "postgres")
-    from mcp_artifact_gateway.config.settings import load_gateway_config
+    """SIDEPOUCH_MCP_DB_BACKEND env var overrides default."""
+    monkeypatch.setenv("SIDEPOUCH_MCP_DB_BACKEND", "postgres")
+    from sidepouch_mcp.config.settings import load_gateway_config
 
     config = load_gateway_config(data_dir_override=str(tmp_path))
     assert config.db_backend == "postgres"

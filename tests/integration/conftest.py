@@ -1,6 +1,6 @@
 """Integration test configuration.
 
-Provides a default ``MCP_GATEWAY_TEST_POSTGRES_DSN`` that matches the
+Provides a default ``SIDEPOUCH_MCP_TEST_POSTGRES_DSN`` that matches the
 docker-compose.yml setup, so ``docker compose up -d`` + ``pytest`` works
 without any manual env-var configuration.
 
@@ -11,12 +11,12 @@ from __future__ import annotations
 
 import os
 
-# Default DSN matches docker-compose.yml (mcp_gateway user) + the mcp_test
+# Default DSN matches docker-compose.yml (sidepouch user) + the mcp_test
 # database created by scripts/init-test-db.sql.
 _DEFAULT_TEST_DSN = (
-    "postgresql://mcp_gateway:mcp_gateway@localhost:5432/mcp_test"
+    "postgresql://sidepouch:sidepouch@localhost:5432/sidepouch_test"
 )
-_ENV_KEY = "MCP_GATEWAY_TEST_POSTGRES_DSN"
+_ENV_KEY = "SIDEPOUCH_MCP_TEST_POSTGRES_DSN"
 
 
 def pytest_configure(config):  # noqa: ARG001

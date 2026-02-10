@@ -6,9 +6,9 @@ from pathlib import Path
 
 import pytest
 
-from mcp_artifact_gateway.cache.reuse import try_acquire_advisory_lock
-from mcp_artifact_gateway.db.backend import SqliteBackend
-from mcp_artifact_gateway.db.migrate import apply_migrations
+from sidepouch_mcp.cache.reuse import try_acquire_advisory_lock
+from sidepouch_mcp.db.backend import SqliteBackend
+from sidepouch_mcp.db.migrate import apply_migrations
 
 
 @pytest.fixture()
@@ -18,7 +18,7 @@ def sqlite_backend(tmp_path: Path) -> SqliteBackend:
     migrations_dir = (
         Path(__file__).resolve().parents[2]
         / "src"
-        / "mcp_artifact_gateway"
+        / "sidepouch_mcp"
         / "db"
         / "migrations_sqlite"
     )

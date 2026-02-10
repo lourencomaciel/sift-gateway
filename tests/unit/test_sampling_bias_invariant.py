@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from _helpers import make_json_stream, make_partial_budgets, make_partial_config
 
-from mcp_artifact_gateway.mapping.partial import run_partial_mapping
+from sidepouch_mcp.mapping.partial import run_partial_mapping
 
 
 def test_oversize_records_skipped_and_counted() -> None:

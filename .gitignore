@@ -12,8 +12,8 @@ wheels/
 # Environment
 .env
 
-# Gateway data directory
-.mcp_gateway/
+# SidePouch data directory
+.sidepouch-mcp/
 
 # IDE
 .idea/

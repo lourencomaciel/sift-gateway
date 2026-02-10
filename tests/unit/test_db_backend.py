@@ -8,13 +8,13 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from mcp_artifact_gateway.db.backend import (
+from sidepouch_mcp.db.backend import (
     DatabaseBackend,
     Dialect,
     PostgresBackend,
     SqliteBackend,
 )
-from mcp_artifact_gateway.db.migrate import apply_migrations, load_migrations
+from sidepouch_mcp.db.migrate import apply_migrations, load_migrations
 
 
 class TestDialect:
@@ -167,7 +167,7 @@ class TestSqliteMigrationFiles:
         migrations_dir = (
             Path(__file__).resolve().parents[2]
             / "src"
-            / "mcp_artifact_gateway"
+            / "sidepouch_mcp"
             / "db"
             / "migrations_sqlite"
         )
@@ -177,7 +177,7 @@ class TestSqliteMigrationFiles:
         migrations_dir = (
             Path(__file__).resolve().parents[2]
             / "src"
-            / "mcp_artifact_gateway"
+            / "sidepouch_mcp"
             / "db"
             / "migrations_sqlite"
         )
@@ -196,7 +196,7 @@ class TestSqliteMigrationIntegration:
         migrations_dir = (
             Path(__file__).resolve().parents[2]
             / "src"
-            / "mcp_artifact_gateway"
+            / "sidepouch_mcp"
             / "db"
             / "migrations_sqlite"
         )
@@ -231,7 +231,7 @@ class TestSqliteMigrationIntegration:
         migrations_dir = (
             Path(__file__).resolve().parents[2]
             / "src"
-            / "mcp_artifact_gateway"
+            / "sidepouch_mcp"
             / "db"
             / "migrations_sqlite"
         )

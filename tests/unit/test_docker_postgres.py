@@ -7,7 +7,7 @@ import subprocess
 
 import pytest
 
-from mcp_artifact_gateway.config.docker_postgres import (
+from sidepouch_mcp.config.docker_postgres import (
     DEFAULT_DB,
     DEFAULT_USER,
     DockerCommandError,
@@ -84,7 +84,7 @@ class TestRunDocker:
         self, monkeypatch
     ) -> None:
         monkeypatch.setattr(
-            "mcp_artifact_gateway.config.docker_postgres.subprocess.run",
+            "sidepouch_mcp.config.docker_postgres.subprocess.run",
             lambda *a, **kw: (_ for _ in ()).throw(FileNotFoundError()),
         )
         with pytest.raises(DockerNotFoundError):
@@ -95,7 +95,7 @@ class TestRunDocker:
             raise subprocess.CalledProcessError(1, "docker", stderr="fail")
 
         monkeypatch.setattr(
-            "mcp_artifact_gateway.config.docker_postgres.subprocess.run",
+            "sidepouch_mcp.config.docker_postgres.subprocess.run",
             _fail,
         )
         with pytest.raises(DockerCommandError):
@@ -110,7 +110,7 @@ class TestRunDocker:
 class TestCheckDockerAvailable:
     def test_returns_true_when_docker_info_succeeds(self, monkeypatch) -> None:
         monkeypatch.setattr(
-            "mcp_artifact_gateway.config.docker_postgres._run_docker",
+            "sidepouch_mcp.config.docker_postgres._run_docker",
             lambda *a, **kw: _mock_run_docker(),
         )
         assert check_docker_available() is True
@@ -120,7 +120,7 @@ class TestCheckDockerAvailable:
             raise DockerNotFoundError("not found")
 
         monkeypatch.setattr(
-            "mcp_artifact_gateway.config.docker_postgres._run_docker",
+            "sidepouch_mcp.config.docker_postgres._run_docker",
             _fail,
         )
         assert check_docker_available() is False
@@ -130,7 +130,7 @@ class TestCheckDockerAvailable:
             raise DockerCommandError("daemon not running")
 
         monkeypatch.setattr(
-            "mcp_artifact_gateway.config.docker_postgres._run_docker",
+            "sidepouch_mcp.config.docker_postgres._run_docker",
             _fail,
         )
         assert check_docker_available() is False
@@ -194,7 +194,7 @@ class TestContainerInspection:
     def test_inspect_returns_parsed_json(self, monkeypatch) -> None:
         output = _make_inspect_output()
         monkeypatch.setattr(
-            "mcp_artifact_gateway.config.docker_postgres._run_docker",
+            "sidepouch_mcp.config.docker_postgres._run_docker",
             lambda *a, **kw: _mock_run_docker(stdout=json.dumps(output)),
         )
         result = _inspect_container("test")
@@ -206,7 +206,7 @@ class TestContainerInspection:
             raise DockerCommandError("no such container")
 
         monkeypatch.setattr(
-            "mcp_artifact_gateway.config.docker_postgres._run_docker",
+            "sidepouch_mcp.config.docker_postgres._run_docker",
             _fail,
         )
         assert _inspect_container("missing") is None
@@ -214,7 +214,7 @@ class TestContainerInspection:
     def test_container_is_running_true(self, monkeypatch) -> None:
         output = _make_inspect_output(running=True)
         monkeypatch.setattr(
-            "mcp_artifact_gateway.config.docker_postgres._run_docker",
+            "sidepouch_mcp.config.docker_postgres._run_docker",
             lambda *a, **kw: _mock_run_docker(stdout=json.dumps(output)),
         )
         assert _container_is_running("test") is True
@@ -222,7 +222,7 @@ class TestContainerInspection:
     def test_container_is_running_false_when_stopped(self, monkeypatch) -> None:
         output = _make_inspect_output(running=False)
         monkeypatch.setattr(
-            "mcp_artifact_gateway.config.docker_postgres._run_docker",
+            "sidepouch_mcp.config.docker_postgres._run_docker",
             lambda *a, **kw: _mock_run_docker(stdout=json.dumps(output)),
         )
         assert _container_is_running("test") is False
@@ -230,7 +230,7 @@ class TestContainerInspection:
     def test_container_exists_true(self, monkeypatch) -> None:
         output = _make_inspect_output()
         monkeypatch.setattr(
-            "mcp_artifact_gateway.config.docker_postgres._run_docker",
+            "sidepouch_mcp.config.docker_postgres._run_docker",
             lambda *a, **kw: _mock_run_docker(stdout=json.dumps(output)),
         )
         assert _container_exists("test") is True
@@ -240,7 +240,7 @@ class TestContainerInspection:
             raise DockerCommandError("no such container")
 
         monkeypatch.setattr(
-            "mcp_artifact_gateway.config.docker_postgres._run_docker",
+            "sidepouch_mcp.config.docker_postgres._run_docker",
             _fail,
         )
         assert _container_exists("missing") is False
@@ -255,7 +255,7 @@ class TestContainerCredentials:
     def test_get_password(self, monkeypatch) -> None:
         output = _make_inspect_output(password="mypass")
         monkeypatch.setattr(
-            "mcp_artifact_gateway.config.docker_postgres._run_docker",
+            "sidepouch_mcp.config.docker_postgres._run_docker",
             lambda *a, **kw: _mock_run_docker(stdout=json.dumps(output)),
         )
         assert _get_container_password("test") == "mypass"
@@ -269,7 +269,7 @@ class TestContainerCredentials:
             }
         ]
         monkeypatch.setattr(
-            "mcp_artifact_gateway.config.docker_postgres._run_docker",
+            "sidepouch_mcp.config.docker_postgres._run_docker",
             lambda *a, **kw: _mock_run_docker(stdout=json.dumps(output)),
         )
         with pytest.raises(
@@ -282,7 +282,7 @@ class TestContainerCredentials:
             raise DockerCommandError("no such container")
 
         monkeypatch.setattr(
-            "mcp_artifact_gateway.config.docker_postgres._run_docker",
+            "sidepouch_mcp.config.docker_postgres._run_docker",
             _fail,
         )
         with pytest.raises(DockerCommandError, match="not found"):
@@ -291,7 +291,7 @@ class TestContainerCredentials:
     def test_get_host_port(self, monkeypatch) -> None:
         output = _make_inspect_output(host_port=5433)
         monkeypatch.setattr(
-            "mcp_artifact_gateway.config.docker_postgres._run_docker",
+            "sidepouch_mcp.config.docker_postgres._run_docker",
             lambda *a, **kw: _mock_run_docker(stdout=json.dumps(output)),
         )
         assert _get_container_host_port("test") == 5433
@@ -305,7 +305,7 @@ class TestContainerCredentials:
             }
         ]
         monkeypatch.setattr(
-            "mcp_artifact_gateway.config.docker_postgres._run_docker",
+            "sidepouch_mcp.config.docker_postgres._run_docker",
             lambda *a, **kw: _mock_run_docker(stdout=json.dumps(output)),
         )
         with pytest.raises(DockerCommandError, match="no port binding"):
@@ -321,7 +321,7 @@ class TestContainerLifecycle:
     def test_start_existing_calls_docker_start(self, monkeypatch) -> None:
         calls: list[list[str]] = []
         monkeypatch.setattr(
-            "mcp_artifact_gateway.config.docker_postgres._run_docker",
+            "sidepouch_mcp.config.docker_postgres._run_docker",
             lambda args, **kw: (calls.append(args), _mock_run_docker())[1],
         )
         _start_existing_container("mycontainer")
@@ -330,7 +330,7 @@ class TestContainerLifecycle:
     def test_create_container_passes_correct_args(self, monkeypatch) -> None:
         calls: list[list[str]] = []
         monkeypatch.setattr(
-            "mcp_artifact_gateway.config.docker_postgres._run_docker",
+            "sidepouch_mcp.config.docker_postgres._run_docker",
             lambda args, **kw: (calls.append(args), _mock_run_docker())[1],
         )
         _create_and_start_container(
@@ -361,7 +361,7 @@ class TestWaitForHealthy:
     def test_returns_when_healthy_immediately(self, monkeypatch) -> None:
         output = _make_inspect_output(healthy=True)
         monkeypatch.setattr(
-            "mcp_artifact_gateway.config.docker_postgres._run_docker",
+            "sidepouch_mcp.config.docker_postgres._run_docker",
             lambda *a, **kw: _mock_run_docker(stdout=json.dumps(output)),
         )
         _wait_for_healthy("test", timeout=5.0)  # should not raise
@@ -377,11 +377,11 @@ class TestWaitForHealthy:
             return _mock_run_docker(stdout=json.dumps(data))
 
         monkeypatch.setattr(
-            "mcp_artifact_gateway.config.docker_postgres._run_docker",
+            "sidepouch_mcp.config.docker_postgres._run_docker",
             _mock,
         )
         monkeypatch.setattr(
-            "mcp_artifact_gateway.config.docker_postgres.time.sleep",
+            "sidepouch_mcp.config.docker_postgres.time.sleep",
             lambda _: None,
         )
         _wait_for_healthy("test", timeout=10.0, interval=0.01)
@@ -390,11 +390,11 @@ class TestWaitForHealthy:
     def test_raises_on_timeout(self, monkeypatch) -> None:
         output = _make_inspect_output(healthy=False)
         monkeypatch.setattr(
-            "mcp_artifact_gateway.config.docker_postgres._run_docker",
+            "sidepouch_mcp.config.docker_postgres._run_docker",
             lambda *a, **kw: _mock_run_docker(stdout=json.dumps(output)),
         )
         monkeypatch.setattr(
-            "mcp_artifact_gateway.config.docker_postgres.time.sleep",
+            "sidepouch_mcp.config.docker_postgres.time.sleep",
             lambda _: None,
         )
         with pytest.raises(
@@ -428,7 +428,7 @@ class TestBuildDsn:
 class TestProvisionPostgres:
     def test_raises_when_docker_not_available(self, monkeypatch) -> None:
         monkeypatch.setattr(
-            "mcp_artifact_gateway.config.docker_postgres.check_docker_available",
+            "sidepouch_mcp.config.docker_postgres.check_docker_available",
             lambda: False,
         )
         with pytest.raises(DockerNotFoundError):
@@ -436,7 +436,7 @@ class TestProvisionPostgres:
 
     def test_dry_run_returns_placeholder(self, monkeypatch) -> None:
         monkeypatch.setattr(
-            "mcp_artifact_gateway.config.docker_postgres.check_docker_available",
+            "sidepouch_mcp.config.docker_postgres.check_docker_available",
             lambda: True,
         )
         result = provision_postgres(dry_run=True)
@@ -446,19 +446,19 @@ class TestProvisionPostgres:
 
     def test_reuses_running_container(self, monkeypatch) -> None:
         monkeypatch.setattr(
-            "mcp_artifact_gateway.config.docker_postgres.check_docker_available",
+            "sidepouch_mcp.config.docker_postgres.check_docker_available",
             lambda: True,
         )
         monkeypatch.setattr(
-            "mcp_artifact_gateway.config.docker_postgres._container_is_running",
+            "sidepouch_mcp.config.docker_postgres._container_is_running",
             lambda name: True,
         )
         monkeypatch.setattr(
-            "mcp_artifact_gateway.config.docker_postgres._get_container_password",
+            "sidepouch_mcp.config.docker_postgres._get_container_password",
             lambda name: "existingpass",
         )
         monkeypatch.setattr(
-            "mcp_artifact_gateway.config.docker_postgres._get_container_host_port",
+            "sidepouch_mcp.config.docker_postgres._get_container_host_port",
             lambda name: 5432,
         )
         result = provision_postgres()
@@ -468,32 +468,32 @@ class TestProvisionPostgres:
 
     def test_starts_stopped_container(self, monkeypatch) -> None:
         monkeypatch.setattr(
-            "mcp_artifact_gateway.config.docker_postgres.check_docker_available",
+            "sidepouch_mcp.config.docker_postgres.check_docker_available",
             lambda: True,
         )
         monkeypatch.setattr(
-            "mcp_artifact_gateway.config.docker_postgres._container_is_running",
+            "sidepouch_mcp.config.docker_postgres._container_is_running",
             lambda name: False,
         )
         monkeypatch.setattr(
-            "mcp_artifact_gateway.config.docker_postgres._container_exists",
+            "sidepouch_mcp.config.docker_postgres._container_exists",
             lambda name: True,
         )
         started = [False]
         monkeypatch.setattr(
-            "mcp_artifact_gateway.config.docker_postgres._start_existing_container",
+            "sidepouch_mcp.config.docker_postgres._start_existing_container",
             lambda name: started.__setitem__(0, True),
         )
         monkeypatch.setattr(
-            "mcp_artifact_gateway.config.docker_postgres._wait_for_healthy",
+            "sidepouch_mcp.config.docker_postgres._wait_for_healthy",
             lambda name, **kw: None,
         )
         monkeypatch.setattr(
-            "mcp_artifact_gateway.config.docker_postgres._get_container_password",
+            "sidepouch_mcp.config.docker_postgres._get_container_password",
             lambda name: "stoppedpass",
         )
         monkeypatch.setattr(
-            "mcp_artifact_gateway.config.docker_postgres._get_container_host_port",
+            "sidepouch_mcp.config.docker_postgres._get_container_host_port",
             lambda name: 5433,
         )
         result = provision_postgres()
@@ -504,32 +504,32 @@ class TestProvisionPostgres:
 
     def test_creates_new_container(self, monkeypatch) -> None:
         monkeypatch.setattr(
-            "mcp_artifact_gateway.config.docker_postgres.check_docker_available",
+            "sidepouch_mcp.config.docker_postgres.check_docker_available",
             lambda: True,
         )
         monkeypatch.setattr(
-            "mcp_artifact_gateway.config.docker_postgres._container_is_running",
+            "sidepouch_mcp.config.docker_postgres._container_is_running",
             lambda name: False,
         )
         monkeypatch.setattr(
-            "mcp_artifact_gateway.config.docker_postgres._container_exists",
+            "sidepouch_mcp.config.docker_postgres._container_exists",
             lambda name: False,
         )
         monkeypatch.setattr(
-            "mcp_artifact_gateway.config.docker_postgres._find_available_port",
+            "sidepouch_mcp.config.docker_postgres._find_available_port",
             lambda preferred: preferred,
         )
         monkeypatch.setattr(
-            "mcp_artifact_gateway.config.docker_postgres._generate_password",
+            "sidepouch_mcp.config.docker_postgres._generate_password",
             lambda: "newpass123",
         )
         created = [False]
         monkeypatch.setattr(
-            "mcp_artifact_gateway.config.docker_postgres._create_and_start_container",
+            "sidepouch_mcp.config.docker_postgres._create_and_start_container",
             lambda **kw: created.__setitem__(0, True),
         )
         monkeypatch.setattr(
-            "mcp_artifact_gateway.config.docker_postgres._wait_for_healthy",
+            "sidepouch_mcp.config.docker_postgres._wait_for_healthy",
             lambda name, **kw: None,
         )
         result = provision_postgres()
@@ -540,31 +540,31 @@ class TestProvisionPostgres:
 
     def test_finds_alternative_port(self, monkeypatch) -> None:
         monkeypatch.setattr(
-            "mcp_artifact_gateway.config.docker_postgres.check_docker_available",
+            "sidepouch_mcp.config.docker_postgres.check_docker_available",
             lambda: True,
         )
         monkeypatch.setattr(
-            "mcp_artifact_gateway.config.docker_postgres._container_is_running",
+            "sidepouch_mcp.config.docker_postgres._container_is_running",
             lambda name: False,
         )
         monkeypatch.setattr(
-            "mcp_artifact_gateway.config.docker_postgres._container_exists",
+            "sidepouch_mcp.config.docker_postgres._container_exists",
             lambda name: False,
         )
         monkeypatch.setattr(
-            "mcp_artifact_gateway.config.docker_postgres._find_available_port",
+            "sidepouch_mcp.config.docker_postgres._find_available_port",
             lambda preferred: 5435,
         )
         monkeypatch.setattr(
-            "mcp_artifact_gateway.config.docker_postgres._generate_password",
+            "sidepouch_mcp.config.docker_postgres._generate_password",
             lambda: "pw",
         )
         monkeypatch.setattr(
-            "mcp_artifact_gateway.config.docker_postgres._create_and_start_container",
+            "sidepouch_mcp.config.docker_postgres._create_and_start_container",
             lambda **kw: None,
         )
         monkeypatch.setattr(
-            "mcp_artifact_gateway.config.docker_postgres._wait_for_healthy",
+            "sidepouch_mcp.config.docker_postgres._wait_for_healthy",
             lambda name, **kw: None,
         )
         result = provision_postgres()
