@@ -1,4 +1,5 @@
 """Advisory lock stampede control and artifact reuse logic."""
+
 from __future__ import annotations
 
 import asyncio
@@ -18,6 +19,7 @@ class ReuseResult:
     reused: bool
     artifact_id: str | None = None
     reason: str | None = None  # "request_key_match" | "dedupe_alias_match"
+
 
 # SQL for advisory lock
 ACQUIRE_ADVISORY_LOCK_SQL = """
@@ -117,7 +119,14 @@ def _lock_result(row: tuple[object, ...] | None) -> bool:
 
 
 def try_acquire_advisory_lock(connection: Any, *, request_key: str) -> bool:
-    """Try to acquire advisory xact lock for request_key."""
+    """Try to acquire advisory xact lock for request_key.
+
+    Returns True immediately on SQLite (advisory locks not supported).
+    """
+    import sqlite3
+
+    if isinstance(connection, sqlite3.Connection):
+        return True
     key_a, key_b = advisory_lock_keys(request_key)
     row = connection.execute(ACQUIRE_ADVISORY_LOCK_SQL, (key_a, key_b)).fetchone()
     return _lock_result(row)

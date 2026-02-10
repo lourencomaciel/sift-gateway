@@ -10,8 +10,6 @@ from typing import Any, Awaitable, Callable, Mapping
 
 from fastmcp import FastMCP
 from fastmcp.tools.tool import Tool, ToolResult
-from psycopg_pool import ConnectionPool
-
 from mcp_artifact_gateway.artifacts.create import (
     ArtifactHandle,
     CreateArtifactInput,
@@ -44,7 +42,11 @@ from mcp_artifact_gateway.envelope.oversize import replace_oversized_json_parts
 from mcp_artifact_gateway.envelope.responses import gateway_error
 from mcp_artifact_gateway.fs.blob_store import BlobStore
 from mcp_artifact_gateway.mapping.runner import MappingInput
-from mcp_artifact_gateway.mapping.worker import WorkerContext, run_mapping_worker, should_run_mapping
+from mcp_artifact_gateway.mapping.worker import (
+    WorkerContext,
+    run_mapping_worker,
+    should_run_mapping,
+)
 from mcp_artifact_gateway.mcp.mirror import (
     MirroredTool,
     build_mirrored_tools,
@@ -147,7 +149,7 @@ class GatewayServer:
     """
 
     config: GatewayConfig
-    db_pool: ConnectionPool | None = None
+    db_pool: Any = None  # DatabaseBackend | None (Postgres or SQLite)
     blob_store: BlobStore | None = None
     upstreams: list[UpstreamInstance] = field(default_factory=list)
     fs_ok: bool = True
@@ -556,9 +558,7 @@ class GatewayServer:
         handle: ArtifactHandle,
         envelope: Envelope,
     ) -> None:
-        task = asyncio.create_task(
-            self._run_mapping_background(handle=handle, envelope=envelope)
-        )
+        task = asyncio.create_task(self._run_mapping_background(handle=handle, envelope=envelope))
         self._mapping_tasks.add(task)
         task.add_done_callback(self._consume_mapping_task)
 
@@ -662,8 +662,7 @@ class GatewayServer:
             oversize_count = sum(
                 1
                 for warning in warnings
-                if isinstance(warning, dict)
-                and warning.get("code") == "oversized_json_part"
+                if isinstance(warning, dict) and warning.get("code") == "oversized_json_part"
             )
             if oversize_count > 0:
                 self._increment_metric("oversize_json_count", oversize_count)
@@ -837,7 +836,7 @@ class GatewayServer:
 async def bootstrap_server(
     config: GatewayConfig,
     *,
-    db_pool: ConnectionPool | None = None,
+    db_pool: Any = None,  # DatabaseBackend | None (Postgres or SQLite)
     blob_store: BlobStore | None = None,
     fs_ok: bool = True,
     db_ok: bool = True,

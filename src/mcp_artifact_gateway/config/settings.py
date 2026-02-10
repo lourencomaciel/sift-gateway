@@ -77,7 +77,9 @@ class UpstreamConfig(BaseSettings):
     strict_schema_reuse: bool = Field(
         True, description="Require schema hash match for reuse (§11.2)"
     )
-    passthrough_allowed: bool = Field(True, description="Allow passthrough for small results (§ passthrough)")
+    passthrough_allowed: bool = Field(
+        True, description="Allow passthrough for small results (§ passthrough)"
+    )
     dedupe_exclusions: list[str] = Field(
         default_factory=list,
         description="JSONPath subset exclusions for dedupe hash (§7.2)",
@@ -120,6 +122,12 @@ class GatewayConfig(BaseSettings):
         description="Root data directory (default .mcp_gateway/)",
     )
 
+    # --------------- Database backend ---------------
+    db_backend: Literal["sqlite", "postgres"] = Field(
+        "sqlite",
+        description="Database backend: 'sqlite' (default, zero-config) or 'postgres'",
+    )
+
     # --------------- Postgres ---------------
     postgres_dsn: str = Field(
         "postgresql://localhost:5432/mcp_gateway",
@@ -128,6 +136,9 @@ class GatewayConfig(BaseSettings):
     postgres_pool_min: int = Field(2, ge=1)
     postgres_pool_max: int = Field(10, ge=1)
     postgres_statement_timeout_ms: int = Field(30_000, ge=1000)
+
+    # --------------- SQLite ---------------
+    sqlite_busy_timeout_ms: int = Field(5000, ge=100)
 
     # --------------- Upstreams (§4) ---------------
     upstreams: list[UpstreamConfig] = Field(default_factory=list)
@@ -228,6 +239,10 @@ class GatewayConfig(BaseSettings):
         return self.state_dir / "secrets.json"
 
     @property
+    def sqlite_path(self) -> Path:
+        return self.state_dir / "gateway.db"
+
+    @property
     def config_json_path(self) -> Path:
         return self.state_dir / "config.json"
 
@@ -310,7 +325,9 @@ def _normalize_env_parts(parts: tuple[str, ...]) -> tuple[str, ...] | None:
             if upstream_field in {"env", "headers"}:
                 normalized.extend(parts[3:])
             else:
-                normalized.extend(part.lower() if not part.isdigit() else part for part in parts[3:])
+                normalized.extend(
+                    part.lower() if not part.isdigit() else part for part in parts[3:]
+                )
         return tuple(normalized)
 
     normalized.extend(part.lower() if not part.isdigit() else part for part in parts[1:])
@@ -321,7 +338,9 @@ class _SparseList(list):
     """List built from indexed env overrides; merged by index."""
 
 
-def _set_nested_env_value(container: object | None, parts: tuple[str, ...], value: object) -> object:
+def _set_nested_env_value(
+    container: object | None, parts: tuple[str, ...], value: object
+) -> object:
     head, *tail = parts
     is_index = head.isdigit()
 

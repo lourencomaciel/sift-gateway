@@ -5,7 +5,14 @@ from __future__ import annotations
 import asyncio
 from typing import TYPE_CHECKING, Any
 
-import psycopg
+try:
+    import psycopg
+
+    _PG_OPERATIONAL_ERROR: type = psycopg.OperationalError
+    _PG_INTERFACE_ERROR: type = psycopg.InterfaceError
+except ImportError:
+    _PG_OPERATIONAL_ERROR = type(None)  # type: ignore[assignment,misc]
+    _PG_INTERFACE_ERROR = type(None)  # type: ignore[assignment,misc]
 
 from mcp_artifact_gateway.artifacts.create import (
     CreateArtifactInput,
@@ -18,7 +25,11 @@ from mcp_artifact_gateway.cache.reuse import (
 )
 from mcp_artifact_gateway.constants import RESPONSE_TYPE_RESULT
 from mcp_artifact_gateway.envelope.model import Envelope
-from mcp_artifact_gateway.envelope.responses import can_passthrough, gateway_error, gateway_tool_result
+from mcp_artifact_gateway.envelope.responses import (
+    can_passthrough,
+    gateway_error,
+    gateway_tool_result,
+)
 from mcp_artifact_gateway.mcp.mirror import (
     MirroredTool,
     extract_gateway_context,
@@ -240,7 +251,7 @@ async def handle_mirrored_tool(
                             },
                         }
                     ctx._increment_metric("cache_misses")
-            except (psycopg.OperationalError, psycopg.InterfaceError):
+            except (_PG_OPERATIONAL_ERROR, _PG_INTERFACE_ERROR):
                 ctx.db_ok = False
                 return gateway_error(
                     "INTERNAL",
@@ -273,7 +284,7 @@ async def handle_mirrored_tool(
                     quota_breaches = quota_result.breaches_after or quota_result.breaches_before
                     if not quota_result.space_cleared:
                         quota_ok = False
-            except (psycopg.OperationalError, psycopg.InterfaceError):
+            except (_PG_OPERATIONAL_ERROR, _PG_INTERFACE_ERROR):
                 ctx.db_ok = False
                 return gateway_error(
                     "INTERNAL",
@@ -367,7 +378,7 @@ async def handle_mirrored_tool(
                     )
                 except Exception:
                     pass  # mapping is best-effort; artifact already committed
-        except (psycopg.OperationalError, psycopg.InterfaceError):
+        except (_PG_OPERATIONAL_ERROR, _PG_INTERFACE_ERROR):
             ctx.db_ok = False
             return gateway_error(
                 "INTERNAL",

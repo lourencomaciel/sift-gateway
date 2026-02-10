@@ -43,9 +43,10 @@ def test_lifecycle_ensure_data_dirs(tmp_path: Path) -> None:
 
 
 def test_lifecycle_startup_check_invalid_upstream(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setattr("mcp_artifact_gateway.lifecycle.connect", lambda _config: _FakeConnection())
+    monkeypatch.setattr("mcp_artifact_gateway.db.conn.connect", lambda _config: _FakeConnection())
     config = GatewayConfig(
         data_dir=tmp_path,
+        db_backend="postgres",
         upstreams=[
             UpstreamConfig(prefix="gh", transport="http", url="https://one.example"),
             UpstreamConfig(prefix="gh", transport="http", url="https://two.example"),
@@ -59,9 +60,10 @@ def test_lifecycle_startup_check_invalid_upstream(tmp_path: Path, monkeypatch) -
 def test_lifecycle_startup_check_does_not_touch_existing_probe_filename(
     tmp_path: Path, monkeypatch
 ) -> None:
-    monkeypatch.setattr("mcp_artifact_gateway.lifecycle.connect", lambda _config: _FakeConnection())
+    monkeypatch.setattr("mcp_artifact_gateway.db.conn.connect", lambda _config: _FakeConnection())
     config = GatewayConfig(
         data_dir=tmp_path,
+        db_backend="postgres",
         upstreams=[UpstreamConfig(prefix="gh", transport="http", url="https://one.example")],
     )
     ensure_data_dirs(config)
@@ -79,10 +81,11 @@ def test_lifecycle_startup_check_reports_db_connect_failure(tmp_path: Path, monk
     def _raise(_config):
         raise RuntimeError("connect failed")
 
-    monkeypatch.setattr("mcp_artifact_gateway.lifecycle.connect", _raise)
+    monkeypatch.setattr("mcp_artifact_gateway.db.conn.connect", _raise)
 
     config = GatewayConfig(
         data_dir=tmp_path,
+        db_backend="postgres",
         upstreams=[UpstreamConfig(prefix="gh", transport="http", url="https://one.example")],
     )
     report = run_startup_check(config)
@@ -93,12 +96,13 @@ def test_lifecycle_startup_check_reports_db_connect_failure(tmp_path: Path, monk
 
 def test_lifecycle_startup_check_reports_db_probe_failure(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(
-        "mcp_artifact_gateway.lifecycle.connect",
+        "mcp_artifact_gateway.db.conn.connect",
         lambda _config: _FakeConnection(fail_probe=True),
     )
 
     config = GatewayConfig(
         data_dir=tmp_path,
+        db_backend="postgres",
         upstreams=[UpstreamConfig(prefix="gh", transport="http", url="https://one.example")],
     )
     report = run_startup_check(config)
@@ -117,12 +121,85 @@ def test_check_migrations_silent_on_failure() -> None:
 
 def test_check_migrations_does_not_affect_db_ok(tmp_path: Path, monkeypatch) -> None:
     """Migration check is informational; db_ok stays True even if migration check fails."""
-    monkeypatch.setattr("mcp_artifact_gateway.lifecycle.connect", lambda _config: _FakeConnection())
+    monkeypatch.setattr("mcp_artifact_gateway.db.conn.connect", lambda _config: _FakeConnection())
     config = GatewayConfig(
         data_dir=tmp_path,
+        db_backend="postgres",
         upstreams=[UpstreamConfig(prefix="gh", transport="http", url="https://one.example")],
     )
     report = run_startup_check(config)
     # _FakeConnection doesn't support fetchall() for migration check,
     # but _check_migrations swallows the error silently
     assert report.db_ok is True
+
+
+# ---- SQLite startup check tests ----
+
+
+def test_lifecycle_startup_check_sqlite_success(tmp_path: Path) -> None:
+    """run_startup_check succeeds with SQLite backend (default)."""
+    config = GatewayConfig(
+        data_dir=tmp_path,
+        db_backend="sqlite",
+        upstreams=[UpstreamConfig(prefix="gh", transport="http", url="https://one.example")],
+    )
+    ensure_data_dirs(config)
+    report = run_startup_check(config)
+    assert report.db_ok is True
+    assert report.ok is True
+
+
+def test_lifecycle_startup_check_sqlite_creates_db(tmp_path: Path) -> None:
+    """SQLite check auto-creates the database file if it doesn't exist."""
+    config = GatewayConfig(
+        data_dir=tmp_path,
+        db_backend="sqlite",
+        upstreams=[UpstreamConfig(prefix="gh", transport="http", url="https://one.example")],
+    )
+    ensure_data_dirs(config)
+    assert not config.sqlite_path.exists()
+    report = run_startup_check(config)
+    assert report.db_ok is True
+    # SQLite auto-creates on connect
+    assert config.sqlite_path.exists()
+
+
+def test_lifecycle_startup_check_sqlite_failure(tmp_path: Path, monkeypatch) -> None:
+    """SQLite check reports failure when connect raises."""
+    import sqlite3
+
+    config = GatewayConfig(
+        data_dir=tmp_path,
+        db_backend="sqlite",
+        upstreams=[UpstreamConfig(prefix="gh", transport="http", url="https://one.example")],
+    )
+    ensure_data_dirs(config)
+
+    def _raise_error(path: str) -> None:
+        raise sqlite3.OperationalError("unable to open database file")
+
+    monkeypatch.setattr("sqlite3.connect", _raise_error)
+    report = run_startup_check(config)
+    assert report.db_ok is False
+    assert report.ok is False
+    assert any("SQLite check failed" in item for item in report.details)
+
+
+def test_lifecycle_startup_check_dispatches_by_backend(tmp_path: Path, monkeypatch) -> None:
+    """run_startup_check dispatches to _check_postgres when db_backend=postgres."""
+    monkeypatch.setattr("mcp_artifact_gateway.db.conn.connect", lambda _config: _FakeConnection())
+    config_pg = GatewayConfig(
+        data_dir=tmp_path,
+        db_backend="postgres",
+        upstreams=[UpstreamConfig(prefix="gh", transport="http", url="https://one.example")],
+    )
+    report_pg = run_startup_check(config_pg)
+    assert report_pg.db_ok is True  # _FakeConnection succeeds
+
+    config_sqlite = GatewayConfig(
+        data_dir=tmp_path,
+        db_backend="sqlite",
+        upstreams=[UpstreamConfig(prefix="gh", transport="http", url="https://one.example")],
+    )
+    report_sqlite = run_startup_check(config_sqlite)
+    assert report_sqlite.db_ok is True
