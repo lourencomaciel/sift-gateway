@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
-from psycopg.types.json import Jsonb
+try:
+    from psycopg.types.json import Jsonb
+except ImportError:  # SQLite-only install — no psycopg
+    Jsonb = lambda v: v  # type: ignore[assignment,misc]  # noqa: E731
 
 from mcp_artifact_gateway.constants import WORKSPACE_ID
 

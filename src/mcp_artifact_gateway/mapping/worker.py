@@ -6,7 +6,10 @@ from dataclasses import dataclass
 import time
 from typing import Any
 
-from psycopg.types.json import Jsonb
+try:
+    from psycopg.types.json import Jsonb
+except ImportError:  # SQLite-only install — no psycopg
+    Jsonb = lambda v: v  # type: ignore[assignment,misc]  # noqa: E731
 
 from mcp_artifact_gateway.constants import MAPPER_VERSION, WORKSPACE_ID
 from mcp_artifact_gateway.db.protocols import ConnectionLike, safe_rollback
