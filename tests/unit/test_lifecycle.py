@@ -43,9 +43,10 @@ def test_lifecycle_ensure_data_dirs(tmp_path: Path) -> None:
 
 
 def test_lifecycle_startup_check_invalid_upstream(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setattr("mcp_artifact_gateway.lifecycle.connect", lambda _config: _FakeConnection())
+    monkeypatch.setattr("mcp_artifact_gateway.db.conn.connect", lambda _config: _FakeConnection())
     config = GatewayConfig(
         data_dir=tmp_path,
+        db_backend="postgres",
         upstreams=[
             UpstreamConfig(prefix="gh", transport="http", url="https://one.example"),
             UpstreamConfig(prefix="gh", transport="http", url="https://two.example"),
@@ -59,9 +60,10 @@ def test_lifecycle_startup_check_invalid_upstream(tmp_path: Path, monkeypatch) -
 def test_lifecycle_startup_check_does_not_touch_existing_probe_filename(
     tmp_path: Path, monkeypatch
 ) -> None:
-    monkeypatch.setattr("mcp_artifact_gateway.lifecycle.connect", lambda _config: _FakeConnection())
+    monkeypatch.setattr("mcp_artifact_gateway.db.conn.connect", lambda _config: _FakeConnection())
     config = GatewayConfig(
         data_dir=tmp_path,
+        db_backend="postgres",
         upstreams=[UpstreamConfig(prefix="gh", transport="http", url="https://one.example")],
     )
     ensure_data_dirs(config)
@@ -79,10 +81,11 @@ def test_lifecycle_startup_check_reports_db_connect_failure(tmp_path: Path, monk
     def _raise(_config):
         raise RuntimeError("connect failed")
 
-    monkeypatch.setattr("mcp_artifact_gateway.lifecycle.connect", _raise)
+    monkeypatch.setattr("mcp_artifact_gateway.db.conn.connect", _raise)
 
     config = GatewayConfig(
         data_dir=tmp_path,
+        db_backend="postgres",
         upstreams=[UpstreamConfig(prefix="gh", transport="http", url="https://one.example")],
     )
     report = run_startup_check(config)
@@ -93,12 +96,13 @@ def test_lifecycle_startup_check_reports_db_connect_failure(tmp_path: Path, monk
 
 def test_lifecycle_startup_check_reports_db_probe_failure(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(
-        "mcp_artifact_gateway.lifecycle.connect",
+        "mcp_artifact_gateway.db.conn.connect",
         lambda _config: _FakeConnection(fail_probe=True),
     )
 
     config = GatewayConfig(
         data_dir=tmp_path,
+        db_backend="postgres",
         upstreams=[UpstreamConfig(prefix="gh", transport="http", url="https://one.example")],
     )
     report = run_startup_check(config)
@@ -117,9 +121,10 @@ def test_check_migrations_silent_on_failure() -> None:
 
 def test_check_migrations_does_not_affect_db_ok(tmp_path: Path, monkeypatch) -> None:
     """Migration check is informational; db_ok stays True even if migration check fails."""
-    monkeypatch.setattr("mcp_artifact_gateway.lifecycle.connect", lambda _config: _FakeConnection())
+    monkeypatch.setattr("mcp_artifact_gateway.db.conn.connect", lambda _config: _FakeConnection())
     config = GatewayConfig(
         data_dir=tmp_path,
+        db_backend="postgres",
         upstreams=[UpstreamConfig(prefix="gh", transport="http", url="https://one.example")],
     )
     report = run_startup_check(config)

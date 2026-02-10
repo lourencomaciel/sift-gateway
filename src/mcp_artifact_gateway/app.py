@@ -4,18 +4,35 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
+from typing import Any
 
 from mcp_artifact_gateway.config import load_gateway_config
 from mcp_artifact_gateway.config.settings import GatewayConfig
-from mcp_artifact_gateway.db.conn import create_pool
+from mcp_artifact_gateway.db.backend import DatabaseBackend, PostgresBackend, SqliteBackend
 from mcp_artifact_gateway.db.migrate import apply_migrations
 from mcp_artifact_gateway.fs.blob_store import BlobStore
 from mcp_artifact_gateway.lifecycle import CheckResult, run_startup_check
 from mcp_artifact_gateway.mcp.server import GatewayServer, bootstrap_server
 
 
-def _migrations_dir() -> Path:
-    return Path(__file__).resolve().parent / "db" / "migrations"
+def _migrations_dir(db_backend_name: str) -> Path:
+    base = Path(__file__).resolve().parent / "db"
+    if db_backend_name == "sqlite":
+        return base / "migrations_sqlite"
+    return base / "migrations"
+
+
+def _create_backend(config: GatewayConfig) -> DatabaseBackend:
+    """Create the appropriate database backend based on config."""
+    if config.db_backend == "postgres":
+        from mcp_artifact_gateway.db.conn import create_pool
+
+        pool = create_pool(config)
+        return PostgresBackend(pool=pool)
+    return SqliteBackend(
+        db_path=config.sqlite_path,
+        busy_timeout_ms=config.sqlite_busy_timeout_ms,
+    )
 
 
 def build_app(
@@ -23,34 +40,34 @@ def build_app(
     data_dir_override: str | None = None,
     config: GatewayConfig | None = None,
     startup_report: CheckResult | None = None,
-) -> tuple[GatewayServer, "ConnectionPool"]:  # type: ignore[name-defined]
-    """Wire all components and return a ready-to-run server + pool.
+) -> tuple[GatewayServer, Any]:
+    """Wire all components and return a ready-to-run server + backend.
 
     Either provide *config* directly or let it be loaded via
     *data_dir_override*.  If *startup_report* is provided it is reused;
-    otherwise ``run_startup_check`` is called.  Returns ``(server, pool)``
-    — caller is responsible for calling ``pool.close()`` on shutdown.
+    otherwise ``run_startup_check`` is called.  Returns ``(server, backend)``
+    — caller is responsible for calling ``backend.close()`` on shutdown.
     """
-    from psycopg_pool import ConnectionPool  # noqa: F811 — deferred for type stub
-
     if config is None:
         config = load_gateway_config(data_dir_override=data_dir_override)
 
     report = startup_report or run_startup_check(config)
     if not report.ok:
-        raise RuntimeError(
-            "Startup checks failed: " + "; ".join(report.details)
-        )
+        raise RuntimeError("Startup checks failed: " + "; ".join(report.details))
 
-    pool: ConnectionPool = create_pool(config)
+    backend = _create_backend(config)
     try:
-        with pool.connection() as conn:
-            apply_migrations(conn, _migrations_dir())
+        with backend.connection() as conn:
+            apply_migrations(
+                conn,
+                _migrations_dir(config.db_backend),
+                param_marker=backend.dialect.param_marker,
+            )
 
         server = asyncio.run(
             bootstrap_server(
                 config,
-                db_pool=pool,
+                db_pool=backend,
                 blob_store=BlobStore(
                     config.blobs_bin_dir,
                     probe_bytes=config.binary_probe_bytes,
@@ -60,7 +77,7 @@ def build_app(
             )
         )
     except BaseException:
-        pool.close()
+        backend.close()
         raise
 
-    return server, pool
+    return server, backend
