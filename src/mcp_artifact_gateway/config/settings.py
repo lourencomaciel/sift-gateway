@@ -1,44 +1,87 @@
-"""Gateway configuration models — loaded from env / config.json / defaults.
+"""Define gateway configuration models with layered loading.
 
-Spec references: §2, §3, §16, §17, §18, Addendum A.3, Addendum D.3.
+Merge environment variables (``MCP_GATEWAY_*`` prefix), an optional
+``state/config.json`` file, and built-in defaults via Pydantic
+settings.  Exports ``GatewayConfig``, ``UpstreamConfig``, and
+``load_gateway_config``.
+
+Typical usage example::
+
+    config = load_gateway_config(data_dir_override="./data")
+    print(config.db_backend, config.upstreams)
 """
 
 from __future__ import annotations
 
+from enum import Enum
 import json
 import os
-from enum import Enum
 from pathlib import Path
 from typing import Literal, Mapping
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from mcp_artifact_gateway.constants import CONFIG_FILENAME, DEFAULT_DATA_DIR, STATE_SUBDIR
+from mcp_artifact_gateway.constants import (
+    CONFIG_FILENAME,
+    DEFAULT_DATA_DIR,
+    STATE_SUBDIR,
+)
 
 
 # ---------------------------------------------------------------------------
 # Enums
 # ---------------------------------------------------------------------------
 class EnvelopeJsonbMode(str, Enum):
+    """Control how envelope JSONB is stored in the database.
+
+    Attributes:
+        full: Store complete envelope as JSONB.
+        minimal_for_large: Store minimal JSONB for large payloads.
+        none: Do not store envelope JSONB at all.
+    """
+
     full = "full"
     minimal_for_large = "minimal_for_large"
     none = "none"
 
 
 class CanonicalEncoding(str, Enum):
+    """Compression algorithm for canonical envelope bytes.
+
+    Attributes:
+        zstd: Compress with Zstandard.
+        gzip: Compress with gzip.
+        none: Store uncompressed.
+    """
+
     zstd = "zstd"
     gzip = "gzip"
     none = "none"
 
 
 class MappingMode(str, Enum):
+    """Control when artifact mapping runs after persistence.
+
+    Attributes:
+        async_: Run mapping in a background task.
+        hybrid: Run mapping inline, fall back to background.
+        sync: Run mapping inline within the request.
+    """
+
     async_ = "async"
     hybrid = "hybrid"
     sync = "sync"
 
 
 class WhereCanonicalizationMode(str, Enum):
+    """Control how ``where`` filter expressions are canonicalized.
+
+    Attributes:
+        raw_string: Hash the raw filter string as-is.
+        canonical_ast: Parse and canonicalize the AST first.
+    """
+
     raw_string = "raw_string"
     canonical_ast = "canonical_ast"
 
@@ -47,21 +90,51 @@ class WhereCanonicalizationMode(str, Enum):
 # Upstream config (§4)
 # ---------------------------------------------------------------------------
 class UpstreamConfig(BaseSettings):
-    """Configuration for a single upstream MCP server."""
+    """Configuration for a single upstream MCP server.
+
+    Define transport, authentication, and behavioral settings
+    for one upstream.  Validated at load time via Pydantic.
+
+    Attributes:
+        prefix: Tool namespace prefix (e.g. ``"github"``).
+        transport: Transport type, ``"stdio"`` or ``"http"``.
+        command: Executable path for stdio transport.
+        args: CLI arguments for stdio transport.
+        env: Environment variables for stdio transport.
+        url: Endpoint URL for http transport.
+        headers: HTTP headers for http transport.
+        semantic_salt_headers: Stable header names for identity.
+        semantic_salt_env_keys: Stable env keys for identity.
+        strict_schema_reuse: Require schema hash match for reuse.
+        passthrough_allowed: Allow small-result passthrough.
+        dedupe_exclusions: JSONPath exclusions for dedupe hash.
+    """
 
     model_config = SettingsConfigDict(extra="forbid")
 
-    prefix: str = Field(..., description="Tool namespace prefix (e.g. 'github')")
-    transport: Literal["stdio", "http"] = Field(..., description="Transport type")
+    prefix: str = Field(
+        ..., description="Tool namespace prefix (e.g. 'github')"
+    )
+    transport: Literal["stdio", "http"] = Field(
+        ..., description="Transport type"
+    )
 
     # stdio fields
-    command: str | None = Field(None, description="Command path for stdio transport")
-    args: list[str] = Field(default_factory=list, description="CLI args for stdio transport")
-    env: dict[str, str] = Field(default_factory=dict, description="Env vars for stdio transport")
+    command: str | None = Field(
+        None, description="Command path for stdio transport"
+    )
+    args: list[str] = Field(
+        default_factory=list, description="CLI args for stdio transport"
+    )
+    env: dict[str, str] = Field(
+        default_factory=dict, description="Env vars for stdio transport"
+    )
 
     # http fields
     url: str | None = Field(None, description="URL for http transport")
-    headers: dict[str, str] = Field(default_factory=dict, description="Headers for http transport")
+    headers: dict[str, str] = Field(
+        default_factory=dict, description="Headers for http transport"
+    )
 
     # Semantic salt for upstream_instance_id (§4.3)
     semantic_salt_headers: list[str] = Field(
@@ -88,6 +161,19 @@ class UpstreamConfig(BaseSettings):
     @field_validator("command")
     @classmethod
     def _validate_stdio_command(cls, value: str | None, info) -> str | None:
+        """Require command for stdio transport.
+
+        Args:
+            value: Candidate command value.
+            info: Pydantic validation context.
+
+        Returns:
+            The validated command string or None.
+
+        Raises:
+            ValueError: If transport is stdio and command
+                is empty.
+        """
         transport = info.data.get("transport")
         if transport == "stdio" and not value:
             msg = "stdio upstream requires command"
@@ -97,6 +183,19 @@ class UpstreamConfig(BaseSettings):
     @field_validator("url")
     @classmethod
     def _validate_http_url(cls, value: str | None, info) -> str | None:
+        """Require url for http transport.
+
+        Args:
+            value: Candidate URL value.
+            info: Pydantic validation context.
+
+        Returns:
+            The validated URL string or None.
+
+        Raises:
+            ValueError: If transport is http and url is
+                empty.
+        """
         transport = info.data.get("transport")
         if transport == "http" and not value:
             msg = "http upstream requires url"
@@ -108,7 +207,20 @@ class UpstreamConfig(BaseSettings):
 # Main gateway config
 # ---------------------------------------------------------------------------
 class GatewayConfig(BaseSettings):
-    """Root configuration for the MCP Artifact Gateway."""
+    """Root configuration for the MCP Artifact Gateway.
+
+    Merge environment variables (``MCP_GATEWAY_*`` prefix), an
+    optional ``state/config.json`` file, and built-in defaults.
+    Nested env vars use ``__`` as a delimiter.
+
+    Attributes:
+        data_dir: Root directory for all persistent state.
+        db_backend: Database backend (``"sqlite"`` or ``"postgres"``).
+        upstreams: List of upstream server configurations.
+        mapping_mode: When to run artifact mapping.
+        passthrough_max_bytes: Max bytes for passthrough mode.
+        cursor_ttl_minutes: Cursor token time-to-live.
+    """
 
     model_config = SettingsConfigDict(
         env_prefix="MCP_GATEWAY_",
@@ -125,7 +237,7 @@ class GatewayConfig(BaseSettings):
     # --------------- Database backend ---------------
     db_backend: Literal["sqlite", "postgres"] = Field(
         "sqlite",
-        description="Database backend: 'sqlite' (default, zero-config) or 'postgres'",
+        description=("Database backend: 'sqlite' (default) or 'postgres'"),
     )
 
     # --------------- Postgres ---------------
@@ -146,7 +258,9 @@ class GatewayConfig(BaseSettings):
     # --------------- Envelope storage (§7.3, §8.4) ---------------
     envelope_jsonb_mode: EnvelopeJsonbMode = Field(EnvelopeJsonbMode.full)
     envelope_jsonb_minimize_threshold_bytes: int = Field(1_000_000, ge=0)
-    envelope_canonical_encoding: CanonicalEncoding = Field(CanonicalEncoding.zstd)
+    envelope_canonical_encoding: CanonicalEncoding = Field(
+        CanonicalEncoding.zstd
+    )
 
     # --------------- Ingest caps (§16.1) ---------------
     max_inbound_request_bytes: int = Field(10_000_000, ge=1)
@@ -216,39 +330,55 @@ class GatewayConfig(BaseSettings):
     # --------------- Derived paths ---------------
     @property
     def state_dir(self) -> Path:
+        """The persistent state directory."""
         return self.data_dir / "state"
 
     @property
     def resources_dir(self) -> Path:
+        """The resource store directory."""
         return self.data_dir / "resources"
 
     @property
     def blobs_bin_dir(self) -> Path:
+        """The binary blob store directory."""
         return self.data_dir / "blobs" / "bin"
 
     @property
     def tmp_dir(self) -> Path:
+        """The temporary scratch directory."""
         return self.data_dir / "tmp"
 
     @property
     def logs_dir(self) -> Path:
+        """The log output directory."""
         return self.data_dir / "logs"
 
     @property
     def secrets_path(self) -> Path:
+        """The cursor secrets JSON file path."""
         return self.state_dir / "secrets.json"
 
     @property
     def sqlite_path(self) -> Path:
+        """The SQLite database file path."""
         return self.state_dir / "gateway.db"
 
     @property
     def config_json_path(self) -> Path:
+        """The gateway config JSON file path."""
         return self.state_dir / "config.json"
 
     @field_validator("data_dir", mode="before")
     @classmethod
     def _resolve_data_dir(cls, v: str | Path) -> Path:
+        """Resolve data_dir to an absolute path.
+
+        Args:
+            v: Raw data directory value (str or Path).
+
+        Returns:
+            Resolved absolute Path.
+        """
         return Path(v).resolve()
 
 
@@ -264,6 +394,18 @@ _JSON_DECODE_UPSTREAM_FIELDS = {
 
 
 def _should_decode_json(parts: tuple[str, ...]) -> bool:
+    """Determine if an env var value should be JSON-decoded.
+
+    Top-level list/dict fields and upstream sub-fields
+    that accept structured values need JSON decoding when
+    the raw string starts with ``[`` or ``{``.
+
+    Args:
+        parts: Normalized env var path segments.
+
+    Returns:
+        True if the value should be JSON-decoded.
+    """
     if len(parts) == 1:
         return parts[0] in _JSON_DECODE_TOP_LEVEL_FIELDS
 
@@ -274,6 +416,19 @@ def _should_decode_json(parts: tuple[str, ...]) -> bool:
 
 
 def _coerce_env_value(raw: str, parts: tuple[str, ...]) -> object:
+    """Coerce a raw env var string to its typed value.
+
+    Attempt JSON decoding for fields that expect structured
+    values when the string starts with ``[`` or ``{``.
+    Return the raw string otherwise.
+
+    Args:
+        raw: Raw environment variable value.
+        parts: Normalized env var path segments.
+
+    Returns:
+        Decoded JSON value or the raw string.
+    """
     if not _should_decode_json(parts):
         return raw
 
@@ -289,6 +444,18 @@ def _coerce_env_value(raw: str, parts: tuple[str, ...]) -> object:
 
 
 def _env_path_segments(env_key: str) -> tuple[str, ...] | None:
+    """Extract path segments from an MCP_GATEWAY_ env key.
+
+    Strip the ``MCP_GATEWAY_`` prefix and split on ``__``
+    delimiters to produce nested path segments.
+
+    Args:
+        env_key: Full environment variable name.
+
+    Returns:
+        Tuple of path segment strings, or None if the key
+        does not match the gateway prefix.
+    """
     prefix = "MCP_GATEWAY_"
     if not env_key.startswith(prefix):
         return None
@@ -301,7 +468,18 @@ def _env_path_segments(env_key: str) -> tuple[str, ...] | None:
     return parts
 
 
-def _match_model_field(raw_key: str, fields: Mapping[str, object]) -> str | None:
+def _match_model_field(
+    raw_key: str, fields: Mapping[str, object]
+) -> str | None:
+    """Case-insensitively match a key to a model field name.
+
+    Args:
+        raw_key: Env var segment to match.
+        fields: Model field name mapping.
+
+    Returns:
+        The matching field name, or None if no match.
+    """
     for field_name in fields:
         if field_name.lower() == raw_key.lower():
             return field_name
@@ -309,6 +487,19 @@ def _match_model_field(raw_key: str, fields: Mapping[str, object]) -> str | None
 
 
 def _normalize_env_parts(parts: tuple[str, ...]) -> tuple[str, ...] | None:
+    """Normalize env var path segments to model field names.
+
+    Map each segment to its canonical field name via
+    case-insensitive matching against the Pydantic model.
+    Preserve case for dict sub-keys (env, headers).
+
+    Args:
+        parts: Raw path segments from ``_env_path_segments``.
+
+    Returns:
+        Normalized segment tuple, or None if the top-level
+        field is unrecognized.
+    """
     top_level = _match_model_field(parts[0], GatewayConfig.model_fields)
     if top_level is None:
         return None
@@ -317,7 +508,9 @@ def _normalize_env_parts(parts: tuple[str, ...]) -> tuple[str, ...] | None:
     if top_level == "upstreams" and len(parts) >= 2:
         normalized.append(parts[1])
         if len(parts) >= 3:
-            upstream_field = _match_model_field(parts[2], UpstreamConfig.model_fields)
+            upstream_field = _match_model_field(
+                parts[2], UpstreamConfig.model_fields
+            )
             if upstream_field is None:
                 normalized.append(parts[2].lower())
             else:
@@ -326,21 +519,42 @@ def _normalize_env_parts(parts: tuple[str, ...]) -> tuple[str, ...] | None:
                 normalized.extend(parts[3:])
             else:
                 normalized.extend(
-                    part.lower() if not part.isdigit() else part for part in parts[3:]
+                    part.lower() if not part.isdigit() else part
+                    for part in parts[3:]
                 )
         return tuple(normalized)
 
-    normalized.extend(part.lower() if not part.isdigit() else part for part in parts[1:])
+    normalized.extend(
+        part.lower() if not part.isdigit() else part for part in parts[1:]
+    )
     return tuple(normalized)
 
 
 class _SparseList(list):
-    """List built from indexed env overrides; merged by index."""
+    """List subclass for sparse index-based env override merging.
+
+    Used internally during config loading to distinguish indexed
+    environment variable overrides from fully-specified lists
+    during deep merge.
+    """
 
 
 def _set_nested_env_value(
     container: object | None, parts: tuple[str, ...], value: object
 ) -> object:
+    """Set a deeply nested value in a dict/list structure.
+
+    Build intermediate dicts or sparse lists as needed to
+    reach the target path, then assign the value.
+
+    Args:
+        container: Existing container or None.
+        parts: Remaining path segments to descend.
+        value: Value to assign at the leaf.
+
+    Returns:
+        Updated container with the value set.
+    """
     head, *tail = parts
     is_index = head.isdigit()
 
@@ -369,6 +583,19 @@ def _set_nested_env_value(
 
 
 def _deep_merge(base: object, override: object) -> object:
+    """Recursively merge override values into a base structure.
+
+    Dicts are merged key-by-key.  Lists are replaced unless
+    the override is a ``_SparseList``, in which case only
+    non-None indexed entries are patched into the base.
+
+    Args:
+        base: Base value (dict, list, or scalar).
+        override: Override value to merge in.
+
+    Returns:
+        Merged result.
+    """
     if isinstance(base, dict) and isinstance(override, dict):
         merged = dict(base)
         for key, value in override.items():
@@ -399,8 +626,20 @@ def _deep_merge(base: object, override: object) -> object:
 
 
 def _load_env_overrides() -> dict[str, object]:
+    """Collect and normalize MCP_GATEWAY_* env var overrides.
+
+    Iterate all environment variables, filter for the
+    ``MCP_GATEWAY_`` prefix, normalize segments, coerce
+    values, and build a nested dict structure.
+
+    Returns:
+        Nested dict of env var overrides keyed by
+        normalized field paths.
+    """
     overrides: object = {}
-    env_items = sorted(os.environ.items(), key=lambda item: len(item[0].split("__")))
+    env_items = sorted(
+        os.environ.items(), key=lambda item: len(item[0].split("__"))
+    )
     for env_key, raw_value in env_items:
         parts = _env_path_segments(env_key)
         if parts is None:
@@ -416,6 +655,19 @@ def _load_env_overrides() -> dict[str, object]:
 
 
 def _load_state_config(data_dir: Path) -> dict[str, object]:
+    """Load the config.json file from the state directory.
+
+    Args:
+        data_dir: Root data directory path.
+
+    Returns:
+        Parsed config dict, or empty dict if the file
+        does not exist.
+
+    Raises:
+        ValueError: If the file does not contain a JSON
+            object.
+    """
     config_path = data_dir / STATE_SUBDIR / CONFIG_FILENAME
     if not config_path.exists():
         return {}
@@ -427,13 +679,27 @@ def _load_state_config(data_dir: Path) -> dict[str, object]:
 
 
 def _resolve_mcp_servers_format(merged: dict[str, object]) -> dict[str, object]:
-    """If config uses mcpServers format, convert to upstreams array.
+    """Convert mcpServers format to the legacy upstreams array.
 
-    Mutates and returns the merged dict. If the standard format keys are
-    present, they are consumed and replaced with the legacy ``upstreams``
-    array so that ``GatewayConfig`` can parse it normally.
+    Detect ``mcpServers`` or VS Code ``mcp`` keys and
+    translate them into the ``upstreams`` list that
+    ``GatewayConfig`` expects.  Mutate and return the
+    merged dict, stripping format-specific keys.
+
+    Args:
+        merged: Merged config dict (file + env overrides).
+
+    Returns:
+        The same dict with upstreams populated and
+        format-specific keys removed.
+
+    Raises:
+        ValueError: If both ``mcpServers`` and legacy
+            ``upstreams`` keys are present.
     """
-    from mcp_artifact_gateway.config.mcp_servers import resolve_mcp_servers_config
+    from mcp_artifact_gateway.config.mcp_servers import (
+        resolve_mcp_servers_config,
+    )
 
     has_mcp_servers = "mcpServers" in merged
     has_vscode = isinstance(merged.get("mcp"), dict)
@@ -462,8 +728,26 @@ def _resolve_mcp_servers_format(merged: dict[str, object]) -> dict[str, object]:
     return merged
 
 
-def load_gateway_config(*, data_dir_override: str | None = None) -> GatewayConfig:
-    """Load config with precedence env > config.json > defaults."""
+def load_gateway_config(
+    *, data_dir_override: str | None = None
+) -> GatewayConfig:
+    """Load gateway config with layered precedence.
+
+    Merge environment variables (highest priority), the
+    ``state/config.json`` file, and built-in defaults.
+    Validate upstream prefix uniqueness before returning.
+
+    Args:
+        data_dir_override: Optional explicit data directory
+            path, overriding env and default values.
+
+    Returns:
+        Fully resolved GatewayConfig instance.
+
+    Raises:
+        ValueError: If the merged config is invalid or
+            upstream prefixes are not unique.
+    """
     env_overrides = _load_env_overrides()
     env_data_dir = env_overrides.get("data_dir")
 

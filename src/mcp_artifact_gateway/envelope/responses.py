@@ -4,7 +4,10 @@ from __future__ import annotations
 
 from typing import Any
 
-from mcp_artifact_gateway.constants import RESPONSE_TYPE_ERROR, RESPONSE_TYPE_RESULT
+from mcp_artifact_gateway.constants import (
+    RESPONSE_TYPE_ERROR,
+    RESPONSE_TYPE_RESULT,
+)
 
 
 def can_passthrough(
@@ -42,6 +45,16 @@ def gateway_error(
     *,
     details: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    """Build a gateway error response dict.
+
+    Args:
+        code: Machine-readable error code.
+        message: Human-readable error message.
+        details: Optional additional error context.
+
+    Returns:
+        Structured error response dict.
+    """
     return {
         "type": RESPONSE_TYPE_ERROR,
         "code": code,

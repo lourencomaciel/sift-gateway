@@ -1,6 +1,10 @@
 from __future__ import annotations
 
-from mcp_artifact_gateway.envelope.model import BinaryRefContentPart, Envelope, JsonContentPart
+from mcp_artifact_gateway.envelope.model import (
+    BinaryRefContentPart,
+    Envelope,
+    JsonContentPart,
+)
 from mcp_artifact_gateway.envelope.oversize import replace_oversized_json_parts
 from mcp_artifact_gateway.fs.blob_store import BlobStore
 

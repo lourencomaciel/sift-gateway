@@ -1,14 +1,26 @@
-"""Quota enforcement: check storage caps and prune if breached."""
+"""Enforce workspace storage quotas by pruning excess artifacts.
+
+Queries current storage usage (binary blobs, payload totals),
+compares against configured caps, and iteratively soft- and
+hard-deletes the least-recently-used artifacts until usage is
+within bounds.  Exports ``StorageUsage``, ``QuotaBreaches``,
+``QuotaEnforcementResult``, and the ``enforce_quota``
+orchestrator function.
+"""
 
 from __future__ import annotations
 
-import datetime as dt
 from dataclasses import dataclass
+import datetime as dt
 from numbers import Number
 from typing import Any
 
 from mcp_artifact_gateway.constants import WORKSPACE_ID
-from mcp_artifact_gateway.db.protocols import ConnectionLike, increment_metric, safe_rollback
+from mcp_artifact_gateway.db.protocols import (
+    ConnectionLike,
+    increment_metric,
+    safe_rollback,
+)
 from mcp_artifact_gateway.jobs.hard_delete import run_hard_delete_batch
 from mcp_artifact_gateway.obs.logging import LogEvents, get_logger
 
@@ -18,7 +30,15 @@ from mcp_artifact_gateway.obs.logging import LogEvents, get_logger
 # ---------------------------------------------------------------------------
 @dataclass(frozen=True)
 class StorageUsage:
-    """Current storage usage for a workspace."""
+    """Current storage usage for a workspace.
+
+    Attributes:
+        binary_blob_bytes: Total bytes stored in binary blobs.
+        payload_total_bytes: Total bytes across all payload
+            blobs.
+        total_storage_bytes: Combined payload JSON bytes plus
+            binary blob bytes.
+    """
 
     binary_blob_bytes: int
     payload_total_bytes: int
@@ -27,7 +47,16 @@ class StorageUsage:
 
 @dataclass(frozen=True)
 class QuotaBreaches:
-    """Which storage caps are exceeded."""
+    """Which storage caps are exceeded.
+
+    Attributes:
+        binary_blob_exceeded: True if binary blob bytes exceed
+            the configured cap.
+        payload_total_exceeded: True if total payload bytes
+            exceed the configured cap.
+        total_storage_exceeded: True if combined storage bytes
+            exceed the configured cap.
+    """
 
     binary_blob_exceeded: bool
     payload_total_exceeded: bool
@@ -35,14 +64,36 @@ class QuotaBreaches:
 
     @property
     def any_exceeded(self) -> bool:
+        """Return whether any storage quota is exceeded.
+
+        Returns:
+            True if any cap is breached.
+        """
         return (
-            self.binary_blob_exceeded or self.payload_total_exceeded or self.total_storage_exceeded
+            self.binary_blob_exceeded
+            or self.payload_total_exceeded
+            or self.total_storage_exceeded
         )
 
 
 @dataclass(frozen=True)
 class QuotaEnforcementResult:
-    """Result of a quota enforcement pass."""
+    """Result of a quota enforcement pass.
+
+    Attributes:
+        usage_before: Storage usage snapshot before enforcement.
+        usage_after: Storage usage after enforcement, or None if
+            no pruning was needed.
+        breaches_before: Quota breach flags before enforcement.
+        breaches_after: Quota breach flags after enforcement,
+            or None if no pruning was needed.
+        pruned: True if any prune rounds were executed.
+        soft_deleted_count: Total artifacts soft-deleted.
+        hard_deleted_count: Total artifacts hard-deleted.
+        bytes_reclaimed: Total bytes freed by hard deletion.
+        space_cleared: True if all quotas are satisfied after
+            enforcement.
+    """
 
     usage_before: StorageUsage
     usage_after: StorageUsage | None
@@ -60,9 +111,12 @@ class QuotaEnforcementResult:
 # ---------------------------------------------------------------------------
 STORAGE_USAGE_SQL = """
 SELECT
-    COALESCE((SELECT SUM(byte_count) FROM binary_blobs WHERE workspace_id = %s), 0),
-    COALESCE((SELECT SUM(payload_total_bytes) FROM payload_blobs WHERE workspace_id = %s), 0),
-    COALESCE((SELECT SUM(payload_json_bytes) FROM payload_blobs WHERE workspace_id = %s), 0)
+    COALESCE((SELECT SUM(byte_count)
+        FROM binary_blobs WHERE workspace_id = %s), 0),
+    COALESCE((SELECT SUM(payload_total_bytes)
+        FROM payload_blobs WHERE workspace_id = %s), 0),
+    COALESCE((SELECT SUM(payload_json_bytes)
+        FROM payload_blobs WHERE workspace_id = %s), 0)
 """
 
 SOFT_DELETE_LRU_FOR_QUOTA_SQL = """
@@ -91,12 +145,23 @@ RETURNING a.artifact_id, c.payload_total_bytes
 # Param helpers
 # ---------------------------------------------------------------------------
 def storage_usage_params() -> tuple[object, ...]:
-    """Params for STORAGE_USAGE_SQL."""
+    """Build parameter tuple for STORAGE_USAGE_SQL.
+
+    Returns:
+        Tuple of workspace ID parameters for the usage query.
+    """
     return (WORKSPACE_ID, WORKSPACE_ID, WORKSPACE_ID)
 
 
 def soft_delete_lru_params(batch_size: int = 100) -> tuple[object, ...]:
-    """Params for SOFT_DELETE_LRU_FOR_QUOTA_SQL."""
+    """Build parameter tuple for SOFT_DELETE_LRU_FOR_QUOTA_SQL.
+
+    Args:
+        batch_size: Maximum artifacts to soft-delete.
+
+    Returns:
+        Parameter tuple for the LRU soft-delete query.
+    """
     return (WORKSPACE_ID, batch_size, WORKSPACE_ID)
 
 
@@ -104,7 +169,15 @@ def soft_delete_lru_params(batch_size: int = 100) -> tuple[object, ...]:
 # Pure functions
 # ---------------------------------------------------------------------------
 def _parse_storage_usage(row: tuple[object, ...] | None) -> StorageUsage:
-    """Parse a row from STORAGE_USAGE_SQL into StorageUsage."""
+    """Parse a row from STORAGE_USAGE_SQL into StorageUsage.
+
+    Args:
+        row: Single result row, or None if query returned
+            nothing.
+
+    Returns:
+        A StorageUsage with parsed byte counts.
+    """
     if row is None or len(row) < 3:
         return StorageUsage(
             binary_blob_bytes=0,
@@ -129,18 +202,39 @@ def check_breaches(
     max_payload_total_bytes: int,
     max_total_storage_bytes: int,
 ) -> QuotaBreaches:
-    """Compare usage against caps."""
+    """Compare storage usage against configured caps.
+
+    Args:
+        usage: Current storage usage snapshot.
+        max_binary_blob_bytes: Cap for binary blob storage.
+        max_payload_total_bytes: Cap for total payload storage.
+        max_total_storage_bytes: Cap for combined storage.
+
+    Returns:
+        A QuotaBreaches indicating which caps are exceeded.
+    """
     return QuotaBreaches(
         binary_blob_exceeded=usage.binary_blob_bytes > max_binary_blob_bytes,
-        payload_total_exceeded=usage.payload_total_bytes > max_payload_total_bytes,
-        total_storage_exceeded=usage.total_storage_bytes > max_total_storage_bytes,
+        payload_total_exceeded=usage.payload_total_bytes
+        > max_payload_total_bytes,
+        total_storage_exceeded=usage.total_storage_bytes
+        > max_total_storage_bytes,
     )
 
 
 def _hard_delete_cutoff_timestamp(hard_delete_grace_seconds: int) -> str:
-    """Compute hard-delete cutoff timestamp for the current round."""
+    """Compute hard-delete cutoff timestamp for the current round.
+
+    Args:
+        hard_delete_grace_seconds: Grace period in seconds after
+            soft-delete before hard-delete is allowed.
+
+    Returns:
+        ISO-formatted UTC timestamp string.
+    """
     return (
-        dt.datetime.now(dt.timezone.utc) - dt.timedelta(seconds=hard_delete_grace_seconds)
+        dt.datetime.now(dt.timezone.utc)
+        - dt.timedelta(seconds=hard_delete_grace_seconds)
     ).isoformat()
 
 
@@ -148,8 +242,17 @@ def _hard_delete_cutoff_timestamp(hard_delete_grace_seconds: int) -> str:
 # DB functions
 # ---------------------------------------------------------------------------
 def query_storage_usage(connection: ConnectionLike) -> StorageUsage:
-    """Execute STORAGE_USAGE_SQL and return parsed result."""
-    row = connection.execute(STORAGE_USAGE_SQL, storage_usage_params()).fetchone()
+    """Execute STORAGE_USAGE_SQL and return parsed result.
+
+    Args:
+        connection: Database connection to query.
+
+    Returns:
+        A StorageUsage with current byte counts.
+    """
+    row = connection.execute(
+        STORAGE_USAGE_SQL, storage_usage_params()
+    ).fetchone()
     return _parse_storage_usage(row)
 
 
@@ -162,8 +265,16 @@ def soft_delete_lru_batch(
 ) -> tuple[int, int]:
     """Soft-delete oldest artifacts by LRU for quota enforcement.
 
-    Returns (count, estimated_bytes_freed).
     Does not commit; caller controls the transaction boundary.
+
+    Args:
+        connection: Database connection for the transaction.
+        batch_size: Maximum artifacts to soft-delete per batch.
+        metrics: Optional GatewayMetrics for counter updates.
+        logger: Optional structured logger override.
+
+    Returns:
+        Tuple of (count, estimated_bytes_freed).
     """
     log = logger or get_logger(component="jobs.quota")
     rows = connection.execute(
@@ -212,15 +323,25 @@ def enforce_quota(
 ) -> QuotaEnforcementResult:
     """Check storage caps and prune if breached.
 
-    Strategy:
-    1. Query current usage and check breaches
-    2. If no breach, return immediately (space_cleared=True)
-    3. Loop up to max_prune_rounds:
-       a. Soft-delete oldest LRU artifacts
-       b. Hard-delete to reclaim space
-       c. Re-check usage
-       d. Break if cleared
-    4. Return result with space_cleared reflecting final state
+    Iteratively soft- and hard-deletes LRU artifacts until all
+    quotas are satisfied or max rounds are exhausted.
+
+    Args:
+        connection: Database connection for the transaction.
+        max_binary_blob_bytes: Cap for binary blob storage.
+        max_payload_total_bytes: Cap for total payload storage.
+        max_total_storage_bytes: Cap for combined storage.
+        prune_batch_size: Artifacts per prune batch.
+        max_prune_rounds: Maximum prune iterations.
+        hard_delete_grace_seconds: Grace period in seconds
+            after soft-delete before hard-delete.
+        remove_fs_blobs: If True, unlink orphaned blob files.
+        metrics: Optional GatewayMetrics for counter updates.
+        logger: Optional structured logger override.
+
+    Returns:
+        A QuotaEnforcementResult with before/after usage and
+        prune statistics.
     """
     log = logger or get_logger(component="jobs.quota")
     increment_metric(metrics, "quota_checks")
@@ -286,7 +407,9 @@ def enforce_quota(
 
             # Recompute cutoff per round so hard-delete can consider artifacts
             # soft-deleted in this round when grace is 0.
-            grace_cutoff_timestamp = _hard_delete_cutoff_timestamp(hard_delete_grace_seconds)
+            grace_cutoff_timestamp = _hard_delete_cutoff_timestamp(
+                hard_delete_grace_seconds
+            )
             hard_result = run_hard_delete_batch(
                 connection,
                 grace_period_timestamp=grace_cutoff_timestamp,

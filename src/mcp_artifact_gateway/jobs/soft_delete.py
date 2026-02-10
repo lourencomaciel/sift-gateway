@@ -1,4 +1,11 @@
-"""Soft delete job: marks expired/eligible artifacts as deleted."""
+"""Mark expired or unreferenced artifacts as soft-deleted.
+
+Provides batched SQL operations that set ``deleted_at`` on
+artifacts whose TTL has expired or whose last reference is
+older than a threshold.  Supports both Postgres (``FOR UPDATE
+SKIP LOCKED``) and SQLite (subquery) concurrency strategies.
+Exports ``SoftDeleteResult`` and the two runner functions.
+"""
 
 from __future__ import annotations
 
@@ -7,13 +14,22 @@ from typing import Any
 
 from mcp_artifact_gateway.constants import WORKSPACE_ID
 from mcp_artifact_gateway.db.backend import Dialect
-from mcp_artifact_gateway.db.protocols import ConnectionLike, increment_metric, safe_rollback
+from mcp_artifact_gateway.db.protocols import (
+    ConnectionLike,
+    increment_metric,
+    safe_rollback,
+)
 from mcp_artifact_gateway.obs.logging import LogEvents, get_logger
 
 
 @dataclass(frozen=True)
 class SoftDeleteResult:
-    """Result of a soft delete batch."""
+    """Result of a soft delete batch.
+
+    Attributes:
+        deleted_count: Number of artifacts soft-deleted.
+        artifact_ids: IDs of the artifacts that were deleted.
+    """
 
     deleted_count: int
     artifact_ids: list[str]
@@ -108,7 +124,14 @@ RETURNING artifact_id
 
 
 def soft_delete_expired_params(batch_size: int = 100) -> tuple[object, ...]:
-    """Params for SOFT_DELETE_BATCH_SQL."""
+    """Build parameter tuple for SOFT_DELETE_BATCH_SQL.
+
+    Args:
+        batch_size: Maximum number of artifacts to soft-delete.
+
+    Returns:
+        Parameter tuple for the expired soft-delete query.
+    """
     return (WORKSPACE_ID, batch_size, WORKSPACE_ID)
 
 
@@ -116,11 +139,28 @@ def soft_delete_unreferenced_params(
     threshold_timestamp: str,
     batch_size: int = 100,
 ) -> tuple[object, ...]:
-    """Params for SOFT_DELETE_UNREFERENCED_SQL."""
+    """Build parameter tuple for SOFT_DELETE_UNREFERENCED_SQL.
+
+    Args:
+        threshold_timestamp: ISO timestamp cutoff for
+            last_referenced_at comparison.
+        batch_size: Maximum number of artifacts to soft-delete.
+
+    Returns:
+        Parameter tuple for the unreferenced soft-delete query.
+    """
     return (WORKSPACE_ID, threshold_timestamp, batch_size, WORKSPACE_ID)
 
 
 def _extract_artifact_ids(rows: list[tuple[object, ...]]) -> list[str]:
+    """Extract valid artifact ID strings from result rows.
+
+    Args:
+        rows: List of row tuples from a RETURNING clause.
+
+    Returns:
+        List of non-empty artifact ID strings.
+    """
     artifact_ids: list[str] = []
     for row in rows:
         if not row:
@@ -139,12 +179,27 @@ def run_soft_delete_expired(
     metrics: Any | None = None,
     logger: Any | None = None,
 ) -> SoftDeleteResult:
-    """Execute one soft-delete batch for expired artifacts."""
+    """Execute one soft-delete batch for expired artifacts.
+
+    Args:
+        connection: Database connection for the transaction.
+        batch_size: Maximum artifacts to process per batch.
+        dialect: SQL dialect (Postgres or SQLite).
+        metrics: Optional GatewayMetrics for counter updates.
+        logger: Optional structured logger override.
+
+    Returns:
+        A SoftDeleteResult with count and affected IDs.
+    """
     log = logger or get_logger(component="jobs.soft_delete")
     try:
         if dialect is Dialect.SQLITE:
             sql = SOFT_DELETE_BATCH_SQLITE_SQL
-            params: tuple[object, ...] = (WORKSPACE_ID, WORKSPACE_ID, batch_size)
+            params: tuple[object, ...] = (
+                WORKSPACE_ID,
+                WORKSPACE_ID,
+                batch_size,
+            )
         else:
             sql = SOFT_DELETE_BATCH_SQL
             params = soft_delete_expired_params(batch_size=batch_size)
@@ -177,7 +232,20 @@ def run_soft_delete_unreferenced(
     metrics: Any | None = None,
     logger: Any | None = None,
 ) -> SoftDeleteResult:
-    """Execute one soft-delete batch for old unreferenced artifacts."""
+    """Execute one soft-delete batch for old unreferenced artifacts.
+
+    Args:
+        connection: Database connection for the transaction.
+        threshold_timestamp: ISO timestamp cutoff for
+            last_referenced_at.
+        batch_size: Maximum artifacts to process per batch.
+        dialect: SQL dialect (Postgres or SQLite).
+        metrics: Optional GatewayMetrics for counter updates.
+        logger: Optional structured logger override.
+
+    Returns:
+        A SoftDeleteResult with count and affected IDs.
+    """
     log = logger or get_logger(component="jobs.soft_delete")
     try:
         if dialect is Dialect.SQLITE:

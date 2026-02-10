@@ -7,7 +7,11 @@ import json
 from pathlib import Path
 
 from mcp_artifact_gateway.config.settings import GatewayConfig
-from mcp_artifact_gateway.mapping.runner import MappingInput, run_mapping, select_json_part
+from mcp_artifact_gateway.mapping.runner import (
+    MappingInput,
+    run_mapping,
+    select_json_part,
+)
 
 
 def _config(tmp_path: Path, **overrides: object) -> GatewayConfig:
@@ -29,9 +33,13 @@ def test_select_json_part_prefers_largest_and_stable_tiebreak() -> None:
     assert selected.part_index == 1
 
 
-def test_run_mapping_uses_binary_ref_stream_for_json_payload(tmp_path: Path) -> None:
+def test_run_mapping_uses_binary_ref_stream_for_json_payload(
+    tmp_path: Path,
+) -> None:
     payload = [{"id": 1}, {"id": 2}, {"id": 3}]
-    payload_bytes = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    payload_bytes = json.dumps(
+        payload, separators=(",", ":"), sort_keys=True
+    ).encode("utf-8")
     envelope = {
         "content": [
             {
@@ -60,7 +68,9 @@ def test_run_mapping_uses_binary_ref_stream_for_json_payload(tmp_path: Path) -> 
     assert len(result.roots) == 1
 
 
-def test_run_mapping_fails_for_json_binary_ref_without_stream_support(tmp_path: Path) -> None:
+def test_run_mapping_fails_for_json_binary_ref_without_stream_support(
+    tmp_path: Path,
+) -> None:
     envelope = {
         "content": [
             {
@@ -163,7 +173,12 @@ def test_select_json_part_ignores_non_json_binary() -> None:
     """binary_ref with non-JSON mime is ignored."""
     envelope = {
         "content": [
-            {"type": "binary_ref", "mime": "image/png", "binary_hash": "abc", "byte_count": 5000}
+            {
+                "type": "binary_ref",
+                "mime": "image/png",
+                "binary_hash": "abc",
+                "byte_count": 5000,
+            }
         ]
     }
     assert select_json_part(envelope) is None
@@ -229,7 +244,10 @@ def test_run_mapping_closes_binary_stream(tmp_path: Path) -> None:
 
 def test_full_mapping_object_discovers_roots(tmp_path: Path) -> None:
     """Full mapping of object discovers multiple roots sorted by score."""
-    data = {"users": [{"id": 1}, {"id": 2}], "orders": [{"oid": 1}, {"oid": 2}, {"oid": 3}]}
+    data = {
+        "users": [{"id": 1}, {"id": 2}],
+        "orders": [{"oid": 1}, {"oid": 2}, {"oid": 3}],
+    }
     envelope = {"content": [{"type": "json", "value": data}]}
     result = run_mapping(
         MappingInput(

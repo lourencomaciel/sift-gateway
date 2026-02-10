@@ -7,7 +7,6 @@ and integration with normalize_envelope.
 
 from __future__ import annotations
 
-import hashlib
 from decimal import Decimal
 
 from mcp_artifact_gateway.canon.rfc8785 import canonical_bytes
@@ -21,7 +20,6 @@ from mcp_artifact_gateway.envelope.normalize import normalize_envelope
 from mcp_artifact_gateway.envelope.oversize import replace_oversized_json_parts
 from mcp_artifact_gateway.fs.blob_store import BlobStore
 from mcp_artifact_gateway.util.hashing import sha256_hex
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -164,7 +162,9 @@ def test_mixed_parts_only_oversized_replaced(tmp_path) -> None:
 def test_multiple_oversized_parts_all_replaced(tmp_path) -> None:
     """Multiple oversized JSON parts each get their own binary ref and warning."""
     store = BlobStore(tmp_path / "blobs" / "bin")
-    parts = [JsonContentPart(value={"idx": i, "data": "x" * 2000}) for i in range(3)]
+    parts = [
+        JsonContentPart(value={"idx": i, "data": "x" * 2000}) for i in range(3)
+    ]
     envelope = _make_envelope(parts)
 
     result = replace_oversized_json_parts(
@@ -293,7 +293,9 @@ def test_oversize_blob_uses_canonical_bytes(tmp_path) -> None:
     # Verify keys are sorted (alpha, middle, zebra)
     assert b'"alpha"' in stored
     text = stored.decode("utf-8")
-    assert text.index('"alpha"') < text.index('"middle"') < text.index('"zebra"')
+    assert (
+        text.index('"alpha"') < text.index('"middle"') < text.index('"zebra"')
+    )
 
 
 def test_oversize_blob_with_decimal_value(tmp_path) -> None:

@@ -4,9 +4,9 @@ import json
 from pathlib import Path
 
 from mcp_artifact_gateway.config.settings import (
-    _SparseList,
-    _deep_merge,
     GatewayConfig,
+    _deep_merge,
+    _SparseList,
     load_gateway_config,
 )
 
@@ -60,7 +60,9 @@ def test_nested_env_overrides_state_config(tmp_path: Path, monkeypatch) -> None:
         ),
         encoding="utf-8",
     )
-    monkeypatch.setenv("MCP_GATEWAY_UPSTREAMS__0__URL", "https://from-env.example")
+    monkeypatch.setenv(
+        "MCP_GATEWAY_UPSTREAMS__0__URL", "https://from-env.example"
+    )
 
     config = load_gateway_config(data_dir_override=str(tmp_path))
     assert len(config.upstreams) == 1
@@ -68,11 +70,15 @@ def test_nested_env_overrides_state_config(tmp_path: Path, monkeypatch) -> None:
     assert config.upstreams[0].url == "https://from-env.example"
 
 
-def test_nested_env_json_leaf_values_are_decoded(tmp_path: Path, monkeypatch) -> None:
+def test_nested_env_json_leaf_values_are_decoded(
+    tmp_path: Path, monkeypatch
+) -> None:
     monkeypatch.setenv("MCP_GATEWAY_UPSTREAMS__0__PREFIX", "gh")
     monkeypatch.setenv("MCP_GATEWAY_UPSTREAMS__0__TRANSPORT", "stdio")
     monkeypatch.setenv("MCP_GATEWAY_UPSTREAMS__0__COMMAND", "gh")
-    monkeypatch.setenv("MCP_GATEWAY_UPSTREAMS__0__ARGS", '["api","/repos/example"]')
+    monkeypatch.setenv(
+        "MCP_GATEWAY_UPSTREAMS__0__ARGS", '["api","/repos/example"]'
+    )
 
     config = load_gateway_config(data_dir_override=str(tmp_path))
     assert config.upstreams[0].args == ["api", "/repos/example"]
@@ -82,17 +88,23 @@ def test_nested_env_map_keys_preserve_case(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("MCP_GATEWAY_UPSTREAMS__0__PREFIX", "gh")
     monkeypatch.setenv("MCP_GATEWAY_UPSTREAMS__0__TRANSPORT", "stdio")
     monkeypatch.setenv("MCP_GATEWAY_UPSTREAMS__0__COMMAND", "gh")
-    monkeypatch.setenv("MCP_GATEWAY_UPSTREAMS__0__ENV__OPENAI_API_KEY", "secret")
+    monkeypatch.setenv(
+        "MCP_GATEWAY_UPSTREAMS__0__ENV__OPENAI_API_KEY", "secret"
+    )
 
     config = load_gateway_config(data_dir_override=str(tmp_path))
     assert config.upstreams[0].env == {"OPENAI_API_KEY": "secret"}
 
 
-def test_nested_env_map_leaf_json_like_string_stays_string(tmp_path: Path, monkeypatch) -> None:
+def test_nested_env_map_leaf_json_like_string_stays_string(
+    tmp_path: Path, monkeypatch
+) -> None:
     monkeypatch.setenv("MCP_GATEWAY_UPSTREAMS__0__PREFIX", "gh")
     monkeypatch.setenv("MCP_GATEWAY_UPSTREAMS__0__TRANSPORT", "http")
     monkeypatch.setenv("MCP_GATEWAY_UPSTREAMS__0__URL", "https://api.example")
-    monkeypatch.setenv("MCP_GATEWAY_UPSTREAMS__0__HEADERS__X_CONFIG", '{"k":"v"}')
+    monkeypatch.setenv(
+        "MCP_GATEWAY_UPSTREAMS__0__HEADERS__X_CONFIG", '{"k":"v"}'
+    )
 
     config = load_gateway_config(data_dir_override=str(tmp_path))
     assert config.upstreams[0].headers == {"X_CONFIG": '{"k":"v"}'}
@@ -105,15 +117,25 @@ def test_deep_merge_preserves_sparse_list_indices() -> None:
     assert merged == [{"prefix": "a"}, None, {"prefix": "c"}]
 
 
-def test_env_top_level_list_override_replaces_file_list(tmp_path: Path, monkeypatch) -> None:
+def test_env_top_level_list_override_replaces_file_list(
+    tmp_path: Path, monkeypatch
+) -> None:
     state_dir = tmp_path / "state"
     state_dir.mkdir(parents=True, exist_ok=True)
     (state_dir / "config.json").write_text(
         json.dumps(
             {
                 "upstreams": [
-                    {"prefix": "a", "transport": "http", "url": "https://a.example"},
-                    {"prefix": "b", "transport": "http", "url": "https://b.example"},
+                    {
+                        "prefix": "a",
+                        "transport": "http",
+                        "url": "https://a.example",
+                    },
+                    {
+                        "prefix": "b",
+                        "transport": "http",
+                        "url": "https://b.example",
+                    },
                 ]
             }
         ),
@@ -128,7 +150,9 @@ def test_env_top_level_list_override_replaces_file_list(tmp_path: Path, monkeypa
     assert [upstream.prefix for upstream in config.upstreams] == ["c"]
 
 
-def test_nested_env_list_field_override_replaces_file_list(tmp_path: Path, monkeypatch) -> None:
+def test_nested_env_list_field_override_replaces_file_list(
+    tmp_path: Path, monkeypatch
+) -> None:
     state_dir = tmp_path / "state"
     state_dir.mkdir(parents=True, exist_ok=True)
     (state_dir / "config.json").write_text(

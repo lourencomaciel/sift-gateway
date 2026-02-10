@@ -1,4 +1,11 @@
-"""Hard delete job: permanently removes artifacts and cleans up storage."""
+"""Permanently remove soft-deleted artifacts and reclaim storage.
+
+Executes a multi-step pipeline: find hard-delete candidates past
+the grace period, delete artifact rows (cascading to refs and
+samples), remove unreferenced payload blobs and binary blob
+rows, and optionally unlink orphaned files from the filesystem.
+Exports ``HardDeleteResult`` and ``run_hard_delete_batch``.
+"""
 
 from __future__ import annotations
 
@@ -8,14 +15,27 @@ from typing import Any
 
 from mcp_artifact_gateway.constants import WORKSPACE_ID
 from mcp_artifact_gateway.db.backend import Dialect
-from mcp_artifact_gateway.db.dialect import adapt_params, expand_any_clause, strip_skip_locked
+from mcp_artifact_gateway.db.dialect import (
+    adapt_params,
+    expand_any_clause,
+    strip_skip_locked,
+)
 from mcp_artifact_gateway.db.protocols import increment_metric, safe_rollback
 from mcp_artifact_gateway.obs.logging import LogEvents, get_logger
 
 
 @dataclass(frozen=True)
 class HardDeleteResult:
-    """Result of a hard delete batch."""
+    """Result of a hard delete batch.
+
+    Attributes:
+        artifacts_deleted: Number of artifact rows removed.
+        payloads_deleted: Number of payload blob rows removed.
+        binary_blobs_deleted: Number of binary blob rows removed.
+        fs_blobs_removed: Number of blob files unlinked from
+            the filesystem.
+        bytes_reclaimed: Total bytes freed (payload + binary).
+    """
 
     artifacts_deleted: int
     payloads_deleted: int
@@ -36,7 +56,7 @@ LIMIT %s
 FOR UPDATE SKIP LOCKED
 """
 
-# Step 2: Delete artifacts (cascades to artifact_roots, artifact_refs, artifact_samples)
+# Step 2: Delete artifacts (cascades to roots, refs, samples)
 DELETE_ARTIFACTS_BATCH_SQL = """
 DELETE FROM artifacts
 WHERE workspace_id = %s AND artifact_id = ANY(%s)
@@ -54,7 +74,7 @@ WHERE pb.workspace_id = %s
   )
 """
 
-# Step 4: Delete unreferenced payloads (cascades payload_binary_refs, payload_hash_aliases)
+# Step 4: Delete unreferenced payloads (cascades binary_refs, aliases)
 DELETE_PAYLOADS_BATCH_SQL = """
 DELETE FROM payload_blobs
 WHERE workspace_id = %s AND payload_hash_full = ANY(%s)
@@ -83,11 +103,28 @@ def hard_delete_candidates_params(
     grace_period_timestamp: str,
     batch_size: int = 50,
 ) -> tuple[object, ...]:
-    """Params for FIND_HARD_DELETE_CANDIDATES_SQL."""
+    """Build parameter tuple for FIND_HARD_DELETE_CANDIDATES_SQL.
+
+    Args:
+        grace_period_timestamp: ISO timestamp cutoff for the
+            deleted_at grace period.
+        batch_size: Maximum candidates to return.
+
+    Returns:
+        Parameter tuple for the hard-delete candidate query.
+    """
     return (WORKSPACE_ID, grace_period_timestamp, batch_size)
 
 
 def _remove_blob_file(fs_path: str) -> bool:
+    """Attempt to unlink a blob file from the filesystem.
+
+    Args:
+        fs_path: Absolute path to the blob file.
+
+    Returns:
+        True if the file was removed, False on any error.
+    """
     try:
         Path(fs_path).unlink()
         return True
@@ -107,7 +144,23 @@ def run_hard_delete_batch(
     metrics: Any | None = None,
     logger: Any | None = None,
 ) -> HardDeleteResult:
-    """Run one hard-delete batch and cleanup orphaned payload/blob storage."""
+    """Run one hard-delete batch and clean up orphaned storage.
+
+    Args:
+        connection: Database connection for the transaction.
+        grace_period_timestamp: ISO timestamp cutoff; only
+            artifacts soft-deleted before this are eligible.
+        batch_size: Maximum artifacts to process per batch.
+        remove_fs_blobs: If True, unlink orphaned blob files
+            from the filesystem after commit.
+        dialect: SQL dialect (Postgres or SQLite).
+        metrics: Optional GatewayMetrics for counter updates.
+        logger: Optional structured logger override.
+
+    Returns:
+        A HardDeleteResult summarizing deletions and reclaimed
+        bytes.
+    """
     log = logger or get_logger(component="jobs.hard_delete")
     try:
         find_sql = FIND_HARD_DELETE_CANDIDATES_SQL
@@ -124,7 +177,9 @@ def run_hard_delete_batch(
         candidate_rows = connection.execute(find_sql, find_params).fetchall()
 
         artifact_ids = [
-            row[0] for row in candidate_rows if len(row) >= 1 and isinstance(row[0], str)
+            row[0]
+            for row in candidate_rows
+            if len(row) >= 1 and isinstance(row[0], str)
         ]
         if artifact_ids:
             if dialect is Dialect.SQLITE:
@@ -144,7 +199,9 @@ def run_hard_delete_batch(
             (WORKSPACE_ID,),
             dialect,
         )
-        payload_rows = connection.execute(unref_pay_sql, unref_pay_params).fetchall()
+        payload_rows = connection.execute(
+            unref_pay_sql, unref_pay_params
+        ).fetchall()
         payload_hashes = []
         payload_bytes_reclaimed = 0
         for row in payload_rows:
@@ -175,7 +232,9 @@ def run_hard_delete_batch(
             (WORKSPACE_ID,),
             dialect,
         )
-        blob_rows = connection.execute(unref_blob_sql, unref_blob_params).fetchall()
+        blob_rows = connection.execute(
+            unref_blob_sql, unref_blob_params
+        ).fetchall()
         blob_hashes = []
         fs_blobs_removed = 0
         blob_bytes_reclaimed = 0

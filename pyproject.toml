@@ -48,7 +48,31 @@ asyncio_mode = "auto"
 
 [tool.ruff]
 target-version = "py311"
-line-length = 100
+line-length = 80
+src = ["src"]
+
+[tool.ruff.lint]
+extend-select = [
+    "D",      # pydocstyle
+    "I",      # isort
+    "C4",     # flake8-comprehensions
+]
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.isort]
+force-sort-within-sections = true
+known-first-party = ["mcp_artifact_gateway"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = [
+    "D100",
+    "D101",
+    "D102",
+    "D103",
+    "D104",
+    "D107",
+]
 
 [tool.mypy]
 python_version = "3.11"

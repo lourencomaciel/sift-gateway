@@ -1,4 +1,12 @@
-"""Mapping worker: schedules and executes mapping with race-safe writes."""
+"""Schedule and execute mapping with generation-safe DB writes.
+
+Run the mapping pipeline for a single artifact and persist
+results using conditional SQL updates guarded by the artifact
+generation counter.  Handle write conflicts gracefully and
+record latency/outcome metrics.  Key exports are
+``run_mapping_worker``, ``persist_mapping_result``,
+``WorkerContext``, and ``check_worker_safety``.
+"""
 
 from __future__ import annotations
 
@@ -24,7 +32,14 @@ from mcp_artifact_gateway.obs.logging import LogEvents, get_logger
 
 
 def _jsonb(value: Any) -> Any:
-    """Wrap non-None values in Jsonb for psycopg3 JSONB columns."""
+    """Wrap non-None values in Jsonb for psycopg3 JSONB columns.
+
+    Args:
+        value: A Python value to wrap, or None.
+
+    Returns:
+        Jsonb-wrapped value, or None if input is None.
+    """
     if value is None:
         return None
     return Jsonb(value)
@@ -32,7 +47,17 @@ def _jsonb(value: Any) -> Any:
 
 @dataclass(frozen=True)
 class WorkerContext:
-    """Context for a mapping worker run."""
+    """Immutable context snapshot for a mapping worker run.
+
+    Capture the artifact state at the moment mapping is
+    scheduled so that the worker can detect concurrent
+    mutations via generation comparison.
+
+    Attributes:
+        artifact_id: Artifact to map.
+        generation: Generation counter at scheduling time.
+        map_status: Must be "pending" or "stale" to proceed.
+    """
 
     artifact_id: str
     generation: int  # snapshot at start
@@ -106,11 +131,26 @@ WHERE workspace_id = %s AND artifact_id = %s AND root_key = %s
 
 
 def should_run_mapping(map_status: str) -> bool:
-    """Check if mapping should run for this artifact."""
+    """Check if mapping should run for the given status.
+
+    Args:
+        map_status: Current artifact map_status value.
+
+    Returns:
+        True if status is "pending" or "stale".
+    """
     return map_status in ("pending", "stale")
 
 
 def _cursor_rowcount(cursor: object) -> int:
+    """Extract rowcount from a DB cursor, defaulting to 1.
+
+    Args:
+        cursor: Database cursor object with optional rowcount.
+
+    Returns:
+        The integer rowcount, or 1 if unavailable.
+    """
     rowcount = getattr(cursor, "rowcount", None)
     if isinstance(rowcount, int):
         return rowcount
@@ -118,6 +158,14 @@ def _cursor_rowcount(cursor: object) -> int:
 
 
 def _root_sample_indices(root: Any) -> list[int] | None:
+    """Extract and sort sample indices from a root inventory.
+
+    Args:
+        root: A RootInventory with a sample_indices attribute.
+
+    Returns:
+        Sorted list of integer indices, or None if not set.
+    """
     raw = root.sample_indices
     if raw is None:
         return None
@@ -125,6 +173,15 @@ def _root_sample_indices(root: Any) -> list[int] | None:
 
 
 def _root_insert_params(*, artifact_id: str, root: Any) -> tuple[object, ...]:
+    """Build positional SQL parameters for root insertion.
+
+    Args:
+        artifact_id: Artifact owning this root.
+        root: A RootInventory object.
+
+    Returns:
+        Ordered tuple matching INSERT_ROOT_SQL placeholders.
+    """
     return (
         WORKSPACE_ID,
         artifact_id,
@@ -142,7 +199,18 @@ def _root_insert_params(*, artifact_id: str, root: Any) -> tuple[object, ...]:
     )
 
 
-def _sample_insert_params(*, artifact_id: str, sample: SampleRecord) -> tuple[object, ...]:
+def _sample_insert_params(
+    *, artifact_id: str, sample: SampleRecord
+) -> tuple[object, ...]:
+    """Build positional SQL parameters for sample insertion.
+
+    Args:
+        artifact_id: Artifact owning this sample.
+        sample: A SampleRecord object.
+
+    Returns:
+        Ordered tuple matching INSERT_SAMPLE_SQL placeholders.
+    """
     return (
         WORKSPACE_ID,
         artifact_id,
@@ -155,7 +223,17 @@ def _sample_insert_params(*, artifact_id: str, sample: SampleRecord) -> tuple[ob
     )
 
 
-def _group_samples(samples: list[SampleRecord] | None) -> dict[str, list[SampleRecord]]:
+def _group_samples(
+    samples: list[SampleRecord] | None,
+) -> dict[str, list[SampleRecord]]:
+    """Group sample records by root_key.
+
+    Args:
+        samples: List of sample records, or None.
+
+    Returns:
+        A dict mapping root_key to list of SampleRecord.
+    """
     grouped: dict[str, list[SampleRecord]] = defaultdict(list)
     if not samples:
         return grouped
@@ -169,6 +247,16 @@ def _validate_sample_alignment(
     result: MappingResult,
     samples_by_root: dict[str, list[SampleRecord]],
 ) -> None:
+    """Verify sample indices match root inventory expectations.
+
+    Args:
+        result: Mapping result with root inventories.
+        samples_by_root: Samples grouped by root_key.
+
+    Raises:
+        ValueError: If any root's sample_indices do not match
+            the actual sample rows for that root.
+    """
     for root in result.roots:
         if root.sample_indices is None:
             continue
@@ -194,7 +282,21 @@ def persist_mapping_result(
     worker_ctx: WorkerContext,
     result: MappingResult,
 ) -> bool:
-    """Persist mapping output with generation-safe conditional writes."""
+    """Persist mapping output with generation-safe conditional writes.
+
+    Update the artifact row only if the generation and status
+    still match, then replace roots and samples.  Roll back
+    and return False on write conflict.
+
+    Args:
+        connection: Active database connection.
+        worker_ctx: Worker context with artifact_id and
+            expected generation.
+        result: The mapping result to persist.
+
+    Returns:
+        True if the write succeeded, False on conflict.
+    """
     update_cursor = connection.execute(
         CONDITIONAL_MAP_UPDATE_SQL,
         (
@@ -232,7 +334,9 @@ def persist_mapping_result(
 
     if result.map_kind == "partial":
         samples_by_root = _group_samples(result.samples)
-        _validate_sample_alignment(result=result, samples_by_root=samples_by_root)
+        _validate_sample_alignment(
+            result=result, samples_by_root=samples_by_root
+        )
         for root in result.roots:
             connection.execute(
                 DELETE_SAMPLES_SQL,
@@ -244,7 +348,9 @@ def persist_mapping_result(
             ):
                 connection.execute(
                     INSERT_SAMPLE_SQL,
-                    _sample_insert_params(artifact_id=worker_ctx.artifact_id, sample=sample),
+                    _sample_insert_params(
+                        artifact_id=worker_ctx.artifact_id, sample=sample
+                    ),
                 )
 
     connection.commit()
@@ -259,7 +365,24 @@ def run_mapping_worker(
     metrics: Any | None = None,
     logger: Any | None = None,
 ) -> bool:
-    """Run mapping and persist results safely; discard on generation/status races."""
+    """Run mapping and persist results with conflict handling.
+
+    Execute the mapping pipeline, persist results via
+    generation-safe writes, and fall back to a "failed" record
+    on write errors.  Record latency and outcome metrics.
+
+    Args:
+        connection: Active database connection.
+        worker_ctx: Worker context with artifact state snapshot.
+        mapping_input: Input bundle for the mapping pipeline.
+        metrics: Optional metrics collector for latency and
+            outcome counters.
+        logger: Optional structured logger override.
+
+    Returns:
+        True if results were persisted, False if discarded
+        due to generation/status race.
+    """
     log = logger or get_logger(
         component="mapping.worker",
         artifact_id=worker_ctx.artifact_id,
@@ -345,6 +468,13 @@ def _record_mapping_metrics(
     result: MappingResult,
     duration_ms: float,
 ) -> None:
+    """Record latency, outcome counters, and stop reasons.
+
+    Args:
+        metrics: Metrics collector, or None to skip.
+        result: Completed mapping result for classification.
+        duration_ms: Elapsed wall-clock milliseconds.
+    """
     if metrics is None:
         return
     mapping_latency = getattr(metrics, "mapping_latency", None)
@@ -371,7 +501,8 @@ def _record_mapping_metrics(
     if result.map_kind != "partial":
         return
     stop_reasons = {
-        root.stop_reason if isinstance(root.stop_reason, str) else "none" for root in result.roots
+        root.stop_reason if isinstance(root.stop_reason, str) else "none"
+        for root in result.roots
     }
     if not stop_reasons:
         stop_reasons = {"none"}
@@ -386,12 +517,19 @@ def check_worker_safety(
     expected_generation: int,
     current_row: dict[str, Any] | None,
 ) -> bool:
-    """Verify it's safe to write mapping results.
+    """Verify it is safe to write mapping results.
 
-    Returns True only if:
-    - artifact exists and is not deleted
-    - map_status is pending or stale
-    - generation matches expected value
+    Return True only when the artifact exists, is not deleted,
+    has a pending or stale map_status, and the generation
+    counter matches the expected value.
+
+    Args:
+        artifact_id: Artifact identifier (for context only).
+        expected_generation: Generation counter at scheduling.
+        current_row: Fresh DB row dict, or None if not found.
+
+    Returns:
+        True if all safety checks pass.
     """
     if current_row is None:
         return False

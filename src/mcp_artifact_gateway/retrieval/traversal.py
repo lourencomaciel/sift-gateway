@@ -1,10 +1,10 @@
-"""Deterministic traversal helpers.
+"""Provide deterministic JSON value traversal iterators.
 
-Order contract (traversal_v1):
-- Arrays: ascending index (0, 1, 2, ...)
-- Objects: lexicographic key order (sorted)
-- Wildcard [*] expansions obey the same ordering
-- Sampled mode: enumerates only the supplied sampled indices, ascending
+Implement the traversal_v1 order contract: arrays in
+ascending index order, objects in lexicographic key order.
+Provide ``traverse_deterministic`` for full recursive
+traversal and ``traverse_sampled`` for iterating only over
+pre-selected sample indices in ascending order.
 """
 
 from __future__ import annotations
@@ -16,19 +16,40 @@ _ASCII_IDENT_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 
 
 def _child_path(parent: str, key: str) -> str:
-    """Build a child JSONPath segment from a parent path and a key."""
+    """Build a child JSONPath segment from a parent and key.
+
+    Use dot notation for simple ASCII identifiers and
+    bracket-quoted notation for keys with special chars.
+
+    Args:
+        parent: Parent JSONPath string.
+        key: Child key name.
+
+    Returns:
+        Extended JSONPath string for the child.
+    """
     if _ASCII_IDENT_RE.fullmatch(key):
         return f"{parent}.{key}"
     escaped = key.replace("\\", "\\\\").replace("'", "\\'")
     return f"{parent}['{escaped}']"
 
 
-def traverse_deterministic(value: Any, path: str = "$") -> Iterator[tuple[str, Any]]:
-    """Yield ``(path, value)`` pairs in deterministic traversal order.
+def traverse_deterministic(
+    value: Any, path: str = "$"
+) -> Iterator[tuple[str, Any]]:
+    """Yield ``(path, value)`` pairs in deterministic order.
 
-    Order contract:
-    - arrays in ascending index
-    - objects in lexicographic key order
+    Implement the traversal_v1 contract: arrays in ascending
+    index order, objects in lexicographic key order.  Recurse
+    depth-first through the entire value tree.
+
+    Args:
+        value: JSON-compatible Python value to traverse.
+        path: JSONPath prefix for the root node.
+
+    Yields:
+        Tuples of ``(jsonpath_string, node_value)`` for
+        every node in the tree including the root.
     """
     yield path, value
 
@@ -50,15 +71,22 @@ def traverse_sampled(
     *,
     path: str = "$",
 ) -> Iterator[tuple[str, int, Any]]:
-    """Yield ``(path, sample_index, record)`` for sampled indices only.
+    """Yield ``(path, index, record)`` for sampled indices.
 
-    The *sample_indices* are always enumerated in ascending order regardless
-    of the order they are supplied in.  Indices that fall outside *records*
-    are silently skipped (the caller already validated them during mapping).
-
-    Each yielded record is **not** recursively expanded -- callers typically
-    pass individual records to ``traverse_deterministic`` or
+    Enumerate *sample_indices* in ascending order regardless
+    of input order.  Indices outside *records* are silently
+    skipped.  Yielded records are not recursively expanded;
+    callers pass them to ``traverse_deterministic`` or
     ``project_select_paths`` for deeper projection.
+
+    Args:
+        records: Full sequence of records to sample from.
+        sample_indices: Indices to include in output.
+        path: JSONPath prefix for the root array.
+
+    Yields:
+        Tuples of ``(child_path, sample_index, record)``
+        for each valid sampled index.
     """
     for idx in sorted(sample_indices):
         if 0 <= idx < len(records):

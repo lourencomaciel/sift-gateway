@@ -5,7 +5,10 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from mcp_artifact_gateway.constants import WORKSPACE_ID
-from mcp_artifact_gateway.cursor.hmac import CursorExpiredError, CursorTokenError
+from mcp_artifact_gateway.cursor.hmac import (
+    CursorExpiredError,
+    CursorTokenError,
+)
 from mcp_artifact_gateway.cursor.payload import CursorStaleError
 from mcp_artifact_gateway.envelope.responses import gateway_error
 from mcp_artifact_gateway.mcp.handlers.common import rows_to_dicts
@@ -29,6 +32,15 @@ async def handle_artifact_chain_pages(
     ctx: GatewayServer,
     arguments: dict[str, Any],
 ) -> dict[str, Any]:
+    """Handle the ``artifact.chain_pages`` tool call.
+
+    Args:
+        ctx: Gateway server instance providing DB and cursor helpers.
+        arguments: Tool arguments including ``parent_artifact_id``.
+
+    Returns:
+        Paginated chain-pages response dict or a gateway error.
+    """
     from mcp_artifact_gateway.tools.artifact_chain_pages import (
         FETCH_CHAIN_PAGES_SQL,
         build_chain_pages_response,
@@ -80,7 +92,9 @@ async def handle_artifact_chain_pages(
         truncated = len(mapped_rows) > limit
 
         touch_artifacts = [parent_artifact_id] + [
-            str(row["artifact_id"]) for row in page_rows if isinstance(row.get("artifact_id"), str)
+            str(row["artifact_id"])
+            for row in page_rows
+            if isinstance(row.get("artifact_id"), str)
         ]
         ctx._safe_touch_for_search(
             connection,

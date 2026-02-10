@@ -1,8 +1,9 @@
-"""Migrate MCP server config from an external tool into the gateway.
+r"""Migrate MCP server config from an external tool into the gateway.
 
 Usage::
 
-    mcp-gateway init --from ~/Library/Application\\ Support/Claude/claude_desktop_config.json
+    mcp-gateway init --from ~/Library/Application\ Support\
+        /Claude/claude_desktop_config.json
 
 This command:
 1. Reads the source file and extracts ``mcpServers``
@@ -17,12 +18,19 @@ from __future__ import annotations
 
 import json
 import os
-import shutil
 from pathlib import Path
+import shutil
 from typing import Any
 
-from mcp_artifact_gateway.config.mcp_servers import extract_mcp_servers, read_config_file
-from mcp_artifact_gateway.constants import CONFIG_FILENAME, DEFAULT_DATA_DIR, STATE_SUBDIR
+from mcp_artifact_gateway.config.mcp_servers import (
+    extract_mcp_servers,
+    read_config_file,
+)
+from mcp_artifact_gateway.constants import (
+    CONFIG_FILENAME,
+    DEFAULT_DATA_DIR,
+    STATE_SUBDIR,
+)
 
 
 def _gateway_server_entry() -> dict[str, Any]:
@@ -77,7 +85,7 @@ def run_init(
     dry_run:
         If True, print what would happen without making changes.
 
-    Returns
+    Returns:
     -------
     Summary dict with keys: servers_migrated, backup_path, source_path,
     gateway_config_path.
@@ -136,7 +144,9 @@ def run_init(
     # 3. Prepare rewritten source file (only the gateway as MCP server)
     #    Preserve the original format (mcpServers vs mcp.servers)
     new_source = dict(source_raw)
-    is_vscode = "mcpServers" not in source_raw and isinstance(source_raw.get("mcp"), dict)
+    is_vscode = "mcpServers" not in source_raw and isinstance(
+        source_raw.get("mcp"), dict
+    )
     if is_vscode:
         new_source["mcp"] = {"servers": {gateway_name: _gateway_server_entry()}}
     else:
@@ -183,7 +193,7 @@ def run_revert(source_path: Path) -> dict[str, Any]:
     source_path:
         Path to the source config file that was previously migrated.
 
-    Returns
+    Returns:
     -------
     Summary dict with keys: restored_path, backup_path.
     """
@@ -203,7 +213,9 @@ def run_revert(source_path: Path) -> dict[str, Any]:
     }
 
 
-def print_init_summary(summary: dict[str, Any], *, dry_run: bool = False) -> None:
+def print_init_summary(
+    summary: dict[str, Any], *, dry_run: bool = False
+) -> None:
     """Print a human-readable summary of the init operation."""
     prefix = "[dry run] " if dry_run else ""
     servers = summary["servers_migrated"]
@@ -215,8 +227,10 @@ def print_init_summary(summary: dict[str, Any], *, dry_run: bool = False) -> Non
     if "docker_postgres" in summary:
         pg = summary["docker_postgres"]
         status = "reused" if pg["already_running"] else "started"
+        ctr = pg["container"]
+        port = pg["port"]
         print(
-            f"{prefix}Postgres:       {status} container '{pg['container']}' on port {pg['port']}"
+            f"{prefix}Postgres:       {status} container '{ctr}' on port {port}"
         )
     elif "docker_postgres_skipped" in summary:
         print(f"{prefix}Postgres:       {summary['docker_postgres_skipped']}")
@@ -227,4 +241,8 @@ def print_init_summary(summary: dict[str, Any], *, dry_run: bool = False) -> Non
 
     if not dry_run:
         print()
-        print("To revert: mcp-gateway init --from " + summary["source_path"] + " --revert")
+        print(
+            "To revert: mcp-gateway init --from "
+            + summary["source_path"]
+            + " --revert"
+        )

@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
-from mcp_artifact_gateway.retrieval.traversal import traverse_deterministic, traverse_sampled
+from mcp_artifact_gateway.retrieval.traversal import (
+    traverse_deterministic,
+    traverse_sampled,
+)
 from mcp_artifact_gateway.tools.artifact_find import (
     build_find_response,
     sampled_indices_from_rows,
     validate_find_args,
 )
-
 
 # ---- validate_find_args ----
 

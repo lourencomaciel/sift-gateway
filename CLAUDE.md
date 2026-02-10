@@ -1,7 +1,7 @@
 # MCP Artifact Gateway
 
 ## Build & Test
-- `python -m pytest tests/unit/ -q` — run unit tests (~923 tests)
+- `python -m pytest tests/unit/ -q` — run unit tests (~1026 tests)
 - `python -m ruff check src tests` — lint
 - `python -m ruff format src tests` — auto-format
 - `python -m mypy src` — strict type checking
@@ -26,6 +26,14 @@
 - `task_plan.md` contains a section-numbered completion checklist (sections 0-15b)
 - "evaluate N" means: verify section N items against source code, update checkboxes, create missing pieces
 - Always run full test suite after changes: tests must stay green
+
+## Style Guide
+- Follows the Google Python Style Guide; enforced by ruff with `pydocstyle convention = "google"`
+- Line length: 80 characters
+- All public modules, classes, and functions have Google-style docstrings (Args/Returns/Raises)
+- Tests are exempt from docstring rules (`D100-D107` suppressed under `tests/**/*.py`)
+- No `@staticmethod`; prefer module-level functions
+- No backslash line continuations in strings
 
 ## Conventions
 - Frozen dataclasses for domain models (BinaryRef, Envelope, etc.)

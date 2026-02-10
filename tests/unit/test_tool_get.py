@@ -8,7 +8,6 @@ from mcp_artifact_gateway.tools.artifact_get import (
     validate_get_args,
 )
 
-
 # ---- validate_get_args ----
 
 

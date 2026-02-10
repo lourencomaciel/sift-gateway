@@ -23,8 +23,10 @@ def rewrite_now(sql: str, dialect: Dialect) -> str:
 
 
 def strip_skip_locked(sql: str) -> str:
-    """Remove FOR UPDATE SKIP LOCKED (not supported in SQLite, not needed with WAL)."""
-    return re.sub(r"\s+FOR\s+UPDATE\s+SKIP\s+LOCKED", "", sql, flags=re.IGNORECASE)
+    """Remove FOR UPDATE SKIP LOCKED (unsupported in SQLite)."""
+    return re.sub(
+        r"\s+FOR\s+UPDATE\s+SKIP\s+LOCKED", "", sql, flags=re.IGNORECASE
+    )
 
 
 def expand_any_clause(
@@ -40,7 +42,10 @@ def expand_any_clause(
     """
     values = params[any_param_index]
     if not isinstance(values, (list, tuple)):
-        msg = f"param at index {any_param_index} must be a list, got {type(values)}"
+        msg = (
+            f"param at index {any_param_index} "
+            f"must be a list, got {type(values)}"
+        )
         raise TypeError(msg)
 
     placeholders = ", ".join("?" for _ in values)
@@ -61,7 +66,7 @@ def adapt_params(
     params: tuple[object, ...],
     dialect: Dialect,
 ) -> tuple[str, tuple[object, ...]]:
-    """Apply all dialect transforms to a simple query (no ANY, no SKIP LOCKED)."""
+    """Apply all dialect transforms to a simple query."""
     sql = rewrite_now(sql, dialect)
     sql = rewrite_param_markers(sql, dialect)
     return sql, params

@@ -36,7 +36,9 @@ class _FakeConnection:
         self.committed = False
         self.rolled_back = False
 
-    def execute(self, _query: str, _params: tuple[object, ...] | None = None) -> _FakeCursor:
+    def execute(
+        self, _query: str, _params: tuple[object, ...] | None = None
+    ) -> _FakeCursor:
         self.calls += 1
         if self.fail_on_call is not None and self.calls == self.fail_on_call:
             raise RuntimeError("simulated execute failure")
@@ -136,7 +138,9 @@ def test_run_soft_delete_rolls_back_on_error() -> None:
 
 def test_run_soft_delete_unreferenced_updates_metrics() -> None:
     """run_soft_delete_unreferenced correctly updates prune_soft_deletes metric."""
-    connection = _FakeConnection(rows_sequence=[[("art_a",), ("art_b",), ("art_c",)]])
+    connection = _FakeConnection(
+        rows_sequence=[[("art_a",), ("art_b",), ("art_c",)]]
+    )
     metrics = GatewayMetrics()
     result = run_soft_delete_unreferenced(
         connection,
@@ -182,7 +186,9 @@ def test_soft_delete_unreferenced_sqlite_sql_uses_datetime() -> None:
 def test_run_soft_delete_expired_with_sqlite_dialect() -> None:
     """Soft delete expired uses SQLite SQL when dialect is SQLITE."""
     connection = _FakeConnection(rows_sequence=[[("art_s1",), ("art_s2",)]])
-    result = run_soft_delete_expired(connection, batch_size=5, dialect=Dialect.SQLITE)
+    result = run_soft_delete_expired(
+        connection, batch_size=5, dialect=Dialect.SQLITE
+    )
     assert result.deleted_count == 2
     assert result.artifact_ids == ["art_s1", "art_s2"]
     assert connection.committed is True

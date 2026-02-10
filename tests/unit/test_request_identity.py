@@ -10,7 +10,6 @@ from mcp_artifact_gateway.request_identity import (
 )
 from mcp_artifact_gateway.util.hashing import sha256_hex
 
-
 # ---- compute_request_identity ----
 
 
@@ -90,7 +89,9 @@ def test_request_args_prefix_capped() -> None:
         tool_name="search_issues",
         forwarded_args={"data": long_value},
     )
-    assert len(ri.request_args_prefix) <= RequestIdentity.REQUEST_ARGS_PREFIX_CAP
+    assert (
+        len(ri.request_args_prefix) <= RequestIdentity.REQUEST_ARGS_PREFIX_CAP
+    )
 
 
 def test_request_args_prefix_short_args_not_truncated() -> None:
@@ -215,4 +216,6 @@ def test_request_identity_with_decimal_args() -> None:
         forwarded_args=args,
     )
     assert ri.canonical_args == canonical_bytes(args)
-    assert b"42" in ri.canonical_args  # Canonical form of Decimal("42.00") is 42
+    assert (
+        b"42" in ri.canonical_args
+    )  # Canonical form of Decimal("42.00") is 42

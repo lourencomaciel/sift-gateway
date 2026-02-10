@@ -5,7 +5,10 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, Mapping
 
 from mcp_artifact_gateway.constants import WORKSPACE_ID
-from mcp_artifact_gateway.cursor.hmac import CursorExpiredError, CursorTokenError
+from mcp_artifact_gateway.cursor.hmac import (
+    CursorExpiredError,
+    CursorTokenError,
+)
 from mcp_artifact_gateway.cursor.payload import CursorStaleError
 from mcp_artifact_gateway.cursor.sample_set_hash import (
     SampleSetHashBindingError,
@@ -51,6 +54,18 @@ async def handle_artifact_select(
     ctx: GatewayServer,
     arguments: dict[str, Any],
 ) -> dict[str, Any]:
+    """Handle the ``artifact.select`` tool call.
+
+    Args:
+        ctx: Gateway server instance providing DB and cursor helpers.
+        arguments: Tool arguments including ``artifact_id``,
+            ``root_path``, ``select_paths``, optional ``where``,
+            ``cursor``, and ``limit``.
+
+    Returns:
+        Paginated select response with projected records, or a
+        gateway error.
+    """
     from mcp_artifact_gateway.tools.artifact_get import FETCH_ARTIFACT_SQL
     from mcp_artifact_gateway.tools.artifact_select import (
         FETCH_ROOT_SQL,
@@ -72,7 +87,9 @@ async def handle_artifact_select(
     select_paths_raw = arguments.get("select_paths", [])
     where_expr = arguments.get("where")
     if where_expr is not None and not isinstance(where_expr, (Mapping, str)):
-        return gateway_error("INVALID_ARGUMENT", "where must be an object or string")
+        return gateway_error(
+            "INVALID_ARGUMENT", "where must be an object or string"
+        )
     absolute_paths = [
         str(path)
         if str(path).startswith("$")
@@ -222,14 +239,18 @@ async def handle_artifact_select(
                     sample_indices = sorted(
                         int(sample_index)
                         for sample in sample_rows
-                        if isinstance((sample_index := sample.get("sample_index")), int)
+                        if isinstance(
+                            (sample_index := sample.get("sample_index")), int
+                        )
                     )
                     expected_sample_set_hash = compute_sample_set_hash(
                         root_path=root_path,
                         sample_indices=sample_indices,
                         map_budget_fingerprint=map_budget_fingerprint,
                     )
-                    assert_sample_set_hash_binding(cursor_payload, expected_sample_set_hash)
+                    assert_sample_set_hash_binding(
+                        cursor_payload, expected_sample_set_hash
+                    )
             except (CursorStaleError, SampleSetHashBindingError) as exc:
                 if isinstance(exc, SampleSetHashBindingError):
                     return ctx._cursor_error(CursorStaleError(str(exc)))
@@ -282,18 +303,31 @@ async def handle_artifact_select(
             if isinstance(envelope_value, dict) and "content" in envelope_value:
                 envelope = envelope_value
             elif canonical_bytes_raw is None:
-                return gateway_error("INTERNAL_ERROR", "missing canonical bytes for artifact")
+                return gateway_error(
+                    "INTERNAL_ERROR", "missing canonical bytes for artifact"
+                )
             else:
                 try:
                     envelope = reconstruct_envelope(
                         compressed_bytes=bytes(canonical_bytes_raw),
-                        encoding=str(artifact_row.get("envelope_canonical_encoding", "none")),
-                        expected_hash=str(artifact_row.get("payload_hash_full", "")),
+                        encoding=str(
+                            artifact_row.get(
+                                "envelope_canonical_encoding", "none"
+                            )
+                        ),
+                        expected_hash=str(
+                            artifact_row.get("payload_hash_full", "")
+                        ),
                     )
                 except ValueError as exc:
-                    return gateway_error("INTERNAL_ERROR", f"envelope reconstruction failed: {exc}")
+                    return gateway_error(
+                        "INTERNAL_ERROR",
+                        f"envelope reconstruction failed: {exc}",
+                    )
 
-            json_target = extract_json_target(envelope, artifact_row.get("mapped_part_index"))
+            json_target = extract_json_target(
+                envelope, artifact_row.get("mapped_part_index")
+            )
 
             try:
                 root_values = evaluate_jsonpath(
@@ -397,14 +431,19 @@ async def handle_artifact_select(
     root_summary = root_row.get("root_summary")
     if sampled_only and isinstance(root_summary, Mapping):
         raw_sampled_prefix_len = root_summary.get("sampled_prefix_len")
-        if isinstance(raw_sampled_prefix_len, int) and raw_sampled_prefix_len >= 0:
+        if (
+            isinstance(raw_sampled_prefix_len, int)
+            and raw_sampled_prefix_len >= 0
+        ):
             sampled_prefix_len = raw_sampled_prefix_len
     determinism: dict[str, str] | None = None
     if sampled_only and map_budget_fingerprint:
         from mcp_artifact_gateway.constants import TRAVERSAL_CONTRACT_VERSION
 
         all_sample_indices = sorted(
-            int(si) for sample in sample_rows if isinstance((si := sample.get("sample_index")), int)
+            int(si)
+            for sample in sample_rows
+            if isinstance((si := sample.get("sample_index")), int)
         )
         ssh = compute_sample_set_hash(
             root_path=root_path,

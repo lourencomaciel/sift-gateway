@@ -10,7 +10,9 @@ def test_resource_store_internal_writes_file(tmp_path: Path) -> None:
     store = ResourceStore(tmp_path / "resources")
     payload = b"hello-resource"
 
-    ref = store.put_bytes(payload, mime="text/plain", name="greeting.txt", durability="internal")
+    ref = store.put_bytes(
+        payload, mime="text/plain", name="greeting.txt", durability="internal"
+    )
     assert ref.durability == "internal"
     assert ref.content_hash is not None
     assert ref.fs_path is not None
@@ -31,7 +33,9 @@ def test_resource_store_external_ref_does_not_write(tmp_path: Path) -> None:
     assert ref.fs_path is None
 
 
-def test_resource_store_external_ref_empty_payload_has_sha256_hash(tmp_path: Path) -> None:
+def test_resource_store_external_ref_empty_payload_has_sha256_hash(
+    tmp_path: Path,
+) -> None:
     store = ResourceStore(tmp_path / "resources")
     ref = store.put_bytes(
         b"",
@@ -41,7 +45,9 @@ def test_resource_store_external_ref_empty_payload_has_sha256_hash(tmp_path: Pat
     assert ref.content_hash == f"sha256:{sha256_hex(b'')}"
 
 
-def test_resource_store_external_ref_requires_source_uri(tmp_path: Path) -> None:
+def test_resource_store_external_ref_requires_source_uri(
+    tmp_path: Path,
+) -> None:
     store = ResourceStore(tmp_path / "resources")
     try:
         store.put_bytes(b"opaque", durability="external_ref")
@@ -51,7 +57,9 @@ def test_resource_store_external_ref_requires_source_uri(tmp_path: Path) -> None
         raise AssertionError("expected ValueError")
 
 
-def test_resource_store_rejects_existing_content_mismatch_same_size(tmp_path: Path) -> None:
+def test_resource_store_rejects_existing_content_mismatch_same_size(
+    tmp_path: Path,
+) -> None:
     store = ResourceStore(tmp_path / "resources")
     payload = b"same-size-bytes"
     ref = store.put_bytes(payload, durability="internal")

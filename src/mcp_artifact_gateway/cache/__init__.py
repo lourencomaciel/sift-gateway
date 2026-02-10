@@ -1,4 +1,4 @@
-"""Cache and reuse logic."""
+"""Re-export cache reuse and advisory lock helpers."""
 
 from mcp_artifact_gateway.cache.reuse import (
     ReuseResult,

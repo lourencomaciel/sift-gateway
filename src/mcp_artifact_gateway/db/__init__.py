@@ -1,7 +1,11 @@
-"""DB access and migration helpers."""
+"""Re-export database connection and migration helpers."""
 
 from mcp_artifact_gateway.db.conn import connect, db_conn_info
-from mcp_artifact_gateway.db.migrate import apply_migrations, list_migrations, load_migrations
+from mcp_artifact_gateway.db.migrate import (
+    apply_migrations,
+    list_migrations,
+    load_migrations,
+)
 
 __all__ = [
     "apply_migrations",

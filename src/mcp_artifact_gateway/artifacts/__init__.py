@@ -1,4 +1,4 @@
-"""Artifact creation and management."""
+"""Re-export artifact creation and management API."""
 
 from mcp_artifact_gateway.artifacts.create import (
     ArtifactHandle,

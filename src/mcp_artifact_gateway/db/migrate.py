@@ -10,13 +10,35 @@ from mcp_artifact_gateway.db.protocols import ConnectionLike
 
 @dataclass(frozen=True)
 class Migration:
+    """A single SQL migration file loaded from disk.
+
+    Attributes:
+        name: Filename of the migration (e.g. ``001_init.sql``).
+        sql: Full SQL text of the migration.
+        path: Filesystem path to the migration file.
+    """
+
     name: str
     sql: str
     path: Path
 
 
 def list_migrations(migrations_dir: Path) -> list[Path]:
-    paths = sorted(path for path in migrations_dir.glob("*.sql") if path.is_file())
+    """List and validate SQL migration files in directory order.
+
+    Args:
+        migrations_dir: Directory containing numbered SQL files.
+
+    Returns:
+        Sorted list of migration file paths.
+
+    Raises:
+        FileNotFoundError: If no SQL files are found.
+        ValueError: If versions are duplicated or have gaps.
+    """
+    paths = sorted(
+        path for path in migrations_dir.glob("*.sql") if path.is_file()
+    )
     if not paths:
         msg = f"no SQL migrations found in {migrations_dir}"
         raise FileNotFoundError(msg)
@@ -25,6 +47,18 @@ def list_migrations(migrations_dir: Path) -> list[Path]:
 
 
 def load_migrations(migrations_dir: Path) -> list[Migration]:
+    """Load all migration files from disk as Migration objects.
+
+    Args:
+        migrations_dir: Directory containing numbered SQL files.
+
+    Returns:
+        List of Migration objects ordered by version number.
+
+    Raises:
+        FileNotFoundError: If no SQL files are found.
+        ValueError: If versions are duplicated or have gaps.
+    """
     migrations = []
     for path in list_migrations(migrations_dir):
         migrations.append(
@@ -38,6 +72,11 @@ def load_migrations(migrations_dir: Path) -> list[Migration]:
 
 
 def _ensure_schema_migrations(connection: ConnectionLike) -> None:
+    """Create the schema_migrations table if it does not exist.
+
+    Args:
+        connection: Database connection to execute DDL on.
+    """
     # Use CURRENT_TIMESTAMP which works on both Postgres and SQLite.
     connection.execute(
         """
@@ -50,19 +89,50 @@ def _ensure_schema_migrations(connection: ConnectionLike) -> None:
 
 
 def _applied_set(connection: ConnectionLike) -> set[str]:
-    rows = connection.execute("SELECT migration_name FROM schema_migrations").fetchall()
+    """Return the set of already-applied migration names.
+
+    Args:
+        connection: Database connection to query.
+
+    Returns:
+        Set of migration name strings from schema_migrations.
+    """
+    rows = connection.execute(
+        "SELECT migration_name FROM schema_migrations"
+    ).fetchall()
     return {str(row[0]) for row in rows}
 
 
 def _migration_version(path: Path) -> int:
+    """Extract the numeric version prefix from a migration filename.
+
+    Args:
+        path: Path to a migration SQL file.
+
+    Returns:
+        Integer version number parsed from the filename prefix.
+
+    Raises:
+        ValueError: If filename lacks a numeric prefix.
+    """
     head, _, _ = path.name.partition("_")
     if not head.isdigit():
-        msg = f"invalid migration filename (missing numeric prefix): {path.name}"
+        msg = (
+            f"invalid migration filename (missing numeric prefix): {path.name}"
+        )
         raise ValueError(msg)
     return int(head)
 
 
 def _validate_migration_sequence(paths: list[Path]) -> None:
+    """Verify migration versions are unique and contiguous.
+
+    Args:
+        paths: Sorted list of migration file paths.
+
+    Raises:
+        ValueError: If duplicate versions or gaps are detected.
+    """
     versions = [_migration_version(path) for path in paths]
     if len(versions) != len(set(versions)):
         msg = "duplicate migration version detected"
@@ -81,9 +151,20 @@ def apply_migrations(
     *,
     param_marker: str = "%s",
 ) -> list[str]:
-    """Apply pending migrations.
+    """Apply pending SQL migrations and record them.
 
-    *param_marker* should be ``%s`` for Postgres or ``?`` for SQLite.
+    Args:
+        connection: Database connection for executing DDL.
+        migrations_dir: Directory containing numbered SQL files.
+        param_marker: SQL placeholder (``%s`` for Postgres,
+            ``?`` for SQLite).
+
+    Returns:
+        List of migration names that were newly applied.
+
+    Raises:
+        FileNotFoundError: If no SQL files are found.
+        ValueError: If migration sequence is invalid.
     """
     _ensure_schema_migrations(connection)
     applied = _applied_set(connection)
@@ -98,10 +179,11 @@ def apply_migrations(
             connection.executescript(migration.sql)
         else:
             connection.execute(migration.sql)
-        connection.execute(
-            f"INSERT INTO schema_migrations (migration_name) VALUES ({param_marker})",
-            (migration.name,),
+        insert_sql = (
+            "INSERT INTO schema_migrations"
+            f" (migration_name) VALUES ({param_marker})"
         )
+        connection.execute(insert_sql, (migration.name,))
         newly_applied.append(migration.name)
 
     connection.commit()

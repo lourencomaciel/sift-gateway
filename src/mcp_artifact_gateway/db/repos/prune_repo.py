@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from mcp_artifact_gateway.constants import WORKSPACE_ID
 
-
 SOFT_DELETE_EXPIRED_SQL = """
 UPDATE artifacts
 SET deleted_at = NOW(),
@@ -17,4 +16,9 @@ WHERE workspace_id = %s
 
 
 def soft_delete_expired_params() -> tuple[str]:
+    """Build parameter tuple for expired artifact soft-delete.
+
+    Returns:
+        Single-element tuple with the workspace ID.
+    """
     return (WORKSPACE_ID,)

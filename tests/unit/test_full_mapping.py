@@ -7,7 +7,11 @@ from mcp_artifact_gateway.mapping.full import run_full_mapping
 
 def test_simple_array_produces_correct_root_with_count() -> None:
     """Mapping a simple array produces a root at $ with correct count."""
-    data = [{"id": 1, "name": "a"}, {"id": 2, "name": "b"}, {"id": 3, "name": "c"}]
+    data = [
+        {"id": 1, "name": "a"},
+        {"id": 2, "name": "b"},
+        {"id": 3, "name": "c"},
+    ]
     roots = run_full_mapping(data, max_roots=3)
 
     assert len(roots) == 1

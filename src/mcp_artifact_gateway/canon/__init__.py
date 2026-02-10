@@ -1,6 +1,10 @@
-"""Canonicalization helpers."""
+"""Re-export RFC 8785 canonicalization, compression, and decimal helpers."""
 
-from mcp_artifact_gateway.canon.compress import CompressedBytes, compress_bytes, decompress_bytes
+from mcp_artifact_gateway.canon.compress import (
+    CompressedBytes,
+    compress_bytes,
+    decompress_bytes,
+)
 from mcp_artifact_gateway.canon.decimal_json import (
     NonFiniteNumberError,
     ensure_no_floats,

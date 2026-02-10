@@ -1,4 +1,9 @@
-"""Structured logging configuration for MCP Artifact Gateway."""
+"""Configure structured logging for MCP Artifact Gateway.
+
+Wraps ``structlog`` to provide JSON or console output, bound
+loggers with contextvars, and a ``LogEvents`` class defining
+standard event name constants used across the gateway.
+"""
 
 from __future__ import annotations
 
@@ -10,7 +15,13 @@ import structlog
 
 
 def configure_logging(*, json_output: bool = True, level: str = "INFO") -> None:
-    """Configure structlog with JSON or console output."""
+    """Configure structlog with JSON or console output.
+
+    Args:
+        json_output: If True, render logs as JSON; otherwise
+            use human-readable console format.
+        level: Minimum log level name (e.g. ``INFO``, ``DEBUG``).
+    """
     shared_processors: list[structlog.types.Processor] = [
         structlog.contextvars.merge_contextvars,
         structlog.processors.add_log_level,
@@ -19,7 +30,9 @@ def configure_logging(*, json_output: bool = True, level: str = "INFO") -> None:
     ]
 
     if json_output:
-        renderer: structlog.types.Processor = structlog.processors.JSONRenderer()
+        renderer: structlog.types.Processor = (
+            structlog.processors.JSONRenderer()
+        )
     else:
         renderer = structlog.dev.ConsoleRenderer()
 
@@ -39,13 +52,26 @@ def configure_logging(*, json_output: bool = True, level: str = "INFO") -> None:
 
 
 def get_logger(**initial_context: Any) -> structlog.stdlib.BoundLogger:
-    """Get a bound structured logger with optional initial context."""
+    """Get a bound structured logger with optional initial context.
+
+    Args:
+        **initial_context: Key-value pairs bound to the logger
+            for all subsequent log events.
+
+    Returns:
+        A structlog BoundLogger instance.
+    """
     return structlog.get_logger(**initial_context)
 
 
 # Pre-defined event names for consistency
 class LogEvents:
-    """Standard log event names for the gateway."""
+    """Standard log event name constants for the gateway.
+
+    Groups event names by subsystem (startup, request, artifact,
+    mapping, cursor, pruning, advisory lock, quota) to ensure
+    consistent structured log keys across all modules.
+    """
 
     # Startup
     STARTUP_BEGIN = "gateway.startup.begin"

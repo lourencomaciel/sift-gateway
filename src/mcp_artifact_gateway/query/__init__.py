@@ -1,4 +1,4 @@
-"""Query helpers for JSONPath/select/where DSL."""
+"""Re-export JSONPath, select-path, and where-DSL query helpers."""
 
 from mcp_artifact_gateway.query.jsonpath import (
     JsonPathError,
@@ -13,7 +13,7 @@ from mcp_artifact_gateway.query.select_paths import (
     select_paths_hash,
 )
 from mcp_artifact_gateway.query.where_dsl import (
-    WhereComputeLimitExceeded,
+    WhereComputeLimitExceededError,
     WhereDslError,
     canonicalize_where_ast,
     evaluate_where,
@@ -24,7 +24,7 @@ from mcp_artifact_gateway.query.where_hash import where_hash
 __all__ = [
     "JsonPathError",
     "Segment",
-    "WhereComputeLimitExceeded",
+    "WhereComputeLimitExceededError",
     "WhereDslError",
     "canonicalize_jsonpath",
     "canonicalize_select_paths",

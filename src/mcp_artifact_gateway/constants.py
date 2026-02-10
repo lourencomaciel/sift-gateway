@@ -1,4 +1,10 @@
-"""Immutable constants for MCP Artifact Gateway v1.9."""
+"""Define immutable constants for MCP Artifact Gateway v1.9.
+
+Provides workspace identifiers, version strings for
+canonicalization and traversal contracts, reserved gateway key
+prefixes, artifact/blob ID prefixes, default filesystem layout
+paths, and envelope type markers.
+"""
 
 from __future__ import annotations
 
