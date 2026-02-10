@@ -200,3 +200,82 @@ def test_full_mapping_object_root_summary_contains_key_count() -> None:
     roots = run_full_mapping(data, max_roots=3)
     assert roots[0].root_summary is not None
     assert roots[0].root_summary.get("key_count") == 3
+
+
+# -----------------------------------------------------------------------
+# JSON-within-JSON (double-encoded string) tests
+# -----------------------------------------------------------------------
+
+
+def test_json_string_value_is_parsed_and_array_discovered() -> None:
+    """A JSON-encoded string containing an array is resolved and discovered."""
+    import json
+
+    data = {"items": json.dumps([{"id": 1}, {"id": 2}, {"id": 3}])}
+    roots = run_full_mapping(data, max_roots=3)
+
+    assert len(roots) >= 1
+    root = roots[0]
+    assert root.root_path == "$.items"
+    assert root.root_shape == "array"
+    assert root.count_estimate == 3
+
+
+def test_nested_json_string_with_dict_discovers_inner_array() -> None:
+    """Double-encoded JSON like meta-ads discovers $.result.data array."""
+    import json
+
+    campaigns = [
+        {"id": "1", "name": "A", "status": "ACTIVE"},
+        {"id": "2", "name": "B", "status": "PAUSED"},
+        {"id": "3", "name": "C", "status": "ACTIVE"},
+    ]
+    inner = json.dumps({"data": campaigns, "paging": {"after": "x"}})
+    data = {"result": inner}
+
+    roots = run_full_mapping(data, max_roots=3)
+
+    # $.result.data (array, 3 items) should outscore $.result (dict, 2 keys)
+    # and $.result.paging (dict, 1 key)
+    paths = {r.root_path for r in roots}
+    assert "$.result.data" in paths
+
+    data_root = next(r for r in roots if r.root_path == "$.result.data")
+    assert data_root.root_shape == "array"
+    assert data_root.count_estimate == 3
+    assert data_root.fields_top is not None
+    assert "name" in data_root.fields_top
+
+
+def test_non_json_string_values_produce_no_extra_roots() -> None:
+    """Plain string values don't create spurious roots."""
+    data = {
+        "status": "ok",
+        "message": "not json",
+        "items": [{"id": 1}],
+    }
+    roots = run_full_mapping(data, max_roots=3)
+
+    # Only $.items should be a root
+    assert len(roots) == 1
+    assert roots[0].root_path == "$.items"
+
+
+def test_depth_exploration_finds_nested_dict_arrays() -> None:
+    """Depth exploration discovers arrays nested inside dict values."""
+    data = {
+        "response": {
+            "records": [{"a": 1}, {"a": 2}, {"a": 3}, {"a": 4}],
+            "meta": {"count": 4},
+        },
+    }
+    roots = run_full_mapping(data, max_roots=3)
+
+    paths = {r.root_path for r in roots}
+    assert "$.response.records" in paths
+
+    records_root = next(
+        r for r in roots if r.root_path == "$.response.records"
+    )
+    assert records_root.root_shape == "array"
+    assert records_root.count_estimate == 4

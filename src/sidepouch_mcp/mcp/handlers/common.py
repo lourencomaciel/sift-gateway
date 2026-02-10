@@ -144,9 +144,15 @@ def extract_json_target(
     that target so callers can evaluate root_path JSONPath expressions against
     the correct object.
 
+    JSON-encoded string values within the target are resolved so that
+    JSONPath traversal can reach nested structures that the mapper
+    discovered during root discovery.
+
     Returns the full *envelope* when *mapped_part_index* is ``None`` or doesn't
     point at a valid JSON content part.
     """
+    from sidepouch_mcp.mapping.json_strings import resolve_json_strings
+
     if not isinstance(mapped_part_index, int):
         return envelope
     content = envelope.get("content", [])
@@ -157,5 +163,5 @@ def extract_json_target(
             and part.get("type") == "json"
             and "value" in part
         ):
-            return part["value"]
+            return resolve_json_strings(part["value"])
     return envelope

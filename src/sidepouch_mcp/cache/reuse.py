@@ -181,7 +181,9 @@ def try_acquire_advisory_lock(connection: Any, *, request_key: str) -> bool:
     """
     import sqlite3
 
-    if isinstance(connection, sqlite3.Connection):
+    from sidepouch_mcp.db.backend import _SqliteConnectionProxy
+
+    if isinstance(connection, (sqlite3.Connection, _SqliteConnectionProxy)):
         with _sqlite_guard:
             lock = _sqlite_key_locks.setdefault(request_key, _threading.Lock())
         return lock.acquire(blocking=False)
@@ -206,7 +208,9 @@ def release_advisory_lock(connection: Any, *, request_key: str) -> None:
     """
     import sqlite3
 
-    if not isinstance(connection, sqlite3.Connection):
+    from sidepouch_mcp.db.backend import _SqliteConnectionProxy
+
+    if not isinstance(connection, (sqlite3.Connection, _SqliteConnectionProxy)):
         return
     with _sqlite_guard:
         lock = _sqlite_key_locks.pop(request_key, None)
