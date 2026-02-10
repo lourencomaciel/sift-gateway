@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from mcp_artifact_gateway.tools.artifact_select import (
+from sidepouch_mcp.tools.artifact_select import (
     build_select_result,
     sampled_indices_ascending,
     validate_select_args,

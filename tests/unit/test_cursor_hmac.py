@@ -5,14 +5,14 @@ import datetime as dt
 from hashlib import sha256
 import hmac
 
-from mcp_artifact_gateway.constants import CURSOR_VERSION
-from mcp_artifact_gateway.cursor.hmac import (
+from sidepouch_mcp.constants import CURSOR_VERSION
+from sidepouch_mcp.cursor.hmac import (
     CursorExpiredError,
     CursorTokenError,
     sign_cursor_payload,
     verify_cursor_token,
 )
-from mcp_artifact_gateway.cursor.secrets import CursorSecrets
+from sidepouch_mcp.cursor.secrets import CursorSecrets
 
 
 def _secrets() -> CursorSecrets:

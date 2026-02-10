@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from mcp_artifact_gateway.tools.artifact_get import (
+from sidepouch_mcp.tools.artifact_get import (
     check_get_preconditions,
     is_sampled_only,
     validate_get_args,

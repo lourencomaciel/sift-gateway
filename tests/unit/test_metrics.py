@@ -6,7 +6,7 @@ import threading
 from prometheus_client import CollectorRegistry
 import pytest
 
-from mcp_artifact_gateway.obs.metrics import (
+from sidepouch_mcp.obs.metrics import (
     GatewayMetrics,
     Histogram,
     counter_reset,
@@ -202,7 +202,7 @@ def test_get_metrics_returns_singleton() -> None:
 def test_get_metrics_thread_safe_singleton_creation(
     monkeypatch: "pytest.MonkeyPatch",
 ) -> None:
-    import mcp_artifact_gateway.obs.metrics as metrics_module
+    import sidepouch_mcp.obs.metrics as metrics_module
 
     monkeypatch.setattr(metrics_module, "_metrics", None)
 

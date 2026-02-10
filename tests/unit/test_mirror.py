@@ -1,13 +1,13 @@
 from __future__ import annotations
 
-from mcp_artifact_gateway.config.settings import UpstreamConfig
-from mcp_artifact_gateway.mcp.mirror import (
+from sidepouch_mcp.config.settings import UpstreamConfig
+from sidepouch_mcp.mcp.mirror import (
     build_mirrored_tools,
     extract_gateway_context,
     strip_reserved_gateway_args,
     validate_against_schema,
 )
-from mcp_artifact_gateway.mcp.upstream import (
+from sidepouch_mcp.mcp.upstream import (
     UpstreamInstance,
     UpstreamToolSchema,
 )

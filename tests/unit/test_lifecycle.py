@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from mcp_artifact_gateway.config.settings import GatewayConfig, UpstreamConfig
-from mcp_artifact_gateway.lifecycle import (
+from sidepouch_mcp.config.settings import GatewayConfig, UpstreamConfig
+from sidepouch_mcp.lifecycle import (
     _check_migrations,
     ensure_data_dirs,
     run_startup_check,
@@ -50,7 +50,7 @@ def test_lifecycle_startup_check_invalid_upstream(
     tmp_path: Path, monkeypatch
 ) -> None:
     monkeypatch.setattr(
-        "mcp_artifact_gateway.db.conn.connect",
+        "sidepouch_mcp.db.conn.connect",
         lambda _config: _FakeConnection(),
     )
     config = GatewayConfig(
@@ -74,7 +74,7 @@ def test_lifecycle_startup_check_does_not_touch_existing_probe_filename(
     tmp_path: Path, monkeypatch
 ) -> None:
     monkeypatch.setattr(
-        "mcp_artifact_gateway.db.conn.connect",
+        "sidepouch_mcp.db.conn.connect",
         lambda _config: _FakeConnection(),
     )
     config = GatewayConfig(
@@ -103,7 +103,7 @@ def test_lifecycle_startup_check_reports_db_connect_failure(
     def _raise(_config):
         raise RuntimeError("connect failed")
 
-    monkeypatch.setattr("mcp_artifact_gateway.db.conn.connect", _raise)
+    monkeypatch.setattr("sidepouch_mcp.db.conn.connect", _raise)
 
     config = GatewayConfig(
         data_dir=tmp_path,
@@ -124,7 +124,7 @@ def test_lifecycle_startup_check_reports_db_probe_failure(
     tmp_path: Path, monkeypatch
 ) -> None:
     monkeypatch.setattr(
-        "mcp_artifact_gateway.db.conn.connect",
+        "sidepouch_mcp.db.conn.connect",
         lambda _config: _FakeConnection(fail_probe=True),
     )
 
@@ -156,7 +156,7 @@ def test_check_migrations_does_not_affect_db_ok(
 ) -> None:
     """Migration check is informational; db_ok stays True even if migration check fails."""
     monkeypatch.setattr(
-        "mcp_artifact_gateway.db.conn.connect",
+        "sidepouch_mcp.db.conn.connect",
         lambda _config: _FakeConnection(),
     )
     config = GatewayConfig(
@@ -245,7 +245,7 @@ def test_lifecycle_startup_check_dispatches_by_backend(
 ) -> None:
     """run_startup_check dispatches to _check_postgres when db_backend=postgres."""
     monkeypatch.setattr(
-        "mcp_artifact_gateway.db.conn.connect",
+        "sidepouch_mcp.db.conn.connect",
         lambda _config: _FakeConnection(),
     )
     config_pg = GatewayConfig(

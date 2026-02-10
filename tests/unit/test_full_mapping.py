@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from mcp_artifact_gateway.mapping.full import run_full_mapping
+from sidepouch_mcp.mapping.full import run_full_mapping
 
 
 def test_simple_array_produces_correct_root_with_count() -> None:

@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from mcp_artifact_gateway.config.settings import GatewayConfig
-from mcp_artifact_gateway.db.conn import create_pool, db_conn_info
-from mcp_artifact_gateway.db.repos.mapping_repo import update_map_status_params
-from mcp_artifact_gateway.db.repos.payloads_repo import payload_blob_params
-from mcp_artifact_gateway.db.repos.prune_repo import soft_delete_expired_params
-from mcp_artifact_gateway.db.repos.sessions_repo import upsert_session_params
+from sidepouch_mcp.config.settings import GatewayConfig
+from sidepouch_mcp.db.conn import create_pool, db_conn_info
+from sidepouch_mcp.db.repos.mapping_repo import update_map_status_params
+from sidepouch_mcp.db.repos.payloads_repo import payload_blob_params
+from sidepouch_mcp.db.repos.prune_repo import soft_delete_expired_params
+from sidepouch_mcp.db.repos.sessions_repo import upsert_session_params
 
 
 def test_db_conn_info_uses_config_values() -> None:
@@ -25,9 +25,7 @@ def test_create_pool_uses_pool_sizes(monkeypatch) -> None:
         def __init__(self, **kwargs) -> None:
             captured.update(kwargs)
 
-    monkeypatch.setattr(
-        "mcp_artifact_gateway.db.conn.ConnectionPool", _FakePool
-    )
+    monkeypatch.setattr("sidepouch_mcp.db.conn.ConnectionPool", _FakePool)
 
     config = GatewayConfig(
         postgres_dsn="postgresql://localhost/test",

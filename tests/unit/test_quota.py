@@ -5,14 +5,14 @@ from __future__ import annotations
 import datetime as dt
 from decimal import Decimal
 
-from mcp_artifact_gateway.constants import WORKSPACE_ID
-from mcp_artifact_gateway.jobs.hard_delete import (
+from sidepouch_mcp.constants import WORKSPACE_ID
+from sidepouch_mcp.jobs.hard_delete import (
     FIND_HARD_DELETE_CANDIDATES_SQL,
     FIND_UNREFERENCED_BLOBS_SQL,
     FIND_UNREFERENCED_PAYLOADS_SQL,
     HardDeleteResult,
 )
-from mcp_artifact_gateway.jobs.quota import (
+from sidepouch_mcp.jobs.quota import (
     SOFT_DELETE_LRU_FOR_QUOTA_SQL,
     STORAGE_USAGE_SQL,
     QuotaBreaches,
@@ -26,7 +26,7 @@ from mcp_artifact_gateway.jobs.quota import (
     soft_delete_lru_params,
     storage_usage_params,
 )
-from mcp_artifact_gateway.obs.metrics import GatewayMetrics, counter_value
+from sidepouch_mcp.obs.metrics import GatewayMetrics, counter_value
 
 
 # ---------------------------------------------------------------------------
@@ -493,11 +493,11 @@ def test_enforce_quota_uses_past_cutoff_for_hard_delete_grace(
         )
 
     monkeypatch.setattr(
-        "mcp_artifact_gateway.jobs.quota.soft_delete_lru_batch",
+        "sidepouch_mcp.jobs.quota.soft_delete_lru_batch",
         _fake_soft_delete,
     )
     monkeypatch.setattr(
-        "mcp_artifact_gateway.jobs.quota.run_hard_delete_batch",
+        "sidepouch_mcp.jobs.quota.run_hard_delete_batch",
         _fake_hard_delete,
     )
 
@@ -552,15 +552,15 @@ def test_enforce_quota_recomputes_cutoff_each_round(monkeypatch) -> None:
         )
 
     monkeypatch.setattr(
-        "mcp_artifact_gateway.jobs.quota._hard_delete_cutoff_timestamp",
+        "sidepouch_mcp.jobs.quota._hard_delete_cutoff_timestamp",
         _fake_cutoff,
     )
     monkeypatch.setattr(
-        "mcp_artifact_gateway.jobs.quota.soft_delete_lru_batch",
+        "sidepouch_mcp.jobs.quota.soft_delete_lru_batch",
         _fake_soft_delete,
     )
     monkeypatch.setattr(
-        "mcp_artifact_gateway.jobs.quota.run_hard_delete_batch",
+        "sidepouch_mcp.jobs.quota.run_hard_delete_batch",
         _fake_hard_delete,
     )
 

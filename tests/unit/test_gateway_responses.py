@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from mcp_artifact_gateway.envelope.responses import (
+from sidepouch_mcp.envelope.responses import (
     can_passthrough,
     gateway_error,
     gateway_tool_result,

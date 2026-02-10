@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 import structlog
 
-from mcp_artifact_gateway.obs.logging import (
+from sidepouch_mcp.obs.logging import (
     LogEvents,
     configure_logging,
     get_logger,

@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from mcp_artifact_gateway.constants import WORKSPACE_ID
-from mcp_artifact_gateway.db.backend import Dialect
-from mcp_artifact_gateway.jobs.soft_delete import (
+from sidepouch_mcp.constants import WORKSPACE_ID
+from sidepouch_mcp.db.backend import Dialect
+from sidepouch_mcp.jobs.soft_delete import (
     SOFT_DELETE_BATCH_SQL,
     SOFT_DELETE_BATCH_SQLITE_SQL,
     SOFT_DELETE_UNREFERENCED_SQL,
@@ -12,7 +12,7 @@ from mcp_artifact_gateway.jobs.soft_delete import (
     soft_delete_expired_params,
     soft_delete_unreferenced_params,
 )
-from mcp_artifact_gateway.obs.metrics import GatewayMetrics, counter_value
+from sidepouch_mcp.obs.metrics import GatewayMetrics, counter_value
 
 
 class _FakeCursor:

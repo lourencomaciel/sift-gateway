@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from mcp_artifact_gateway.cursor.secrets import load_or_create_cursor_secrets
+from sidepouch_mcp.cursor.secrets import load_or_create_cursor_secrets
 
 
 def test_load_or_create_cursor_secrets_roundtrip(tmp_path: Path) -> None:

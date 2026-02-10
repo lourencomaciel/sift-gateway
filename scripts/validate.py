@@ -5,12 +5,12 @@ Exercises the full artifact lifecycle against a fresh DATA_DIR + fresh DB
 schema, exits non-zero on any invariant violation.
 
 Requires a live Postgres instance.  Reads DSN from
-``MCP_GATEWAY_TEST_POSTGRES_DSN`` (defaults to docker-compose test DB).
+``SIDEPOUCH_MCP_TEST_POSTGRES_DSN`` (defaults to docker-compose test DB).
 
 Usage::
 
     PYTHONPATH=src python scripts/validate.py
-    MCP_GATEWAY_TEST_POSTGRES_DSN="postgresql://..." PYTHONPATH=src python scripts/validate.py
+    SIDEPOUCH_MCP_TEST_POSTGRES_DSN="postgresql://..." PYTHONPATH=src python scripts/validate.py
 """
 
 from __future__ import annotations
@@ -29,29 +29,29 @@ from typing import Any
 # Imports from the gateway package
 # ---------------------------------------------------------------------------
 
-from mcp_artifact_gateway.config.settings import GatewayConfig, UpstreamConfig
-from mcp_artifact_gateway.constants import WORKSPACE_ID
-from mcp_artifact_gateway.db.conn import create_pool
-from mcp_artifact_gateway.db.migrate import apply_migrations
-from mcp_artifact_gateway.jobs.hard_delete import run_hard_delete_batch
-from mcp_artifact_gateway.jobs.soft_delete import run_soft_delete_unreferenced
-from mcp_artifact_gateway.mcp import server as _server_module
-from mcp_artifact_gateway.mcp.server import GatewayServer
-from mcp_artifact_gateway.mcp.upstream import UpstreamInstance, UpstreamToolSchema
+from sidepouch_mcp.config.settings import GatewayConfig, UpstreamConfig
+from sidepouch_mcp.constants import WORKSPACE_ID
+from sidepouch_mcp.db.conn import create_pool
+from sidepouch_mcp.db.migrate import apply_migrations
+from sidepouch_mcp.jobs.hard_delete import run_hard_delete_batch
+from sidepouch_mcp.jobs.soft_delete import run_soft_delete_unreferenced
+from sidepouch_mcp.mcp import server as _server_module
+from sidepouch_mcp.mcp.server import GatewayServer
+from sidepouch_mcp.mcp.upstream import UpstreamInstance, UpstreamToolSchema
 
-_DEFAULT_DSN = "postgresql://mcp_gateway:mcp_gateway@localhost:5432/mcp_test"
+_DEFAULT_DSN = "postgresql://sidepouch:sidepouch@localhost:5432/sidepouch_test"
 
 # Safety: only allow DROP SCHEMA on databases whose name has "test" as a
 # word-boundary segment (e.g. mcp_test, test_db, testing — but NOT contest,
 # latest, or protest_prod).
-# Override with MCP_GATEWAY_VALIDATE_DESTRUCTIVE=1 for non-standard names.
+# Override with SIDEPOUCH_MCP_VALIDATE_DESTRUCTIVE=1 for non-standard names.
 _TEST_DB_PATTERN = re.compile(r"(?:^|[_\-])test(?:[_\-]|$|ing)", re.IGNORECASE)
 
 
 def _assert_test_database(dsn: str) -> None:
     """Abort if the DSN doesn't point to a test database."""
     import os
-    if os.getenv("MCP_GATEWAY_VALIDATE_DESTRUCTIVE") == "1":
+    if os.getenv("SIDEPOUCH_MCP_VALIDATE_DESTRUCTIVE") == "1":
         return
     # Extract DB name: last path segment of the DSN
     match = re.search(r"/([^/?]+)(?:\?|$)", dsn.split("@")[-1])
@@ -63,7 +63,7 @@ def _assert_test_database(dsn: str) -> None:
             "destroy all data.  Either:\n"
             "  - Use a DSN whose database name contains 'test' as a word "
             "segment (e.g. mcp_test, test_db), or\n"
-            "  - Set MCP_GATEWAY_VALIDATE_DESTRUCTIVE=1 to override.",
+            "  - Set SIDEPOUCH_MCP_VALIDATE_DESTRUCTIVE=1 to override.",
             file=sys.stderr,
         )
         sys.exit(2)
@@ -161,7 +161,7 @@ def _migrations_dir() -> Path:
     return (
         Path(__file__).resolve().parents[1]
         / "src"
-        / "mcp_artifact_gateway"
+        / "sidepouch_mcp"
         / "db"
         / "migrations"
     )
@@ -606,7 +606,7 @@ _CHECKS = [
 def main() -> int:
     import os
 
-    dsn = os.getenv("MCP_GATEWAY_TEST_POSTGRES_DSN", _DEFAULT_DSN)
+    dsn = os.getenv("SIDEPOUCH_MCP_TEST_POSTGRES_DSN", _DEFAULT_DSN)
     _assert_test_database(dsn)
     data_dir = Path(tempfile.mkdtemp(prefix="mcp_validate_"))
 

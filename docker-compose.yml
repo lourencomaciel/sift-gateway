@@ -2,16 +2,16 @@ services:
   postgres:
     image: postgres:16-alpine
     environment:
-      POSTGRES_USER: mcp_gateway
-      POSTGRES_PASSWORD: mcp_gateway
-      POSTGRES_DB: mcp_gateway
+      POSTGRES_USER: sidepouch
+      POSTGRES_PASSWORD: sidepouch
+      POSTGRES_DB: sidepouch
     ports:
       - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./scripts/init-test-db.sql:/docker-entrypoint-initdb.d/init-test-db.sql:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U mcp_gateway"]
+      test: ["CMD-SHELL", "pg_isready -U sidepouch"]
       interval: 5s
       timeout: 5s
       retries: 5

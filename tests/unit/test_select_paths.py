@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from mcp_artifact_gateway.query.select_paths import (
+from sidepouch_mcp.query.select_paths import (
     canonicalize_select_paths,
     project_select_paths,
     select_paths_hash,

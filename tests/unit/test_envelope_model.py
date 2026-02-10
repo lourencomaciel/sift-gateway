@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from mcp_artifact_gateway.envelope.model import Envelope, JsonContentPart
+from sidepouch_mcp.envelope.model import Envelope, JsonContentPart
 
 
 def test_envelope_to_dict_shape() -> None:
