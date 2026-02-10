@@ -12,22 +12,35 @@ def test_gateway_tool_result_handle_only() -> None:
         artifact_id="art_1",
         cache_meta={"hit": True},
     )
-    assert response == {
-        "type": "gateway_tool_result",
-        "artifact_id": "art_1",
-        "meta": {"cache": {"hit": True}},
-    }
-    assert "inline" not in response["meta"]
+    assert response["type"] == "gateway_tool_result"
+    assert response["artifact_id"] == "art_1"
+    assert response["meta"] == {"cache": {"hit": True}}
+    assert "describe" not in response
+    assert "usage_hint" not in response
 
 
 def test_gateway_tool_result_no_cache_meta() -> None:
     response = gateway_tool_result(artifact_id="art_2")
-    assert response == {
-        "type": "gateway_tool_result",
-        "artifact_id": "art_2",
-        "meta": {"cache": {}},
-    }
-    assert "inline" not in response["meta"]
+    assert response["type"] == "gateway_tool_result"
+    assert response["artifact_id"] == "art_2"
+    assert response["meta"] == {"cache": {}}
+    assert "describe" not in response
+    assert "usage_hint" not in response
+
+
+def test_gateway_tool_result_with_describe_and_hint() -> None:
+    desc = {"artifact_id": "art_3", "mapping": {}, "roots": []}
+    response = gateway_tool_result(
+        artifact_id="art_3",
+        cache_meta={"reused": False},
+        describe=desc,
+        usage_hint="Use artifact.get to retrieve.",
+    )
+    assert response["type"] == "gateway_tool_result"
+    assert response["artifact_id"] == "art_3"
+    assert response["describe"] is desc
+    assert response["usage_hint"] == "Use artifact.get to retrieve."
+    assert response["meta"] == {"cache": {"reused": False}}
 
 
 # -- can_passthrough boundary tests --

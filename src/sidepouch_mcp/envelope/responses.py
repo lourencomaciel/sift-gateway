@@ -30,13 +30,34 @@ def gateway_tool_result(
     *,
     artifact_id: str,
     cache_meta: dict[str, Any] | None = None,
+    describe: dict[str, Any] | None = None,
+    usage_hint: str | None = None,
 ) -> dict[str, Any]:
-    """Create handle-only tool response (artifact_id + cache metadata)."""
-    return {
+    """Create a gateway tool response with inline describe data.
+
+    Args:
+        artifact_id: Unique artifact identifier.
+        cache_meta: Cache metadata dict (reused, reason, etc.).
+        describe: Inline describe response with mapping metadata
+            and discovered roots.
+        usage_hint: Natural language hint for the calling model
+            describing what the artifact contains and which
+            tools to call next.
+
+    Returns:
+        Structured result dict with artifact handle, cache info,
+        describe data, and usage hint.
+    """
+    result: dict[str, Any] = {
         "type": RESPONSE_TYPE_RESULT,
         "artifact_id": artifact_id,
         "meta": {"cache": cache_meta or {}},
     }
+    if describe is not None:
+        result["describe"] = describe
+    if usage_hint is not None:
+        result["usage_hint"] = usage_hint
+    return result
 
 
 def gateway_error(

@@ -138,7 +138,7 @@ SQLite uses WAL mode for concurrent read access. Advisory locks are no-op (alway
 |-----|------|---------|---------|-------------|
 | `passthrough_max_bytes` | int | 8192 | `SIDEPOUCH_MCP_PASSTHROUGH_MAX_BYTES` | Max payload bytes for passthrough (8 KB); `0` = disabled |
 
-Results below this threshold are returned as raw upstream responses (gateway is transparent). Results at or above this threshold return handle-only. Binary responses never passthrough regardless of size. Passthrough results are persisted asynchronously for audit/durability. See also `passthrough_allowed` per-upstream.
+Results below this threshold are returned as raw upstream responses (gateway is transparent). Results at or above this threshold return a handle with inline describe data and a usage hint. Binary responses never passthrough regardless of size. Passthrough results are persisted asynchronously for audit/durability. See also `passthrough_allowed` per-upstream.
 
 ## Cursor
 
