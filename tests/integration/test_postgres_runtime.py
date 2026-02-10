@@ -2,16 +2,19 @@ from __future__ import annotations
 
 import asyncio
 import os
-import uuid
 from pathlib import Path
+import uuid
 
 import pytest
 
-from mcp_artifact_gateway.artifacts.create import CreateArtifactInput, persist_artifact
+from mcp_artifact_gateway.artifacts.create import (
+    CreateArtifactInput,
+    persist_artifact,
+)
 from mcp_artifact_gateway.config.settings import GatewayConfig, UpstreamConfig
+from mcp_artifact_gateway.constants import WORKSPACE_ID
 from mcp_artifact_gateway.db.conn import create_pool
 from mcp_artifact_gateway.db.migrate import apply_migrations
-from mcp_artifact_gateway.constants import WORKSPACE_ID
 from mcp_artifact_gateway.envelope.model import (
     BinaryRefContentPart,
     Envelope,
@@ -19,7 +22,10 @@ from mcp_artifact_gateway.envelope.model import (
 )
 from mcp_artifact_gateway.jobs.hard_delete import run_hard_delete_batch
 from mcp_artifact_gateway.mcp.server import GatewayServer
-from mcp_artifact_gateway.mcp.upstream import UpstreamInstance, UpstreamToolSchema
+from mcp_artifact_gateway.mcp.upstream import (
+    UpstreamInstance,
+    UpstreamToolSchema,
+)
 
 _POSTGRES_DSN_ENV = "MCP_GATEWAY_TEST_POSTGRES_DSN"
 
@@ -37,7 +43,11 @@ def _integration_config(tmp_path: Path) -> GatewayConfig:
 
 def _migrations_dir() -> Path:
     return (
-        Path(__file__).resolve().parents[2] / "src" / "mcp_artifact_gateway" / "db" / "migrations"
+        Path(__file__).resolve().parents[2]
+        / "src"
+        / "mcp_artifact_gateway"
+        / "db"
+        / "migrations"
     )
 
 
@@ -103,7 +113,9 @@ def test_runtime_handlers_work_with_real_postgres(tmp_path: Path) -> None:
                 {"_gateway_context": {"session_id": session_id}, "filters": {}}
             )
         )
-        assert any(item["artifact_id"] == artifact_id for item in search["items"])
+        assert any(
+            item["artifact_id"] == artifact_id for item in search["items"]
+        )
 
         envelope_result = asyncio.run(
             server.handle_artifact_get(
@@ -149,25 +161,34 @@ def test_mirrored_tool_flow_persists_artifact_with_real_postgres(
                 )
             ],
         )
-        server = GatewayServer(config=config, db_pool=pool, upstreams=[upstream])
+        server = GatewayServer(
+            config=config, db_pool=pool, upstreams=[upstream]
+        )
         mirrored = server.mirrored_tools["demo.echo"]
 
         async def _fake_call(_upstream, _tool, args):
             return {
-                "content": [{"type": "text", "text": str(args.get("message", ""))}],
+                "content": [
+                    {"type": "text", "text": str(args.get("message", ""))}
+                ],
                 "structuredContent": {"message": args.get("message")},
                 "isError": False,
                 "meta": {},
             }
 
-        monkeypatch.setattr("mcp_artifact_gateway.mcp.server.call_upstream_tool", _fake_call)
+        monkeypatch.setattr(
+            "mcp_artifact_gateway.mcp.server.call_upstream_tool", _fake_call
+        )
 
         session_id = f"sess_int_{uuid.uuid4().hex}"
         response = asyncio.run(
             server.handle_mirrored_tool(
                 mirrored,
                 {
-                    "_gateway_context": {"session_id": session_id, "cache_mode": "fresh"},
+                    "_gateway_context": {
+                        "session_id": session_id,
+                        "cache_mode": "fresh",
+                    },
                     "message": "hello integration",
                 },
             )
@@ -181,7 +202,9 @@ def test_mirrored_tool_flow_persists_artifact_with_real_postgres(
                 {"_gateway_context": {"session_id": session_id}, "filters": {}}
             )
         )
-        assert any(item["artifact_id"] == artifact_id for item in search["items"])
+        assert any(
+            item["artifact_id"] == artifact_id for item in search["items"]
+        )
     finally:
         pool.close()
 
@@ -191,7 +214,9 @@ def test_mirrored_tool_flow_persists_artifact_with_real_postgres(
 # ---------------------------------------------------------------------------
 
 
-def test_search_only_returns_artifacts_visible_to_own_session(tmp_path: Path) -> None:
+def test_search_only_returns_artifacts_visible_to_own_session(
+    tmp_path: Path,
+) -> None:
     """artifact.search must only return artifacts in artifact_refs for that session.
 
     Artifacts created under session_a must NOT appear when session_b
@@ -251,9 +276,9 @@ def test_search_only_returns_artifacts_visible_to_own_session(tmp_path: Path) ->
 
 
 def test_artifact_visible_immediately_after_creation(tmp_path: Path) -> None:
-    """A new artifact must appear in artifact.search immediately after
-    persist_artifact commits, proving there is no deferred visibility
-    window.
+    """A new artifact must appear in artifact.search immediately after persist.
+
+    persist_artifact commits must have no deferred visibility window.
     """
     config = _integration_config(tmp_path)
     pool = create_pool(config)
@@ -301,9 +326,7 @@ def test_artifact_visible_immediately_after_creation(tmp_path: Path) -> None:
 
 
 def test_artifact_get_not_found_for_wrong_session(tmp_path: Path) -> None:
-    """artifact.get returns NOT_FOUND when another session's artifact_id
-    is requested, verifying the visibility check on retrieval.
-    """
+    """Verify artifact.get returns NOT_FOUND for another session's artifact."""
     config = _integration_config(tmp_path)
     pool = create_pool(config)
     try:
@@ -346,9 +369,10 @@ def test_artifact_get_not_found_for_wrong_session(tmp_path: Path) -> None:
 
 
 def test_payload_binary_refs_recorded_on_persist(tmp_path: Path) -> None:
-    """When binary_hashes are supplied to persist_artifact, rows are
-    inserted into payload_binary_refs.  This prevents the hard-delete
-    job from orphaning binary blobs that are still referenced.
+    """Verify binary_hashes create payload_binary_refs rows on persist.
+
+    This prevents the hard-delete job from orphaning binary blobs
+    that are still referenced.
     """
     config = _integration_config(tmp_path)
     pool = create_pool(config)
@@ -439,8 +463,12 @@ def test_payload_binary_refs_recorded_on_persist(tmp_path: Path) -> None:
         pool.close()
 
 
-def test_hard_delete_removes_payload_only_when_unreferenced(tmp_path: Path) -> None:
-    """When two artifacts share the same payload_hash_full and one is
+def test_hard_delete_removes_payload_only_when_unreferenced(
+    tmp_path: Path,
+) -> None:
+    """Shared payloads survive hard-delete until all references are gone.
+
+    When two artifacts share the same payload_hash_full and one is
     hard-deleted, the payload must NOT be removed because the other
     artifact still references it.  Only after both are gone should
     the payload be deleted.
@@ -458,12 +486,18 @@ def test_hard_delete_removes_payload_only_when_unreferenced(tmp_path: Path) -> N
         session_2 = f"sess_hd2_{uuid.uuid4().hex}"
 
         # Use the SAME envelope so both artifacts share the same payload_hash_full
-        shared_envelope = _make_envelope({"shared": True, "key": "deterministic_payload"})
+        shared_envelope = _make_envelope(
+            {"shared": True, "key": "deterministic_payload"}
+        )
 
         with pool.connection() as connection:
-            handle_1 = _persist_one(connection, config, session_1, envelope=shared_envelope)
+            handle_1 = _persist_one(
+                connection, config, session_1, envelope=shared_envelope
+            )
         with pool.connection() as connection:
-            handle_2 = _persist_one(connection, config, session_2, envelope=shared_envelope)
+            handle_2 = _persist_one(
+                connection, config, session_2, envelope=shared_envelope
+            )
 
         payload_hash = handle_1.payload_hash_full
         assert payload_hash == handle_2.payload_hash_full, (
@@ -540,7 +574,9 @@ def test_hard_delete_removes_payload_only_when_unreferenced(tmp_path: Path) -> N
 
 
 def test_hard_delete_respects_binary_ref_protection(tmp_path: Path) -> None:
-    """Binary blobs referenced via payload_binary_refs must not be
+    """Binary blobs with active refs survive hard-delete.
+
+    Binary blobs referenced via payload_binary_refs must not be
     deleted during hard delete while any payload still references them.
 
     The FK constraint payload_binary_refs -> binary_blobs uses ON DELETE
@@ -656,7 +692,9 @@ def test_hard_delete_respects_binary_ref_protection(tmp_path: Path) -> None:
                 "SELECT 1 FROM binary_blobs WHERE workspace_id = %s AND binary_hash = %s",
                 (WORKSPACE_ID, bin_hash),
             ).fetchone()
-        assert blob_row is not None, "Binary blob must survive when a payload still references it"
+        assert blob_row is not None, (
+            "Binary blob must survive when a payload still references it"
+        )
 
         # Now soft-delete + hard-delete artifact_2
         with pool.connection() as connection:
@@ -692,8 +730,11 @@ def test_hard_delete_respects_binary_ref_protection(tmp_path: Path) -> None:
         pool.close()
 
 
-def test_soft_delete_does_not_remove_from_search_until_expired(tmp_path: Path) -> None:
-    """An artifact with deleted_at IS NULL remains visible in search.
+def test_soft_delete_does_not_remove_from_search_until_expired(
+    tmp_path: Path,
+) -> None:
+    """Artifact remains in search until soft-delete sets deleted_at.
+
     Only after soft-delete sets deleted_at does the default search
     filter (include_deleted=false) exclude it.
     """
@@ -716,7 +757,10 @@ def test_soft_delete_does_not_remove_from_search_until_expired(tmp_path: Path) -
                 {"_gateway_context": {"session_id": session_id}, "filters": {}}
             )
         )
-        assert any(item["artifact_id"] == handle.artifact_id for item in search1["items"])
+        assert any(
+            item["artifact_id"] == handle.artifact_id
+            for item in search1["items"]
+        )
 
         # Manually set deleted_at (simulating soft-delete)
         with pool.connection() as connection:
@@ -735,7 +779,10 @@ def test_soft_delete_does_not_remove_from_search_until_expired(tmp_path: Path) -
                 {"_gateway_context": {"session_id": session_id}, "filters": {}}
             )
         )
-        assert not any(item["artifact_id"] == handle.artifact_id for item in search2["items"])
+        assert not any(
+            item["artifact_id"] == handle.artifact_id
+            for item in search2["items"]
+        )
 
         # Search with include_deleted=true should still find it
         search3 = asyncio.run(
@@ -746,6 +793,9 @@ def test_soft_delete_does_not_remove_from_search_until_expired(tmp_path: Path) -
                 }
             )
         )
-        assert any(item["artifact_id"] == handle.artifact_id for item in search3["items"])
+        assert any(
+            item["artifact_id"] == handle.artifact_id
+            for item in search3["items"]
+        )
     finally:
         pool.close()

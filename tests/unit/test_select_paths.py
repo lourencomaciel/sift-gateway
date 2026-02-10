@@ -13,7 +13,9 @@ def test_select_paths_canonicalize_and_dedupe() -> None:
 
 
 def test_select_projection_missing_as_null() -> None:
-    projected = project_select_paths({"a": 1}, ["$.a", "$.missing"], missing_as_null=True)
+    projected = project_select_paths(
+        {"a": 1}, ["$.a", "$.missing"], missing_as_null=True
+    )
     assert projected["$.a"] == 1
     assert projected["$.missing"] is None
 

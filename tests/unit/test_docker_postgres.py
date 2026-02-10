@@ -4,21 +4,15 @@ from __future__ import annotations
 
 import json
 import subprocess
-from unittest.mock import patch
 
 import pytest
 
 from mcp_artifact_gateway.config.docker_postgres import (
-    CONTAINER_NAME,
     DEFAULT_DB,
-    DEFAULT_PORT,
     DEFAULT_USER,
-    IMAGE,
-    VOLUME_NAME,
     DockerCommandError,
     DockerHealthCheckError,
     DockerNotFoundError,
-    DockerPostgresResult,
     PortConflictError,
     _build_dsn,
     _container_exists,
@@ -35,7 +29,6 @@ from mcp_artifact_gateway.config.docker_postgres import (
     check_docker_available,
     provision_postgres,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers for building mock docker inspect output
@@ -87,7 +80,9 @@ def _mock_run_docker(stdout: str = "", returncode: int = 0):
 
 
 class TestRunDocker:
-    def test_raises_docker_not_found_on_file_not_found(self, monkeypatch) -> None:
+    def test_raises_docker_not_found_on_file_not_found(
+        self, monkeypatch
+    ) -> None:
         monkeypatch.setattr(
             "mcp_artifact_gateway.config.docker_postgres.subprocess.run",
             lambda *a, **kw: (_ for _ in ()).throw(FileNotFoundError()),
@@ -277,7 +272,9 @@ class TestContainerCredentials:
             "mcp_artifact_gateway.config.docker_postgres._run_docker",
             lambda *a, **kw: _mock_run_docker(stdout=json.dumps(output)),
         )
-        with pytest.raises(DockerCommandError, match="POSTGRES_PASSWORD not found"):
+        with pytest.raises(
+            DockerCommandError, match="POSTGRES_PASSWORD not found"
+        ):
             _get_container_password("test")
 
     def test_get_password_container_not_found(self, monkeypatch) -> None:
@@ -301,7 +298,11 @@ class TestContainerCredentials:
 
     def test_get_host_port_no_bindings(self, monkeypatch) -> None:
         output = [
-            {"HostConfig": {"PortBindings": {}}, "State": {"Running": True}, "Config": {"Env": []}}
+            {
+                "HostConfig": {"PortBindings": {}},
+                "State": {"Running": True},
+                "Config": {"Env": []},
+            }
         ]
         monkeypatch.setattr(
             "mcp_artifact_gateway.config.docker_postgres._run_docker",
@@ -396,7 +397,9 @@ class TestWaitForHealthy:
             "mcp_artifact_gateway.config.docker_postgres.time.sleep",
             lambda _: None,
         )
-        with pytest.raises(DockerHealthCheckError, match="did not become healthy"):
+        with pytest.raises(
+            DockerHealthCheckError, match="did not become healthy"
+        ):
             _wait_for_healthy("test", timeout=0.0)
 
 

@@ -6,6 +6,12 @@ import datetime as dt
 from decimal import Decimal
 
 from mcp_artifact_gateway.constants import WORKSPACE_ID
+from mcp_artifact_gateway.jobs.hard_delete import (
+    FIND_HARD_DELETE_CANDIDATES_SQL,
+    FIND_UNREFERENCED_BLOBS_SQL,
+    FIND_UNREFERENCED_PAYLOADS_SQL,
+    HardDeleteResult,
+)
 from mcp_artifact_gateway.jobs.quota import (
     SOFT_DELETE_LRU_FOR_QUOTA_SQL,
     STORAGE_USAGE_SQL,
@@ -19,12 +25,6 @@ from mcp_artifact_gateway.jobs.quota import (
     soft_delete_lru_batch,
     soft_delete_lru_params,
     storage_usage_params,
-)
-from mcp_artifact_gateway.jobs.hard_delete import (
-    FIND_HARD_DELETE_CANDIDATES_SQL,
-    FIND_UNREFERENCED_BLOBS_SQL,
-    FIND_UNREFERENCED_PAYLOADS_SQL,
-    HardDeleteResult,
 )
 from mcp_artifact_gateway.obs.metrics import GatewayMetrics, counter_value
 
@@ -74,7 +74,9 @@ class _FakeConnection:
         self.committed = 0
         self.rolled_back = 0
 
-    def execute(self, query: str, _params: tuple[object, ...] | None = None) -> _FakeCursor:
+    def execute(
+        self, query: str, _params: tuple[object, ...] | None = None
+    ) -> _FakeCursor:
         self.executed.append(query.strip())
         if self.fail_on_contains and self.fail_on_contains in query:
             raise RuntimeError("simulated execute failure")
@@ -168,7 +170,9 @@ def test_parse_storage_usage_from_valid_row() -> None:
 
 
 def test_parse_storage_usage_from_decimal_row() -> None:
-    usage = _parse_storage_usage((Decimal("500"), Decimal("1000"), Decimal("800")))
+    usage = _parse_storage_usage(
+        (Decimal("500"), Decimal("1000"), Decimal("800"))
+    )
     assert usage.binary_blob_bytes == 500
     assert usage.payload_total_bytes == 1000
     assert usage.total_storage_bytes == 1300
@@ -199,7 +203,9 @@ def test_parse_storage_usage_total_avoids_double_counting() -> None:
 # check_breaches
 # ---------------------------------------------------------------------------
 def test_check_breaches_no_breach() -> None:
-    usage = StorageUsage(binary_blob_bytes=100, payload_total_bytes=200, total_storage_bytes=300)
+    usage = StorageUsage(
+        binary_blob_bytes=100, payload_total_bytes=200, total_storage_bytes=300
+    )
     breaches = check_breaches(
         usage,
         max_binary_blob_bytes=500,
@@ -213,7 +219,9 @@ def test_check_breaches_no_breach() -> None:
 
 
 def test_check_breaches_binary_only() -> None:
-    usage = StorageUsage(binary_blob_bytes=600, payload_total_bytes=200, total_storage_bytes=300)
+    usage = StorageUsage(
+        binary_blob_bytes=600, payload_total_bytes=200, total_storage_bytes=300
+    )
     breaches = check_breaches(
         usage,
         max_binary_blob_bytes=500,
@@ -227,7 +235,9 @@ def test_check_breaches_binary_only() -> None:
 
 
 def test_check_breaches_payload_only() -> None:
-    usage = StorageUsage(binary_blob_bytes=100, payload_total_bytes=600, total_storage_bytes=300)
+    usage = StorageUsage(
+        binary_blob_bytes=100, payload_total_bytes=600, total_storage_bytes=300
+    )
     breaches = check_breaches(
         usage,
         max_binary_blob_bytes=500,
@@ -241,7 +251,9 @@ def test_check_breaches_payload_only() -> None:
 
 
 def test_check_breaches_total_only() -> None:
-    usage = StorageUsage(binary_blob_bytes=100, payload_total_bytes=200, total_storage_bytes=600)
+    usage = StorageUsage(
+        binary_blob_bytes=100, payload_total_bytes=200, total_storage_bytes=600
+    )
     breaches = check_breaches(
         usage,
         max_binary_blob_bytes=500,
@@ -253,7 +265,9 @@ def test_check_breaches_total_only() -> None:
 
 
 def test_check_breaches_all_exceeded() -> None:
-    usage = StorageUsage(binary_blob_bytes=600, payload_total_bytes=600, total_storage_bytes=600)
+    usage = StorageUsage(
+        binary_blob_bytes=600, payload_total_bytes=600, total_storage_bytes=600
+    )
     breaches = check_breaches(
         usage,
         max_binary_blob_bytes=500,
@@ -266,7 +280,9 @@ def test_check_breaches_all_exceeded() -> None:
 
 
 def test_check_breaches_at_exact_limit_not_exceeded() -> None:
-    usage = StorageUsage(binary_blob_bytes=500, payload_total_bytes=500, total_storage_bytes=500)
+    usage = StorageUsage(
+        binary_blob_bytes=500, payload_total_bytes=500, total_storage_bytes=500
+    )
     breaches = check_breaches(
         usage,
         max_binary_blob_bytes=500,
@@ -397,7 +413,9 @@ def test_enforce_quota_runs_hard_delete_with_no_new_soft_deletes() -> None:
         # First usage call: over quota; second (after hard-delete): under quota
         usage_sequence=[(600, 800, 700), (100, 200, 150)],
         soft_delete_rows=[],  # nothing newly soft-deleted this round
-        candidate_rows=[("art_deleted", "hash_deleted")],  # already soft-deleted
+        candidate_rows=[
+            ("art_deleted", "hash_deleted")
+        ],  # already soft-deleted
         payload_rows=[("hash_deleted", 600)],
         blob_rows=[],
     )
@@ -453,7 +471,9 @@ def test_enforce_quota_stops_when_no_candidates_to_prune() -> None:
     assert result.soft_deleted_count == 0
 
 
-def test_enforce_quota_uses_past_cutoff_for_hard_delete_grace(monkeypatch) -> None:
+def test_enforce_quota_uses_past_cutoff_for_hard_delete_grace(
+    monkeypatch,
+) -> None:
     conn = _FakeConnection(
         usage_sequence=[(600, 800, 700), (600, 800, 700)],
     )
@@ -505,8 +525,12 @@ def test_enforce_quota_recomputes_cutoff_each_round(monkeypatch) -> None:
     captured: list[str] = []
     cutoff_values = iter(
         [
-            dt.datetime(2026, 1, 1, 0, 0, 1, tzinfo=dt.timezone.utc).isoformat(),
-            dt.datetime(2026, 1, 1, 0, 0, 4, tzinfo=dt.timezone.utc).isoformat(),
+            dt.datetime(
+                2026, 1, 1, 0, 0, 1, tzinfo=dt.timezone.utc
+            ).isoformat(),
+            dt.datetime(
+                2026, 1, 1, 0, 0, 4, tzinfo=dt.timezone.utc
+            ).isoformat(),
         ]
     )
 
@@ -612,7 +636,9 @@ def test_enforce_quota_returns_usage_before() -> None:
 # Dataclass invariants
 # ---------------------------------------------------------------------------
 def test_storage_usage_is_frozen() -> None:
-    usage = StorageUsage(binary_blob_bytes=0, payload_total_bytes=0, total_storage_bytes=0)
+    usage = StorageUsage(
+        binary_blob_bytes=0, payload_total_bytes=0, total_storage_bytes=0
+    )
     try:
         usage.binary_blob_bytes = 1  # type: ignore[misc]
         assert False, "should be frozen"

@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import gzip
 from dataclasses import dataclass
+import gzip
 
 import zstandard as zstd
 
@@ -20,7 +20,9 @@ class CompressedBytes:
 def compress_bytes(data: bytes, encoding: str) -> CompressedBytes:
     """Compress bytes with configured encoding."""
     if encoding == "none":
-        return CompressedBytes(encoding="none", data=data, uncompressed_len=len(data))
+        return CompressedBytes(
+            encoding="none", data=data, uncompressed_len=len(data)
+        )
     if encoding == "gzip":
         return CompressedBytes(
             encoding="gzip",

@@ -1,8 +1,7 @@
 from __future__ import annotations
 
-import dataclasses
-
 import asyncio
+import dataclasses
 
 from mcp_artifact_gateway.cache.reuse import (
     ReuseResult,
@@ -96,7 +95,9 @@ def test_check_reuse_no_expected_schema_hash() -> None:
 
 
 def test_reuse_result_frozen() -> None:
-    r = ReuseResult(reused=True, artifact_id="art_1", reason="request_key_match")
+    r = ReuseResult(
+        reused=True, artifact_id="art_1", reason="request_key_match"
+    )
     try:
         r.reused = False  # type: ignore[misc]
         raise AssertionError("expected FrozenInstanceError")  # pragma: no cover
@@ -152,8 +153,12 @@ def test_acquire_advisory_lock_with_timeout_success(monkeypatch) -> None:
     conn = _LockConnection([False, False, True])
     metrics = _Metrics()
     times = iter([0.0, 0.001, 0.002, 0.003, 0.004])
-    monkeypatch.setattr("mcp_artifact_gateway.cache.reuse.time.monotonic", lambda: next(times))
-    monkeypatch.setattr("mcp_artifact_gateway.cache.reuse.time.sleep", lambda _seconds: None)
+    monkeypatch.setattr(
+        "mcp_artifact_gateway.cache.reuse.time.monotonic", lambda: next(times)
+    )
+    monkeypatch.setattr(
+        "mcp_artifact_gateway.cache.reuse.time.sleep", lambda _seconds: None
+    )
 
     acquired = acquire_advisory_lock(
         conn,
@@ -171,8 +176,12 @@ def test_acquire_advisory_lock_with_timeout_failure(monkeypatch) -> None:
     conn = _LockConnection([False, False, False])
     metrics = _Metrics()
     times = iter([0.0, 0.005, 0.010, 0.011])
-    monkeypatch.setattr("mcp_artifact_gateway.cache.reuse.time.monotonic", lambda: next(times))
-    monkeypatch.setattr("mcp_artifact_gateway.cache.reuse.time.sleep", lambda _seconds: None)
+    monkeypatch.setattr(
+        "mcp_artifact_gateway.cache.reuse.time.monotonic", lambda: next(times)
+    )
+    monkeypatch.setattr(
+        "mcp_artifact_gateway.cache.reuse.time.sleep", lambda _seconds: None
+    )
 
     acquired = acquire_advisory_lock(
         conn,
@@ -222,7 +231,9 @@ def test_check_reuse_candidate_increments_cache_miss_on_none() -> None:
     assert counter_value(metrics.cache_hits) == 0
 
 
-def test_check_reuse_candidate_increments_cache_miss_on_schema_mismatch() -> None:
+def test_check_reuse_candidate_increments_cache_miss_on_schema_mismatch() -> (
+    None
+):
     """check_reuse_candidate increments cache_misses on schema mismatch."""
     metrics = GatewayMetrics()
     row = {
@@ -253,7 +264,9 @@ def test_acquire_advisory_lock_async_success(monkeypatch) -> None:
     async def _noop_sleep(_seconds):
         pass
 
-    monkeypatch.setattr("mcp_artifact_gateway.cache.reuse.asyncio.sleep", _noop_sleep)
+    monkeypatch.setattr(
+        "mcp_artifact_gateway.cache.reuse.asyncio.sleep", _noop_sleep
+    )
 
     acquired = asyncio.run(
         acquire_advisory_lock_async(
@@ -373,9 +386,9 @@ def test_release_advisory_lock_noop_for_postgres() -> None:
 
 def test_sqlite_lock_contention_only_one_thread_wins() -> None:
     """When multiple threads race for the same key, exactly one acquires."""
+    from concurrent.futures import ThreadPoolExecutor
     import sqlite3
     import threading
-    from concurrent.futures import ThreadPoolExecutor
 
     from mcp_artifact_gateway.cache.reuse import release_advisory_lock
 
@@ -407,9 +420,9 @@ def test_sqlite_lock_contention_only_one_thread_wins() -> None:
 
 def test_sqlite_lock_contention_different_keys_independent() -> None:
     """Threads competing for different keys should all succeed."""
+    from concurrent.futures import ThreadPoolExecutor
     import sqlite3
     import threading
-    from concurrent.futures import ThreadPoolExecutor
 
     from mcp_artifact_gateway.cache.reuse import release_advisory_lock
 

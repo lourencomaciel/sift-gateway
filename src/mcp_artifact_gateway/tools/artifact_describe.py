@@ -1,14 +1,33 @@
-"""artifact.describe tool implementation."""
+"""Validate arguments and build responses for ``artifact.describe``.
+
+Return mapping metadata and discovered root paths for an artifact,
+including sample indices and coverage statistics for partially
+mapped artifacts.  Exports ``validate_describe_args``,
+``build_describe_response``, and fetch SQL constants.
+
+Typical usage example::
+
+    error = validate_describe_args(arguments)
+    if error:
+        return error
+    response = build_describe_response(artifact_row, roots)
+"""
 
 from __future__ import annotations
 
 from typing import Any
 
-from mcp_artifact_gateway.constants import WORKSPACE_ID
-
 
 def validate_describe_args(arguments: dict[str, Any]) -> dict[str, Any] | None:
-    """Validate artifact.describe arguments."""
+    """Validate ``artifact.describe`` arguments.
+
+    Args:
+        arguments: Raw tool arguments including gateway context
+            and ``artifact_id``.
+
+    Returns:
+        Error dict on validation failure, ``None`` when valid.
+    """
     ctx = arguments.get("_gateway_context")
     if not isinstance(ctx, dict) or not ctx.get("session_id"):
         return {
@@ -45,7 +64,22 @@ def build_describe_response(
     artifact_row: dict[str, Any],
     roots: list[dict[str, Any]],
 ) -> dict[str, Any]:
-    """Build artifact.describe response."""
+    """Build the ``artifact.describe`` response dict.
+
+    Assembles mapping metadata, traversal contract version, and
+    root path information including sample coverage statistics
+    for partially mapped artifacts.
+
+    Args:
+        artifact_row: Artifact database row with mapping
+            metadata columns.
+        roots: List of root row dicts ordered by
+            ``root_score`` descending.
+
+    Returns:
+        Structured response dict with ``artifact_id``,
+        ``mapping``, and ``roots`` sections.
+    """
     from mcp_artifact_gateway.constants import TRAVERSAL_CONTRACT_VERSION
 
     response: dict[str, Any] = {
@@ -54,7 +88,9 @@ def build_describe_response(
             "map_kind": artifact_row.get("map_kind", "none"),
             "map_status": artifact_row.get("map_status", "pending"),
             "mapper_version": artifact_row.get("mapper_version"),
-            "map_budget_fingerprint": artifact_row.get("map_budget_fingerprint"),
+            "map_budget_fingerprint": artifact_row.get(
+                "map_budget_fingerprint"
+            ),
             "map_backend_id": artifact_row.get("map_backend_id"),
             "prng_version": artifact_row.get("prng_version"),
             "traversal_contract_version": TRAVERSAL_CONTRACT_VERSION,
@@ -76,7 +112,9 @@ def build_describe_response(
         if sample_indices is not None:
             root_info["sampled_only"] = True
             root_info["sample_indices"] = sample_indices
-            sampled_record_count = len(sample_indices) if isinstance(sample_indices, list) else 0
+            sampled_record_count = (
+                len(sample_indices) if isinstance(sample_indices, list) else 0
+            )
             if isinstance(root_summary, dict):
                 raw_count = root_summary.get("sampled_record_count")
                 if isinstance(raw_count, int) and raw_count >= 0:

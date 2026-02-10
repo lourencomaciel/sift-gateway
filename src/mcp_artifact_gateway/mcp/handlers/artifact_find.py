@@ -5,7 +5,10 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, Mapping
 
 from mcp_artifact_gateway.constants import WORKSPACE_ID
-from mcp_artifact_gateway.cursor.hmac import CursorExpiredError, CursorTokenError
+from mcp_artifact_gateway.cursor.hmac import (
+    CursorExpiredError,
+    CursorTokenError,
+)
 from mcp_artifact_gateway.cursor.payload import CursorStaleError
 from mcp_artifact_gateway.envelope.responses import gateway_error
 from mcp_artifact_gateway.mcp.handlers.common import (
@@ -29,13 +32,30 @@ FROM artifact_samples
 WHERE workspace_id = %s AND artifact_id = %s AND root_key = ANY(%s)
 ORDER BY root_key, sample_index ASC
 """
-_BATCH_SAMPLE_COLUMNS = ["root_key", "sample_index", "record", "record_bytes", "record_hash"]
+_BATCH_SAMPLE_COLUMNS = [
+    "root_key",
+    "sample_index",
+    "record",
+    "record_bytes",
+    "record_hash",
+]
 
 
 async def handle_artifact_find(
     ctx: GatewayServer,
     arguments: dict[str, Any],
 ) -> dict[str, Any]:
+    """Handle the ``artifact.find`` tool call.
+
+    Args:
+        ctx: Gateway server instance providing DB and cursor helpers.
+        arguments: Tool arguments including ``artifact_id``, optional
+            ``root_path``, ``where``, ``cursor``, and ``limit``.
+
+    Returns:
+        Paginated find response with matching records, or a gateway
+        error.
+    """
     from mcp_artifact_gateway.tools.artifact_describe import FETCH_ROOTS_SQL
     from mcp_artifact_gateway.tools.artifact_find import (
         build_find_response,
@@ -56,7 +76,9 @@ async def handle_artifact_find(
         return gateway_error("INVALID_ARGUMENT", "root_path must be a string")
     where_expr = arguments.get("where")
     if where_expr is not None and not isinstance(where_expr, (Mapping, str)):
-        return gateway_error("INVALID_ARGUMENT", "where must be an object or string")
+        return gateway_error(
+            "INVALID_ARGUMENT", "where must be an object or string"
+        )
     if where_expr is None:
         where_binding_hash = "__none__"
     else:
@@ -70,7 +92,9 @@ async def handle_artifact_find(
                 "INVALID_ARGUMENT",
                 f"invalid where expression: {exc}",
             )
-    root_path_binding = root_path_filter if isinstance(root_path_filter, str) else "__any__"
+    root_path_binding = (
+        root_path_filter if isinstance(root_path_filter, str) else "__any__"
+    )
 
     offset = 0
     cursor_payload: dict[str, Any] | None = None
@@ -163,10 +187,16 @@ async def handle_artifact_find(
             ROOT_COLUMNS,
         )
         if root_path_filter is not None:
-            roots = [root for root in roots if root.get("root_path") == root_path_filter]
+            roots = [
+                root
+                for root in roots
+                if root.get("root_path") == root_path_filter
+            ]
 
         root_keys = [root["root_key"] for root in roots]
-        root_key_to_path = {root["root_key"]: root.get("root_path") for root in roots}
+        root_key_to_path = {
+            root["root_key"]: root.get("root_path") for root in roots
+        }
 
         items: list[dict[str, Any]] = []
         if root_keys:
@@ -206,7 +236,9 @@ async def handle_artifact_find(
                         continue
                 items.append(
                     {
-                        "root_path": root_key_to_path.get(sample.get("root_key")),
+                        "root_path": root_key_to_path.get(
+                            sample.get("root_key")
+                        ),
                         "sample_index": sample.get("sample_index"),
                         "record": record,
                         "record_hash": sample.get("record_hash"),
@@ -253,7 +285,7 @@ async def handle_artifact_find(
             extra=extra,
         )
     determinism: dict[str, str] | None = None
-    # No sampled_only guard needed: artifact.find always operates in sampled mode.
+    # No sampled_only guard: find always uses sampled mode.
     if map_budget_fingerprint:
         from mcp_artifact_gateway.constants import TRAVERSAL_CONTRACT_VERSION
 

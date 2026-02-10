@@ -1,4 +1,4 @@
-"""Payload storage helpers."""
+"""Re-export payload preparation and reconstruction helpers."""
 
 from mcp_artifact_gateway.storage.payload_store import (
     PreparedPayload,

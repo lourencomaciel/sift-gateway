@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 from mcp_artifact_gateway.envelope.model import BinaryRefContentPart
-from mcp_artifact_gateway.envelope.normalize import normalize_envelope, strip_reserved_args
+from mcp_artifact_gateway.envelope.normalize import (
+    normalize_envelope,
+    strip_reserved_args,
+)
 
 
 def test_strip_reserved_args_keeps_non_reserved_gateway_word() -> None:
@@ -76,7 +79,13 @@ def test_normalize_rejects_binary_ref_missing_identifiers() -> None:
             upstream_instance_id="up_1",
             upstream_prefix="github",
             tool="search_issues",
-            content=[{"type": "binary_ref", "byte_count": 1, "mime": "application/octet-stream"}],
+            content=[
+                {
+                    "type": "binary_ref",
+                    "byte_count": 1,
+                    "mime": "application/octet-stream",
+                }
+            ],
         )
     except ValueError as exc:
         assert "blob_id" in str(exc)

@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import sqlite3
 from pathlib import Path
+import sqlite3
 from unittest.mock import MagicMock
 
 import pytest
@@ -60,7 +60,9 @@ class TestPostgresBackendConnectionInterface:
     def test_connection_context_yields_same_object(self):
         mock_conn = MagicMock()
         pool = MagicMock()
-        pool.connection.return_value.__enter__ = MagicMock(return_value=mock_conn)
+        pool.connection.return_value.__enter__ = MagicMock(
+            return_value=mock_conn
+        )
         pool.connection.return_value.__exit__ = MagicMock(return_value=False)
         backend = PostgresBackend(pool=pool)
         with backend.connection() as conn:
@@ -91,7 +93,9 @@ class TestSqliteBackend:
             assert fk == 1
 
     def test_busy_timeout_set(self, tmp_path: Path):
-        backend = SqliteBackend(db_path=tmp_path / "test.db", busy_timeout_ms=3000)
+        backend = SqliteBackend(
+            db_path=tmp_path / "test.db", busy_timeout_ms=3000
+        )
         try:
             with backend.connection() as conn:
                 timeout = conn.execute("PRAGMA busy_timeout").fetchone()[0]
@@ -103,15 +107,21 @@ class TestSqliteBackend:
         with backend.connection() as conn:
             conn.execute("CREATE TABLE t (id INTEGER PRIMARY KEY, name TEXT)")
             conn.execute("INSERT INTO t (id, name) VALUES (?, ?)", (1, "alice"))
-            row = conn.execute("SELECT name FROM t WHERE id = ?", (1,)).fetchone()
+            row = conn.execute(
+                "SELECT name FROM t WHERE id = ?", (1,)
+            ).fetchone()
             assert row[0] == "alice"
 
     def test_json_roundtrip_dict(self, backend: SqliteBackend):
         with backend.connection() as conn:
             conn.execute("CREATE TABLE j (id INTEGER PRIMARY KEY, data JSON)")
             original = {"key": "value", "nested": {"a": 1}}
-            conn.execute("INSERT INTO j (id, data) VALUES (?, ?)", (1, original))
-            row = conn.execute("SELECT data FROM j WHERE id = ?", (1,)).fetchone()
+            conn.execute(
+                "INSERT INTO j (id, data) VALUES (?, ?)", (1, original)
+            )
+            row = conn.execute(
+                "SELECT data FROM j WHERE id = ?", (1,)
+            ).fetchone()
             assert row[0] == original
             assert isinstance(row[0], dict)
 
@@ -119,8 +129,12 @@ class TestSqliteBackend:
         with backend.connection() as conn:
             conn.execute("CREATE TABLE j2 (id INTEGER PRIMARY KEY, data JSON)")
             original = [1, "two", {"three": 3}]
-            conn.execute("INSERT INTO j2 (id, data) VALUES (?, ?)", (1, original))
-            row = conn.execute("SELECT data FROM j2 WHERE id = ?", (1,)).fetchone()
+            conn.execute(
+                "INSERT INTO j2 (id, data) VALUES (?, ?)", (1, original)
+            )
+            row = conn.execute(
+                "SELECT data FROM j2 WHERE id = ?", (1,)
+            ).fetchone()
             assert row[0] == original
             assert isinstance(row[0], list)
 
@@ -128,7 +142,9 @@ class TestSqliteBackend:
         with backend.connection() as conn:
             conn.execute("CREATE TABLE j3 (id INTEGER PRIMARY KEY, data JSON)")
             conn.execute("INSERT INTO j3 (id, data) VALUES (?, ?)", (1, None))
-            row = conn.execute("SELECT data FROM j3 WHERE id = ?", (1,)).fetchone()
+            row = conn.execute(
+                "SELECT data FROM j3 WHERE id = ?", (1,)
+            ).fetchone()
             assert row[0] is None
 
     def test_close_then_connection_raises(self, tmp_path: Path):
@@ -219,10 +235,14 @@ class TestSqliteMigrationIntegration:
             / "db"
             / "migrations_sqlite"
         )
-        applied_again = apply_migrations(migrated_conn, migrations_dir, param_marker="?")
+        applied_again = apply_migrations(
+            migrated_conn, migrations_dir, param_marker="?"
+        )
         assert applied_again == []
 
-    def test_schema_migrations_recorded(self, migrated_conn: sqlite3.Connection):
+    def test_schema_migrations_recorded(
+        self, migrated_conn: sqlite3.Connection
+    ):
         rows = migrated_conn.execute(
             "SELECT migration_name FROM schema_migrations ORDER BY migration_name"
         ).fetchall()
@@ -254,7 +274,20 @@ class TestSqliteMigrationIntegration:
                 payload_binary_bytes_total, payload_total_bytes,
                 mapper_version
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            ("test", "a1", "s1", "tool", "up1", "rk1", "ph1", "v1", 4, 0, 4, "v1"),
+            (
+                "test",
+                "a1",
+                "s1",
+                "tool",
+                "up1",
+                "rk1",
+                "ph1",
+                "v1",
+                4,
+                0,
+                4,
+                "v1",
+            ),
         )
         row = migrated_conn.execute(
             "SELECT created_seq FROM artifacts WHERE artifact_id = ?", ("a1",)

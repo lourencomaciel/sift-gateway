@@ -40,7 +40,9 @@ class _FakeConnection:
         self.committed = False
         self.rolled_back = False
 
-    def execute(self, query: str, _params: tuple[object, ...] | None = None) -> _FakeCursor:
+    def execute(
+        self, query: str, _params: tuple[object, ...] | None = None
+    ) -> _FakeCursor:
         self.executed.append(query.strip())
         if self.fail_on_contains and self.fail_on_contains in query:
             raise RuntimeError("simulated execute failure")
@@ -199,7 +201,9 @@ class _SqliteFakeConnection:
         self.committed = False
         self.rolled_back = False
 
-    def execute(self, query: str, _params: tuple[object, ...] | None = None) -> "_SqliteFakeCursor":
+    def execute(
+        self, query: str, _params: tuple[object, ...] | None = None
+    ) -> "_SqliteFakeCursor":
         self.executed.append(query.strip())
         normalized = query.strip().upper()
         if "DELETED_AT IS NOT NULL" in normalized and "SELECT" in normalized:

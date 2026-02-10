@@ -9,8 +9,14 @@ from mcp_artifact_gateway.cursor.hmac import CursorExpiredError
 from mcp_artifact_gateway.cursor.payload import CursorStaleError
 from mcp_artifact_gateway.cursor.sample_set_hash import compute_sample_set_hash
 from mcp_artifact_gateway.cursor.secrets import CursorSecrets
-from mcp_artifact_gateway.mcp.server import GatewayServer
-from mcp_artifact_gateway.mcp.upstream import UpstreamInstance, UpstreamToolSchema
+from mcp_artifact_gateway.mcp.server import (
+    GatewayServer,
+    _check_sample_corruption,
+)
+from mcp_artifact_gateway.mcp.upstream import (
+    UpstreamInstance,
+    UpstreamToolSchema,
+)
 from mcp_artifact_gateway.obs.metrics import GatewayMetrics, counter_value
 from mcp_artifact_gateway.query.select_paths import select_paths_hash
 from mcp_artifact_gateway.query.where_hash import where_hash
@@ -254,7 +260,9 @@ def test_status_handler_includes_cursor_secrets_info(tmp_path: Path) -> None:
     assert cursor["active_versions"] == ["v1", "v2"]
 
 
-def test_status_handler_omits_cursor_secrets_when_not_loaded(tmp_path: Path) -> None:
+def test_status_handler_omits_cursor_secrets_when_not_loaded(
+    tmp_path: Path,
+) -> None:
     """When cursor_secrets is None, the status response should not include secret fields."""
     server = _server(tmp_path)
     assert server.cursor_secrets is None
@@ -280,16 +288,22 @@ def test_status_handler_includes_upstream_connectivity(tmp_path: Path) -> None:
 
 
 def test_cursor_error_updates_metrics(tmp_path: Path) -> None:
-    server = GatewayServer(config=GatewayConfig(data_dir=tmp_path), metrics=GatewayMetrics())
+    server = GatewayServer(
+        config=GatewayConfig(data_dir=tmp_path), metrics=GatewayMetrics()
+    )
     expired = server._cursor_error(CursorExpiredError("expired"))
     assert expired["code"] == "CURSOR_EXPIRED"
     assert counter_value(server.metrics.cursor_expired) == 1
 
-    stale = server._cursor_error(CursorStaleError("cursor where_canonicalization_mode mismatch"))
+    stale = server._cursor_error(
+        CursorStaleError("cursor where_canonicalization_mode mismatch")
+    )
     assert stale["code"] == "CURSOR_STALE"
     assert counter_value(server.metrics.cursor_stale_where_mode) == 1
 
-    stale_budget = server._cursor_error(CursorStaleError("cursor map_budget_fingerprint mismatch"))
+    stale_budget = server._cursor_error(
+        CursorStaleError("cursor map_budget_fingerprint mismatch")
+    )
     assert stale_budget["code"] == "CURSOR_STALE"
     assert counter_value(server.metrics.cursor_stale_map_budget) == 1
 
@@ -298,7 +312,9 @@ def test_cursor_error_updates_metrics(tmp_path: Path) -> None:
     assert counter_value(server.metrics.cursor_invalid) == 1
 
 
-def test_artifact_handlers_return_validation_or_not_implemented(tmp_path: Path) -> None:
+def test_artifact_handlers_return_validation_or_not_implemented(
+    tmp_path: Path,
+) -> None:
     server = _server(tmp_path)
 
     invalid_get = asyncio.run(server.handle_artifact_get({}))
@@ -364,7 +380,9 @@ def test_handle_mirrored_tool_rejects_invalid_chain_seq(tmp_path: Path) -> None:
     assert response["code"] == "INVALID_ARGUMENT"
 
 
-def test_handle_mirrored_tool_success_path_without_db(tmp_path: Path, monkeypatch) -> None:
+def test_handle_mirrored_tool_success_path_without_db(
+    tmp_path: Path, monkeypatch
+) -> None:
     config = GatewayConfig(data_dir=tmp_path, passthrough_max_bytes=0)
     server = GatewayServer(config=config, upstreams=[_upstream()])
     mirrored = server.mirrored_tools["demo.echo"]
@@ -377,7 +395,9 @@ def test_handle_mirrored_tool_success_path_without_db(tmp_path: Path, monkeypatc
             "meta": {"trace_id": "abc"},
         }
 
-    monkeypatch.setattr("mcp_artifact_gateway.mcp.server.call_upstream_tool", _fake_call)
+    monkeypatch.setattr(
+        "mcp_artifact_gateway.mcp.server.call_upstream_tool", _fake_call
+    )
 
     response = asyncio.run(
         server.handle_mirrored_tool(
@@ -401,7 +421,9 @@ def test_handle_mirrored_tool_returns_cached_artifact_when_reused(
     server = GatewayServer(
         config=config,
         upstreams=[_upstream()],
-        db_pool=_FakePool(("art_cached", "payload_hash", "schema_echo", "ready", 3)),  # type: ignore[arg-type]
+        db_pool=_FakePool(
+            ("art_cached", "payload_hash", "schema_echo", "ready", 3)
+        ),  # type: ignore[arg-type]
         metrics=GatewayMetrics(),
     )
     mirrored = server.mirrored_tools["demo.echo"]
@@ -409,7 +431,9 @@ def test_handle_mirrored_tool_returns_cached_artifact_when_reused(
     async def _must_not_call(*_args, **_kwargs):
         raise AssertionError("upstream should not be called on reuse")
 
-    monkeypatch.setattr("mcp_artifact_gateway.mcp.server.call_upstream_tool", _must_not_call)
+    monkeypatch.setattr(
+        "mcp_artifact_gateway.mcp.server.call_upstream_tool", _must_not_call
+    )
 
     response = asyncio.run(
         server.handle_mirrored_tool(
@@ -442,13 +466,16 @@ def test_handle_mirrored_tool_returns_busy_when_lock_times_out(
         return False
 
     monkeypatch.setattr(
-        "mcp_artifact_gateway.mcp.handlers.mirrored_tool.acquire_advisory_lock_async", _lock_fail
+        "mcp_artifact_gateway.mcp.handlers.mirrored_tool.acquire_advisory_lock_async",
+        _lock_fail,
     )
 
     async def _must_not_call(*_args, **_kwargs):
         raise AssertionError("upstream should not be called when lock fails")
 
-    monkeypatch.setattr("mcp_artifact_gateway.mcp.server.call_upstream_tool", _must_not_call)
+    monkeypatch.setattr(
+        "mcp_artifact_gateway.mcp.server.call_upstream_tool", _must_not_call
+    )
 
     response = asyncio.run(
         server.handle_mirrored_tool(
@@ -468,7 +495,9 @@ def test_handle_mirrored_tool_runs_inline_mapping_in_sync_mode(
     monkeypatch,
 ) -> None:
     server = GatewayServer(
-        config=GatewayConfig(data_dir=tmp_path, mapping_mode="sync", passthrough_max_bytes=0),
+        config=GatewayConfig(
+            data_dir=tmp_path, mapping_mode="sync", passthrough_max_bytes=0
+        ),
         upstreams=[_upstream()],
         db_pool=_FakePool((True,)),  # type: ignore[arg-type]
         metrics=GatewayMetrics(),
@@ -486,7 +515,9 @@ def test_handle_mirrored_tool_runs_inline_mapping_in_sync_mode(
     inline_calls: list[str] = []
     scheduled_calls: list[str] = []
 
-    monkeypatch.setattr("mcp_artifact_gateway.mcp.server.call_upstream_tool", _fake_call)
+    monkeypatch.setattr(
+        "mcp_artifact_gateway.mcp.server.call_upstream_tool", _fake_call
+    )
     monkeypatch.setattr(
         "mcp_artifact_gateway.mcp.handlers.mirrored_tool.persist_artifact",
         lambda **_kwargs: _persisted_handle(),
@@ -494,7 +525,9 @@ def test_handle_mirrored_tool_runs_inline_mapping_in_sync_mode(
     monkeypatch.setattr(
         server,
         "_run_mapping_inline",
-        lambda *_args, **kwargs: inline_calls.append(kwargs["handle"].artifact_id) or True,
+        lambda *_args, **kwargs: (
+            inline_calls.append(kwargs["handle"].artifact_id) or True
+        ),
     )
     monkeypatch.setattr(
         server,
@@ -521,7 +554,9 @@ def test_handle_mirrored_tool_schedules_background_mapping_in_async_mode(
     monkeypatch,
 ) -> None:
     server = GatewayServer(
-        config=GatewayConfig(data_dir=tmp_path, mapping_mode="async", passthrough_max_bytes=0),
+        config=GatewayConfig(
+            data_dir=tmp_path, mapping_mode="async", passthrough_max_bytes=0
+        ),
         upstreams=[_upstream()],
         db_pool=_FakePool((True,)),  # type: ignore[arg-type]
         metrics=GatewayMetrics(),
@@ -539,7 +574,9 @@ def test_handle_mirrored_tool_schedules_background_mapping_in_async_mode(
     inline_calls: list[str] = []
     scheduled_calls: list[str] = []
 
-    monkeypatch.setattr("mcp_artifact_gateway.mcp.server.call_upstream_tool", _fake_call)
+    monkeypatch.setattr(
+        "mcp_artifact_gateway.mcp.server.call_upstream_tool", _fake_call
+    )
     monkeypatch.setattr(
         "mcp_artifact_gateway.mcp.handlers.mirrored_tool.persist_artifact",
         lambda **_kwargs: _persisted_handle(),
@@ -547,7 +584,9 @@ def test_handle_mirrored_tool_schedules_background_mapping_in_async_mode(
     monkeypatch.setattr(
         server,
         "_run_mapping_inline",
-        lambda *_args, **kwargs: inline_calls.append(kwargs["handle"].artifact_id) or True,
+        lambda *_args, **kwargs: (
+            inline_calls.append(kwargs["handle"].artifact_id) or True
+        ),
     )
     monkeypatch.setattr(
         server,
@@ -568,7 +607,9 @@ def test_handle_mirrored_tool_schedules_background_mapping_in_async_mode(
     assert counter_value(server.metrics.upstream_calls) == 1
 
 
-def test_artifact_search_db_runtime_returns_items(tmp_path: Path, monkeypatch) -> None:
+def test_artifact_search_db_runtime_returns_items(
+    tmp_path: Path, monkeypatch
+) -> None:
     conn = _SeqConnection(
         [
             _SeqCursor(
@@ -594,17 +635,23 @@ def test_artifact_search_db_runtime_returns_items(tmp_path: Path, monkeypatch) -
         config=GatewayConfig(data_dir=tmp_path),
         db_pool=_SeqPool(conn),  # type: ignore[arg-type]
     )
-    monkeypatch.setattr(server, "_safe_touch_for_search", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        server, "_safe_touch_for_search", lambda *args, **kwargs: None
+    )
 
     response = asyncio.run(
-        server.handle_artifact_search({"_gateway_context": {"session_id": "sess_1"}, "filters": {}})
+        server.handle_artifact_search(
+            {"_gateway_context": {"session_id": "sess_1"}, "filters": {}}
+        )
     )
     assert response["truncated"] is False
     assert response["items"][0]["artifact_id"] == "art_1"
     assert conn.committed is True
 
 
-def test_artifact_get_db_runtime_returns_envelope_items(tmp_path: Path, monkeypatch) -> None:
+def test_artifact_get_db_runtime_returns_envelope_items(
+    tmp_path: Path, monkeypatch
+) -> None:
     envelope = {
         "type": "mcp_envelope",
         "upstream_instance_id": "inst_demo",
@@ -641,7 +688,9 @@ def test_artifact_get_db_runtime_returns_envelope_items(tmp_path: Path, monkeypa
         config=GatewayConfig(data_dir=tmp_path),
         db_pool=_SeqPool(conn),  # type: ignore[arg-type]
     )
-    monkeypatch.setattr(server, "_safe_touch_for_retrieval", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        server, "_safe_touch_for_retrieval", lambda *args, **kwargs: None
+    )
 
     response = asyncio.run(
         server.handle_artifact_get(
@@ -687,7 +736,9 @@ def test_artifact_get_cursor_includes_target_and_jsonpath_binding(
         config=GatewayConfig(data_dir=tmp_path),
         db_pool=_SeqPool(conn),  # type: ignore[arg-type]
     )
-    monkeypatch.setattr(server, "_safe_touch_for_retrieval", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        server, "_safe_touch_for_retrieval", lambda *args, **kwargs: None
+    )
     issued: dict[str, object] = {}
 
     def _issue_cursor(**kwargs):
@@ -716,7 +767,9 @@ def test_artifact_get_cursor_includes_target_and_jsonpath_binding(
     assert extra["artifact_generation"] == 1
 
 
-def test_artifact_get_cursor_target_mismatch_returns_stale(tmp_path: Path, monkeypatch) -> None:
+def test_artifact_get_cursor_target_mismatch_returns_stale(
+    tmp_path: Path, monkeypatch
+) -> None:
     conn = _SeqConnection(
         [
             _SeqCursor(one=(1,)),
@@ -744,7 +797,9 @@ def test_artifact_get_cursor_target_mismatch_returns_stale(tmp_path: Path, monke
         db_pool=_SeqPool(conn),  # type: ignore[arg-type]
         metrics=GatewayMetrics(),
     )
-    monkeypatch.setattr(server, "_safe_touch_for_retrieval", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        server, "_safe_touch_for_retrieval", lambda *args, **kwargs: None
+    )
     monkeypatch.setattr(
         server,
         "_verify_cursor_payload",
@@ -771,7 +826,9 @@ def test_artifact_get_cursor_target_mismatch_returns_stale(tmp_path: Path, monke
     assert "target mismatch" in response["message"]
 
 
-def test_artifact_describe_db_runtime_returns_roots(tmp_path: Path, monkeypatch) -> None:
+def test_artifact_describe_db_runtime_returns_roots(
+    tmp_path: Path, monkeypatch
+) -> None:
     conn = _SeqConnection(
         [
             _SeqCursor(one=(1,)),
@@ -816,11 +873,16 @@ def test_artifact_describe_db_runtime_returns_roots(tmp_path: Path, monkeypatch)
         config=GatewayConfig(data_dir=tmp_path),
         db_pool=_SeqPool(conn),  # type: ignore[arg-type]
     )
-    monkeypatch.setattr(server, "_safe_touch_for_retrieval", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        server, "_safe_touch_for_retrieval", lambda *args, **kwargs: None
+    )
 
     response = asyncio.run(
         server.handle_artifact_describe(
-            {"_gateway_context": {"session_id": "sess_1"}, "artifact_id": "art_1"}
+            {
+                "_gateway_context": {"session_id": "sess_1"},
+                "artifact_id": "art_1",
+            }
         )
     )
     assert response["artifact_id"] == "art_1"
@@ -830,11 +892,15 @@ def test_artifact_describe_db_runtime_returns_roots(tmp_path: Path, monkeypatch)
     assert response["roots"][0]["stop_reason"] == "max_compute"
 
 
-def test_artifact_select_db_runtime_partial_projects_records(tmp_path: Path, monkeypatch) -> None:
+def test_artifact_select_db_runtime_partial_projects_records(
+    tmp_path: Path, monkeypatch
+) -> None:
     conn = _SeqConnection(
         [
             _SeqCursor(one=(1,)),
-            _SeqCursor(one=("art_1", "partial", "ready", "off", None, 1, "mbf")),
+            _SeqCursor(
+                one=("art_1", "partial", "ready", "off", None, 1, "mbf")
+            ),
             _SeqCursor(
                 one=(
                     "rk_1",
@@ -853,7 +919,9 @@ def test_artifact_select_db_runtime_partial_projects_records(tmp_path: Path, mon
         config=GatewayConfig(data_dir=tmp_path),
         db_pool=_SeqPool(conn),  # type: ignore[arg-type]
     )
-    monkeypatch.setattr(server, "_safe_touch_for_retrieval", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        server, "_safe_touch_for_retrieval", lambda *args, **kwargs: None
+    )
 
     response = asyncio.run(
         server.handle_artifact_select(
@@ -878,7 +946,9 @@ def test_artifact_select_cursor_sample_set_mismatch_returns_stale(
     conn = _SeqConnection(
         [
             _SeqCursor(one=(1,)),
-            _SeqCursor(one=("art_1", "partial", "ready", "off", None, 1, "mbf")),
+            _SeqCursor(
+                one=("art_1", "partial", "ready", "off", None, 1, "mbf")
+            ),
             _SeqCursor(
                 one=(
                     "rk_1",
@@ -903,7 +973,9 @@ def test_artifact_select_cursor_sample_set_mismatch_returns_stale(
         db_pool=_SeqPool(conn),  # type: ignore[arg-type]
         metrics=GatewayMetrics(),
     )
-    monkeypatch.setattr(server, "_safe_touch_for_retrieval", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        server, "_safe_touch_for_retrieval", lambda *args, **kwargs: None
+    )
 
     where_expr = {"path": "$.id", "op": "eq", "value": 1}
     monkeypatch.setattr(
@@ -947,7 +1019,9 @@ def test_artifact_select_cursor_includes_partial_binding_fields(
     conn = _SeqConnection(
         [
             _SeqCursor(one=(1,)),
-            _SeqCursor(one=("art_1", "partial", "ready", "off", None, 1, "mbf")),
+            _SeqCursor(
+                one=("art_1", "partial", "ready", "off", None, 1, "mbf")
+            ),
             _SeqCursor(
                 one=(
                     "rk_1",
@@ -971,7 +1045,9 @@ def test_artifact_select_cursor_includes_partial_binding_fields(
         config=GatewayConfig(data_dir=tmp_path),
         db_pool=_SeqPool(conn),  # type: ignore[arg-type]
     )
-    monkeypatch.setattr(server, "_safe_touch_for_retrieval", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        server, "_safe_touch_for_retrieval", lambda *args, **kwargs: None
+    )
     issued: dict[str, object] = {}
 
     def _issue_cursor(**kwargs):
@@ -1008,11 +1084,15 @@ def test_artifact_select_cursor_includes_partial_binding_fields(
     )
 
 
-def test_artifact_find_db_runtime_filters_samples(tmp_path: Path, monkeypatch) -> None:
+def test_artifact_find_db_runtime_filters_samples(
+    tmp_path: Path, monkeypatch
+) -> None:
     conn = _SeqConnection(
         [
             _SeqCursor(one=(1,)),
-            _SeqCursor(one=("art_1", "partial", "ready", "off", None, 1, "mbf")),
+            _SeqCursor(
+                one=("art_1", "partial", "ready", "off", None, 1, "mbf")
+            ),
             _SeqCursor(
                 all_rows=[
                     (
@@ -1040,7 +1120,9 @@ def test_artifact_find_db_runtime_filters_samples(tmp_path: Path, monkeypatch) -
         config=GatewayConfig(data_dir=tmp_path),
         db_pool=_SeqPool(conn),  # type: ignore[arg-type]
     )
-    monkeypatch.setattr(server, "_safe_touch_for_retrieval", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        server, "_safe_touch_for_retrieval", lambda *args, **kwargs: None
+    )
 
     response = asyncio.run(
         server.handle_artifact_find(
@@ -1062,7 +1144,9 @@ def test_artifact_find_cursor_map_budget_mismatch_returns_stale(
     conn = _SeqConnection(
         [
             _SeqCursor(one=(1,)),
-            _SeqCursor(one=("art_1", "partial", "ready", "off", None, 1, "mbf")),
+            _SeqCursor(
+                one=("art_1", "partial", "ready", "off", None, 1, "mbf")
+            ),
         ]
     )
     server = GatewayServer(
@@ -1133,8 +1217,12 @@ def test_artifact_chain_pages_db_runtime_returns_cursor_when_truncated(
         config=GatewayConfig(data_dir=tmp_path),
         db_pool=_SeqPool(conn),  # type: ignore[arg-type]
     )
-    monkeypatch.setattr(server, "_safe_touch_for_search", lambda *args, **kwargs: None)
-    monkeypatch.setattr(server, "_issue_cursor", lambda *args, **kwargs: "cur_next")
+    monkeypatch.setattr(
+        server, "_safe_touch_for_search", lambda *args, **kwargs: None
+    )
+    monkeypatch.setattr(
+        server, "_issue_cursor", lambda *args, **kwargs: "cur_next"
+    )
 
     response = asyncio.run(
         server.handle_artifact_chain_pages(
@@ -1162,21 +1250,23 @@ def test_check_sample_corruption_returns_none_when_indices_match() -> None:
         {"sample_index": 3},
         {"sample_index": 7},
     ]
-    assert GatewayServer._check_sample_corruption(root_row, sample_rows) is None
+    assert _check_sample_corruption(root_row, sample_rows) is None
 
 
-def test_check_sample_corruption_returns_none_when_no_expected_indices() -> None:
+def test_check_sample_corruption_returns_none_when_no_expected_indices() -> (
+    None
+):
     root_row = {"root_key": "rk_1", "sample_indices": None}
-    assert GatewayServer._check_sample_corruption(root_row, []) is None
+    assert _check_sample_corruption(root_row, []) is None
 
     root_row_empty = {"root_key": "rk_1", "sample_indices": []}
-    assert GatewayServer._check_sample_corruption(root_row_empty, []) is None
+    assert _check_sample_corruption(root_row_empty, []) is None
 
 
 def test_check_sample_corruption_returns_internal_when_rows_missing() -> None:
     root_row = {"root_key": "rk_1", "sample_indices": [0, 3, 7]}
     sample_rows = [{"sample_index": 0}]  # indices 3 and 7 missing
-    result = GatewayServer._check_sample_corruption(root_row, sample_rows)
+    result = _check_sample_corruption(root_row, sample_rows)
     assert result is not None
     assert result["code"] == "INTERNAL"
     assert "corruption" in result["message"]
@@ -1195,7 +1285,9 @@ def test_artifact_select_returns_internal_on_sample_corruption(
             # artifact_visible
             _SeqCursor(one=(1,)),
             # artifact_meta
-            _SeqCursor(one=("art_1", "partial", "ready", "off", None, 1, "mbf")),
+            _SeqCursor(
+                one=("art_1", "partial", "ready", "off", None, 1, "mbf")
+            ),
             # root_row with sample_indices=[0, 1]
             _SeqCursor(
                 one=(
@@ -1216,7 +1308,9 @@ def test_artifact_select_returns_internal_on_sample_corruption(
         config=GatewayConfig(data_dir=tmp_path),
         db_pool=_SeqPool(conn),  # type: ignore[arg-type]
     )
-    monkeypatch.setattr(server, "_safe_touch_for_retrieval", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        server, "_safe_touch_for_retrieval", lambda *args, **kwargs: None
+    )
 
     response = asyncio.run(
         server.handle_artifact_select(
@@ -1241,11 +1335,17 @@ def test_artifact_find_returns_internal_on_sample_corruption(
             # artifact_visible
             _SeqCursor(one=(1,)),
             # artifact_meta
-            _SeqCursor(one=("art_1", "partial", "ready", "off", None, 1, "mbf")),
+            _SeqCursor(
+                one=("art_1", "partial", "ready", "off", None, 1, "mbf")
+            ),
             # roots: one root with sample_indices=[0, 2]
             # columns: root_key, root_path, count_estimate, inventory_coverage,
             #          root_summary, root_score, root_shape, fields_top, sample_indices
-            _SeqCursor(all_rows=[("rk_1", "$.data", 50, None, None, None, None, None, [0, 2])]),
+            _SeqCursor(
+                all_rows=[
+                    ("rk_1", "$.data", 50, None, None, None, None, None, [0, 2])
+                ]
+            ),
             # batch sample_rows: root_key, sample_index, record, record_bytes, record_hash
             # only index 0 present (index 2 missing)
             _SeqCursor(all_rows=[("rk_1", 0, {"x": 1}, 8, "h0")]),
@@ -1255,7 +1355,9 @@ def test_artifact_find_returns_internal_on_sample_corruption(
         config=GatewayConfig(data_dir=tmp_path),
         db_pool=_SeqPool(conn),  # type: ignore[arg-type]
     )
-    monkeypatch.setattr(server, "_safe_touch_for_retrieval", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        server, "_safe_touch_for_retrieval", lambda *args, **kwargs: None
+    )
 
     response = asyncio.run(
         server.handle_artifact_find(
@@ -1274,7 +1376,9 @@ def test_artifact_find_returns_internal_on_sample_corruption(
 # ---------------------------------------------------------------------------
 
 
-def test_handle_mirrored_tool_returns_internal_when_db_unhealthy(tmp_path: Path) -> None:
+def test_handle_mirrored_tool_returns_internal_when_db_unhealthy(
+    tmp_path: Path,
+) -> None:
     """When db_pool exists, db_ok=False, and recovery probe fails, return INTERNAL."""
     import psycopg
 
@@ -1328,7 +1432,9 @@ def test_handle_mirrored_tool_recovers_db_ok_on_successful_probe(
             "meta": {},
         }
 
-    monkeypatch.setattr("mcp_artifact_gateway.mcp.server.call_upstream_tool", _fake_call)
+    monkeypatch.setattr(
+        "mcp_artifact_gateway.mcp.server.call_upstream_tool", _fake_call
+    )
 
     _fake_handle = ArtifactHandle(
         artifact_id="art_recovered",
@@ -1359,7 +1465,10 @@ def test_handle_mirrored_tool_recovers_db_ok_on_successful_probe(
         server.handle_mirrored_tool(
             mirrored,
             {
-                "_gateway_context": {"session_id": "sess_1", "cache_mode": "fresh"},
+                "_gateway_context": {
+                    "session_id": "sess_1",
+                    "cache_mode": "fresh",
+                },
                 "message": "hello",
             },
         )
@@ -1369,7 +1478,9 @@ def test_handle_mirrored_tool_recovers_db_ok_on_successful_probe(
     assert server.db_ok is True  # recovered from transient failure
 
 
-def test_handle_mirrored_tool_returns_internal_when_fs_unhealthy(tmp_path: Path) -> None:
+def test_handle_mirrored_tool_returns_internal_when_fs_unhealthy(
+    tmp_path: Path,
+) -> None:
     """When fs_ok=False, return INTERNAL before calling upstream."""
     server = GatewayServer(
         config=GatewayConfig(data_dir=tmp_path),
@@ -1456,7 +1567,9 @@ def test_handle_mirrored_tool_skips_cache_on_non_connectivity_error(
             "meta": {},
         }
 
-    monkeypatch.setattr("mcp_artifact_gateway.mcp.server.call_upstream_tool", _fake_call)
+    monkeypatch.setattr(
+        "mcp_artifact_gateway.mcp.server.call_upstream_tool", _fake_call
+    )
 
     _fake_handle = ArtifactHandle(
         artifact_id="art_cache_skip",
@@ -1511,7 +1624,9 @@ def test_handle_mirrored_tool_returns_internal_on_db_persist_failure(
 
     server = GatewayServer(
         config=GatewayConfig(
-            data_dir=tmp_path, quota_enforcement_enabled=False, passthrough_max_bytes=0
+            data_dir=tmp_path,
+            quota_enforcement_enabled=False,
+            passthrough_max_bytes=0,
         ),
         upstreams=[_upstream()],
         db_pool=_FailPool(),  # type: ignore[arg-type]
@@ -1527,14 +1642,19 @@ def test_handle_mirrored_tool_returns_internal_on_db_persist_failure(
             "meta": {},
         }
 
-    monkeypatch.setattr("mcp_artifact_gateway.mcp.server.call_upstream_tool", _fake_call)
+    monkeypatch.setattr(
+        "mcp_artifact_gateway.mcp.server.call_upstream_tool", _fake_call
+    )
 
     # Use cache_mode=fresh to skip Phase 1 and go straight to Phase 3 (persist).
     response = asyncio.run(
         server.handle_mirrored_tool(
             mirrored,
             {
-                "_gateway_context": {"session_id": "sess_1", "cache_mode": "fresh"},
+                "_gateway_context": {
+                    "session_id": "sess_1",
+                    "cache_mode": "fresh",
+                },
                 "message": "hello",
             },
         )
@@ -1569,7 +1689,9 @@ def test_handle_mirrored_tool_keeps_db_ok_on_integrity_error(
             "meta": {},
         }
 
-    monkeypatch.setattr("mcp_artifact_gateway.mcp.server.call_upstream_tool", _fake_call)
+    monkeypatch.setattr(
+        "mcp_artifact_gateway.mcp.server.call_upstream_tool", _fake_call
+    )
 
     def _fk_persist(**_kw):
         raise psycopg.IntegrityError("violates foreign key constraint")
@@ -1583,7 +1705,10 @@ def test_handle_mirrored_tool_keeps_db_ok_on_integrity_error(
         server.handle_mirrored_tool(
             mirrored,
             {
-                "_gateway_context": {"session_id": "sess_1", "cache_mode": "fresh"},
+                "_gateway_context": {
+                    "session_id": "sess_1",
+                    "cache_mode": "fresh",
+                },
                 "message": "hello",
             },
         )
@@ -1616,7 +1741,9 @@ def test_handle_mirrored_tool_returns_internal_on_non_db_persist_failure(
             "meta": {},
         }
 
-    monkeypatch.setattr("mcp_artifact_gateway.mcp.server.call_upstream_tool", _fake_call)
+    monkeypatch.setattr(
+        "mcp_artifact_gateway.mcp.server.call_upstream_tool", _fake_call
+    )
 
     def _bad_persist(**_kw):
         raise ValueError("canonicalization rejected float")
@@ -1630,7 +1757,10 @@ def test_handle_mirrored_tool_returns_internal_on_non_db_persist_failure(
         server.handle_mirrored_tool(
             mirrored,
             {
-                "_gateway_context": {"session_id": "sess_1", "cache_mode": "fresh"},
+                "_gateway_context": {
+                    "session_id": "sess_1",
+                    "cache_mode": "fresh",
+                },
                 "message": "hello",
             },
         )
@@ -1663,7 +1793,9 @@ def test_handle_mirrored_tool_succeeds_when_mapping_fails(
             "meta": {},
         }
 
-    monkeypatch.setattr("mcp_artifact_gateway.mcp.server.call_upstream_tool", _fake_call)
+    monkeypatch.setattr(
+        "mcp_artifact_gateway.mcp.server.call_upstream_tool", _fake_call
+    )
 
     _fake_handle = ArtifactHandle(
         artifact_id="art_mapping_fail",
@@ -1693,13 +1825,18 @@ def test_handle_mirrored_tool_succeeds_when_mapping_fails(
     def _exploding_mapping(self, connection, *, handle, envelope):
         raise RuntimeError("mapping exploded")
 
-    monkeypatch.setattr(GatewayServer, "_trigger_mapping_for_artifact", _exploding_mapping)
+    monkeypatch.setattr(
+        GatewayServer, "_trigger_mapping_for_artifact", _exploding_mapping
+    )
 
     response = asyncio.run(
         server.handle_mirrored_tool(
             mirrored,
             {
-                "_gateway_context": {"session_id": "sess_1", "cache_mode": "fresh"},
+                "_gateway_context": {
+                    "session_id": "sess_1",
+                    "cache_mode": "fresh",
+                },
                 "message": "hello",
             },
         )
@@ -1731,7 +1868,9 @@ def test_handle_mirrored_tool_triggers_mapping_on_single_connection(
 
     server = GatewayServer(
         config=GatewayConfig(
-            data_dir=tmp_path, quota_enforcement_enabled=False, passthrough_max_bytes=0
+            data_dir=tmp_path,
+            quota_enforcement_enabled=False,
+            passthrough_max_bytes=0,
         ),
         upstreams=[_upstream()],
         db_pool=_SingleCheckoutPool(),  # type: ignore[arg-type]
@@ -1747,7 +1886,9 @@ def test_handle_mirrored_tool_triggers_mapping_on_single_connection(
             "meta": {},
         }
 
-    monkeypatch.setattr("mcp_artifact_gateway.mcp.server.call_upstream_tool", _fake_call)
+    monkeypatch.setattr(
+        "mcp_artifact_gateway.mcp.server.call_upstream_tool", _fake_call
+    )
 
     _fake_handle = ArtifactHandle(
         artifact_id="art_single_conn",
@@ -1778,13 +1919,18 @@ def test_handle_mirrored_tool_triggers_mapping_on_single_connection(
         nonlocal mapping_called
         mapping_called = True
 
-    monkeypatch.setattr(GatewayServer, "_trigger_mapping_for_artifact", _track_mapping)
+    monkeypatch.setattr(
+        GatewayServer, "_trigger_mapping_for_artifact", _track_mapping
+    )
 
     response = asyncio.run(
         server.handle_mirrored_tool(
             mirrored,
             {
-                "_gateway_context": {"session_id": "sess_1", "cache_mode": "fresh"},
+                "_gateway_context": {
+                    "session_id": "sess_1",
+                    "cache_mode": "fresh",
+                },
                 "message": "hello",
             },
         )
@@ -1827,14 +1973,18 @@ def test_handle_mirrored_tool_quota_exceeded_returns_error(
             "meta": {},
         }
 
-    monkeypatch.setattr("mcp_artifact_gateway.mcp.server.call_upstream_tool", _fake_call)
+    monkeypatch.setattr(
+        "mcp_artifact_gateway.mcp.server.call_upstream_tool", _fake_call
+    )
 
     _breaches = QuotaBreaches(
         binary_blob_exceeded=False,
         payload_total_exceeded=False,
         total_storage_exceeded=True,
     )
-    _usage = StorageUsage(binary_blob_bytes=0, payload_total_bytes=0, total_storage_bytes=999)
+    _usage = StorageUsage(
+        binary_blob_bytes=0, payload_total_bytes=0, total_storage_bytes=999
+    )
 
     monkeypatch.setattr(
         "mcp_artifact_gateway.mcp.handlers.mirrored_tool.enforce_quota",
@@ -1855,7 +2005,10 @@ def test_handle_mirrored_tool_quota_exceeded_returns_error(
         server.handle_mirrored_tool(
             mirrored,
             {
-                "_gateway_context": {"session_id": "sess_1", "cache_mode": "fresh"},
+                "_gateway_context": {
+                    "session_id": "sess_1",
+                    "cache_mode": "fresh",
+                },
                 "message": "hello",
             },
         )
@@ -1864,7 +2017,10 @@ def test_handle_mirrored_tool_quota_exceeded_returns_error(
     assert response["code"] == "QUOTA_EXCEEDED"
     assert "quota" in response["message"].lower()
     assert response["details"]["exceeded_caps"] == ["max_total_storage_bytes"]
-    assert response["details"]["max_total_storage_bytes"] == server.config.max_total_storage_bytes
+    assert (
+        response["details"]["max_total_storage_bytes"]
+        == server.config.max_total_storage_bytes
+    )
 
 
 def test_handle_mirrored_tool_quota_exceeded_reports_specific_caps(
@@ -1894,14 +2050,18 @@ def test_handle_mirrored_tool_quota_exceeded_reports_specific_caps(
             "meta": {},
         }
 
-    monkeypatch.setattr("mcp_artifact_gateway.mcp.server.call_upstream_tool", _fake_call)
+    monkeypatch.setattr(
+        "mcp_artifact_gateway.mcp.server.call_upstream_tool", _fake_call
+    )
 
     _breaches = QuotaBreaches(
         binary_blob_exceeded=True,
         payload_total_exceeded=True,
         total_storage_exceeded=False,
     )
-    _usage = StorageUsage(binary_blob_bytes=999, payload_total_bytes=999, total_storage_bytes=100)
+    _usage = StorageUsage(
+        binary_blob_bytes=999, payload_total_bytes=999, total_storage_bytes=100
+    )
 
     monkeypatch.setattr(
         "mcp_artifact_gateway.mcp.handlers.mirrored_tool.enforce_quota",
@@ -1922,7 +2082,10 @@ def test_handle_mirrored_tool_quota_exceeded_reports_specific_caps(
         server.handle_mirrored_tool(
             mirrored,
             {
-                "_gateway_context": {"session_id": "sess_1", "cache_mode": "fresh"},
+                "_gateway_context": {
+                    "session_id": "sess_1",
+                    "cache_mode": "fresh",
+                },
                 "message": "hello",
             },
         )
@@ -1933,8 +2096,14 @@ def test_handle_mirrored_tool_quota_exceeded_reports_specific_caps(
         "max_binary_blob_bytes",
         "max_payload_total_bytes",
     ]
-    assert response["details"]["max_binary_blob_bytes"] == server.config.max_binary_blob_bytes
-    assert response["details"]["max_payload_total_bytes"] == server.config.max_payload_total_bytes
+    assert (
+        response["details"]["max_binary_blob_bytes"]
+        == server.config.max_binary_blob_bytes
+    )
+    assert (
+        response["details"]["max_payload_total_bytes"]
+        == server.config.max_payload_total_bytes
+    )
     assert "max_total_storage_bytes" not in response["details"]
 
 
@@ -1969,14 +2138,18 @@ def test_handle_mirrored_tool_quota_exceeded_skips_upstream_call(
             "meta": {},
         }
 
-    monkeypatch.setattr("mcp_artifact_gateway.mcp.server.call_upstream_tool", _fake_call)
+    monkeypatch.setattr(
+        "mcp_artifact_gateway.mcp.server.call_upstream_tool", _fake_call
+    )
 
     _breaches = QuotaBreaches(
         binary_blob_exceeded=False,
         payload_total_exceeded=False,
         total_storage_exceeded=True,
     )
-    _usage = StorageUsage(binary_blob_bytes=0, payload_total_bytes=0, total_storage_bytes=999)
+    _usage = StorageUsage(
+        binary_blob_bytes=0, payload_total_bytes=0, total_storage_bytes=999
+    )
 
     monkeypatch.setattr(
         "mcp_artifact_gateway.mcp.handlers.mirrored_tool.enforce_quota",
@@ -1997,7 +2170,10 @@ def test_handle_mirrored_tool_quota_exceeded_skips_upstream_call(
         server.handle_mirrored_tool(
             mirrored,
             {
-                "_gateway_context": {"session_id": "sess_1", "cache_mode": "fresh"},
+                "_gateway_context": {
+                    "session_id": "sess_1",
+                    "cache_mode": "fresh",
+                },
                 "message": "hello",
             },
         )
@@ -2034,9 +2210,13 @@ def test_handle_mirrored_tool_quota_ok_proceeds_to_persist(
             "meta": {},
         }
 
-    monkeypatch.setattr("mcp_artifact_gateway.mcp.server.call_upstream_tool", _fake_call)
+    monkeypatch.setattr(
+        "mcp_artifact_gateway.mcp.server.call_upstream_tool", _fake_call
+    )
 
-    _usage = StorageUsage(binary_blob_bytes=0, payload_total_bytes=0, total_storage_bytes=100)
+    _usage = StorageUsage(
+        binary_blob_bytes=0, payload_total_bytes=0, total_storage_bytes=100
+    )
     _no_breach = QuotaBreaches(False, False, False)
 
     monkeypatch.setattr(
@@ -2083,7 +2263,10 @@ def test_handle_mirrored_tool_quota_ok_proceeds_to_persist(
         server.handle_mirrored_tool(
             mirrored,
             {
-                "_gateway_context": {"session_id": "sess_1", "cache_mode": "fresh"},
+                "_gateway_context": {
+                    "session_id": "sess_1",
+                    "cache_mode": "fresh",
+                },
                 "message": "hello",
             },
         )
@@ -2117,7 +2300,9 @@ def test_handle_mirrored_tool_quota_check_fails_closed_on_generic_error(
             "meta": {},
         }
 
-    monkeypatch.setattr("mcp_artifact_gateway.mcp.server.call_upstream_tool", _fake_call)
+    monkeypatch.setattr(
+        "mcp_artifact_gateway.mcp.server.call_upstream_tool", _fake_call
+    )
 
     def _exploding_quota(*a, **kw):
         raise RuntimeError("quota check exploded")
@@ -2141,7 +2326,10 @@ def test_handle_mirrored_tool_quota_check_fails_closed_on_generic_error(
         server.handle_mirrored_tool(
             mirrored,
             {
-                "_gateway_context": {"session_id": "sess_1", "cache_mode": "fresh"},
+                "_gateway_context": {
+                    "session_id": "sess_1",
+                    "cache_mode": "fresh",
+                },
                 "message": "hello",
             },
         )
@@ -2189,20 +2377,28 @@ def test_handle_mirrored_tool_quota_check_marks_unhealthy_on_connectivity_error(
             "meta": {},
         }
 
-    monkeypatch.setattr("mcp_artifact_gateway.mcp.server.call_upstream_tool", _fake_call)
+    monkeypatch.setattr(
+        "mcp_artifact_gateway.mcp.server.call_upstream_tool", _fake_call
+    )
 
     response = asyncio.run(
         server.handle_mirrored_tool(
             mirrored,
             {
-                "_gateway_context": {"session_id": "sess_1", "cache_mode": "fresh"},
+                "_gateway_context": {
+                    "session_id": "sess_1",
+                    "cache_mode": "fresh",
+                },
                 "message": "hello",
             },
         )
     )
     assert response["type"] == "gateway_error"
     assert response["code"] == "INTERNAL"
-    assert "quota" in response["message"].lower() or "unhealthy" in response["message"].lower()
+    assert (
+        "quota" in response["message"].lower()
+        or "unhealthy" in response["message"].lower()
+    )
     assert server.db_ok is False
 
 
@@ -2224,7 +2420,9 @@ def test_handle_mirrored_tool_skips_quota_when_disabled(
 
     server = GatewayServer(
         config=GatewayConfig(
-            data_dir=tmp_path, quota_enforcement_enabled=False, passthrough_max_bytes=0
+            data_dir=tmp_path,
+            quota_enforcement_enabled=False,
+            passthrough_max_bytes=0,
         ),
         upstreams=[_upstream()],
         db_pool=_FakePool(None),  # type: ignore[arg-type]
@@ -2240,7 +2438,9 @@ def test_handle_mirrored_tool_skips_quota_when_disabled(
             "meta": {},
         }
 
-    monkeypatch.setattr("mcp_artifact_gateway.mcp.server.call_upstream_tool", _fake_call)
+    monkeypatch.setattr(
+        "mcp_artifact_gateway.mcp.server.call_upstream_tool", _fake_call
+    )
 
     _fake_handle = ArtifactHandle(
         artifact_id="art_no_quota",
@@ -2271,7 +2471,10 @@ def test_handle_mirrored_tool_skips_quota_when_disabled(
         server.handle_mirrored_tool(
             mirrored,
             {
-                "_gateway_context": {"session_id": "sess_1", "cache_mode": "fresh"},
+                "_gateway_context": {
+                    "session_id": "sess_1",
+                    "cache_mode": "fresh",
+                },
                 "message": "hello",
             },
         )

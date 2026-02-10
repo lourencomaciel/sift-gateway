@@ -24,7 +24,6 @@ import json
 from pathlib import Path
 from typing import Any
 
-
 # Gateway extension fields that live under ``_gateway`` in each server entry.
 _GATEWAY_EXTENSION_FIELDS = frozenset(
     {
@@ -147,13 +146,17 @@ def to_upstream_configs(
     return configs
 
 
-def resolve_mcp_servers_config(raw: dict[str, Any]) -> list[dict[str, Any]] | None:
+def resolve_mcp_servers_config(
+    raw: dict[str, Any],
+) -> list[dict[str, Any]] | None:
     """Main entry point: resolve mcpServers into UpstreamConfig dicts.
 
     Returns None if the config doesn't use the mcpServers format.
     """
     has_mcp_servers = "mcpServers" in raw
-    has_vscode = isinstance(raw.get("mcp"), dict) and "servers" in raw.get("mcp", {})
+    has_vscode = isinstance(raw.get("mcp"), dict) and "servers" in raw.get(
+        "mcp", {}
+    )
 
     if not has_mcp_servers and not has_vscode:
         return None

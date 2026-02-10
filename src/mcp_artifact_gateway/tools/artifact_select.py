@@ -1,27 +1,37 @@
-"""artifact.select tool implementation.
+"""Validate arguments and build responses for ``artifact.select``.
 
-Supports both *full* and *sampled-only* retrieval modes:
+Project and filter artifact data with bounded traversal in two
+modes: full (evaluate root_path against the complete envelope) and
+sampled-only (iterate pre-materialised sample rows).  Both modes
+honour the traversal_v1 determinism contract.  Exports
+``validate_select_args``, ``build_select_result``, and fetch SQL.
 
-- **Full mode** (``map_kind == "full"``): evaluates the root_path against the
-  full envelope, enumerates records in ascending index order, applies where
-  filtering, then projects select_paths.
-- **Sampled-only mode** (``map_kind == "partial"``): iterates pre-materialised
-  sample rows in ascending ``sample_index`` order (guaranteed by SQL
-  ``ORDER BY sample_index ASC``), applies where filtering, then projects
-  select_paths.
+Typical usage example::
 
-Both modes honour the traversal_v1 determinism contract.
+    error = validate_select_args(arguments)
+    if error:
+        return error
+    result = build_select_result(items=items, truncated=False)
 """
 
 from __future__ import annotations
 
 from typing import Any, Sequence
 
-from mcp_artifact_gateway.constants import WORKSPACE_ID
-
 
 def validate_select_args(arguments: dict[str, Any]) -> dict[str, Any] | None:
-    """Validate artifact.select arguments. Returns error dict or None."""
+    """Validate ``artifact.select`` arguments.
+
+    Checks for required gateway context, ``artifact_id``,
+    ``root_path``, and a non-empty ``select_paths`` list with
+    relative (non-``$``) paths.
+
+    Args:
+        arguments: Raw tool arguments.
+
+    Returns:
+        Error dict on validation failure, ``None`` when valid.
+    """
     ctx = arguments.get("_gateway_context")
     if not isinstance(ctx, dict) or not ctx.get("session_id"):
         return {
@@ -70,14 +80,25 @@ ORDER BY sample_index ASC
 """
 
 
-def sampled_indices_ascending(sample_rows: Sequence[dict[str, Any]]) -> list[int]:
-    """Extract and return sample indices in ascending order from sample rows.
+def sampled_indices_ascending(
+    sample_rows: Sequence[dict[str, Any]],
+) -> list[int]:
+    """Extract sample indices in ascending order from sample rows.
 
-    This enforces the traversal_v1 contract for partial/sampled mode:
-    sampled indices are always enumerated in ascending order.
+    Enforces the traversal_v1 contract: sampled indices are
+    always enumerated in ascending order.
+
+    Args:
+        sample_rows: Sequence of sample row dicts, each
+            containing a ``sample_index`` key.
+
+    Returns:
+        Sorted list of integer sample indices.
     """
     return sorted(
-        int(idx) for row in sample_rows if isinstance((idx := row.get("sample_index")), int)
+        int(idx)
+        for row in sample_rows
+        if isinstance((idx := row.get("sample_index")), int)
     )
 
 
@@ -93,7 +114,27 @@ def build_select_result(
     stats: dict[str, Any] | None = None,
     determinism: dict[str, str] | None = None,
 ) -> dict[str, Any]:
-    """Build artifact.select response."""
+    """Build the ``artifact.select`` response dict.
+
+    Args:
+        items: Projected records matching the select criteria.
+        truncated: Whether the result set was truncated by
+            budget limits.
+        cursor: Opaque pagination cursor, or ``None``.
+        sampled_only: Whether results come from partial
+            (sampled) data rather than the full envelope.
+        sample_indices_used: Indices of samples that
+            contributed to the result.
+        sampled_prefix_len: Length of the contiguous prefix
+            of sampled records.
+        omitted: Dict describing omitted fields or records.
+        stats: Traversal statistics dict.
+        determinism: Dict with determinism contract metadata.
+
+    Returns:
+        Structured response dict for the ``artifact.select``
+        tool.
+    """
     result: dict[str, Any] = {
         "items": items,
         "truncated": truncated,

@@ -30,7 +30,9 @@ def make_partial_budgets(**overrides: int) -> PartialMappingBudgets:
 
 def make_json_stream(data: object) -> io.BytesIO:
     """Serialize data to a compact JSON byte stream."""
-    return io.BytesIO(json.dumps(data, separators=(",", ":"), sort_keys=True).encode("utf-8"))
+    return io.BytesIO(
+        json.dumps(data, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    )
 
 
 def make_partial_config(

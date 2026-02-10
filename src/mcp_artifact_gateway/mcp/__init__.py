@@ -1,1 +1,1 @@
-"""MCP server and upstream client modules."""
+"""MCP server, upstream client, and tool mirroring modules."""

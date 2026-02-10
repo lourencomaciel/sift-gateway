@@ -1,4 +1,17 @@
-"""gateway.status tool implementation."""
+"""Build the ``gateway.status`` health and configuration response.
+
+Probe database connectivity, filesystem directory existence, and
+upstream status, then assemble a structured status payload with
+version strings, retrieval budgets, and cursor settings.
+
+Typical usage example::
+
+    db_health = probe_db(db_pool)
+    fs_health = probe_fs(config)
+    payload = build_status_response_with_runtime(
+        config, db_health=db_health, fs_health=fs_health,
+    )
+"""
 
 from __future__ import annotations
 
@@ -18,7 +31,12 @@ from mcp_artifact_gateway.constants import (
 def probe_db(db_pool: Any) -> dict[str, Any]:
     """Probe database pool connectivity.
 
-    Returns a dict with 'ok' bool and optional 'error' string.
+    Args:
+        db_pool: Database backend exposing a ``connection()``
+            context manager. May be ``None``.
+
+    Returns:
+        A dict with ``ok`` bool and optional ``error`` string.
     """
     if db_pool is None:
         return {"ok": False, "error": "no db pool configured"}
@@ -33,8 +51,13 @@ def probe_db(db_pool: Any) -> dict[str, Any]:
 def probe_fs(config: GatewayConfig) -> dict[str, Any]:
     """Probe filesystem path existence for required directories.
 
-    Returns a dict with 'ok' bool, 'paths' dict mapping each required
-    directory to its existence status, and optional 'error' string.
+    Args:
+        config: Gateway configuration providing directory paths.
+
+    Returns:
+        A dict with ``ok`` bool, ``paths`` mapping each
+        directory name to its existence status, and an optional
+        ``error`` string listing missing directories.
     """
     required_paths: dict[str, Path] = {
         "data_dir": config.data_dir,
@@ -57,9 +80,17 @@ def probe_fs(config: GatewayConfig) -> dict[str, Any]:
 
 
 def build_status_response(config: GatewayConfig) -> dict[str, Any]:
-    """Build the gateway.status response payload.
+    """Build the ``gateway.status`` response payload.
 
-    Returns: upstream connectivity, DB ok, FS ok, versions, budgets, cursor settings.
+    Delegates to ``build_status_response_with_runtime`` with no
+    runtime probes.
+
+    Args:
+        config: Gateway configuration.
+
+    Returns:
+        Status dict with versions, budgets, and placeholder
+        health sections.
     """
     return build_status_response_with_runtime(config)
 
@@ -72,27 +103,33 @@ def build_status_response_with_runtime(
     upstreams: list[dict[str, Any]] | None = None,
     cursor_secrets_info: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Build status payload with runtime health probes and secret metadata.
+    """Build status payload with runtime health probes.
 
-    Parameters
-    ----------
-    config:
-        Gateway configuration.
-    db_health:
-        Result of ``probe_db()``, or None if not probed.
-    fs_health:
-        Result of ``probe_fs()``, or None if not probed.
-    upstreams:
-        List of upstream connectivity dicts from ``GatewayServer._status_upstreams()``.
-    cursor_secrets_info:
-        Dict with ``signing_version`` and ``active_versions`` from cursor secrets.
+    Args:
+        config: Gateway configuration.
+        db_health: Result of ``probe_db()``, or ``None`` if
+            not probed.
+        fs_health: Result of ``probe_fs()``, or ``None`` if
+            not probed.
+        upstreams: Upstream connectivity dicts from
+            ``GatewayServer._status_upstreams()``.
+        cursor_secrets_info: Dict with ``signing_version``
+            and ``active_versions`` from cursor secrets.
+
+    Returns:
+        Structured status dict containing versions, budgets,
+        storage caps, cursor settings, and health sections.
     """
     cursor_section: dict[str, Any] = {
         "cursor_ttl_minutes": config.cursor_ttl_minutes,
     }
     if cursor_secrets_info is not None:
-        cursor_section["signing_version"] = cursor_secrets_info.get("signing_version")
-        cursor_section["active_versions"] = cursor_secrets_info.get("active_versions", [])
+        cursor_section["signing_version"] = cursor_secrets_info.get(
+            "signing_version"
+        )
+        cursor_section["active_versions"] = cursor_secrets_info.get(
+            "active_versions", []
+        )
 
     return {
         "type": "gateway_status",
@@ -113,7 +150,9 @@ def build_status_response_with_runtime(
             "max_json_part_parse_bytes": config.max_json_part_parse_bytes,
             "max_full_map_bytes": config.max_full_map_bytes,
             "max_bytes_read_partial_map": config.max_bytes_read_partial_map,
-            "max_compute_steps_partial_map": config.max_compute_steps_partial_map,
+            "max_compute_steps_partial_map": (
+                config.max_compute_steps_partial_map
+            ),
             "max_depth_partial_map": config.max_depth_partial_map,
             "max_records_sampled_partial": config.max_records_sampled_partial,
             "max_record_bytes_partial": config.max_record_bytes_partial,
@@ -126,7 +165,11 @@ def build_status_response_with_runtime(
             "max_total_storage_bytes": config.max_total_storage_bytes,
         },
         "cursor": cursor_section,
-        "db": db_health if db_health is not None else {"ok": False, "error": "not probed"},
-        "fs": fs_health if fs_health is not None else {"ok": False, "error": "not probed"},
+        "db": db_health
+        if db_health is not None
+        else {"ok": False, "error": "not probed"},
+        "fs": fs_health
+        if fs_health is not None
+        else {"ok": False, "error": "not probed"},
         "upstreams": list(upstreams or []),
     }

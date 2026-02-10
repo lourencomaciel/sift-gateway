@@ -1,6 +1,10 @@
-"""Filesystem persistence helpers."""
+"""Re-export blob and resource store primitives."""
 
-from mcp_artifact_gateway.fs.blob_store import BinaryRef, BlobStore, normalize_mime
+from mcp_artifact_gateway.fs.blob_store import (
+    BinaryRef,
+    BlobStore,
+    normalize_mime,
+)
 from mcp_artifact_gateway.fs.resource_store import ResourceRef, ResourceStore
 
 __all__ = [

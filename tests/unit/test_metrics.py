@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-import threading
 from concurrent.futures import ThreadPoolExecutor
+import threading
 
-import pytest
 from prometheus_client import CollectorRegistry
+import pytest
 
 from mcp_artifact_gateway.obs.metrics import (
     GatewayMetrics,
@@ -199,7 +199,9 @@ def test_get_metrics_returns_singleton() -> None:
     assert isinstance(m1, GatewayMetrics)
 
 
-def test_get_metrics_thread_safe_singleton_creation(monkeypatch: "pytest.MonkeyPatch") -> None:
+def test_get_metrics_thread_safe_singleton_creation(
+    monkeypatch: "pytest.MonkeyPatch",
+) -> None:
     import mcp_artifact_gateway.obs.metrics as metrics_module
 
     monkeypatch.setattr(metrics_module, "_metrics", None)
@@ -283,16 +285,20 @@ def test_all_counters_use_gateway_prefix_and_total_suffix() -> None:
     rendering), so we check that the base name starts with gateway_ and that
     the rendered exposition output contains the full name_total line.
     """
-    from prometheus_client import Counter as PromCounter, generate_latest
+    from prometheus_client import Counter as PromCounter
+    from prometheus_client import generate_latest
 
     reg = CollectorRegistry()
     m = GatewayMetrics(registry=reg)
     counters = [
         (attr, getattr(m, attr))
         for attr in dir(m)
-        if not attr.startswith("_") and isinstance(getattr(m, attr), PromCounter)
+        if not attr.startswith("_")
+        and isinstance(getattr(m, attr), PromCounter)
     ]
-    assert len(counters) >= 25, f"Expected at least 25 counters, got {len(counters)}"
+    assert len(counters) >= 25, (
+        f"Expected at least 25 counters, got {len(counters)}"
+    )
 
     output = generate_latest(reg).decode("utf-8")
 
@@ -320,7 +326,9 @@ def test_counter_names_are_unique() -> None:
         obj = getattr(m, attr)
         if isinstance(obj, PromCounter):
             names.append(obj.describe()[0].name)
-    assert len(names) == len(set(names)), f"Duplicate counter names: {sorted(names)}"
+    assert len(names) == len(set(names)), (
+        f"Duplicate counter names: {sorted(names)}"
+    )
 
 
 def test_counters_render_in_prometheus_text_format() -> None:
@@ -365,7 +373,8 @@ def test_snapshot_keys_match_counter_names() -> None:
     counter_attrs = [
         attr
         for attr in dir(m)
-        if not attr.startswith("_") and isinstance(getattr(m, attr), PromCounter)
+        if not attr.startswith("_")
+        and isinstance(getattr(m, attr), PromCounter)
     ]
 
     # Snapshot should have at least as many leaf values as counters

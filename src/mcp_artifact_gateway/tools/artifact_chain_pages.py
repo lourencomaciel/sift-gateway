@@ -1,14 +1,35 @@
-"""artifact.chain_pages tool implementation."""
+"""Validate arguments and build responses for ``artifact.chain_pages``.
+
+Return child artifacts of a parent in chain-sequence order, useful
+for paginated or multi-part upstream responses.  Exports
+``validate_chain_pages_args``, ``build_chain_pages_response``, and
+fetch SQL constants.
+
+Typical usage example::
+
+    error = validate_chain_pages_args(arguments)
+    if error:
+        return error
+    response = build_chain_pages_response(rows, truncated=False)
+"""
 
 from __future__ import annotations
 
 from typing import Any
 
-from mcp_artifact_gateway.constants import WORKSPACE_ID
 
+def validate_chain_pages_args(
+    arguments: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Validate ``artifact.chain_pages`` arguments.
 
-def validate_chain_pages_args(arguments: dict[str, Any]) -> dict[str, Any] | None:
-    """Validate artifact.chain_pages arguments."""
+    Args:
+        arguments: Raw tool arguments including gateway context
+            and ``parent_artifact_id``.
+
+    Returns:
+        Error dict on validation failure, ``None`` when valid.
+    """
     ctx = arguments.get("_gateway_context")
     if not isinstance(ctx, dict) or not ctx.get("session_id"):
         return {
@@ -51,7 +72,18 @@ def build_chain_pages_response(
     truncated: bool = False,
     cursor: str | None = None,
 ) -> dict[str, Any]:
-    """Build artifact.chain_pages response."""
+    """Build the ``artifact.chain_pages`` response dict.
+
+    Args:
+        rows: Child artifact row dicts ordered by
+            ``chain_seq`` ascending.
+        truncated: Whether more pages exist beyond this batch.
+        cursor: Opaque pagination cursor, or ``None``.
+
+    Returns:
+        Response dict with ``items``, ``truncated``, and
+        ``cursor`` keys.
+    """
     return {
         "items": [
             {

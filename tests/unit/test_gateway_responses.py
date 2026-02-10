@@ -110,7 +110,9 @@ def test_can_passthrough_exactly_at_boundary() -> None:
 
 
 def test_gateway_error_shape() -> None:
-    response = gateway_error("INVALID_ARGUMENT", "bad request", details={"field": "x"})
+    response = gateway_error(
+        "INVALID_ARGUMENT", "bad request", details={"field": "x"}
+    )
     assert response == {
         "type": "gateway_error",
         "code": "INVALID_ARGUMENT",

@@ -13,7 +13,9 @@ import os
 
 # Default DSN matches docker-compose.yml (mcp_gateway user) + the mcp_test
 # database created by scripts/init-test-db.sql.
-_DEFAULT_TEST_DSN = "postgresql://mcp_gateway:mcp_gateway@localhost:5432/mcp_test"
+_DEFAULT_TEST_DSN = (
+    "postgresql://mcp_gateway:mcp_gateway@localhost:5432/mcp_test"
+)
 _ENV_KEY = "MCP_GATEWAY_TEST_POSTGRES_DSN"
 
 

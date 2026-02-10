@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import dataclasses
 
-from mcp_artifact_gateway.artifacts.create import ArtifactHandle, CreateArtifactInput
+from mcp_artifact_gateway.artifacts.create import (
+    ArtifactHandle,
+    CreateArtifactInput,
+)
 from mcp_artifact_gateway.envelope.model import Envelope, JsonContentPart
 
 

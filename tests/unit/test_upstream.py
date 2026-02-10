@@ -6,10 +6,10 @@ from mcp_artifact_gateway.config.settings import UpstreamConfig
 from mcp_artifact_gateway.mcp.upstream import (
     UpstreamInstance,
     call_upstream_tool,
-    connect_upstream,
-    connect_upstreams,
     compute_auth_fingerprint,
     compute_upstream_instance_id,
+    connect_upstream,
+    connect_upstreams,
     discover_tools,
 )
 
@@ -66,14 +66,22 @@ def test_different_prefix_different_id() -> None:
 
 
 def test_different_command_different_id() -> None:
-    id1 = compute_upstream_instance_id(_stdio_config(command="/usr/bin/github-mcp"))
-    id2 = compute_upstream_instance_id(_stdio_config(command="/usr/local/bin/github-mcp"))
+    id1 = compute_upstream_instance_id(
+        _stdio_config(command="/usr/bin/github-mcp")
+    )
+    id2 = compute_upstream_instance_id(
+        _stdio_config(command="/usr/local/bin/github-mcp")
+    )
     assert id1 != id2
 
 
 def test_different_url_different_id() -> None:
-    id1 = compute_upstream_instance_id(_http_config(url="https://a.example.com/mcp"))
-    id2 = compute_upstream_instance_id(_http_config(url="https://b.example.com/mcp"))
+    id1 = compute_upstream_instance_id(
+        _http_config(url="https://a.example.com/mcp")
+    )
+    id2 = compute_upstream_instance_id(
+        _http_config(url="https://b.example.com/mcp")
+    )
     assert id1 != id2
 
 
@@ -174,7 +182,9 @@ class _FakeContentBlock:
     def __init__(self, payload: dict) -> None:
         self._payload = payload
 
-    def model_dump(self, *, by_alias: bool = False, exclude_none: bool = False) -> dict:
+    def model_dump(
+        self, *, by_alias: bool = False, exclude_none: bool = False
+    ) -> dict:
         return dict(self._payload)
 
 
@@ -211,7 +221,9 @@ class _FakeClient:
 
 
 @pytest.mark.asyncio
-async def test_discover_tools_fetches_and_hashes_tool_schemas(monkeypatch) -> None:
+async def test_discover_tools_fetches_and_hashes_tool_schemas(
+    monkeypatch,
+) -> None:
     _FakeClient.instances.clear()
     _FakeClient.tools = [
         _FakeTool(
@@ -219,7 +231,11 @@ async def test_discover_tools_fetches_and_hashes_tool_schemas(monkeypatch) -> No
             "List issues",
             {"type": "object", "properties": {"repo": {"type": "string"}}},
         ),
-        _FakeTool("list_prs", "List pull requests", {"type": "object", "properties": {}}),
+        _FakeTool(
+            "list_prs",
+            "List pull requests",
+            {"type": "object", "properties": {}},
+        ),
     ]
     monkeypatch.setattr("mcp_artifact_gateway.mcp.upstream.Client", _FakeClient)
 

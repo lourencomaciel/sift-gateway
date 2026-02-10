@@ -10,17 +10,27 @@ class CursorLike(Protocol):
 
     rowcount: int
 
-    def fetchone(self) -> tuple[object, ...] | None: ...
+    def fetchone(self) -> tuple[object, ...] | None:
+        """Fetch the next row or None."""
+        ...
 
-    def fetchall(self) -> list[tuple[object, ...]]: ...
+    def fetchall(self) -> list[tuple[object, ...]]:
+        """Fetch all remaining rows."""
+        ...
 
 
 class ConnectionLike(Protocol):
     """Minimal connection protocol for execute + commit."""
 
-    def execute(self, query: str, params: tuple[object, ...] | None = None) -> CursorLike: ...
+    def execute(
+        self, query: str, params: tuple[object, ...] | None = None
+    ) -> CursorLike:
+        """Execute a SQL query and return a cursor."""
+        ...
 
-    def commit(self) -> None: ...
+    def commit(self) -> None:
+        """Commit the current transaction."""
+        ...
 
 
 def safe_rollback(connection: object) -> None:

@@ -2,12 +2,18 @@
 
 from __future__ import annotations
 
-import hashlib
-import json
 from decimal import Decimal
+import hashlib
 
-from mcp_artifact_gateway.canon import canonical_bytes, compress_bytes, decompress_bytes
-from mcp_artifact_gateway.config.settings import CanonicalEncoding, EnvelopeJsonbMode
+from mcp_artifact_gateway.canon import (
+    canonical_bytes,
+    compress_bytes,
+    decompress_bytes,
+)
+from mcp_artifact_gateway.config.settings import (
+    CanonicalEncoding,
+    EnvelopeJsonbMode,
+)
 from mcp_artifact_gateway.constants import CANONICALIZER_VERSION
 from mcp_artifact_gateway.storage.payload_store import (
     PreparedPayload,
@@ -216,7 +222,9 @@ def test_reconstruct_envelope_rejects_invalid_json_payload() -> None:
     compressed = compress_bytes(raw, "none")
     expected_hash = hashlib.sha256(raw).hexdigest()
     try:
-        reconstruct_envelope(compressed.data, compressed.encoding, expected_hash)
+        reconstruct_envelope(
+            compressed.data, compressed.encoding, expected_hash
+        )
     except ValueError as exc:
         assert "valid JSON" in str(exc)
     else:
@@ -228,17 +236,25 @@ def test_reconstruct_envelope_rejects_non_object_json() -> None:
     compressed = compress_bytes(raw, "none")
     expected_hash = hashlib.sha256(raw).hexdigest()
     try:
-        reconstruct_envelope(compressed.data, compressed.encoding, expected_hash)
+        reconstruct_envelope(
+            compressed.data, compressed.encoding, expected_hash
+        )
     except ValueError as exc:
         assert "JSON object" in str(exc)
     else:
-        raise AssertionError("expected ValueError for non-object envelope payload")
+        raise AssertionError(
+            "expected ValueError for non-object envelope payload"
+        )
 
 
 def test_reconstruct_envelope_all_encodings() -> None:
     """Verify reconstruct works for all three encoding modes."""
     env = _sample_envelope()
-    for enc in (CanonicalEncoding.zstd, CanonicalEncoding.gzip, CanonicalEncoding.none):
+    for enc in (
+        CanonicalEncoding.zstd,
+        CanonicalEncoding.gzip,
+        CanonicalEncoding.none,
+    ):
         prepared = prepare_payload(env, encoding=enc)
         reconstructed = reconstruct_envelope(
             prepared.compressed_bytes,
@@ -259,7 +275,10 @@ def _envelope_with_decimal() -> dict:
         "tool": "get_price",
         "status": "ok",
         "content": [
-            {"type": "json", "value": {"price": Decimal("19.99"), "quantity": 5}},
+            {
+                "type": "json",
+                "value": {"price": Decimal("19.99"), "quantity": 5},
+            },
         ],
         "error": None,
         "meta": {"warnings": []},
@@ -277,7 +296,9 @@ def test_prepare_and_reconstruct_preserves_decimal() -> None:
     )
     # The reconstructed value should be Decimal, not float
     price = reconstructed["content"][0]["value"]["price"]
-    assert isinstance(price, Decimal), f"expected Decimal, got {type(price).__name__}"
+    assert isinstance(price, Decimal), (
+        f"expected Decimal, got {type(price).__name__}"
+    )
     assert price == Decimal("19.99")
 
 
@@ -294,7 +315,11 @@ def test_compression_integrity_verified_in_prepare() -> None:
     """prepare_payload verifies decompress(compress(x)) == x."""
     env = _sample_envelope()
     # This implicitly tests the integrity check inside prepare_payload
-    for enc in (CanonicalEncoding.zstd, CanonicalEncoding.gzip, CanonicalEncoding.none):
+    for enc in (
+        CanonicalEncoding.zstd,
+        CanonicalEncoding.gzip,
+        CanonicalEncoding.none,
+    ):
         result = prepare_payload(env, encoding=enc)
         # Verify we can reconstruct successfully
         reconstructed = reconstruct_envelope(

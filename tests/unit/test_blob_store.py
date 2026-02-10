@@ -34,7 +34,9 @@ def test_blob_store_rejects_existing_size_mismatch(tmp_path: Path) -> None:
         raise AssertionError("expected ValueError")
 
 
-def test_blob_store_rejects_existing_content_mismatch_same_size(tmp_path: Path) -> None:
+def test_blob_store_rejects_existing_content_mismatch_same_size(
+    tmp_path: Path,
+) -> None:
     store = BlobStore(tmp_path / "blobs" / "bin")
     payload = b"same-size-bytes"
     ref = store.put_bytes(payload)

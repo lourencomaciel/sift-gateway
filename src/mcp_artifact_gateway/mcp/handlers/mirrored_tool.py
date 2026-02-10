@@ -1,4 +1,10 @@
-"""Mirrored upstream tool handler."""
+"""Handle invocations of mirrored upstream tools.
+
+Orchestrate the full lifecycle for a proxied tool call: validate
+gateway context, check the deduplication cache, enforce storage
+quotas, call the upstream, persist the artifact envelope, and
+trigger mapping.  Exports ``handle_mirrored_tool``.
+"""
 
 from __future__ import annotations
 
@@ -31,14 +37,14 @@ from mcp_artifact_gateway.envelope.responses import (
     gateway_error,
     gateway_tool_result,
 )
-from mcp_artifact_gateway.obs.logging import get_logger
+from mcp_artifact_gateway.jobs.quota import QuotaBreaches, enforce_quota
 from mcp_artifact_gateway.mcp.mirror import (
     MirroredTool,
     extract_gateway_context,
     strip_reserved_gateway_args,
     validate_against_schema,
 )
-from mcp_artifact_gateway.jobs.quota import QuotaBreaches, enforce_quota
+from mcp_artifact_gateway.obs.logging import get_logger
 from mcp_artifact_gateway.request_identity import compute_request_identity
 from mcp_artifact_gateway.sessions import upsert_artifact_ref
 
@@ -47,6 +53,14 @@ if TYPE_CHECKING:
 
 
 def _extract_session_id(context: dict[str, Any] | None) -> str | None:
+    """Extract a non-empty session ID from the gateway context.
+
+    Args:
+        context: Gateway context dict, or ``None``.
+
+    Returns:
+        The session ID string, or ``None`` if absent or empty.
+    """
     if context is None:
         return None
     session_id = context.get("session_id")
@@ -56,6 +70,16 @@ def _extract_session_id(context: dict[str, Any] | None) -> str | None:
 
 
 def _lookup_cache_mode(context: dict[str, Any] | None) -> str | None:
+    """Resolve the cache mode from the gateway context.
+
+    Args:
+        context: Gateway context dict, or ``None`` (defaults
+            to ``"allow"``).
+
+    Returns:
+        ``"allow"`` or ``"fresh"`` when valid, ``None`` when
+        the value is unrecognised.
+    """
     if context is None:
         return "allow"
     raw = context.get("cache_mode", "allow")
@@ -69,7 +93,17 @@ async def _persist_async(
     input_data: CreateArtifactInput,
     envelope: Envelope,
 ) -> None:
-    """Best-effort async artifact persistence (no mapping)."""
+    """Persist an artifact asynchronously on a best-effort basis.
+
+    Used for passthrough-eligible responses where the raw
+    upstream result is returned immediately.  Failures are
+    logged but do not propagate.
+
+    Args:
+        ctx: Gateway server providing DB pool and helpers.
+        input_data: Pre-built artifact creation input.
+        envelope: The envelope to persist.
+    """
     try:
         if ctx.db_pool is None:
             return
@@ -93,9 +127,28 @@ async def handle_mirrored_tool(
     mirrored: MirroredTool,
     arguments: dict[str, Any],
 ) -> dict[str, Any]:
-    # Pre-flight health gate: refuse artifact creation when gateway is unhealthy.
-    # Probe before refusing — the failure that latched db_ok=False may have
-    # been transient (e.g. PoolTimeout).
+    """Handle a mirrored upstream tool invocation.
+
+    Orchestrates the full lifecycle: validate context, check
+    the deduplication cache, enforce storage quotas, call the
+    upstream, persist the artifact envelope, and trigger
+    mapping.
+
+    Args:
+        ctx: Gateway server with DB pool, blob store, config,
+            and metrics.
+        mirrored: The mirrored tool descriptor identifying
+            the upstream and schema.
+        arguments: Raw tool arguments including reserved
+            ``_gateway_*`` keys.
+
+    Returns:
+        A gateway tool result dict with ``artifact_id`` and
+        cache metadata, or a gateway error dict on failure.
+    """
+    # Pre-flight health gate: refuse artifact creation when
+    # gateway is unhealthy. Probe before refusing -- the failure
+    # that latched db_ok=False may have been transient.
     if ctx.db_pool is not None and not ctx.db_ok:
         if not ctx._probe_db_recovery():
             return gateway_error(
@@ -123,13 +176,17 @@ async def handle_mirrored_tool(
             "invalid _gateway_context.cache_mode; expected allow|fresh",
         )
     parent_artifact_id = arguments.get("_gateway_parent_artifact_id")
-    if parent_artifact_id is not None and not isinstance(parent_artifact_id, str):
+    if parent_artifact_id is not None and not isinstance(
+        parent_artifact_id, str
+    ):
         return gateway_error(
             "INVALID_ARGUMENT",
             "_gateway_parent_artifact_id must be a string when provided",
         )
     chain_seq = arguments.get("_gateway_chain_seq")
-    if chain_seq is not None and (not isinstance(chain_seq, int) or chain_seq < 0):
+    if chain_seq is not None and (
+        not isinstance(chain_seq, int) or chain_seq < 0
+    ):
         return gateway_error(
             "INVALID_ARGUMENT",
             "_gateway_chain_seq must be a non-negative integer when provided",
@@ -154,7 +211,7 @@ async def handle_mirrored_tool(
         forwarded_args=forwarded_args,
     )
 
-    def _create_input(envelope):  # type: ignore[no-untyped-def]
+    def _create_input(envelope: Envelope) -> CreateArtifactInput:
         return CreateArtifactInput(
             session_id=session_id,
             upstream_instance_id=mirrored.upstream.instance_id,
@@ -205,7 +262,9 @@ async def handle_mirrored_tool(
         )
         if passthrough_eligible:
             return upstream_result
-        handle = ctx._build_non_persisted_handle(input_data=_create_input(envelope))
+        handle = ctx._build_non_persisted_handle(
+            input_data=_create_input(envelope)
+        )
     else:
         # Phase 1: Cache check in a short-lived connection.
         # The advisory lock is transaction-scoped and released when this
@@ -228,7 +287,9 @@ async def handle_mirrored_tool(
                             "RESOURCE_BUSY",
                             "advisory lock acquisition timed out",
                             details={
-                                "timeout_ms": ctx.config.advisory_lock_timeout_ms,
+                                "timeout_ms": (
+                                    ctx.config.advisory_lock_timeout_ms
+                                ),
                             },
                         )
                     try:
@@ -258,7 +319,8 @@ async def handle_mirrored_tool(
                                 "meta": {
                                     "cache": {
                                         "reused": True,
-                                        "reason": reuse.reason or "request_key_match",
+                                        "reason": reuse.reason
+                                        or "request_key_match",
                                         "request_key": identity.request_key,
                                     },
                                 },
@@ -302,7 +364,10 @@ async def handle_mirrored_tool(
                         remove_fs_blobs=ctx.blob_store is not None,
                         metrics=ctx.metrics,
                     )
-                    quota_breaches = quota_result.breaches_after or quota_result.breaches_before
+                    quota_breaches = (
+                        quota_result.breaches_after
+                        or quota_result.breaches_before
+                    )
                     if not quota_result.space_cleared:
                         quota_ok = False
             except (_PG_OPERATIONAL_ERROR, _PG_INTERFACE_ERROR):
@@ -319,21 +384,39 @@ async def handle_mirrored_tool(
 
         if not quota_ok:
             quota_details: dict[str, Any] = {"exceeded_caps": []}
-            if quota_breaches is not None and quota_breaches.binary_blob_exceeded:
-                quota_details["max_binary_blob_bytes"] = ctx.config.max_binary_blob_bytes
+            if (
+                quota_breaches is not None
+                and quota_breaches.binary_blob_exceeded
+            ):
+                quota_details["max_binary_blob_bytes"] = (
+                    ctx.config.max_binary_blob_bytes
+                )
                 quota_details["exceeded_caps"].append("max_binary_blob_bytes")
-            if quota_breaches is not None and quota_breaches.payload_total_exceeded:
-                quota_details["max_payload_total_bytes"] = ctx.config.max_payload_total_bytes
+            if (
+                quota_breaches is not None
+                and quota_breaches.payload_total_exceeded
+            ):
+                quota_details["max_payload_total_bytes"] = (
+                    ctx.config.max_payload_total_bytes
+                )
                 quota_details["exceeded_caps"].append("max_payload_total_bytes")
-            if quota_breaches is not None and quota_breaches.total_storage_exceeded:
-                quota_details["max_total_storage_bytes"] = ctx.config.max_total_storage_bytes
+            if (
+                quota_breaches is not None
+                and quota_breaches.total_storage_exceeded
+            ):
+                quota_details["max_total_storage_bytes"] = (
+                    ctx.config.max_total_storage_bytes
+                )
                 quota_details["exceeded_caps"].append("max_total_storage_bytes")
             if not quota_details["exceeded_caps"]:
-                quota_details["max_total_storage_bytes"] = ctx.config.max_total_storage_bytes
+                quota_details["max_total_storage_bytes"] = (
+                    ctx.config.max_total_storage_bytes
+                )
                 quota_details["exceeded_caps"].append("max_total_storage_bytes")
             return gateway_error(
                 "QUOTA_EXCEEDED",
-                "workspace storage quota exceeded; prune could not free enough space",
+                "workspace storage quota exceeded;"
+                " prune could not free enough space",
                 details=quota_details,
             )
 
@@ -372,7 +455,9 @@ async def handle_mirrored_tool(
             max_bytes=ctx.config.passthrough_max_bytes,
         )
         if passthrough_eligible:
-            asyncio.create_task(_persist_async(ctx, _create_input(envelope), envelope))
+            asyncio.create_task(
+                _persist_async(ctx, _create_input(envelope), envelope)
+            )
             return upstream_result
 
         # Phase 3: Persist + Phase 4: Mapping in a single connection.

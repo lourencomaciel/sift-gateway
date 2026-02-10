@@ -1,11 +1,18 @@
-"""Artifact creation pipeline for mirrored tool calls."""
+"""Persist artifact envelopes from mirrored tool calls.
+
+Provide the end-to-end pipeline for creating artifacts:
+ID generation, payload sizing, envelope serialization,
+and transactional DB writes.  Key exports are
+``persist_artifact``, ``ArtifactHandle``, and
+``CreateArtifactInput``.
+"""
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 import datetime as dt
 import json
 import secrets
-from dataclasses import dataclass
 from typing import Any
 
 from mcp_artifact_gateway.canon.compress import CompressedBytes, compress_bytes
@@ -17,19 +24,26 @@ from mcp_artifact_gateway.constants import (
     MAPPER_VERSION,
     WORKSPACE_ID,
 )
+from mcp_artifact_gateway.db.protocols import (
+    ConnectionLike,
+    increment_metric,
+    safe_rollback,
+)
 from mcp_artifact_gateway.db.repos.artifacts_repo import validate_artifact_row
 from mcp_artifact_gateway.db.repos.payloads_repo import (
     INSERT_PAYLOAD_BLOB_SQL,
     payload_blob_params,
 )
-from mcp_artifact_gateway.db.repos.sessions_repo import UPSERT_SESSION_SQL, upsert_session_params
+from mcp_artifact_gateway.db.repos.sessions_repo import (
+    UPSERT_SESSION_SQL,
+    upsert_session_params,
+)
 from mcp_artifact_gateway.envelope.jsonb import envelope_to_jsonb
 from mcp_artifact_gateway.envelope.model import (
     BinaryRefContentPart,
     Envelope,
     JsonContentPart,
 )
-from mcp_artifact_gateway.db.protocols import ConnectionLike, increment_metric, safe_rollback
 from mcp_artifact_gateway.obs.logging import LogEvents, get_logger
 from mcp_artifact_gateway.util.hashing import sha256_hex
 
@@ -39,7 +53,31 @@ from mcp_artifact_gateway.util.hashing import sha256_hex
 # ---------------------------------------------------------------------------
 @dataclass(frozen=True)
 class ArtifactHandle:
-    """Handle returned to the caller after artifact creation."""
+    """Immutable handle returned after successful artifact creation.
+
+    Carries the identifiers and size metadata the caller needs
+    to reference the newly persisted artifact without a DB
+    round-trip.
+
+    Attributes:
+        artifact_id: Unique artifact identifier with prefix.
+        created_seq: Auto-increment sequence from DB, or None.
+        generation: Optimistic-concurrency generation counter.
+        session_id: Owning session identifier.
+        source_tool: Fully qualified tool name (prefix.tool).
+        upstream_instance_id: Identity of the upstream server.
+        request_key: Content-addressed request fingerprint.
+        payload_hash_full: SHA-256 hex of canonical payload.
+        payload_json_bytes: Total bytes of JSON content parts.
+        payload_binary_bytes_total: Total bytes of binary refs.
+        payload_total_bytes: Sum of JSON and binary bytes.
+        contains_binary_refs: True if envelope has binary refs.
+        map_kind: Mapping kind applied (e.g. "none", "full").
+        map_status: Current mapping status (e.g. "pending").
+        index_status: Current index status (e.g. "off").
+        status: Envelope status, "ok" or "error".
+        error_summary: Human-readable error, or None if ok.
+    """
 
     artifact_id: str
     created_seq: int | None  # assigned by DB
@@ -62,7 +100,25 @@ class ArtifactHandle:
 
 @dataclass(frozen=True)
 class CreateArtifactInput:
-    """Input for creating an artifact."""
+    """Immutable input bundle for the artifact creation pipeline.
+
+    Groups every value needed to persist an artifact so that
+    callers can build the input once and pass it through.
+
+    Attributes:
+        session_id: Client session that triggered the call.
+        upstream_instance_id: Identity of the upstream server.
+        prefix: Namespace prefix for the tool.
+        tool_name: Bare upstream tool name (without prefix).
+        request_key: Content-addressed request fingerprint.
+        request_args_hash: Hash of the stripped request args.
+        request_args_prefix: Truncated args for display.
+        upstream_tool_schema_hash: Schema hash, or None.
+        envelope: Normalized envelope with tool results.
+        parent_artifact_id: Parent artifact for chained calls.
+        chain_seq: Position in a chain sequence, or None.
+        cache_mode: "allow" for cache reuse, "fresh" to skip.
+    """
 
     session_id: str
     upstream_instance_id: str
@@ -82,19 +138,28 @@ class CreateArtifactInput:
 # ID generation
 # ---------------------------------------------------------------------------
 def generate_artifact_id() -> str:
-    """Generate a unique artifact ID."""
+    """Generate a unique artifact ID with the standard prefix.
+
+    Returns:
+        A string of the form ``art_<32 hex chars>``.
+    """
     return f"{ARTIFACT_ID_PREFIX}{secrets.token_hex(16)}"
 
 
 # ---------------------------------------------------------------------------
 # Payload sizing
 # ---------------------------------------------------------------------------
-def compute_payload_sizes(envelope: Envelope) -> tuple[int, int, int]:
-    """Compute (payload_json_bytes, payload_binary_bytes_total, payload_total_bytes).
+def compute_payload_sizes(
+    envelope: Envelope,
+) -> tuple[int, int, int]:
+    """Compute byte sizes for all content parts in an envelope.
 
-    - payload_json_bytes: sum of JSON content part sizes
-    - payload_binary_bytes_total: sum of binary_ref byte_counts
-    - payload_total_bytes: json + binary
+    Args:
+        envelope: Normalized envelope whose parts are measured.
+
+    Returns:
+        A tuple of (payload_json_bytes,
+        payload_binary_bytes_total, payload_total_bytes).
     """
     json_bytes = 0
     binary_bytes = 0
@@ -103,13 +168,17 @@ def compute_payload_sizes(envelope: Envelope) -> tuple[int, int, int]:
         if isinstance(part, JsonContentPart):
             # Approximate JSON size from UTF-8 encoded value
             if part.value is not None:
-                json_bytes += len(json.dumps(part.value, ensure_ascii=False).encode("utf-8"))
+                json_bytes += len(
+                    json.dumps(part.value, ensure_ascii=False).encode("utf-8")
+                )
         elif isinstance(part, BinaryRefContentPart):
             binary_bytes += part.byte_count
         else:
             # Text and resource ref contribute to json bytes
             part_dict = part.to_dict()
-            json_bytes += len(json.dumps(part_dict, ensure_ascii=False).encode("utf-8"))
+            json_bytes += len(
+                json.dumps(part_dict, ensure_ascii=False).encode("utf-8")
+            )
 
     return json_bytes, binary_bytes, json_bytes + binary_bytes
 
@@ -121,14 +190,23 @@ def prepare_envelope_storage(
     envelope: Envelope,
     config: GatewayConfig,
 ) -> tuple[str, bytes, CompressedBytes, dict[str, Any] | None]:
-    """Prepare envelope for storage.
+    """Canonicalize, hash, compress, and optionally JSONB-encode an envelope.
 
-    Returns: (payload_hash, uncompressed_canonical, compressed, jsonb_or_none)
+    Args:
+        envelope: Normalized envelope to prepare.
+        config: Gateway configuration controlling encoding
+            and JSONB mode.
+
+    Returns:
+        A tuple of (payload_hash_hex, uncompressed_canonical,
+        compressed_bytes, jsonb_value_or_none).
     """
     envelope_dict = envelope.to_dict()
     uncompressed = canonical_bytes(envelope_dict)
     p_hash = sha256_hex(uncompressed)
-    compressed = compress_bytes(uncompressed, config.envelope_canonical_encoding.value)
+    compressed = compress_bytes(
+        uncompressed, config.envelope_canonical_encoding.value
+    )
 
     # JSONB storage mode
     jsonb_value: dict[str, Any] | None = envelope_to_jsonb(
@@ -152,10 +230,26 @@ def build_artifact_row(
     payload_binary_bytes_total: int,
     payload_total_bytes: int,
 ) -> dict[str, Any]:
-    """Build the artifact row dict for DB insertion."""
+    """Build the artifact row dict for DB insertion.
+
+    Args:
+        artifact_id: Unique ID for the new artifact.
+        input_data: Creation input with tool and session info.
+        payload_hash: SHA-256 hex of canonical payload.
+        payload_json_bytes: Total bytes of JSON content.
+        payload_binary_bytes_total: Total bytes of binary refs.
+        payload_total_bytes: Sum of JSON and binary bytes.
+
+    Returns:
+        A dict whose keys match the ``artifacts`` table columns.
+    """
     error_summary = None
-    if input_data.envelope.status == "error" and input_data.envelope.error is not None:
-        error_summary = f"{input_data.envelope.error.code}: {input_data.envelope.error.message}"
+    if (
+        input_data.envelope.status == "error"
+        and input_data.envelope.error is not None
+    ):
+        err = input_data.envelope.error
+        error_summary = f"{err.code}: {err.message}"
 
     return {
         "workspace_id": WORKSPACE_ID,
@@ -198,13 +292,16 @@ INSERT INTO artifacts (
     parent_artifact_id, chain_seq,
     map_kind, map_status, mapper_version, index_status, error_summary
 ) VALUES (
-    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
 )
 RETURNING created_seq
 """
 
 UPSERT_ARTIFACT_REF_SQL = """
-INSERT INTO artifact_refs (workspace_id, session_id, artifact_id, first_seen_at, last_seen_at)
+INSERT INTO artifact_refs (
+    workspace_id, session_id, artifact_id,
+    first_seen_at, last_seen_at)
 VALUES (%s, %s, %s, NOW(), NOW())
 ON CONFLICT (workspace_id, session_id, artifact_id)
 DO UPDATE SET last_seen_at = EXCLUDED.last_seen_at
@@ -217,7 +314,17 @@ ON CONFLICT (workspace_id, payload_hash_full, binary_hash) DO NOTHING
 """
 
 
-def _artifact_insert_params(row: dict[str, Any]) -> tuple[object, ...]:
+def _artifact_insert_params(
+    row: dict[str, Any],
+) -> tuple[object, ...]:
+    """Extract positional SQL parameters from an artifact row dict.
+
+    Args:
+        row: Artifact row dict built by ``build_artifact_row``.
+
+    Returns:
+        Ordered tuple matching INSERT_ARTIFACT_SQL placeholders.
+    """
     return (
         row["workspace_id"],
         row["artifact_id"],
@@ -245,7 +352,18 @@ def _artifact_insert_params(row: dict[str, Any]) -> tuple[object, ...]:
     )
 
 
-def _created_seq_from_row(row: tuple[object, ...] | None) -> int | None:
+def _created_seq_from_row(
+    row: tuple[object, ...] | None,
+) -> int | None:
+    """Extract the created_seq integer from a RETURNING row.
+
+    Args:
+        row: Single-column row from INSERT ... RETURNING, or
+            None if the database returned no row.
+
+    Returns:
+        The integer sequence value, or None if unavailable.
+    """
     if row is None:
         return None
     raw = row[0]
@@ -265,15 +383,38 @@ def persist_artifact(
     metrics: Any | None = None,
     logger: Any | None = None,
 ) -> ArtifactHandle:
-    """Persist payload + artifact rows and return a stable artifact handle."""
+    """Persist payload and artifact rows in a single transaction.
+
+    Canonicalize the envelope, insert payload blob and artifact
+    rows, upsert session and artifact-ref rows, and link any
+    binary blob hashes.  Rolls back on failure.
+
+    Args:
+        connection: Active database connection.
+        config: Gateway configuration for encoding settings.
+        input_data: Creation input with envelope and metadata.
+        binary_hashes: Optional binary blob hashes to link to
+            the payload.
+        metrics: Optional metrics collector for counters.
+        logger: Optional structured logger override.
+
+    Returns:
+        An ArtifactHandle with all assigned identifiers and
+        size metadata.
+
+    Raises:
+        ValueError: If the built artifact row fails validation.
+    """
     log = logger or get_logger(component="artifacts.create")
 
-    payload_hash, _canonical_raw, compressed, jsonb_value = prepare_envelope_storage(
-        input_data.envelope,
-        config,
+    payload_hash, _canonical_raw, compressed, jsonb_value = (
+        prepare_envelope_storage(
+            input_data.envelope,
+            config,
+        )
     )
-    payload_json_bytes, payload_binary_bytes_total, payload_total_bytes = compute_payload_sizes(
-        input_data.envelope
+    payload_json_bytes, payload_binary_bytes_total, payload_total_bytes = (
+        compute_payload_sizes(input_data.envelope)
     )
     artifact_id = generate_artifact_id()
     row = build_artifact_row(
@@ -302,7 +443,9 @@ def persist_artifact(
                 contains_binary_refs=input_data.envelope.contains_binary_refs,
             ),
         )
-        connection.execute(UPSERT_SESSION_SQL, upsert_session_params(input_data.session_id))
+        connection.execute(
+            UPSERT_SESSION_SQL, upsert_session_params(input_data.session_id)
+        )
         created_row = connection.execute(
             INSERT_ARTIFACT_SQL,
             _artifact_insert_params(row),

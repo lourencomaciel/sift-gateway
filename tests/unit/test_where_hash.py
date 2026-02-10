@@ -4,18 +4,21 @@ import pytest
 
 from mcp_artifact_gateway.query.where_hash import where_hash
 
-
 # ---------------------------------------------------------------------------
 # raw_string mode
 # ---------------------------------------------------------------------------
 
 
 def test_where_hash_raw_string_mode() -> None:
-    assert where_hash("a = 1", mode="raw_string") == where_hash("a = 1", mode="raw_string")
+    assert where_hash("a = 1", mode="raw_string") == where_hash(
+        "a = 1", mode="raw_string"
+    )
 
 
 def test_where_hash_raw_string_different_strings_differ() -> None:
-    assert where_hash("a = 1", mode="raw_string") != where_hash("a = 2", mode="raw_string")
+    assert where_hash("a = 1", mode="raw_string") != where_hash(
+        "a = 2", mode="raw_string"
+    )
 
 
 def test_where_hash_raw_string_dict_input() -> None:
@@ -29,7 +32,9 @@ def test_where_hash_raw_string_dict_input() -> None:
 
 def test_where_hash_raw_string_whitespace_matters() -> None:
     """raw_string mode does NOT normalize whitespace — different strings differ."""
-    assert where_hash("a = 1", mode="raw_string") != where_hash("a  =  1", mode="raw_string")
+    assert where_hash("a = 1", mode="raw_string") != where_hash(
+        "a  =  1", mode="raw_string"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -40,7 +45,9 @@ def test_where_hash_raw_string_whitespace_matters() -> None:
 def test_where_hash_canonical_ast_mode_is_order_insensitive() -> None:
     a = {"op": "and", "clauses": [{"path": "$.x", "op": "eq", "value": 1}]}
     b = {"clauses": [{"value": 1, "op": "eq", "path": "$.x"}], "op": "and"}
-    assert where_hash(a, mode="canonical_ast") == where_hash(b, mode="canonical_ast")
+    assert where_hash(a, mode="canonical_ast") == where_hash(
+        b, mode="canonical_ast"
+    )
 
 
 def test_where_hash_canonical_ast_sorts_commutative_clauses() -> None:
@@ -58,7 +65,9 @@ def test_where_hash_canonical_ast_sorts_commutative_clauses() -> None:
             {"path": "$.x", "op": "eq", "value": 1},
         ],
     }
-    assert where_hash(a, mode="canonical_ast") == where_hash(b, mode="canonical_ast")
+    assert where_hash(a, mode="canonical_ast") == where_hash(
+        b, mode="canonical_ast"
+    )
 
 
 def test_where_hash_canonical_ast_or_commutative() -> None:
@@ -76,7 +85,9 @@ def test_where_hash_canonical_ast_or_commutative() -> None:
             {"path": "$.x", "op": "eq", "value": 1},
         ],
     }
-    assert where_hash(a, mode="canonical_ast") == where_hash(b, mode="canonical_ast")
+    assert where_hash(a, mode="canonical_ast") == where_hash(
+        b, mode="canonical_ast"
+    )
 
 
 def test_where_hash_canonical_ast_nested_sorting() -> None:
@@ -107,13 +118,17 @@ def test_where_hash_canonical_ast_nested_sorting() -> None:
             },
         ],
     }
-    assert where_hash(a, mode="canonical_ast") == where_hash(b, mode="canonical_ast")
+    assert where_hash(a, mode="canonical_ast") == where_hash(
+        b, mode="canonical_ast"
+    )
 
 
 def test_where_hash_canonical_ast_different_predicates_differ() -> None:
     a = {"path": "$.x", "op": "eq", "value": 1}
     b = {"path": "$.x", "op": "eq", "value": 2}
-    assert where_hash(a, mode="canonical_ast") != where_hash(b, mode="canonical_ast")
+    assert where_hash(a, mode="canonical_ast") != where_hash(
+        b, mode="canonical_ast"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -124,27 +139,35 @@ def test_where_hash_canonical_ast_different_predicates_differ() -> None:
 def test_where_hash_canonical_ast_mode_parses_string_expression() -> None:
     a = "status = 'open' AND score >= 10"
     b = "score >= 10 and status = 'open'"
-    assert where_hash(a, mode="canonical_ast") == where_hash(b, mode="canonical_ast")
+    assert where_hash(a, mode="canonical_ast") == where_hash(
+        b, mode="canonical_ast"
+    )
 
 
 def test_where_hash_canonical_ast_string_or_commutative() -> None:
     a = "x = 1 OR y = 2"
     b = "y = 2 OR x = 1"
-    assert where_hash(a, mode="canonical_ast") == where_hash(b, mode="canonical_ast")
+    assert where_hash(a, mode="canonical_ast") == where_hash(
+        b, mode="canonical_ast"
+    )
 
 
 def test_where_hash_canonical_ast_string_whitespace_insensitive() -> None:
     """canonical_ast mode normalizes parsed expressions regardless of whitespace."""
     a = "x = 1 AND y = 2"
     b = "x=1   AND   y=2"
-    assert where_hash(a, mode="canonical_ast") == where_hash(b, mode="canonical_ast")
+    assert where_hash(a, mode="canonical_ast") == where_hash(
+        b, mode="canonical_ast"
+    )
 
 
 def test_where_hash_canonical_ast_case_insensitive_keywords() -> None:
     """AND/and/And should all produce the same hash in canonical_ast mode."""
     a = "x = 1 AND y = 2"
     b = "x = 1 and y = 2"
-    assert where_hash(a, mode="canonical_ast") == where_hash(b, mode="canonical_ast")
+    assert where_hash(a, mode="canonical_ast") == where_hash(
+        b, mode="canonical_ast"
+    )
 
 
 # ---------------------------------------------------------------------------

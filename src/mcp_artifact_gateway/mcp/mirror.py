@@ -1,17 +1,32 @@
-"""Tool mirroring: expose upstream tools as {prefix}.{tool}."""
+"""Mirror upstream tools under namespaced qualified names.
+
+Expose each upstream tool as ``{prefix}.{tool}`` in the gateway,
+stripping reserved ``_gateway_*`` arguments before forwarding.
+Exports ``MirroredTool``, ``build_mirrored_tools``, and argument
+helpers for schema validation and reserved-key stripping.
+"""
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 from mcp_artifact_gateway.constants import RESERVED_EXACT_KEYS, RESERVED_PREFIX
-from mcp_artifact_gateway.mcp.upstream import UpstreamInstance, UpstreamToolSchema
+from mcp_artifact_gateway.mcp.upstream import (
+    UpstreamInstance,
+    UpstreamToolSchema,
+)
 
 
 @dataclass(frozen=True)
 class MirroredTool:
-    """A tool mirrored from upstream with prefixed name."""
+    """A single upstream tool exposed under a qualified name.
+
+    Attributes:
+        qualified_name: Namespaced name ``{prefix}.{tool}``.
+        upstream: The upstream instance owning this tool.
+        upstream_tool: Schema descriptor from tool discovery.
+    """
 
     qualified_name: str  # "{prefix}.{tool}"
     upstream: UpstreamInstance
@@ -19,15 +34,31 @@ class MirroredTool:
 
     @property
     def prefix(self) -> str:
+        """The upstream namespace prefix."""
         return self.upstream.prefix
 
     @property
     def original_name(self) -> str:
+        """The original upstream tool name."""
         return self.upstream_tool.name
 
 
-def build_mirrored_tools(upstreams: list[UpstreamInstance]) -> dict[str, MirroredTool]:
-    """Build mapping of qualified tool names to MirroredTool objects."""
+def build_mirrored_tools(
+    upstreams: list[UpstreamInstance],
+) -> dict[str, MirroredTool]:
+    """Build mapping of qualified names to ``MirroredTool`` objects.
+
+    Args:
+        upstreams: Connected upstream instances with discovered
+            tool schemas.
+
+    Returns:
+        Dict keyed by ``{prefix}.{tool}`` qualified names.
+
+    Raises:
+        ValueError: If two upstreams produce the same qualified
+            tool name.
+    """
     tools: dict[str, MirroredTool] = {}
     for upstream in upstreams:
         for tool_schema in upstream.tools:
@@ -43,23 +74,35 @@ def build_mirrored_tools(upstreams: list[UpstreamInstance]) -> dict[str, Mirrore
 
 
 def strip_reserved_gateway_args(args: dict[str, Any]) -> dict[str, Any]:
-    """Remove reserved gateway args exactly per spec.
+    """Remove reserved ``_gateway_*`` keys before forwarding.
 
-    Removes:
-    - Exact keys: _gateway_context, _gateway_parent_artifact_id, _gateway_chain_seq
-    - Any key starting with prefix "_gateway_"
+    Strips exact reserved keys and any key starting with the
+    ``_gateway_`` prefix. Does not remove ``gateway_*`` or
+    partial-prefix keys like ``_gatewa``.
 
-    Does NOT remove: gateway_url, _gatewa, gateway_*, etc.
+    Args:
+        args: Raw tool arguments dict.
+
+    Returns:
+        New dict with reserved keys removed.
     """
     return {
         key: value
         for key, value in args.items()
-        if key not in RESERVED_EXACT_KEYS and not key.startswith(RESERVED_PREFIX)
+        if key not in RESERVED_EXACT_KEYS
+        and not key.startswith(RESERVED_PREFIX)
     }
 
 
 def extract_gateway_context(args: dict[str, Any]) -> dict[str, Any] | None:
-    """Extract _gateway_context from args if present."""
+    """Extract ``_gateway_context`` from arguments.
+
+    Args:
+        args: Raw tool arguments dict.
+
+    Returns:
+        The context dict, or ``None`` if absent or not a dict.
+    """
     ctx = args.get("_gateway_context")
     if isinstance(ctx, dict):
         return ctx
@@ -70,9 +113,20 @@ def validate_against_schema(
     args: dict[str, Any],
     schema: dict[str, Any],
 ) -> list[str]:
-    """Validate forwarded args against upstream tool schema (strict enforcement).
+    """Validate forwarded args against the upstream tool schema.
 
-    Returns list of violation strings. Non-empty means strict rejection.
+    Performs basic checks: required properties must be present,
+    and when ``additionalProperties`` is ``False``, unknown keys
+    are rejected.
+
+    Args:
+        args: Forwarded tool arguments (reserved keys already
+            stripped).
+        schema: JSON Schema dict from the upstream tool.
+
+    Returns:
+        List of violation description strings. An empty list
+        indicates valid arguments.
     """
     # Basic validation - check required properties exist
     violations: list[str] = []

@@ -1,21 +1,57 @@
-"""Payload storage: compression, integrity, and reconstruction."""
+"""Prepare and reconstruct envelope payloads for database storage.
+
+Canonicalizes envelope dicts to RFC 8785 bytes, compresses them
+with zstd (or stores raw), hashes for integrity, and computes
+JSON/binary size metrics.  ``prepare_payload`` produces a
+``PreparedPayload`` ready for insertion into ``payload_blobs``.
+``reconstruct_envelope`` reverses the process with integrity
+verification.
+"""
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
+import json
 from typing import Any
 
-from mcp_artifact_gateway.canon import canonical_bytes, compress_bytes, decompress_bytes
+from mcp_artifact_gateway.canon import (
+    canonical_bytes,
+    compress_bytes,
+    decompress_bytes,
+)
 from mcp_artifact_gateway.canon.decimal_json import loads_decimal
-from mcp_artifact_gateway.config.settings import CanonicalEncoding, EnvelopeJsonbMode
+from mcp_artifact_gateway.config.settings import (
+    CanonicalEncoding,
+    EnvelopeJsonbMode,
+)
 from mcp_artifact_gateway.constants import CANONICALIZER_VERSION
 from mcp_artifact_gateway.util.hashing import payload_hash_full, sha256_hex
 
 
 @dataclass(frozen=True)
 class PreparedPayload:
-    """All data needed to insert a payload_blobs row."""
+    """All data needed to insert a payload_blobs row.
+
+    Produced by ``prepare_payload`` after canonicalization,
+    compression, and integrity verification of an envelope dict.
+
+    Attributes:
+        payload_hash: SHA-256 hex of uncompressed canonical
+            bytes (storage identity).
+        encoding: Compression encoding name (e.g. ``zstd``).
+        compressed_bytes: The compressed payload data.
+        uncompressed_len: Byte length before compression.
+        canonicalizer_version: Version string of the
+            canonicalizer used.
+        payload_json_bytes: Total JSON content size in bytes.
+        payload_binary_bytes_total: Total binary ref size in
+            bytes.
+        payload_total_bytes: Sum of JSON and binary byte counts.
+        contains_binary_refs: True if any content part is a
+            binary or image reference.
+        envelope_jsonb: Optional JSONB representation for
+            database indexing (None if disabled).
+    """
 
     payload_hash: str
     encoding: str
@@ -29,8 +65,19 @@ class PreparedPayload:
     envelope_jsonb: dict[str, Any] | None
 
 
-def _compute_content_sizes(envelope_dict: dict[str, Any]) -> tuple[int, int, bool]:
-    """Compute JSON byte size, binary byte total, and binary-refs presence from content parts."""
+def _compute_content_sizes(
+    envelope_dict: dict[str, Any],
+) -> tuple[int, int, bool]:
+    """Compute content size metrics from envelope parts.
+
+    Args:
+        envelope_dict: Envelope dictionary with a ``content``
+            list of typed parts.
+
+    Returns:
+        Tuple of (json_bytes, binary_bytes_total,
+        has_binary_refs).
+    """
     json_bytes = 0
     binary_bytes_total = 0
     has_binary_refs = False
@@ -57,7 +104,19 @@ def _build_jsonb(
     threshold: int,
     uncompressed_len: int,
 ) -> dict[str, Any] | None:
-    """Determine JSONB representation based on mode and size threshold."""
+    """Determine JSONB representation based on mode and size.
+
+    Args:
+        envelope_dict: Full envelope dictionary.
+        mode: JSONB storage mode (none, full, or
+            minimal_for_large).
+        threshold: Byte threshold for minimal_for_large mode.
+        uncompressed_len: Uncompressed canonical byte length.
+
+    Returns:
+        Full or minimal envelope dict for JSONB storage, or
+        None if mode is ``none``.
+    """
     if mode == EnvelopeJsonbMode.none:
         return None
     if mode == EnvelopeJsonbMode.full:
@@ -81,7 +140,21 @@ def prepare_payload(
     jsonb_mode: EnvelopeJsonbMode = EnvelopeJsonbMode.full,
     jsonb_minimize_threshold: int = 1_000_000,
 ) -> PreparedPayload:
-    """Canonicalize, hash, compress envelope; compute sizes; prepare JSONB."""
+    """Canonicalize, hash, compress, and verify an envelope.
+
+    Args:
+        envelope_dict: Envelope dictionary to prepare.
+        encoding: Compression encoding to apply.
+        jsonb_mode: JSONB storage mode for database indexing.
+        jsonb_minimize_threshold: Byte threshold for the
+            minimal_for_large JSONB mode.
+
+    Returns:
+        A PreparedPayload ready for database insertion.
+
+    Raises:
+        ValueError: If compression integrity check fails.
+    """
     # 1. Canonicalize
     uncompressed = canonical_bytes(envelope_dict)
 
@@ -95,11 +168,16 @@ def prepare_payload(
     roundtrip = decompress_bytes(compressed.data, compressed.encoding)
     roundtrip_hash = sha256_hex(roundtrip)
     if roundtrip_hash != p_hash:
-        msg = f"compression integrity check failed: expected {p_hash}, got {roundtrip_hash}"
+        msg = (
+            f"compression integrity check failed: "
+            f"expected {p_hash}, got {roundtrip_hash}"
+        )
         raise ValueError(msg)
 
     # 5. Compute sizes from envelope content parts
-    json_bytes, binary_bytes_total, has_binary_refs = _compute_content_sizes(envelope_dict)
+    json_bytes, binary_bytes_total, has_binary_refs = _compute_content_sizes(
+        envelope_dict
+    )
     total_bytes = json_bytes + binary_bytes_total
 
     # 6. Determine JSONB storage based on mode/threshold
@@ -126,11 +204,28 @@ def reconstruct_envelope(
     encoding: str,
     expected_hash: str,
 ) -> dict[str, Any]:
-    """Decompress canonical bytes and verify integrity."""
+    """Decompress canonical bytes and verify integrity.
+
+    Args:
+        compressed_bytes: Compressed payload data.
+        encoding: Compression encoding name (e.g. ``zstd``).
+        expected_hash: SHA-256 hex digest of the uncompressed
+            canonical bytes.
+
+    Returns:
+        Reconstructed envelope dictionary.
+
+    Raises:
+        ValueError: If integrity check fails or payload is not
+            valid JSON.
+    """
     decompressed = decompress_bytes(compressed_bytes, encoding)
     actual_hash = sha256_hex(decompressed)
     if actual_hash != expected_hash:
-        msg = f"envelope integrity check failed: expected {expected_hash}, got {actual_hash}"
+        msg = (
+            f"envelope integrity check failed: "
+            f"expected {expected_hash}, got {actual_hash}"
+        )
         raise ValueError(msg)
     try:
         # Use loads_decimal to preserve Decimal values (no Python float drift)

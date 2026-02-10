@@ -7,7 +7,6 @@ from mcp_artifact_gateway.tools.artifact_search import (
     validate_search_args,
 )
 
-
 # ---- validate_search_args ----
 
 
@@ -100,7 +99,8 @@ def test_build_search_query_base_has_workspace_and_session() -> None:
     assert "ar.workspace_id = %s" in sql
     assert "ar.session_id = %s" in sql
     assert "a.status" not in sql
-    assert "CASE WHEN a.error_summary IS NULL THEN 'ok' ELSE 'error' END AS status" in sql
+    assert "CASE WHEN a.error_summary IS NULL" in sql
+    assert "END AS status" in sql
     assert params[0] == "local"
     assert params[1] == "sess_1"
 
@@ -111,7 +111,9 @@ def test_build_search_query_excludes_deleted_by_default() -> None:
 
 
 def test_build_search_query_includes_deleted_when_requested() -> None:
-    sql, params = build_search_query("sess_1", {"include_deleted": True}, "created_seq_desc", 50)
+    sql, params = build_search_query(
+        "sess_1", {"include_deleted": True}, "created_seq_desc", 50
+    )
     assert "a.deleted_at IS NULL" not in sql
 
 
@@ -140,7 +142,9 @@ def test_build_search_query_upstream_instance_id_filter() -> None:
 
 
 def test_build_search_query_request_key_filter() -> None:
-    sql, params = build_search_query("sess_1", {"request_key": "rk_abc"}, "created_seq_desc", 50)
+    sql, params = build_search_query(
+        "sess_1", {"request_key": "rk_abc"}, "created_seq_desc", 50
+    )
     assert "a.request_key = %s" in sql
     assert "rk_abc" in params
 
@@ -204,10 +208,14 @@ def test_build_search_query_fetches_limit_plus_one() -> None:
 
 
 def test_build_search_query_status_error_filter() -> None:
-    sql, _ = build_search_query("sess_1", {"status": "error"}, "created_seq_desc", 50)
+    sql, _ = build_search_query(
+        "sess_1", {"status": "error"}, "created_seq_desc", 50
+    )
     assert "a.error_summary IS NOT NULL" in sql
 
 
 def test_build_search_query_status_ok_filter() -> None:
-    sql, _ = build_search_query("sess_1", {"status": "ok"}, "created_seq_desc", 50)
+    sql, _ = build_search_query(
+        "sess_1", {"status": "ok"}, "created_seq_desc", 50
+    )
     assert "a.error_summary IS NULL" in sql

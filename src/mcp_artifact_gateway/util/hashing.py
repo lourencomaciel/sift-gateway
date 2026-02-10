@@ -1,4 +1,11 @@
-"""Hashing helpers used across gateway identity and integrity paths."""
+"""Provide SHA-256-based hashing for identity and integrity.
+
+Centralizes all hash derivations used by the gateway: raw
+digests, truncated digests, blob IDs, request keys, advisory
+lock keys, payload hashes, upstream instance IDs, map budget
+fingerprints, and sample set hashes.  Every function is
+deterministic and side-effect-free.
+"""
 
 from __future__ import annotations
 
@@ -10,12 +17,30 @@ from mcp_artifact_gateway.constants import BLOB_ID_PREFIX
 
 
 def sha256_hex(data: bytes) -> str:
-    """Return SHA-256 hex digest."""
+    """Return the full SHA-256 hex digest of raw bytes.
+
+    Args:
+        data: Bytes to hash.
+
+    Returns:
+        64-character lowercase hex digest string.
+    """
     return hashlib.sha256(data).hexdigest()
 
 
 def sha256_trunc(data: bytes, chars: int) -> str:
-    """Return first `chars` chars of SHA-256 hex digest."""
+    """Return truncated SHA-256 hex digest.
+
+    Args:
+        data: Bytes to hash.
+        chars: Number of leading hex characters to keep.
+
+    Returns:
+        Truncated hex digest string of length *chars*.
+
+    Raises:
+        ValueError: If *chars* is not positive.
+    """
     if chars <= 0:
         msg = "chars must be positive"
         raise ValueError(msg)
@@ -23,29 +48,84 @@ def sha256_trunc(data: bytes, chars: int) -> str:
 
 
 def binary_hash(data: bytes) -> str:
-    """sha256(raw_bytes).hexdigest()"""
+    """Return SHA-256 hex digest of raw binary data.
+
+    Semantic alias for ``sha256_hex`` used when hashing
+    binary blob content.
+
+    Args:
+        data: Raw bytes to hash.
+
+    Returns:
+        64-character lowercase hex digest string.
+    """
     return sha256_hex(data)
 
 
 def blob_id(binary_hash_hex: str) -> str:
-    """'bin_' + binary_hash[:32]"""
+    """Derive a blob ID from a binary hash hex string.
+
+    Concatenate the ``bin_`` prefix with the first 32 hex
+    characters of the hash for a compact identifier.
+
+    Args:
+        binary_hash_hex: Full SHA-256 hex digest of the
+            binary content.
+
+    Returns:
+        Blob ID string (e.g. ``bin_<32 hex chars>``).
+    """
     return BLOB_ID_PREFIX + binary_hash_hex[:32]
 
 
 def advisory_lock_keys(request_key_str: str) -> tuple[int, int]:
-    """Two signed int32 keys derived from sha256(request_key) for pg_advisory_lock."""
+    """Derive two signed int32 keys for pg_advisory_lock.
+
+    Hash the request key with SHA-256 and unpack the first
+    8 bytes as two big-endian unsigned 32-bit integers,
+    then convert each to signed int32.
+
+    Args:
+        request_key_str: Request key string to hash.
+
+    Returns:
+        Tuple of two signed int32 values suitable for
+        ``pg_try_advisory_lock(key1, key2)``.
+    """
     digest = hashlib.sha256(request_key_str.encode("utf-8")).digest()
     key1_u32, key2_u32 = struct.unpack(">II", digest[:8])
     return _to_signed_int32(key1_u32), _to_signed_int32(key2_u32)
 
 
 def payload_hash_full(canonical_bytes_uncompressed: bytes) -> str:
-    """sha256(envelope_canonical_bytes_uncompressed).hexdigest()"""
+    """Return SHA-256 hex digest of uncompressed canonical bytes.
+
+    Used to fingerprint the full envelope payload before
+    compression for integrity verification.
+
+    Args:
+        canonical_bytes_uncompressed: Uncompressed
+            canonical JSON bytes.
+
+    Returns:
+        64-character lowercase hex digest string.
+    """
     return sha256_hex(canonical_bytes_uncompressed)
 
 
 def upstream_instance_id(canonical_semantic_identity_bytes: bytes) -> str:
-    """sha256(canonical_semantic_identity_bytes)[:32] hex"""
+    """Derive a truncated upstream instance identifier.
+
+    Hash the canonical semantic identity bytes with SHA-256
+    and return the first 32 hex characters (128-bit).
+
+    Args:
+        canonical_semantic_identity_bytes: Canonical JSON
+            bytes encoding the upstream's stable identity.
+
+    Returns:
+        32-character hex string identifying the upstream.
+    """
     return hashlib.sha256(canonical_semantic_identity_bytes).hexdigest()[:32]
 
 
@@ -55,7 +135,23 @@ def request_key(
     tool: str,
     canonical_args_bytes: bytes,
 ) -> str:
-    """sha256(upstream_instance_id|prefix|tool|canonical_args_bytes).hexdigest()"""
+    """Compute a request deduplication key.
+
+    Concatenate the upstream instance ID, prefix, tool
+    name, and canonical argument bytes with pipe delimiters
+    and return the SHA-256 hex digest.
+
+    Args:
+        upstream_instance_id: Upstream identity hash.
+        prefix: Tool namespace prefix.
+        tool: Tool name.
+        canonical_args_bytes: RFC 8785 canonical JSON
+            bytes of the tool arguments.
+
+    Returns:
+        64-character hex digest uniquely identifying the
+        request.
+    """
     digest = hashlib.sha256()
     digest.update(upstream_instance_id.encode("utf-8"))
     digest.update(b"|")
@@ -75,9 +171,22 @@ def map_budget_fingerprint(
     prng_version: str,
     budgets: dict,
 ) -> str:
-    """sha256(canonical_json({mapper_version, ...+ all budget keys}))[:32]
+    """Compute a truncated fingerprint of mapping budgets.
 
-    Uses RFC 8785 canonical JSON for determinism.
+    Serialize the version strings and budget parameters
+    into RFC 8785 canonical JSON and return the first 32
+    hex characters of the SHA-256 digest.
+
+    Args:
+        mapper_version: Mapper algorithm version string.
+        traversal_contract_version: Traversal contract
+            version string.
+        map_backend_id: Backend identifier string.
+        prng_version: PRNG algorithm version string.
+        budgets: Dict of budget parameter key-value pairs.
+
+    Returns:
+        32-character hex fingerprint string.
     """
     payload: dict = {
         "map_backend_id": map_backend_id,
@@ -97,9 +206,21 @@ def sample_set_hash(
     map_budget_fingerprint: str,
     mapper_version: str,
 ) -> str:
-    """sha256(canonical_json({root_path, sample_indices, ...}))[:32].
+    """Compute a truncated hash identifying a sample set.
 
-    This intentionally truncates to 32 hex chars (128-bit) for compactness.
+    Serialize the root path, sample indices, budget
+    fingerprint, and mapper version into RFC 8785 canonical
+    JSON and return the first 32 hex characters of the
+    SHA-256 digest (128-bit).
+
+    Args:
+        root_path: JSONPath to the root array.
+        sample_indices: Sorted list of sampled indices.
+        map_budget_fingerprint: Budget fingerprint string.
+        mapper_version: Mapper algorithm version string.
+
+    Returns:
+        32-character hex sample set identifier.
     """
     payload = {
         "root_path": root_path,
@@ -111,7 +232,14 @@ def sample_set_hash(
 
 
 def _to_signed_int32(value: int) -> int:
-    """Convert an unsigned 32-bit integer to signed int32."""
+    """Convert an unsigned 32-bit integer to signed int32.
+
+    Args:
+        value: Unsigned 32-bit integer (0 to 0xFFFFFFFF).
+
+    Returns:
+        Signed int32 in the range -2^31 to 2^31 - 1.
+    """
     if value >= 0x80000000:
         return value - 0x100000000
     return value

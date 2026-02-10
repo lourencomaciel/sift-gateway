@@ -1,11 +1,18 @@
-"""Advisory lock stampede control and artifact reuse logic."""
+"""Provide advisory lock stampede control and artifact reuse.
+
+Implement cache-hit detection by request key or dedupe alias,
+and advisory-lock acquisition (Postgres native or SQLite
+emulated) to prevent concurrent duplicate artifact creation.
+Key exports are ``ReuseResult``, ``check_reuse_candidate``,
+and ``acquire_advisory_lock``.
+"""
 
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass
 import threading as _threading
 import time
-from dataclasses import dataclass
 from typing import Any
 
 from mcp_artifact_gateway.db.protocols import increment_metric
@@ -21,7 +28,17 @@ _sqlite_guard = _threading.Lock()
 
 @dataclass(frozen=True)
 class ReuseResult:
-    """Result of checking for artifact reuse."""
+    """Outcome of an artifact reuse check.
+
+    Indicates whether a previous artifact can satisfy the
+    current request and, if so, which artifact matched.
+
+    Attributes:
+        reused: True if a reusable artifact was found.
+        artifact_id: Matching artifact ID, or None on miss.
+        reason: Match strategy, e.g. "request_key_match"
+            or "dedupe_alias_match", or None on miss.
+    """
 
     reused: bool
     artifact_id: str | None = None
@@ -35,7 +52,8 @@ SELECT pg_try_advisory_xact_lock(%s, %s)
 
 # SQL for finding reusable artifact by request_key
 FIND_REUSABLE_BY_REQUEST_KEY_SQL = """
-SELECT artifact_id, payload_hash_full, upstream_tool_schema_hash, map_status, generation
+SELECT artifact_id, payload_hash_full,
+       upstream_tool_schema_hash, map_status, generation
 FROM artifacts
 WHERE workspace_id = %s
   AND request_key = %s
@@ -72,11 +90,25 @@ def check_reuse_candidate(
     logger: Any | None = None,
     request_key: str | None = None,
 ) -> ReuseResult:
-    """Check if a candidate artifact can be reused.
+    """Evaluate whether a candidate artifact can satisfy a new request.
 
-    Reuse requires:
-    - candidate exists and is not deleted/expired
-    - schema hash matches if strict reuse enabled
+    Reuse requires the candidate to exist and, when strict mode
+    is enabled, the upstream tool schema hash to match.
+
+    Args:
+        candidate_row: DB row dict with artifact_id and
+            upstream_tool_schema_hash, or None on cache miss.
+        expected_schema_hash: Schema hash the caller expects,
+            or None to skip schema comparison.
+        strict_schema_reuse: Reject candidates whose schema
+            hash differs from expected_schema_hash.
+        metrics: Optional metrics collector for hit/miss
+            counters.
+        logger: Optional structured logger override.
+        request_key: Request fingerprint for log context.
+
+    Returns:
+        A ReuseResult indicating hit or miss with reason.
     """
     log = logger or get_logger(component="cache.reuse")
 
@@ -120,16 +152,32 @@ ON CONFLICT (workspace_id, payload_hash_dedupe, payload_hash_full) DO NOTHING
 
 
 def _lock_result(row: tuple[object, ...] | None) -> bool:
+    """Interpret a pg_try_advisory_xact_lock result row as bool.
+
+    Args:
+        row: Single-column row from the lock query, or None.
+
+    Returns:
+        True if the lock was acquired, False otherwise.
+    """
     if row is None or not row:
         return False
     return bool(row[0])
 
 
 def try_acquire_advisory_lock(connection: Any, *, request_key: str) -> bool:
-    """Try to acquire advisory xact lock for request_key.
+    """Try to acquire an advisory lock for request_key.
 
-    For SQLite: acquires a per-key threading.Lock (non-blocking).
-    For Postgres: uses pg_try_advisory_xact_lock.
+    For SQLite connections, acquire a per-key threading.Lock
+    (non-blocking).  For Postgres, use
+    ``pg_try_advisory_xact_lock``.
+
+    Args:
+        connection: Database connection (sqlite3 or psycopg).
+        request_key: Content-addressed request fingerprint.
+
+    Returns:
+        True if the lock was acquired, False if contended.
     """
     import sqlite3
 
@@ -139,16 +187,22 @@ def try_acquire_advisory_lock(connection: Any, *, request_key: str) -> bool:
         return lock.acquire(blocking=False)
 
     key_a, key_b = advisory_lock_keys(request_key)
-    row = connection.execute(ACQUIRE_ADVISORY_LOCK_SQL, (key_a, key_b)).fetchone()
+    row = connection.execute(
+        ACQUIRE_ADVISORY_LOCK_SQL, (key_a, key_b)
+    ).fetchone()
     return _lock_result(row)
 
 
 def release_advisory_lock(connection: Any, *, request_key: str) -> None:
-    """Release advisory lock for request_key.
+    """Release the advisory lock for request_key.
 
-    For SQLite: releases and removes the per-key threading.Lock so the
-    dict does not grow unbounded over the process lifetime.
-    For Postgres: no-op (advisory locks are transaction-scoped).
+    For SQLite, release and remove the per-key threading.Lock
+    so the dict does not grow unbounded.  For Postgres this is
+    a no-op because advisory locks are transaction-scoped.
+
+    Args:
+        connection: Database connection (sqlite3 or psycopg).
+        request_key: Content-addressed request fingerprint.
     """
     import sqlite3
 
@@ -172,7 +226,22 @@ def acquire_advisory_lock(
     metrics: Any | None = None,
     logger: Any | None = None,
 ) -> bool:
-    """Acquire advisory lock with timeout and optional metrics hooks."""
+    """Acquire an advisory lock with polling timeout.
+
+    Repeatedly attempt ``try_acquire_advisory_lock`` until the
+    lock is obtained or the deadline expires.
+
+    Args:
+        connection: Database connection (sqlite3 or psycopg).
+        request_key: Content-addressed request fingerprint.
+        timeout_ms: Maximum milliseconds to wait for the lock.
+        poll_interval_ms: Milliseconds between retry attempts.
+        metrics: Optional metrics collector for lock counters.
+        logger: Optional structured logger override.
+
+    Returns:
+        True if the lock was acquired before timeout.
+    """
     log = logger or get_logger(component="cache.reuse")
     deadline = time.monotonic() + (max(timeout_ms, 0) / 1000.0)
     sleep_seconds = max(poll_interval_ms, 1) / 1000.0
@@ -205,7 +274,22 @@ async def acquire_advisory_lock_async(
     metrics: Any | None = None,
     logger: Any | None = None,
 ) -> bool:
-    """Acquire advisory lock with timeout, using asyncio.sleep to avoid blocking the event loop."""
+    """Acquire an advisory lock with async polling timeout.
+
+    Same semantics as ``acquire_advisory_lock`` but uses
+    ``asyncio.sleep`` to avoid blocking the event loop.
+
+    Args:
+        connection: Database connection (sqlite3 or psycopg).
+        request_key: Content-addressed request fingerprint.
+        timeout_ms: Maximum milliseconds to wait for the lock.
+        poll_interval_ms: Milliseconds between retry attempts.
+        metrics: Optional metrics collector for lock counters.
+        logger: Optional structured logger override.
+
+    Returns:
+        True if the lock was acquired before timeout.
+    """
     log = logger or get_logger(component="cache.reuse")
     deadline = time.monotonic() + (max(timeout_ms, 0) / 1000.0)
     sleep_seconds = max(poll_interval_ms, 1) / 1000.0

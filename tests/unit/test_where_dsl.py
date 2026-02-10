@@ -3,13 +3,12 @@ from __future__ import annotations
 import pytest
 
 from mcp_artifact_gateway.query.where_dsl import (
-    WhereComputeLimitExceeded,
+    WhereComputeLimitExceededError,
     WhereDslError,
     canonicalize_where_ast,
     evaluate_where,
     parse_where_expression,
 )
-
 
 # ---------------------------------------------------------------------------
 # Existing tests (preserved)
@@ -27,7 +26,10 @@ def test_where_dsl_compound_and_not() -> None:
         "op": "and",
         "clauses": [
             {"path": "$.n", "op": "gt", "value": 1},
-            {"op": "not", "clause": {"path": "$.archived", "op": "eq", "value": True}},
+            {
+                "op": "not",
+                "clause": {"path": "$.archived", "op": "eq", "value": True},
+            },
         ],
     }
     assert evaluate_where({"n": 3, "archived": False}, where) is True
@@ -35,13 +37,16 @@ def test_where_dsl_compound_and_not() -> None:
 
 
 def test_where_dsl_compute_limit() -> None:
-    where = {"op": "and", "clauses": [{"path": "$.a", "op": "exists"} for _ in range(5)]}
+    where = {
+        "op": "and",
+        "clauses": [{"path": "$.a", "op": "exists"} for _ in range(5)],
+    }
     try:
         evaluate_where({"a": 1}, where, max_compute_steps=2)
-    except WhereComputeLimitExceeded:
+    except WhereComputeLimitExceededError:
         pass
     else:
-        raise AssertionError("expected WhereComputeLimitExceeded")
+        raise AssertionError("expected WhereComputeLimitExceededError")
 
 
 def test_where_dsl_rejects_non_object_clause() -> None:
@@ -65,9 +70,18 @@ def test_where_dsl_rejects_non_comparable_values() -> None:
 
 
 def test_where_dsl_missing_path_false_except_ne_null() -> None:
-    assert evaluate_where({}, {"path": "$.missing", "op": "eq", "value": 1}) is False
-    assert evaluate_where({}, {"path": "$.missing", "op": "ne", "value": 1}) is False
-    assert evaluate_where({}, {"path": "$.missing", "op": "ne", "value": None}) is True
+    assert (
+        evaluate_where({}, {"path": "$.missing", "op": "eq", "value": 1})
+        is False
+    )
+    assert (
+        evaluate_where({}, {"path": "$.missing", "op": "ne", "value": 1})
+        is False
+    )
+    assert (
+        evaluate_where({}, {"path": "$.missing", "op": "ne", "value": None})
+        is True
+    )
 
 
 def test_where_dsl_relative_path_is_supported() -> None:
@@ -99,7 +113,10 @@ def test_parse_where_expression_builds_ast() -> None:
 
 def test_evaluate_where_accepts_string_expression() -> None:
     expr = "items[*].id = 2 OR score >= 10"
-    assert evaluate_where({"items": [{"id": 1}, {"id": 2}], "score": 1}, expr) is True
+    assert (
+        evaluate_where({"items": [{"id": 1}, {"id": 2}], "score": 1}, expr)
+        is True
+    )
     assert evaluate_where({"items": [{"id": 1}], "score": 5}, expr) is False
 
 
@@ -142,7 +159,7 @@ def test_parser_nested_parentheses() -> None:
 
 
 def test_parser_precedence_and_binds_tighter_than_or() -> None:
-    """a OR b AND c should parse as a OR (b AND c)."""
+    """A OR b AND c should parse as a OR (b AND c)."""
     ast = parse_where_expression("a = 1 OR b = 2 AND c = 3")
     assert ast["op"] == "or"
     assert ast["clauses"][0]["path"] == "a"
@@ -158,10 +175,20 @@ def test_parser_not_binds_tighter_than_and() -> None:
 
 
 def test_parser_all_comparison_operators() -> None:
-    ops = {"=": "eq", "==": "eq", "!=": "ne", ">": "gt", ">=": "gte", "<": "lt", "<=": "lte"}
+    ops = {
+        "=": "eq",
+        "==": "eq",
+        "!=": "ne",
+        ">": "gt",
+        ">=": "gte",
+        "<": "lt",
+        "<=": "lte",
+    }
     for text_op, expected_op in ops.items():
         ast = parse_where_expression(f"x {text_op} 1")
-        assert ast["op"] == expected_op, f"operator {text_op} should parse as {expected_op}"
+        assert ast["op"] == expected_op, (
+            f"operator {text_op} should parse as {expected_op}"
+        )
 
 
 def test_parser_in_operator() -> None:
@@ -287,16 +314,25 @@ def test_parser_rejects_unterminated_string() -> None:
 
 
 def test_relative_path_dotted() -> None:
-    assert evaluate_where({"a": {"b": 1}}, {"path": "a.b", "op": "eq", "value": 1}) is True
+    assert (
+        evaluate_where({"a": {"b": 1}}, {"path": "a.b", "op": "eq", "value": 1})
+        is True
+    )
 
 
 def test_relative_path_bracket() -> None:
-    assert evaluate_where({"a": 1}, {"path": "['a']", "op": "eq", "value": 1}) is True
+    assert (
+        evaluate_where({"a": 1}, {"path": "['a']", "op": "eq", "value": 1})
+        is True
+    )
 
 
 def test_relative_path_mixed() -> None:
     doc = {"items": [{"id": 10}]}
-    assert evaluate_where(doc, {"path": "items[0].id", "op": "eq", "value": 10}) is True
+    assert (
+        evaluate_where(doc, {"path": "items[0].id", "op": "eq", "value": 10})
+        is True
+    )
 
 
 def test_relative_path_in_string_expression() -> None:
@@ -309,12 +345,17 @@ def test_relative_path_in_string_expression() -> None:
 
 
 def test_missing_path_eq_returns_false() -> None:
-    assert evaluate_where({}, {"path": "$.x", "op": "eq", "value": "anything"}) is False
+    assert (
+        evaluate_where({}, {"path": "$.x", "op": "eq", "value": "anything"})
+        is False
+    )
 
 
 def test_missing_path_eq_null_returns_false() -> None:
     """Missing path == null is False (missing is not the same as null value)."""
-    assert evaluate_where({}, {"path": "$.x", "op": "eq", "value": None}) is False
+    assert (
+        evaluate_where({}, {"path": "$.x", "op": "eq", "value": None}) is False
+    )
 
 
 def test_missing_path_ne_non_null_returns_false() -> None:
@@ -322,20 +363,30 @@ def test_missing_path_ne_non_null_returns_false() -> None:
 
 
 def test_missing_path_ne_null_returns_true() -> None:
-    assert evaluate_where({}, {"path": "$.x", "op": "ne", "value": None}) is True
+    assert (
+        evaluate_where({}, {"path": "$.x", "op": "ne", "value": None}) is True
+    )
 
 
 def test_missing_path_ordered_returns_false() -> None:
     for op in ["gt", "gte", "lt", "lte"]:
-        assert evaluate_where({}, {"path": "$.x", "op": op, "value": 0}) is False
+        assert (
+            evaluate_where({}, {"path": "$.x", "op": op, "value": 0}) is False
+        )
 
 
 def test_missing_path_in_returns_false() -> None:
-    assert evaluate_where({}, {"path": "$.x", "op": "in", "value": [1, 2]}) is False
+    assert (
+        evaluate_where({}, {"path": "$.x", "op": "in", "value": [1, 2]})
+        is False
+    )
 
 
 def test_missing_path_contains_returns_false() -> None:
-    assert evaluate_where({}, {"path": "$.x", "op": "contains", "value": "a"}) is False
+    assert (
+        evaluate_where({}, {"path": "$.x", "op": "contains", "value": "a"})
+        is False
+    )
 
 
 def test_missing_path_exists_returns_false() -> None:
@@ -348,33 +399,63 @@ def test_missing_path_exists_returns_false() -> None:
 
 
 def test_wildcard_any_match_satisfies_ne() -> None:
-    """ne with wildcard: true if ANY value != right."""
+    """Ne with wildcard: true if ANY value != right."""
     doc = {"items": [1, 2, 3]}
-    assert evaluate_where(doc, {"path": "$.items[*]", "op": "ne", "value": 1}) is True
+    assert (
+        evaluate_where(doc, {"path": "$.items[*]", "op": "ne", "value": 1})
+        is True
+    )
 
 
 def test_wildcard_all_same_ne_false() -> None:
-    """ne returns false if all values match."""
+    """Ne returns false if all values match."""
     doc = {"items": [1, 1, 1]}
-    assert evaluate_where(doc, {"path": "$.items[*]", "op": "ne", "value": 1}) is False
+    assert (
+        evaluate_where(doc, {"path": "$.items[*]", "op": "ne", "value": 1})
+        is False
+    )
 
 
 def test_wildcard_in_check() -> None:
     doc = {"tags": ["a", "b", "c"]}
-    assert evaluate_where(doc, {"path": "$.tags[*]", "op": "in", "value": ["b", "d"]}) is True
-    assert evaluate_where(doc, {"path": "$.tags[*]", "op": "in", "value": ["x", "y"]}) is False
+    assert (
+        evaluate_where(
+            doc, {"path": "$.tags[*]", "op": "in", "value": ["b", "d"]}
+        )
+        is True
+    )
+    assert (
+        evaluate_where(
+            doc, {"path": "$.tags[*]", "op": "in", "value": ["x", "y"]}
+        )
+        is False
+    )
 
 
 def test_wildcard_contains_string_in_list() -> None:
     doc = {"items": ["hello world", "foo"]}
-    assert evaluate_where(doc, {"path": "$.items[*]", "op": "contains", "value": "world"}) is True
-    assert evaluate_where(doc, {"path": "$.items[*]", "op": "contains", "value": "bar"}) is False
+    assert (
+        evaluate_where(
+            doc, {"path": "$.items[*]", "op": "contains", "value": "world"}
+        )
+        is True
+    )
+    assert (
+        evaluate_where(
+            doc, {"path": "$.items[*]", "op": "contains", "value": "bar"}
+        )
+        is False
+    )
 
 
 def test_wildcard_expansion_within_limit_passes() -> None:
     doc = {"items": [1, 2]}
     assert (
-        evaluate_where(doc, {"path": "$.items[*]", "op": "exists"}, max_wildcard_expansion=5)
+        evaluate_where(
+            doc,
+            {"path": "$.items[*]", "op": "exists"},
+            max_wildcard_expansion=5,
+        )
         is True
     )
 
@@ -390,20 +471,45 @@ def test_numeric_gt_requires_numeric_operands() -> None:
 
 
 def test_string_gt_lexicographic() -> None:
-    assert evaluate_where({"x": "banana"}, {"path": "$.x", "op": "gt", "value": "apple"}) is True
-    assert evaluate_where({"x": "apple"}, {"path": "$.x", "op": "gt", "value": "banana"}) is False
+    assert (
+        evaluate_where(
+            {"x": "banana"}, {"path": "$.x", "op": "gt", "value": "apple"}
+        )
+        is True
+    )
+    assert (
+        evaluate_where(
+            {"x": "apple"}, {"path": "$.x", "op": "gt", "value": "banana"}
+        )
+        is False
+    )
 
 
 def test_string_gte_lexicographic() -> None:
-    assert evaluate_where({"x": "apple"}, {"path": "$.x", "op": "gte", "value": "apple"}) is True
+    assert (
+        evaluate_where(
+            {"x": "apple"}, {"path": "$.x", "op": "gte", "value": "apple"}
+        )
+        is True
+    )
 
 
 def test_string_lt_lexicographic() -> None:
-    assert evaluate_where({"x": "abc"}, {"path": "$.x", "op": "lt", "value": "abd"}) is True
+    assert (
+        evaluate_where(
+            {"x": "abc"}, {"path": "$.x", "op": "lt", "value": "abd"}
+        )
+        is True
+    )
 
 
 def test_string_lte_lexicographic() -> None:
-    assert evaluate_where({"x": "abc"}, {"path": "$.x", "op": "lte", "value": "abc"}) is True
+    assert (
+        evaluate_where(
+            {"x": "abc"}, {"path": "$.x", "op": "lte", "value": "abc"}
+        )
+        is True
+    )
 
 
 def test_string_gt_rejects_non_string_left() -> None:
@@ -419,34 +525,77 @@ def test_ordered_rejects_boolean_value() -> None:
 
 def test_boolean_eq_only() -> None:
     """Boolean values support = and != but not ordered comparisons."""
-    assert evaluate_where({"x": True}, {"path": "$.x", "op": "eq", "value": True}) is True
-    assert evaluate_where({"x": True}, {"path": "$.x", "op": "eq", "value": False}) is False
-    assert evaluate_where({"x": False}, {"path": "$.x", "op": "ne", "value": True}) is True
+    assert (
+        evaluate_where({"x": True}, {"path": "$.x", "op": "eq", "value": True})
+        is True
+    )
+    assert (
+        evaluate_where({"x": True}, {"path": "$.x", "op": "eq", "value": False})
+        is False
+    )
+    assert (
+        evaluate_where({"x": False}, {"path": "$.x", "op": "ne", "value": True})
+        is True
+    )
 
 
 def test_boolean_int_coercion_prevented() -> None:
     """1 == True should be False with strict type semantics (no Python coercion)."""
-    assert evaluate_where({"x": 1}, {"path": "$.x", "op": "eq", "value": True}) is False
-    assert evaluate_where({"x": 0}, {"path": "$.x", "op": "eq", "value": False}) is False
-    assert evaluate_where({"x": True}, {"path": "$.x", "op": "eq", "value": 1}) is False
+    assert (
+        evaluate_where({"x": 1}, {"path": "$.x", "op": "eq", "value": True})
+        is False
+    )
+    assert (
+        evaluate_where({"x": 0}, {"path": "$.x", "op": "eq", "value": False})
+        is False
+    )
+    assert (
+        evaluate_where({"x": True}, {"path": "$.x", "op": "eq", "value": 1})
+        is False
+    )
 
 
 def test_boolean_ne_int_coercion_prevented() -> None:
     """1 != True should be True with strict type semantics."""
-    assert evaluate_where({"x": 1}, {"path": "$.x", "op": "ne", "value": True}) is True
-    assert evaluate_where({"x": 0}, {"path": "$.x", "op": "ne", "value": False}) is True
+    assert (
+        evaluate_where({"x": 1}, {"path": "$.x", "op": "ne", "value": True})
+        is True
+    )
+    assert (
+        evaluate_where({"x": 0}, {"path": "$.x", "op": "ne", "value": False})
+        is True
+    )
 
 
 def test_in_with_strict_types() -> None:
     """IN should use strict type checking too."""
-    assert evaluate_where({"x": 1}, {"path": "$.x", "op": "in", "value": [True, 2]}) is False
-    assert evaluate_where({"x": 1}, {"path": "$.x", "op": "in", "value": [1, 2]}) is True
-    assert evaluate_where({"x": True}, {"path": "$.x", "op": "in", "value": [1, 2]}) is False
+    assert (
+        evaluate_where(
+            {"x": 1}, {"path": "$.x", "op": "in", "value": [True, 2]}
+        )
+        is False
+    )
+    assert (
+        evaluate_where({"x": 1}, {"path": "$.x", "op": "in", "value": [1, 2]})
+        is True
+    )
+    assert (
+        evaluate_where(
+            {"x": True}, {"path": "$.x", "op": "in", "value": [1, 2]}
+        )
+        is False
+    )
 
 
 def test_numeric_float_comparison() -> None:
-    assert evaluate_where({"x": 3.14}, {"path": "$.x", "op": "gte", "value": 3.0}) is True
-    assert evaluate_where({"x": 2.5}, {"path": "$.x", "op": "lt", "value": 3.0}) is True
+    assert (
+        evaluate_where({"x": 3.14}, {"path": "$.x", "op": "gte", "value": 3.0})
+        is True
+    )
+    assert (
+        evaluate_where({"x": 2.5}, {"path": "$.x", "op": "lt", "value": 3.0})
+        is True
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -459,7 +608,7 @@ def test_compute_accounting_increments_per_path_segment() -> None:
     deep_path = {"path": "$.a.b.c.d.e.f.g.h", "op": "exists"}
     # The path has 8 segments; walk=1, segments=8, expansion=0, comparison=1 => 10 steps
     # With max_compute_steps=5 this should exceed the limit
-    with pytest.raises(WhereComputeLimitExceeded):
+    with pytest.raises(WhereComputeLimitExceededError):
         evaluate_where(
             {"a": {"b": {"c": {"d": {"e": {"f": {"g": {"h": 1}}}}}}}},
             deep_path,
@@ -473,7 +622,10 @@ def test_compute_accounting_short_circuit_and() -> None:
         "op": "and",
         "clauses": [
             {"path": "$.a", "op": "eq", "value": 999},  # Always false
-            {"path": "$.b.c.d.e.f.g.h.i.j", "op": "exists"},  # Expensive but skipped
+            {
+                "path": "$.b.c.d.e.f.g.h.i.j",
+                "op": "exists",
+            },  # Expensive but skipped
         ],
     }
     # The first clause is false, so the second should be skipped.
@@ -488,7 +640,10 @@ def test_compute_accounting_short_circuit_or() -> None:
         "op": "or",
         "clauses": [
             {"path": "$.a", "op": "eq", "value": 1},  # Always true
-            {"path": "$.b.c.d.e.f.g.h.i.j", "op": "exists"},  # Expensive but skipped
+            {
+                "path": "$.b.c.d.e.f.g.h.i.j",
+                "op": "exists",
+            },  # Expensive but skipped
         ],
     }
     result = evaluate_where({"a": 1}, where, max_compute_steps=20)
@@ -499,7 +654,9 @@ def test_compute_accounting_deterministic_for_same_input() -> None:
     """Same expression on same data should always produce the same result."""
     where = {"path": "$.x", "op": "eq", "value": 42}
     record = {"x": 42}
-    results = [evaluate_where(record, where, max_compute_steps=100) for _ in range(100)]
+    results = [
+        evaluate_where(record, where, max_compute_steps=100) for _ in range(100)
+    ]
     assert all(r is True for r in results)
 
 
@@ -509,28 +666,50 @@ def test_compute_accounting_deterministic_for_same_input() -> None:
 
 
 def test_eval_in_with_numbers() -> None:
-    assert evaluate_where({"x": 2}, {"path": "$.x", "op": "in", "value": [1, 2, 3]}) is True
-    assert evaluate_where({"x": 5}, {"path": "$.x", "op": "in", "value": [1, 2, 3]}) is False
+    assert (
+        evaluate_where(
+            {"x": 2}, {"path": "$.x", "op": "in", "value": [1, 2, 3]}
+        )
+        is True
+    )
+    assert (
+        evaluate_where(
+            {"x": 5}, {"path": "$.x", "op": "in", "value": [1, 2, 3]}
+        )
+        is False
+    )
 
 
 def test_eval_contains_string_substring() -> None:
     assert (
-        evaluate_where({"s": "hello world"}, {"path": "$.s", "op": "contains", "value": "world"})
+        evaluate_where(
+            {"s": "hello world"},
+            {"path": "$.s", "op": "contains", "value": "world"},
+        )
         is True
     )
     assert (
-        evaluate_where({"s": "hello world"}, {"path": "$.s", "op": "contains", "value": "xyz"})
+        evaluate_where(
+            {"s": "hello world"},
+            {"path": "$.s", "op": "contains", "value": "xyz"},
+        )
         is False
     )
 
 
 def test_eval_contains_array_element() -> None:
     assert (
-        evaluate_where({"tags": [1, 2, 3]}, {"path": "$.tags", "op": "contains", "value": 2})
+        evaluate_where(
+            {"tags": [1, 2, 3]},
+            {"path": "$.tags", "op": "contains", "value": 2},
+        )
         is True
     )
     assert (
-        evaluate_where({"tags": [1, 2, 3]}, {"path": "$.tags", "op": "contains", "value": 5})
+        evaluate_where(
+            {"tags": [1, 2, 3]},
+            {"path": "$.tags", "op": "contains", "value": 5},
+        )
         is False
     )
 
@@ -591,7 +770,9 @@ def test_string_expr_complex_combination() -> None:
     expr = "(status = 'open' OR status = 'pending') AND NOT archived = true"
     assert evaluate_where({"status": "open", "archived": False}, expr) is True
     assert evaluate_where({"status": "open", "archived": True}, expr) is False
-    assert evaluate_where({"status": "closed", "archived": False}, expr) is False
+    assert (
+        evaluate_where({"status": "closed", "archived": False}, expr) is False
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -688,7 +869,9 @@ def test_where_not_requires_object_clause() -> None:
 
 def test_in_rejects_non_array_value() -> None:
     with pytest.raises(WhereDslError, match="in operator requires array"):
-        evaluate_where({"x": 1}, {"path": "$.x", "op": "in", "value": "not_array"})
+        evaluate_where(
+            {"x": 1}, {"path": "$.x", "op": "in", "value": "not_array"}
+        )
 
 
 def test_ordered_rejects_list_comparison_value() -> None:
@@ -698,9 +881,15 @@ def test_ordered_rejects_list_comparison_value() -> None:
 
 def test_eq_with_null_value_present() -> None:
     """Existing null value == null should be True."""
-    assert evaluate_where({"x": None}, {"path": "$.x", "op": "eq", "value": None}) is True
+    assert (
+        evaluate_where({"x": None}, {"path": "$.x", "op": "eq", "value": None})
+        is True
+    )
 
 
 def test_ne_with_null_value_present() -> None:
     """Existing null value != null should be False."""
-    assert evaluate_where({"x": None}, {"path": "$.x", "op": "ne", "value": None}) is False
+    assert (
+        evaluate_where({"x": None}, {"path": "$.x", "op": "ne", "value": None})
+        is False
+    )

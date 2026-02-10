@@ -1,9 +1,15 @@
-"""Filesystem reconciliation: detect and optionally remove orphan files."""
+"""Reconcile filesystem blob storage against database records.
+
+Scans the ``blobs/bin`` directory tree and compares file names
+against known binary hashes in the database.  Reports orphan
+files (present on disk but absent from DB) and missing files
+(referenced in DB but absent from disk).  Optionally removes
+orphans and cleans up empty parent directories.
+"""
 
 from __future__ import annotations
 
-import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -13,7 +19,15 @@ from mcp_artifact_gateway.obs.logging import LogEvents, get_logger
 
 @dataclass(frozen=True)
 class ReconcileResult:
-    """Result of filesystem reconciliation."""
+    """Result of filesystem reconciliation.
+
+    Attributes:
+        orphan_files: File paths on disk not referenced in DB.
+        missing_files: Binary hashes in DB with no file on disk.
+        orphan_bytes: Total bytes of orphan files.
+        removed_count: Number of orphan files actually removed
+            (non-zero only when ``remove=True``).
+    """
 
     orphan_files: list[str]  # paths not in DB
     missing_files: list[str]  # DB references without files
@@ -30,7 +44,14 @@ WHERE workspace_id = %s
 
 
 def scan_blob_directory(blobs_bin_dir: Path) -> dict[str, Path]:
-    """Scan the blobs/bin directory tree and return {binary_hash: path}."""
+    """Scan the blobs/bin directory tree for blob files.
+
+    Args:
+        blobs_bin_dir: Root directory of the blob store.
+
+    Returns:
+        Dict mapping binary hash filenames to their paths.
+    """
     found: dict[str, Path] = {}
     if not blobs_bin_dir.exists():
         return found
@@ -52,19 +73,50 @@ def find_orphans(
     fs_blobs: dict[str, Path],
     db_hashes: set[str],
 ) -> list[Path]:
-    """Find files on disk not referenced in DB."""
-    return [path for hash_name, path in fs_blobs.items() if hash_name not in db_hashes]
+    """Find files on disk not referenced in the database.
+
+    Args:
+        fs_blobs: Dict of hash-name to path from disk scan.
+        db_hashes: Set of binary hashes known to the database.
+
+    Returns:
+        List of filesystem paths for orphan blob files.
+    """
+    return [
+        path
+        for hash_name, path in fs_blobs.items()
+        if hash_name not in db_hashes
+    ]
 
 
 def find_missing(
     db_paths: dict[str, str],
 ) -> list[str]:
-    """Find DB references with missing files."""
-    return [binary_hash for binary_hash, fs_path in db_paths.items() if not Path(fs_path).exists()]
+    """Find database references with missing files on disk.
+
+    Args:
+        db_paths: Dict of binary_hash to fs_path from the
+            database.
+
+    Returns:
+        List of binary hashes whose files are missing.
+    """
+    return [
+        binary_hash
+        for binary_hash, fs_path in db_paths.items()
+        if not Path(fs_path).exists()
+    ]
 
 
 def remove_orphan_files(orphans: list[Path]) -> int:
-    """Remove orphan files and return count removed."""
+    """Remove orphan files and clean up empty parent directories.
+
+    Args:
+        orphans: List of orphan file paths to unlink.
+
+    Returns:
+        Number of files successfully removed.
+    """
     removed = 0
     for path in orphans:
         try:
@@ -82,6 +134,13 @@ def remove_orphan_files(orphans: list[Path]) -> int:
 
 
 def _increment_metric(metrics: Any | None, attr: str, amount: int = 1) -> None:
+    """Safely increment a Prometheus counter on a metrics object.
+
+    Args:
+        metrics: Optional GatewayMetrics instance.
+        attr: Attribute name of the counter on metrics.
+        amount: Value to increment the counter by.
+    """
     if metrics is None:
         return
     counter = getattr(metrics, attr, None)
@@ -98,15 +157,20 @@ def run_reconcile(
     metrics: Any | None = None,
     logger: Any | None = None,
 ) -> ReconcileResult:
-    """Run full filesystem reconciliation: detect and optionally remove orphans.
+    """Run full filesystem reconciliation.
 
-    Steps:
-    1. Query DB for all known binary blob paths.
-    2. Scan the blobs/bin directory for files on disk.
-    3. Compare to find orphan files (on disk but not in DB) and missing files
-       (in DB but not on disk).
-    4. Optionally remove orphan files.
-    5. Return a ReconcileResult with findings.
+    Detects orphan files (on disk but not in DB) and missing
+    files (in DB but not on disk), optionally removing orphans.
+
+    Args:
+        connection: Database connection for querying blob rows.
+        blobs_bin_dir: Root directory of the blob store.
+        remove: If True, unlink orphan files from disk.
+        metrics: Optional GatewayMetrics for counter updates.
+        logger: Optional structured logger override.
+
+    Returns:
+        A ReconcileResult with orphan and missing file details.
     """
     rows = connection.execute(
         FETCH_ALL_BLOB_PATHS_SQL,

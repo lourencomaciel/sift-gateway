@@ -1,7 +1,4 @@
-"""Mapping system for artifact JSON analysis.
-
-Public API re-exports for the mapping package.
-"""
+"""Re-export mapping runner, worker, and data model API."""
 
 from mcp_artifact_gateway.mapping.runner import (
     MappingInput,

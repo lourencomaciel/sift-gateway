@@ -173,13 +173,17 @@ def test_check_worker_safety_accepts_valid_stale() -> None:
     assert check_worker_safety("art_123", 3, row) is True
 
 
-def test_persist_mapping_result_writes_roots_and_samples_transactionally() -> None:
+def test_persist_mapping_result_writes_roots_and_samples_transactionally() -> (
+    None
+):
     connection = _FakeConnection(conditional_rowcount=1)
     result = _partial_ready_result()
 
     persisted = persist_mapping_result(
         connection,
-        worker_ctx=WorkerContext(artifact_id="art_123", generation=1, map_status="pending"),
+        worker_ctx=WorkerContext(
+            artifact_id="art_123", generation=1, map_status="pending"
+        ),
         result=result,
     )
 
@@ -192,13 +196,17 @@ def test_persist_mapping_result_writes_roots_and_samples_transactionally() -> No
     assert INSERT_SAMPLE_SQL.strip() in connection.queries
 
 
-def test_persist_mapping_result_discards_when_conditional_update_skips() -> None:
+def test_persist_mapping_result_discards_when_conditional_update_skips() -> (
+    None
+):
     connection = _FakeConnection(conditional_rowcount=0)
     result = _partial_ready_result()
 
     persisted = persist_mapping_result(
         connection,
-        worker_ctx=WorkerContext(artifact_id="art_123", generation=1, map_status="pending"),
+        worker_ctx=WorkerContext(
+            artifact_id="art_123", generation=1, map_status="pending"
+        ),
         result=result,
     )
 
@@ -207,7 +215,9 @@ def test_persist_mapping_result_discards_when_conditional_update_skips() -> None
     assert connection.rolled_back is True
 
 
-def test_run_mapping_worker_records_metrics(tmp_path: Path, monkeypatch) -> None:
+def test_run_mapping_worker_records_metrics(
+    tmp_path: Path, monkeypatch
+) -> None:
     connection = _FakeConnection(conditional_rowcount=1)
     metrics = GatewayMetrics()
     result = _partial_ready_result()
@@ -219,7 +229,9 @@ def test_run_mapping_worker_records_metrics(tmp_path: Path, monkeypatch) -> None
 
     persisted = run_mapping_worker(
         connection,
-        worker_ctx=WorkerContext(artifact_id="art_123", generation=1, map_status="pending"),
+        worker_ctx=WorkerContext(
+            artifact_id="art_123", generation=1, map_status="pending"
+        ),
         mapping_input=MappingInput(
             artifact_id="art_123",
             payload_hash_full="payload_hash_1",
@@ -235,12 +247,16 @@ def test_run_mapping_worker_records_metrics(tmp_path: Path, monkeypatch) -> None
     assert metrics.mapping_latency.snapshot()["count"] == 1.0
 
 
-def test_run_mapping_worker_rejects_ready_status(tmp_path: Path, monkeypatch) -> None:
+def test_run_mapping_worker_rejects_ready_status(
+    tmp_path: Path, monkeypatch
+) -> None:
     """run_mapping_worker returns False for non-runnable map_status."""
     connection = _FakeConnection(conditional_rowcount=1)
     persisted = run_mapping_worker(
         connection,
-        worker_ctx=WorkerContext(artifact_id="art_x", generation=1, map_status="ready"),
+        worker_ctx=WorkerContext(
+            artifact_id="art_x", generation=1, map_status="ready"
+        ),
         mapping_input=MappingInput(
             artifact_id="art_x",
             payload_hash_full="ph_x",
@@ -284,7 +300,9 @@ def test_persist_full_mapping_writes_roots_no_samples() -> None:
     result = _full_ready_result()
     persisted = persist_mapping_result(
         connection,
-        worker_ctx=WorkerContext(artifact_id="art_f", generation=1, map_status="pending"),
+        worker_ctx=WorkerContext(
+            artifact_id="art_f", generation=1, map_status="pending"
+        ),
         result=result,
     )
     assert persisted is True
@@ -298,8 +316,6 @@ def test_persist_full_mapping_writes_roots_no_samples() -> None:
 
 def test_persist_failed_mapping_commits_without_roots() -> None:
     """Failed mapping commits artifact update but skips root and sample writes."""
-    from mcp_artifact_gateway.mapping.worker import DELETE_SAMPLES_SQL
-
     failed_result = MappingResult(
         map_kind="full",
         map_status="failed",
@@ -313,7 +329,9 @@ def test_persist_failed_mapping_commits_without_roots() -> None:
     connection = _FakeConnection(conditional_rowcount=1)
     persisted = persist_mapping_result(
         connection,
-        worker_ctx=WorkerContext(artifact_id="art_fail", generation=1, map_status="pending"),
+        worker_ctx=WorkerContext(
+            artifact_id="art_fail", generation=1, map_status="pending"
+        ),
         result=failed_result,
     )
     assert persisted is True
@@ -372,10 +390,14 @@ def test_validate_sample_alignment_rejects_mismatch() -> None:
     )
     samples_by_root = {"items": result.samples}
     with pytest.raises(ValueError, match="sample index mismatch"):
-        _validate_sample_alignment(result=result, samples_by_root=samples_by_root)
+        _validate_sample_alignment(
+            result=result, samples_by_root=samples_by_root
+        )
 
 
-def test_run_mapping_worker_records_full_metrics(tmp_path: Path, monkeypatch) -> None:
+def test_run_mapping_worker_records_full_metrics(
+    tmp_path: Path, monkeypatch
+) -> None:
     """run_mapping_worker records full mapping metrics."""
     connection = _FakeConnection(conditional_rowcount=1)
     metrics = GatewayMetrics()
@@ -387,7 +409,9 @@ def test_run_mapping_worker_records_full_metrics(tmp_path: Path, monkeypatch) ->
     )
     run_mapping_worker(
         connection,
-        worker_ctx=WorkerContext(artifact_id="art_fm", generation=1, map_status="pending"),
+        worker_ctx=WorkerContext(
+            artifact_id="art_fm", generation=1, map_status="pending"
+        ),
         mapping_input=MappingInput(
             artifact_id="art_fm",
             payload_hash_full="ph_fm",
@@ -401,7 +425,9 @@ def test_run_mapping_worker_records_full_metrics(tmp_path: Path, monkeypatch) ->
     assert metrics.mapping_latency.snapshot()["count"] == 1.0
 
 
-def test_run_mapping_worker_records_failed_metrics(tmp_path: Path, monkeypatch) -> None:
+def test_run_mapping_worker_records_failed_metrics(
+    tmp_path: Path, monkeypatch
+) -> None:
     """run_mapping_worker records failed mapping metrics."""
     connection = _FakeConnection(conditional_rowcount=1)
     metrics = GatewayMetrics()
@@ -421,7 +447,9 @@ def test_run_mapping_worker_records_failed_metrics(tmp_path: Path, monkeypatch) 
     )
     run_mapping_worker(
         connection,
-        worker_ctx=WorkerContext(artifact_id="art_fl", generation=1, map_status="pending"),
+        worker_ctx=WorkerContext(
+            artifact_id="art_fl", generation=1, map_status="pending"
+        ),
         mapping_input=MappingInput(
             artifact_id="art_fl",
             payload_hash_full="ph_fl",
@@ -434,7 +462,9 @@ def test_run_mapping_worker_records_failed_metrics(tmp_path: Path, monkeypatch) 
     assert counter_value(metrics.mapping_full_count) == 0
 
 
-def test_run_mapping_worker_emits_structured_log(tmp_path: Path, monkeypatch) -> None:
+def test_run_mapping_worker_emits_structured_log(
+    tmp_path: Path, monkeypatch
+) -> None:
     """run_mapping_worker emits structured log events for completed mapping."""
     connection = _FakeConnection(conditional_rowcount=1)
     result = _full_ready_result()
@@ -455,7 +485,9 @@ def test_run_mapping_worker_emits_structured_log(tmp_path: Path, monkeypatch) ->
     logger = _CapturingLogger()
     run_mapping_worker(
         connection,
-        worker_ctx=WorkerContext(artifact_id="art_log", generation=1, map_status="pending"),
+        worker_ctx=WorkerContext(
+            artifact_id="art_log", generation=1, map_status="pending"
+        ),
         mapping_input=MappingInput(
             artifact_id="art_log",
             payload_hash_full="ph_log",
@@ -470,7 +502,9 @@ def test_run_mapping_worker_emits_structured_log(tmp_path: Path, monkeypatch) ->
     assert LogEvents.MAPPING_COMPLETED in log_events
 
 
-def test_run_mapping_worker_emits_failed_log(tmp_path: Path, monkeypatch) -> None:
+def test_run_mapping_worker_emits_failed_log(
+    tmp_path: Path, monkeypatch
+) -> None:
     """run_mapping_worker emits MAPPING_FAILED log for failed results."""
     connection = _FakeConnection(conditional_rowcount=1)
     failed = MappingResult(
@@ -500,7 +534,9 @@ def test_run_mapping_worker_emits_failed_log(tmp_path: Path, monkeypatch) -> Non
     logger = _CapturingLogger()
     run_mapping_worker(
         connection,
-        worker_ctx=WorkerContext(artifact_id="art_flog", generation=1, map_status="pending"),
+        worker_ctx=WorkerContext(
+            artifact_id="art_flog", generation=1, map_status="pending"
+        ),
         mapping_input=MappingInput(
             artifact_id="art_flog",
             payload_hash_full="ph_flog",

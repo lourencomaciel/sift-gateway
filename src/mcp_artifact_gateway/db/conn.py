@@ -12,6 +12,15 @@ from mcp_artifact_gateway.config.settings import GatewayConfig
 
 @dataclass(frozen=True)
 class DbConnInfo:
+    """Postgres connection parameters extracted from config.
+
+    Attributes:
+        dsn: PostgreSQL connection string.
+        statement_timeout_ms: Per-statement timeout in milliseconds.
+        pool_min: Minimum pool size.
+        pool_max: Maximum pool size.
+    """
+
     dsn: str
     statement_timeout_ms: int
     pool_min: int
@@ -19,6 +28,14 @@ class DbConnInfo:
 
 
 def db_conn_info(config: GatewayConfig) -> DbConnInfo:
+    """Extract Postgres connection parameters from config.
+
+    Args:
+        config: Gateway configuration instance.
+
+    Returns:
+        A DbConnInfo with DSN, timeout, and pool size settings.
+    """
     return DbConnInfo(
         dsn=config.postgres_dsn,
         statement_timeout_ms=config.postgres_statement_timeout_ms,
@@ -28,6 +45,14 @@ def db_conn_info(config: GatewayConfig) -> DbConnInfo:
 
 
 def connect(config: GatewayConfig) -> psycopg.Connection:
+    """Open a single psycopg connection with statement timeout.
+
+    Args:
+        config: Gateway configuration instance.
+
+    Returns:
+        An open psycopg connection.
+    """
     info = db_conn_info(config)
     return psycopg.connect(
         info.dsn,
@@ -36,7 +61,14 @@ def connect(config: GatewayConfig) -> psycopg.Connection:
 
 
 def create_pool(config: GatewayConfig) -> ConnectionPool:
-    """Create a psycopg3 connection pool from gateway settings."""
+    """Create a psycopg3 connection pool from gateway settings.
+
+    Args:
+        config: Gateway configuration instance.
+
+    Returns:
+        A ConnectionPool sized per config pool_min/pool_max.
+    """
     info = db_conn_info(config)
     return ConnectionPool(
         conninfo=info.dsn,
