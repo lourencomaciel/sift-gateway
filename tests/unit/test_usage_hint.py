@@ -50,6 +50,16 @@ def test_pending_mapping_hint() -> None:
     assert "art_1" in hint
 
 
+def test_ready_status_treated_as_complete() -> None:
+    desc = _describe(
+        map_status="ready",
+        roots=[_root(root_path="$.data", count_estimate=5)],
+    )
+    hint = build_usage_hint("art_ready", desc)
+    assert "Mapping in progress" not in hint
+    assert "5 records" in hint
+
+
 def test_empty_roots_suggests_get() -> None:
     desc = _describe(roots=[])
     hint = build_usage_hint("art_2", desc)

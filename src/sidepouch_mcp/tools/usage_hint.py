@@ -71,7 +71,7 @@ def build_usage_hint(
     roots: list[dict[str, Any]] = describe.get("roots", [])
 
     # Mapping not yet complete
-    if map_status not in {"complete", "done"}:
+    if map_status not in {"complete", "done", "ready"}:
         return (
             "Mapping in progress. Call "
             f'artifact.describe(artifact_id="{artifact_id}") '
