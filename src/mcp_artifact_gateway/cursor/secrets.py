@@ -86,6 +86,8 @@ def load_or_create_cursor_secrets(path: Path, *, initial_version: str = "v1") ->
     if path.exists():
         return load_cursor_secrets(path)
 
-    secrets = CursorSecrets(active={initial_version: _new_secret()}, signing_version=initial_version)
+    secrets = CursorSecrets(
+        active={initial_version: _new_secret()}, signing_version=initial_version
+    )
     save_cursor_secrets(path, secrets)
     return secrets

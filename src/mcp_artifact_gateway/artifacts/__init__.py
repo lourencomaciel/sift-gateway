@@ -1,4 +1,5 @@
 """Artifact creation and management."""
+
 from mcp_artifact_gateway.artifacts.create import (
     ArtifactHandle,
     CreateArtifactInput,

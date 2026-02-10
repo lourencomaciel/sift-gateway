@@ -1,4 +1,5 @@
 """Full mapping: parse fully, discover roots, build inventory."""
+
 from __future__ import annotations
 
 import re
@@ -47,7 +48,9 @@ def _json_type_name(value: Any) -> str:
     return type(value).__name__
 
 
-def _build_fields_top(elements: list[Any], sample_limit: int = _FIELD_SAMPLE_LIMIT) -> dict[str, Any]:
+def _build_fields_top(
+    elements: list[Any], sample_limit: int = _FIELD_SAMPLE_LIMIT
+) -> dict[str, Any]:
     """Build fields_top from sampled elements: field -> {type -> count}."""
     field_types: dict[str, dict[str, int]] = {}
     sampled = elements[:sample_limit]

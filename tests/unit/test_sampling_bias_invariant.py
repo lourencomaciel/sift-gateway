@@ -1,4 +1,5 @@
 """Tests for sampling bias invariants: oversize record handling."""
+
 from __future__ import annotations
 
 from mcp_artifact_gateway.mapping.partial import run_partial_mapping
@@ -53,9 +54,7 @@ def test_sample_indices_exclude_oversize_records() -> None:
     # Oversize indices: 0, 4, 8, 12, 16
     oversize_indices = {0, 4, 8, 12, 16}
     for idx in sample_indices:
-        assert idx not in oversize_indices, (
-            f"sample_indices contains oversize record index {idx}"
-        )
+        assert idx not in oversize_indices, f"sample_indices contains oversize record index {idx}"
 
 
 def test_sampled_prefix_len_includes_skipped_records() -> None:

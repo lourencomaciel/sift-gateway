@@ -39,6 +39,7 @@ def _http_config(**overrides) -> UpstreamConfig:
 
 # ---- determinism ----
 
+
 def test_instance_id_deterministic_stdio() -> None:
     cfg = _stdio_config()
     id1 = compute_upstream_instance_id(cfg)
@@ -56,6 +57,7 @@ def test_instance_id_deterministic_http() -> None:
 
 
 # ---- different configs yield different ids ----
+
 
 def test_different_prefix_different_id() -> None:
     id1 = compute_upstream_instance_id(_stdio_config(prefix="github"))
@@ -76,6 +78,7 @@ def test_different_url_different_id() -> None:
 
 
 # ---- secrets excluded ----
+
 
 def test_secret_env_excluded_from_instance_id() -> None:
     """Changing a secret (non-salt) env var must NOT change the instance id."""
@@ -100,6 +103,7 @@ def test_secret_header_excluded_from_instance_id() -> None:
 
 
 # ---- semantic salt included ----
+
 
 def test_semantic_salt_env_included() -> None:
     """Semantic salt env values SHOULD change the instance id."""
@@ -136,6 +140,7 @@ def test_semantic_salt_header_included() -> None:
 
 
 # ---- auth fingerprint ----
+
 
 def test_auth_fingerprint_none_when_no_secret_values() -> None:
     cfg = _stdio_config(env={})
@@ -209,7 +214,11 @@ class _FakeClient:
 async def test_discover_tools_fetches_and_hashes_tool_schemas(monkeypatch) -> None:
     _FakeClient.instances.clear()
     _FakeClient.tools = [
-        _FakeTool("list_issues", "List issues", {"type": "object", "properties": {"repo": {"type": "string"}}}),
+        _FakeTool(
+            "list_issues",
+            "List issues",
+            {"type": "object", "properties": {"repo": {"type": "string"}}},
+        ),
         _FakeTool("list_prs", "List pull requests", {"type": "object", "properties": {}}),
     ]
     monkeypatch.setattr("mcp_artifact_gateway.mcp.upstream.Client", _FakeClient)

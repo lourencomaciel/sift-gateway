@@ -39,4 +39,3 @@ def test_envelope_jsonb_minimal_for_large() -> None:
     assert payload is not None
     assert "content_summary" in payload
     assert payload["content_summary"]["part_count"] == 1
-

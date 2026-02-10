@@ -10,6 +10,7 @@ from mcp_artifact_gateway.tools.artifact_search import (
 
 # ---- validate_search_args ----
 
+
 def test_validate_search_args_requires_session_id() -> None:
     result = validate_search_args({}, max_limit=200)
     assert result["code"] == "INVALID_ARGUMENT"
@@ -17,9 +18,7 @@ def test_validate_search_args_requires_session_id() -> None:
 
 
 def test_validate_search_args_requires_session_id_in_context() -> None:
-    result = validate_search_args(
-        {"_gateway_context": {}}, max_limit=200
-    )
+    result = validate_search_args({"_gateway_context": {}}, max_limit=200)
     assert result["code"] == "INVALID_ARGUMENT"
 
 
@@ -95,6 +94,7 @@ def test_validate_search_args_rejects_invalid_status_filter() -> None:
 
 # ---- build_search_query ----
 
+
 def test_build_search_query_base_has_workspace_and_session() -> None:
     sql, params = build_search_query("sess_1", {}, "created_seq_desc", 50)
     assert "ar.workspace_id = %s" in sql
@@ -111,9 +111,7 @@ def test_build_search_query_excludes_deleted_by_default() -> None:
 
 
 def test_build_search_query_includes_deleted_when_requested() -> None:
-    sql, params = build_search_query(
-        "sess_1", {"include_deleted": True}, "created_seq_desc", 50
-    )
+    sql, params = build_search_query("sess_1", {"include_deleted": True}, "created_seq_desc", 50)
     assert "a.deleted_at IS NULL" not in sql
 
 
@@ -142,9 +140,7 @@ def test_build_search_query_upstream_instance_id_filter() -> None:
 
 
 def test_build_search_query_request_key_filter() -> None:
-    sql, params = build_search_query(
-        "sess_1", {"request_key": "rk_abc"}, "created_seq_desc", 50
-    )
+    sql, params = build_search_query("sess_1", {"request_key": "rk_abc"}, "created_seq_desc", 50)
     assert "a.request_key = %s" in sql
     assert "rk_abc" in params
 
@@ -208,14 +204,10 @@ def test_build_search_query_fetches_limit_plus_one() -> None:
 
 
 def test_build_search_query_status_error_filter() -> None:
-    sql, _ = build_search_query(
-        "sess_1", {"status": "error"}, "created_seq_desc", 50
-    )
+    sql, _ = build_search_query("sess_1", {"status": "error"}, "created_seq_desc", 50)
     assert "a.error_summary IS NOT NULL" in sql
 
 
 def test_build_search_query_status_ok_filter() -> None:
-    sql, _ = build_search_query(
-        "sess_1", {"status": "ok"}, "created_seq_desc", 50
-    )
+    sql, _ = build_search_query("sess_1", {"status": "ok"}, "created_seq_desc", 50)
     assert "a.error_summary IS NULL" in sql

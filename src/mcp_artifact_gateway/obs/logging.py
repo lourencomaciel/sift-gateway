@@ -1,4 +1,5 @@
 """Structured logging configuration for MCP Artifact Gateway."""
+
 from __future__ import annotations
 
 import logging
@@ -45,6 +46,7 @@ def get_logger(**initial_context: Any) -> structlog.stdlib.BoundLogger:
 # Pre-defined event names for consistency
 class LogEvents:
     """Standard log event names for the gateway."""
+
     # Startup
     STARTUP_BEGIN = "gateway.startup.begin"
     STARTUP_UPSTREAM_DISCOVERED = "gateway.startup.upstream_discovered"

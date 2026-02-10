@@ -2,6 +2,7 @@
 
 Public API re-exports for the mapping package.
 """
+
 from mcp_artifact_gateway.mapping.runner import (
     MappingInput,
     MappingResult,

@@ -1,4 +1,5 @@
 """Tests for mapping worker: safety checks and scheduling."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -21,7 +22,7 @@ from mcp_artifact_gateway.mapping.worker import (
     run_mapping_worker,
     should_run_mapping,
 )
-from mcp_artifact_gateway.obs.metrics import GatewayMetrics
+from mcp_artifact_gateway.obs.metrics import GatewayMetrics, counter_value
 
 
 class _FakeCursor:
@@ -229,8 +230,8 @@ def test_run_mapping_worker_records_metrics(tmp_path: Path, monkeypatch) -> None
     )
 
     assert persisted is True
-    assert metrics.mapping_partial_count.value == 1
-    assert metrics.mapping_stop_none.value == 1
+    assert counter_value(metrics.mapping_partial_count) == 1
+    assert counter_value(metrics.mapping_stop_none) == 1
     assert metrics.mapping_latency.snapshot()["count"] == 1.0
 
 
@@ -350,10 +351,22 @@ def test_validate_sample_alignment_rejects_mismatch() -> None:
         prng_version="pv",
         map_error=None,
         samples=[
-            SampleRecord(root_key="items", root_path="$.items",
-                         sample_index=0, record={"id": 0}, record_bytes=8, record_hash="h0"),
-            SampleRecord(root_key="items", root_path="$.items",
-                         sample_index=1, record={"id": 1}, record_bytes=8, record_hash="h1"),
+            SampleRecord(
+                root_key="items",
+                root_path="$.items",
+                sample_index=0,
+                record={"id": 0},
+                record_bytes=8,
+                record_hash="h0",
+            ),
+            SampleRecord(
+                root_key="items",
+                root_path="$.items",
+                sample_index=1,
+                record={"id": 1},
+                record_bytes=8,
+                record_hash="h1",
+            ),
             # Missing index 2
         ],
     )
@@ -383,8 +396,8 @@ def test_run_mapping_worker_records_full_metrics(tmp_path: Path, monkeypatch) ->
         ),
         metrics=metrics,
     )
-    assert metrics.mapping_full_count.value == 1
-    assert metrics.mapping_partial_count.value == 0
+    assert counter_value(metrics.mapping_full_count) == 1
+    assert counter_value(metrics.mapping_partial_count) == 0
     assert metrics.mapping_latency.snapshot()["count"] == 1.0
 
 
@@ -393,9 +406,14 @@ def test_run_mapping_worker_records_failed_metrics(tmp_path: Path, monkeypatch) 
     connection = _FakeConnection(conditional_rowcount=1)
     metrics = GatewayMetrics()
     failed = MappingResult(
-        map_kind="full", map_status="failed", mapped_part_index=None,
-        roots=[], map_budget_fingerprint=None, map_backend_id=None,
-        prng_version=None, map_error="test error",
+        map_kind="full",
+        map_status="failed",
+        mapped_part_index=None,
+        roots=[],
+        map_budget_fingerprint=None,
+        map_backend_id=None,
+        prng_version=None,
+        map_error="test error",
     )
     monkeypatch.setattr(
         "mcp_artifact_gateway.mapping.worker.run_mapping",
@@ -405,13 +423,15 @@ def test_run_mapping_worker_records_failed_metrics(tmp_path: Path, monkeypatch) 
         connection,
         worker_ctx=WorkerContext(artifact_id="art_fl", generation=1, map_status="pending"),
         mapping_input=MappingInput(
-            artifact_id="art_fl", payload_hash_full="ph_fl",
-            envelope={"content": []}, config=GatewayConfig(data_dir=tmp_path),
+            artifact_id="art_fl",
+            payload_hash_full="ph_fl",
+            envelope={"content": []},
+            config=GatewayConfig(data_dir=tmp_path),
         ),
         metrics=metrics,
     )
-    assert metrics.mapping_failed_count.value == 1
-    assert metrics.mapping_full_count.value == 0
+    assert counter_value(metrics.mapping_failed_count) == 1
+    assert counter_value(metrics.mapping_full_count) == 0
 
 
 def test_run_mapping_worker_emits_structured_log(tmp_path: Path, monkeypatch) -> None:
@@ -437,12 +457,15 @@ def test_run_mapping_worker_emits_structured_log(tmp_path: Path, monkeypatch) ->
         connection,
         worker_ctx=WorkerContext(artifact_id="art_log", generation=1, map_status="pending"),
         mapping_input=MappingInput(
-            artifact_id="art_log", payload_hash_full="ph_log",
-            envelope={"content": []}, config=GatewayConfig(data_dir=tmp_path),
+            artifact_id="art_log",
+            payload_hash_full="ph_log",
+            envelope={"content": []},
+            config=GatewayConfig(data_dir=tmp_path),
         ),
         logger=logger,
     )
     from mcp_artifact_gateway.obs.logging import LogEvents
+
     assert LogEvents.MAPPING_STARTED in log_events
     assert LogEvents.MAPPING_COMPLETED in log_events
 
@@ -451,9 +474,14 @@ def test_run_mapping_worker_emits_failed_log(tmp_path: Path, monkeypatch) -> Non
     """run_mapping_worker emits MAPPING_FAILED log for failed results."""
     connection = _FakeConnection(conditional_rowcount=1)
     failed = MappingResult(
-        map_kind="full", map_status="failed", mapped_part_index=None,
-        roots=[], map_budget_fingerprint=None, map_backend_id=None,
-        prng_version=None, map_error="test error",
+        map_kind="full",
+        map_status="failed",
+        mapped_part_index=None,
+        roots=[],
+        map_budget_fingerprint=None,
+        map_backend_id=None,
+        prng_version=None,
+        map_error="test error",
     )
     monkeypatch.setattr(
         "mcp_artifact_gateway.mapping.worker.run_mapping",
@@ -474,11 +502,14 @@ def test_run_mapping_worker_emits_failed_log(tmp_path: Path, monkeypatch) -> Non
         connection,
         worker_ctx=WorkerContext(artifact_id="art_flog", generation=1, map_status="pending"),
         mapping_input=MappingInput(
-            artifact_id="art_flog", payload_hash_full="ph_flog",
-            envelope={"content": []}, config=GatewayConfig(data_dir=tmp_path),
+            artifact_id="art_flog",
+            payload_hash_full="ph_flog",
+            envelope={"content": []},
+            config=GatewayConfig(data_dir=tmp_path),
         ),
         logger=logger,
     )
     from mcp_artifact_gateway.obs.logging import LogEvents
+
     assert LogEvents.MAPPING_STARTED in log_events
     assert LogEvents.MAPPING_FAILED in log_events

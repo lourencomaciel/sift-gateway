@@ -30,4 +30,3 @@ def test_sample_set_hash_changes_when_indices_change() -> None:
         map_budget_fingerprint="abc123",
     )
     assert h1 != h2
-

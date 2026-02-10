@@ -12,7 +12,7 @@ from mcp_artifact_gateway.jobs.hard_delete import (
     hard_delete_candidates_params,
     run_hard_delete_batch,
 )
-from mcp_artifact_gateway.obs.metrics import GatewayMetrics
+from mcp_artifact_gateway.obs.metrics import GatewayMetrics, counter_value
 
 
 class _FakeCursor:
@@ -135,9 +135,9 @@ def test_run_hard_delete_batch_removes_records_and_fs_blobs(tmp_path) -> None:
     assert connection.rolled_back is False
     assert not blob_one.exists()
     assert not blob_two.exists()
-    assert metrics.prune_hard_deletes.value == 2
-    assert metrics.prune_bytes_reclaimed.value == 170
-    assert metrics.prune_fs_orphans_removed.value == 2
+    assert counter_value(metrics.prune_hard_deletes) == 2
+    assert counter_value(metrics.prune_bytes_reclaimed) == 170
+    assert counter_value(metrics.prune_fs_orphans_removed) == 2
 
 
 def test_run_hard_delete_batch_rolls_back_on_error() -> None:
@@ -175,8 +175,8 @@ def test_run_hard_delete_batch_no_candidates_zero_metrics() -> None:
     )
     assert result.artifacts_deleted == 0
     assert result.bytes_reclaimed == 0
-    assert metrics.prune_hard_deletes.value == 0
-    assert metrics.prune_bytes_reclaimed.value == 0
+    assert counter_value(metrics.prune_hard_deletes) == 0
+    assert counter_value(metrics.prune_bytes_reclaimed) == 0
 
 
 # ---- SQLite dialect tests ----

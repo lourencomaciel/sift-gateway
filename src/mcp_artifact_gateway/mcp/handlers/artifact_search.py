@@ -78,9 +78,7 @@ async def handle_artifact_search(
         page_rows = mapped_rows[:limit]
         truncated = len(mapped_rows) > limit
         artifact_ids = [
-            str(row["artifact_id"])
-            for row in page_rows
-            if isinstance(row.get("artifact_id"), str)
+            str(row["artifact_id"]) for row in page_rows if isinstance(row.get("artifact_id"), str)
         ]
         ctx._safe_touch_for_search(
             connection,
@@ -105,14 +103,10 @@ async def handle_artifact_search(
                 "artifact_id": row["artifact_id"],
                 "created_seq": row["created_seq"],
                 "created_at": (
-                    str(row["created_at"])
-                    if row.get("created_at") is not None
-                    else None
+                    str(row["created_at"]) if row.get("created_at") is not None else None
                 ),
                 "last_seen_at": (
-                    str(row["last_seen_at"])
-                    if row.get("last_seen_at") is not None
-                    else None
+                    str(row["last_seen_at"]) if row.get("last_seen_at") is not None else None
                 ),
                 "source_tool": row["source_tool"],
                 "upstream_instance_id": row["upstream_instance_id"],

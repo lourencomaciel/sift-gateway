@@ -42,4 +42,3 @@ def envelope_to_jsonb(
 
     msg = f"unsupported envelope_jsonb_mode: {mode}"
     raise ValueError(msg)
-

@@ -27,6 +27,7 @@ from mcp_artifact_gateway.util.hashing import sha256_hex
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_envelope(content_parts, meta=None):
     """Build a minimal Envelope with the given content parts."""
     return Envelope(
@@ -42,6 +43,7 @@ def _make_envelope(content_parts, meta=None):
 # ---------------------------------------------------------------------------
 # Basic oversize replacement
 # ---------------------------------------------------------------------------
+
 
 def test_oversize_json_part_replaced_with_binary_ref(tmp_path) -> None:
     """A JSON part exceeding the threshold becomes a BinaryRefContentPart."""
@@ -133,6 +135,7 @@ def test_under_threshold_json_part_kept(tmp_path) -> None:
 # Mixed content handling
 # ---------------------------------------------------------------------------
 
+
 def test_mixed_parts_only_oversized_replaced(tmp_path) -> None:
     """Only JSON parts exceeding threshold are replaced; others preserved."""
     store = BlobStore(tmp_path / "blobs" / "bin")
@@ -180,6 +183,7 @@ def test_multiple_oversized_parts_all_replaced(tmp_path) -> None:
 # Existing warnings preserved
 # ---------------------------------------------------------------------------
 
+
 def test_oversize_preserves_existing_warnings(tmp_path) -> None:
     """Pre-existing warnings are not lost when oversize warnings are appended."""
     store = BlobStore(tmp_path / "blobs" / "bin")
@@ -203,6 +207,7 @@ def test_oversize_preserves_existing_warnings(tmp_path) -> None:
 # ---------------------------------------------------------------------------
 # Integration with normalize_envelope
 # ---------------------------------------------------------------------------
+
 
 def test_normalize_envelope_with_oversize_handling(tmp_path) -> None:
     """normalize_envelope replaces oversized JSON parts when configured."""
@@ -263,6 +268,7 @@ def test_normalize_envelope_under_threshold_preserves_json(tmp_path) -> None:
 # Canonicalization correctness in oversize path
 # ---------------------------------------------------------------------------
 
+
 def test_oversize_blob_uses_canonical_bytes(tmp_path) -> None:
     """The blob stored for an oversized part must be RFC 8785 canonical JSON."""
     store = BlobStore(tmp_path / "blobs" / "bin")
@@ -316,6 +322,7 @@ def test_oversize_blob_with_decimal_value(tmp_path) -> None:
 # ---------------------------------------------------------------------------
 # Full pipeline: normalize -> oversize -> payload_store -> reconstruct
 # ---------------------------------------------------------------------------
+
 
 def test_full_pipeline_normalize_oversize_store_reconstruct(tmp_path) -> None:
     """Full pipeline: normalize with oversize -> prepare_payload -> reconstruct."""

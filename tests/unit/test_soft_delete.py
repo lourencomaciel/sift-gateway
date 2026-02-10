@@ -12,7 +12,7 @@ from mcp_artifact_gateway.jobs.soft_delete import (
     soft_delete_expired_params,
     soft_delete_unreferenced_params,
 )
-from mcp_artifact_gateway.obs.metrics import GatewayMetrics
+from mcp_artifact_gateway.obs.metrics import GatewayMetrics, counter_value
 
 
 class _FakeCursor:
@@ -119,7 +119,7 @@ def test_run_soft_delete_updates_metrics() -> None:
     metrics = GatewayMetrics()
     result = run_soft_delete_expired(connection, batch_size=2, metrics=metrics)
     assert result.deleted_count == 2
-    assert metrics.prune_soft_deletes.value == 2
+    assert counter_value(metrics.prune_soft_deletes) == 2
 
 
 def test_run_soft_delete_rolls_back_on_error() -> None:
@@ -145,7 +145,7 @@ def test_run_soft_delete_unreferenced_updates_metrics() -> None:
         metrics=metrics,
     )
     assert result.deleted_count == 3
-    assert metrics.prune_soft_deletes.value == 3
+    assert counter_value(metrics.prune_soft_deletes) == 3
 
 
 # ---- SQLite dialect tests ----

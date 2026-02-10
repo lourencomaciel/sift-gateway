@@ -22,7 +22,9 @@ def apply_output_budgets(
         if len(selected) >= max_items:
             break
         try:
-            item_bytes = len(json.dumps(item, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
+            item_bytes = len(
+                json.dumps(item, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+            )
         except TypeError:
             # Fallback for Decimal-safe canonical payloads that stdlib json cannot encode.
             item_bytes = len(canonical_bytes(item))

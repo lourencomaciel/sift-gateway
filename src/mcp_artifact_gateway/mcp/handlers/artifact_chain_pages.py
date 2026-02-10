@@ -80,9 +80,7 @@ async def handle_artifact_chain_pages(
         truncated = len(mapped_rows) > limit
 
         touch_artifacts = [parent_artifact_id] + [
-            str(row["artifact_id"])
-            for row in page_rows
-            if isinstance(row.get("artifact_id"), str)
+            str(row["artifact_id"]) for row in page_rows if isinstance(row.get("artifact_id"), str)
         ]
         ctx._safe_touch_for_search(
             connection,

@@ -26,8 +26,8 @@ def test_canonical_uses_scientific_for_large_numbers_with_plus_sign() -> None:
 
 
 def test_canonical_sorts_keys_by_utf16_code_units() -> None:
-    key_bmp = "\uFFFD"
-    key_astral = "\U0001F600"
+    key_bmp = "\ufffd"
+    key_astral = "\U0001f600"
     text = canonical_text({key_bmp: 2, key_astral: 1})
     assert text == f'{{"{key_astral}":1,"{key_bmp}":2}}'
 

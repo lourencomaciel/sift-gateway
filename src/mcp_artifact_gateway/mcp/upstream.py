@@ -1,4 +1,5 @@
 """Upstream MCP client connections and tool discovery."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -64,9 +65,7 @@ def _client_result_content(result: Any) -> list[dict[str, Any]]:
             continue
         model_dump = getattr(block, "model_dump", None)
         if callable(model_dump):
-            normalized.append(
-                model_dump(by_alias=True, exclude_none=True)
-            )
+            normalized.append(model_dump(by_alias=True, exclude_none=True))
             continue
         normalized.append({"type": "text", "text": str(block)})
     return normalized

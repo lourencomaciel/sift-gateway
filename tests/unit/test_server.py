@@ -11,7 +11,7 @@ from mcp_artifact_gateway.cursor.sample_set_hash import compute_sample_set_hash
 from mcp_artifact_gateway.cursor.secrets import CursorSecrets
 from mcp_artifact_gateway.mcp.server import GatewayServer
 from mcp_artifact_gateway.mcp.upstream import UpstreamInstance, UpstreamToolSchema
-from mcp_artifact_gateway.obs.metrics import GatewayMetrics
+from mcp_artifact_gateway.obs.metrics import GatewayMetrics, counter_value
 from mcp_artifact_gateway.query.select_paths import select_paths_hash
 from mcp_artifact_gateway.query.where_hash import where_hash
 
@@ -283,19 +283,19 @@ def test_cursor_error_updates_metrics(tmp_path: Path) -> None:
     server = GatewayServer(config=GatewayConfig(data_dir=tmp_path), metrics=GatewayMetrics())
     expired = server._cursor_error(CursorExpiredError("expired"))
     assert expired["code"] == "CURSOR_EXPIRED"
-    assert server.metrics.cursor_expired.value == 1
+    assert counter_value(server.metrics.cursor_expired) == 1
 
     stale = server._cursor_error(CursorStaleError("cursor where_canonicalization_mode mismatch"))
     assert stale["code"] == "CURSOR_STALE"
-    assert server.metrics.cursor_stale_where_mode.value == 1
+    assert counter_value(server.metrics.cursor_stale_where_mode) == 1
 
     stale_budget = server._cursor_error(CursorStaleError("cursor map_budget_fingerprint mismatch"))
     assert stale_budget["code"] == "CURSOR_STALE"
-    assert server.metrics.cursor_stale_map_budget.value == 1
+    assert counter_value(server.metrics.cursor_stale_map_budget) == 1
 
     invalid = server._cursor_error(ValueError("bad token"))
     assert invalid["code"] == "INVALID_ARGUMENT"
-    assert server.metrics.cursor_invalid.value == 1
+    assert counter_value(server.metrics.cursor_invalid) == 1
 
 
 def test_artifact_handlers_return_validation_or_not_implemented(tmp_path: Path) -> None:
@@ -423,7 +423,7 @@ def test_handle_mirrored_tool_returns_cached_artifact_when_reused(
     assert response["type"] == "gateway_tool_result"
     assert response["artifact_id"] == "art_cached"
     assert response["meta"]["cache"]["reused"] is True
-    assert server.metrics.cache_hits.value == 1
+    assert counter_value(server.metrics.cache_hits) == 1
 
 
 def test_handle_mirrored_tool_returns_busy_when_lock_times_out(
@@ -441,7 +441,9 @@ def test_handle_mirrored_tool_returns_busy_when_lock_times_out(
     async def _lock_fail(*_args, **_kwargs):
         return False
 
-    monkeypatch.setattr("mcp_artifact_gateway.mcp.handlers.mirrored_tool.acquire_advisory_lock_async", _lock_fail)
+    monkeypatch.setattr(
+        "mcp_artifact_gateway.mcp.handlers.mirrored_tool.acquire_advisory_lock_async", _lock_fail
+    )
 
     async def _must_not_call(*_args, **_kwargs):
         raise AssertionError("upstream should not be called when lock fails")
@@ -510,8 +512,8 @@ def test_handle_mirrored_tool_runs_inline_mapping_in_sync_mode(
     assert response["type"] == "gateway_tool_result"
     assert inline_calls == ["art_new"]
     assert scheduled_calls == []
-    assert server.metrics.cache_misses.value == 1
-    assert server.metrics.upstream_calls.value == 1
+    assert counter_value(server.metrics.cache_misses) == 1
+    assert counter_value(server.metrics.upstream_calls) == 1
 
 
 def test_handle_mirrored_tool_schedules_background_mapping_in_async_mode(
@@ -563,7 +565,7 @@ def test_handle_mirrored_tool_schedules_background_mapping_in_async_mode(
     assert response["type"] == "gateway_tool_result"
     assert inline_calls == []
     assert scheduled_calls == ["art_new"]
-    assert server.metrics.upstream_calls.value == 1
+    assert counter_value(server.metrics.upstream_calls) == 1
 
 
 def test_artifact_search_db_runtime_returns_items(tmp_path: Path, monkeypatch) -> None:
@@ -595,9 +597,7 @@ def test_artifact_search_db_runtime_returns_items(tmp_path: Path, monkeypatch) -
     monkeypatch.setattr(server, "_safe_touch_for_search", lambda *args, **kwargs: None)
 
     response = asyncio.run(
-        server.handle_artifact_search(
-            {"_gateway_context": {"session_id": "sess_1"}, "filters": {}}
-        )
+        server.handle_artifact_search({"_gateway_context": {"session_id": "sess_1"}, "filters": {}})
     )
     assert response["truncated"] is False
     assert response["items"][0]["artifact_id"] == "art_1"
@@ -937,7 +937,7 @@ def test_artifact_select_cursor_sample_set_mismatch_returns_stale(
     )
     assert response["code"] == "CURSOR_STALE"
     assert "sample_set_hash mismatch" in response["message"]
-    assert server.metrics.cursor_stale_sample_set.value == 1
+    assert counter_value(server.metrics.cursor_stale_sample_set) == 1
 
 
 def test_artifact_select_cursor_includes_partial_binding_fields(
@@ -1093,7 +1093,7 @@ def test_artifact_find_cursor_map_budget_mismatch_returns_stale(
     )
     assert response["code"] == "CURSOR_STALE"
     assert "map_budget_fingerprint mismatch" in response["message"]
-    assert server.metrics.cursor_stale_map_budget.value == 1
+    assert counter_value(server.metrics.cursor_stale_map_budget) == 1
 
 
 def test_artifact_chain_pages_db_runtime_returns_cursor_when_truncated(
@@ -1245,11 +1245,7 @@ def test_artifact_find_returns_internal_on_sample_corruption(
             # roots: one root with sample_indices=[0, 2]
             # columns: root_key, root_path, count_estimate, inventory_coverage,
             #          root_summary, root_score, root_shape, fields_top, sample_indices
-            _SeqCursor(
-                all_rows=[
-                    ("rk_1", "$.data", 50, None, None, None, None, None, [0, 2])
-                ]
-            ),
+            _SeqCursor(all_rows=[("rk_1", "$.data", 50, None, None, None, None, None, [0, 2])]),
             # batch sample_rows: root_key, sample_index, record, record_bytes, record_hash
             # only index 0 present (index 2 missing)
             _SeqCursor(all_rows=[("rk_1", 0, {"x": 1}, 8, "h0")]),
@@ -1514,7 +1510,9 @@ def test_handle_mirrored_tool_returns_internal_on_db_persist_failure(
             raise psycopg.OperationalError("connection lost")
 
     server = GatewayServer(
-        config=GatewayConfig(data_dir=tmp_path, quota_enforcement_enabled=False, passthrough_max_bytes=0),
+        config=GatewayConfig(
+            data_dir=tmp_path, quota_enforcement_enabled=False, passthrough_max_bytes=0
+        ),
         upstreams=[_upstream()],
         db_pool=_FailPool(),  # type: ignore[arg-type]
         metrics=GatewayMetrics(),
@@ -1732,7 +1730,9 @@ def test_handle_mirrored_tool_triggers_mapping_on_single_connection(
             return _FakeConnectionContext(None)
 
     server = GatewayServer(
-        config=GatewayConfig(data_dir=tmp_path, quota_enforcement_enabled=False, passthrough_max_bytes=0),
+        config=GatewayConfig(
+            data_dir=tmp_path, quota_enforcement_enabled=False, passthrough_max_bytes=0
+        ),
         upstreams=[_upstream()],
         db_pool=_SingleCheckoutPool(),  # type: ignore[arg-type]
         metrics=GatewayMetrics(),
@@ -1864,10 +1864,7 @@ def test_handle_mirrored_tool_quota_exceeded_returns_error(
     assert response["code"] == "QUOTA_EXCEEDED"
     assert "quota" in response["message"].lower()
     assert response["details"]["exceeded_caps"] == ["max_total_storage_bytes"]
-    assert (
-        response["details"]["max_total_storage_bytes"]
-        == server.config.max_total_storage_bytes
-    )
+    assert response["details"]["max_total_storage_bytes"] == server.config.max_total_storage_bytes
 
 
 def test_handle_mirrored_tool_quota_exceeded_reports_specific_caps(
@@ -1937,10 +1934,7 @@ def test_handle_mirrored_tool_quota_exceeded_reports_specific_caps(
         "max_payload_total_bytes",
     ]
     assert response["details"]["max_binary_blob_bytes"] == server.config.max_binary_blob_bytes
-    assert (
-        response["details"]["max_payload_total_bytes"]
-        == server.config.max_payload_total_bytes
-    )
+    assert response["details"]["max_payload_total_bytes"] == server.config.max_payload_total_bytes
     assert "max_total_storage_bytes" not in response["details"]
 
 
@@ -2169,6 +2163,7 @@ def test_handle_mirrored_tool_quota_check_marks_unhealthy_on_connectivity_error(
 
     class _FailOnSecondPool:
         """First connection succeeds (probe), second fails (quota check)."""
+
         _call_count = 0
 
         def connection(self):
@@ -2228,7 +2223,9 @@ def test_handle_mirrored_tool_skips_quota_when_disabled(
     )
 
     server = GatewayServer(
-        config=GatewayConfig(data_dir=tmp_path, quota_enforcement_enabled=False, passthrough_max_bytes=0),
+        config=GatewayConfig(
+            data_dir=tmp_path, quota_enforcement_enabled=False, passthrough_max_bytes=0
+        ),
         upstreams=[_upstream()],
         db_pool=_FakePool(None),  # type: ignore[arg-type]
         metrics=GatewayMetrics(),

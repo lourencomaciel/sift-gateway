@@ -112,7 +112,7 @@ def _check_migrations(connection: object, details: list[str]) -> None:
             suffix = ", ..." if len(pending) > 3 else ""
             details.append(f"migrations: {len(pending)} pending ({names}{suffix})")
     except Exception:
-        pass
+        _logger.warning("migration check failed", exc_info=True)
 
 
 def _check_db(config: GatewayConfig) -> tuple[bool, list[str]]:

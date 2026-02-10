@@ -1,6 +1,10 @@
 from __future__ import annotations
 
-from mcp_artifact_gateway.cursor.payload import CursorStaleError, assert_cursor_binding, build_cursor_payload
+from mcp_artifact_gateway.cursor.payload import (
+    CursorStaleError,
+    assert_cursor_binding,
+    build_cursor_payload,
+)
 
 
 def test_cursor_where_mode_stale() -> None:
@@ -22,4 +26,3 @@ def test_cursor_where_mode_stale() -> None:
         assert "where_canonicalization_mode mismatch" in str(exc)
     else:
         raise AssertionError("expected CursorStaleError")
-

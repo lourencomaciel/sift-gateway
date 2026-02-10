@@ -171,12 +171,7 @@ def _get_container_host_port(container_name: str) -> int:
     if info is None or not info:
         msg = f"container '{container_name}' not found"
         raise DockerCommandError(msg)
-    bindings = (
-        info[0]
-        .get("HostConfig", {})
-        .get("PortBindings", {})
-        .get("5432/tcp", [])
-    )
+    bindings = info[0].get("HostConfig", {}).get("PortBindings", {}).get("5432/tcp", [])
     if not bindings:
         msg = f"no port binding for 5432/tcp on container '{container_name}'"
         raise DockerCommandError(msg)
@@ -226,20 +221,34 @@ def _create_and_start_container(
     db: str,
 ) -> None:
     """Create and start a new Postgres container."""
-    _run_docker([
-        "docker", "run", "-d",
-        "--name", container_name,
-        "-e", f"POSTGRES_USER={user}",
-        "-e", f"POSTGRES_PASSWORD={password}",
-        "-e", f"POSTGRES_DB={db}",
-        "-p", f"{port}:5432",
-        "-v", f"{volume_name}:/var/lib/postgresql/data",
-        "--health-cmd", f"pg_isready -U {user}",
-        "--health-interval", "5s",
-        "--health-timeout", "5s",
-        "--health-retries", "5",
-        image,
-    ])
+    _run_docker(
+        [
+            "docker",
+            "run",
+            "-d",
+            "--name",
+            container_name,
+            "-e",
+            f"POSTGRES_USER={user}",
+            "-e",
+            f"POSTGRES_PASSWORD={password}",
+            "-e",
+            f"POSTGRES_DB={db}",
+            "-p",
+            f"{port}:5432",
+            "-v",
+            f"{volume_name}:/var/lib/postgresql/data",
+            "--health-cmd",
+            f"pg_isready -U {user}",
+            "--health-interval",
+            "5s",
+            "--health-timeout",
+            "5s",
+            "--health-retries",
+            "5",
+            image,
+        ]
+    )
 
 
 def _wait_for_healthy(
@@ -255,10 +264,7 @@ def _wait_for_healthy(
         if info and info[0].get("State", {}).get("Health", {}).get("Status") == "healthy":
             return
         time.sleep(interval)
-    msg = (
-        f"container '{container_name}' did not become healthy "
-        f"within {timeout}s"
-    )
+    msg = f"container '{container_name}' did not become healthy within {timeout}s"
     raise DockerHealthCheckError(msg)
 
 
@@ -319,8 +325,11 @@ def provision_postgres(
         port = _get_container_host_port(container_name)
         return DockerPostgresResult(
             dsn=_build_dsn(
-                user=DEFAULT_USER, password=password,
-                host="localhost", port=port, db=DEFAULT_DB,
+                user=DEFAULT_USER,
+                password=password,
+                host="localhost",
+                port=port,
+                db=DEFAULT_DB,
             ),
             container_name=container_name,
             port=port,
@@ -336,8 +345,11 @@ def provision_postgres(
         port = _get_container_host_port(container_name)
         return DockerPostgresResult(
             dsn=_build_dsn(
-                user=DEFAULT_USER, password=password,
-                host="localhost", port=port, db=DEFAULT_DB,
+                user=DEFAULT_USER,
+                password=password,
+                host="localhost",
+                port=port,
+                db=DEFAULT_DB,
             ),
             container_name=container_name,
             port=port,
@@ -360,8 +372,11 @@ def provision_postgres(
     _wait_for_healthy(container_name)
     return DockerPostgresResult(
         dsn=_build_dsn(
-            user=DEFAULT_USER, password=password,
-            host="localhost", port=port, db=DEFAULT_DB,
+            user=DEFAULT_USER,
+            password=password,
+            host="localhost",
+            port=port,
+            db=DEFAULT_DB,
         ),
         container_name=container_name,
         port=port,

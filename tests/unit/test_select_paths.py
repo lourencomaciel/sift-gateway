@@ -22,4 +22,3 @@ def test_select_paths_hash_stable() -> None:
     h1 = select_paths_hash(["$.a", "$.b"])
     h2 = select_paths_hash(["$.b", "$.a"])
     assert h1 == h2
-

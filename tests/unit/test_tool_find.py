@@ -12,6 +12,7 @@ from mcp_artifact_gateway.tools.artifact_find import (
 
 # ---- validate_find_args ----
 
+
 def test_validate_find_args_requires_session_id() -> None:
     result = validate_find_args({})
     assert result is not None
@@ -20,9 +21,7 @@ def test_validate_find_args_requires_session_id() -> None:
 
 
 def test_validate_find_args_requires_artifact_id() -> None:
-    result = validate_find_args(
-        {"_gateway_context": {"session_id": "sess_1"}}
-    )
+    result = validate_find_args({"_gateway_context": {"session_id": "sess_1"}})
     assert result is not None
     assert result["code"] == "INVALID_ARGUMENT"
     assert "artifact_id" in result["message"]
@@ -39,6 +38,7 @@ def test_validate_find_args_accepts_valid() -> None:
 
 
 # ---- sampled_indices_from_rows ----
+
 
 def test_sampled_indices_from_rows_sorts_ascending() -> None:
     rows = [
@@ -81,6 +81,7 @@ def test_sampled_indices_from_rows_skips_missing_key() -> None:
 
 
 # ---- build_find_response ----
+
 
 def test_build_find_response_sampled_only_true_when_index_off() -> None:
     result = build_find_response(
@@ -137,6 +138,7 @@ def test_build_find_response_default_sampled_only() -> None:
 
 # ---- traverse_sampled (traversal_v1 contract tests) ----
 
+
 def test_traverse_sampled_ascending_order() -> None:
     """Sampled indices are always enumerated in ascending order."""
     records = ["a", "b", "c", "d", "e"]
@@ -191,6 +193,7 @@ def test_traverse_sampled_duplicate_indices() -> None:
 
 
 # ---- traverse_deterministic ordering contract ----
+
 
 def test_traverse_deterministic_nested_object_lex_order() -> None:
     """Keys of nested objects must be in lexicographic order."""

@@ -56,6 +56,7 @@ def _envelope_with_binary_ref() -> dict:
 
 # ---- PreparedPayload creation ----
 
+
 def test_prepare_payload_creates_valid_result() -> None:
     env = _sample_envelope()
     result = prepare_payload(env)
@@ -79,6 +80,7 @@ def test_prepare_payload_with_binary_refs() -> None:
 
 
 # ---- Compression roundtrip ----
+
 
 def test_compression_roundtrip_zstd() -> None:
     env = _sample_envelope()
@@ -105,6 +107,7 @@ def test_compression_roundtrip_none() -> None:
 
 # ---- Hash integrity ----
 
+
 def test_payload_hash_matches_sha256_of_uncompressed() -> None:
     env = _sample_envelope()
     uncompressed = canonical_bytes(env)
@@ -120,6 +123,7 @@ def test_prepare_payload_hash_integrity() -> None:
 
 
 # ---- JSONB modes ----
+
 
 def test_jsonb_mode_full() -> None:
     env = _sample_envelope()
@@ -163,6 +167,7 @@ def test_jsonb_mode_minimal_for_large_big_envelope() -> None:
 
 # ---- Encoding options ----
 
+
 def test_prepare_payload_gzip_encoding() -> None:
     env = _sample_envelope()
     result = prepare_payload(env, encoding=CanonicalEncoding.gzip)
@@ -176,6 +181,7 @@ def test_prepare_payload_none_encoding() -> None:
 
 
 # ---- reconstruct_envelope ----
+
 
 def test_reconstruct_envelope_roundtrip() -> None:
     env = _sample_envelope()
@@ -243,6 +249,7 @@ def test_reconstruct_envelope_all_encodings() -> None:
 
 
 # ---- Decimal safety: reconstruct_envelope uses loads_decimal ----
+
 
 def _envelope_with_decimal() -> dict:
     return {

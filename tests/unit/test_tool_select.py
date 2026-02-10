@@ -11,6 +11,7 @@ from mcp_artifact_gateway.tools.artifact_select import (
 
 # ---- validate_select_args ----
 
+
 def test_validate_select_args_requires_session_id() -> None:
     result = validate_select_args({})
     assert result is not None
@@ -19,9 +20,7 @@ def test_validate_select_args_requires_session_id() -> None:
 
 
 def test_validate_select_args_requires_artifact_id() -> None:
-    result = validate_select_args(
-        {"_gateway_context": {"session_id": "sess_1"}}
-    )
+    result = validate_select_args({"_gateway_context": {"session_id": "sess_1"}})
     assert result is not None
     assert result["code"] == "INVALID_ARGUMENT"
     assert "artifact_id" in result["message"]
@@ -90,6 +89,7 @@ def test_validate_select_args_accepts_valid_arguments() -> None:
 
 # ---- build_select_result ----
 
+
 def test_build_select_result_basic() -> None:
     result = build_select_result(
         items=[{"name": "alice"}],
@@ -152,6 +152,7 @@ def test_build_select_result_with_omitted_and_stats() -> None:
 
 # ---- sampled_indices_ascending ----
 
+
 def test_sampled_indices_ascending_extracts_and_sorts() -> None:
     rows = [
         {"sample_index": 10, "record": {}},
@@ -193,6 +194,7 @@ def test_sampled_indices_ascending_skips_missing_key() -> None:
 
 
 # ---- sampled_only in build_select_result ----
+
 
 def test_build_select_result_sampled_only_indices_always_ascending() -> None:
     """sample_indices_used should be stored as-is (caller responsibility)."""

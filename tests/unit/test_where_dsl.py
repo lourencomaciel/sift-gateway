@@ -373,7 +373,10 @@ def test_wildcard_contains_string_in_list() -> None:
 
 def test_wildcard_expansion_within_limit_passes() -> None:
     doc = {"items": [1, 2]}
-    assert evaluate_where(doc, {"path": "$.items[*]", "op": "exists"}, max_wildcard_expansion=5) is True
+    assert (
+        evaluate_where(doc, {"path": "$.items[*]", "op": "exists"}, max_wildcard_expansion=5)
+        is True
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -457,7 +460,11 @@ def test_compute_accounting_increments_per_path_segment() -> None:
     # The path has 8 segments; walk=1, segments=8, expansion=0, comparison=1 => 10 steps
     # With max_compute_steps=5 this should exceed the limit
     with pytest.raises(WhereComputeLimitExceeded):
-        evaluate_where({"a": {"b": {"c": {"d": {"e": {"f": {"g": {"h": 1}}}}}}}}, deep_path, max_compute_steps=5)
+        evaluate_where(
+            {"a": {"b": {"c": {"d": {"e": {"f": {"g": {"h": 1}}}}}}}},
+            deep_path,
+            max_compute_steps=5,
+        )
 
 
 def test_compute_accounting_short_circuit_and() -> None:
@@ -507,13 +514,25 @@ def test_eval_in_with_numbers() -> None:
 
 
 def test_eval_contains_string_substring() -> None:
-    assert evaluate_where({"s": "hello world"}, {"path": "$.s", "op": "contains", "value": "world"}) is True
-    assert evaluate_where({"s": "hello world"}, {"path": "$.s", "op": "contains", "value": "xyz"}) is False
+    assert (
+        evaluate_where({"s": "hello world"}, {"path": "$.s", "op": "contains", "value": "world"})
+        is True
+    )
+    assert (
+        evaluate_where({"s": "hello world"}, {"path": "$.s", "op": "contains", "value": "xyz"})
+        is False
+    )
 
 
 def test_eval_contains_array_element() -> None:
-    assert evaluate_where({"tags": [1, 2, 3]}, {"path": "$.tags", "op": "contains", "value": 2}) is True
-    assert evaluate_where({"tags": [1, 2, 3]}, {"path": "$.tags", "op": "contains", "value": 5}) is False
+    assert (
+        evaluate_where({"tags": [1, 2, 3]}, {"path": "$.tags", "op": "contains", "value": 2})
+        is True
+    )
+    assert (
+        evaluate_where({"tags": [1, 2, 3]}, {"path": "$.tags", "op": "contains", "value": 5})
+        is False
+    )
 
 
 def test_eval_exists_present() -> None:
@@ -526,10 +545,13 @@ def test_eval_exists_null_value_is_present() -> None:
 
 
 def test_eval_or_clause() -> None:
-    where = {"op": "or", "clauses": [
-        {"path": "$.x", "op": "eq", "value": 1},
-        {"path": "$.y", "op": "eq", "value": 2},
-    ]}
+    where = {
+        "op": "or",
+        "clauses": [
+            {"path": "$.x", "op": "eq", "value": 1},
+            {"path": "$.y", "op": "eq", "value": 2},
+        ],
+    }
     assert evaluate_where({"x": 1, "y": 0}, where) is True
     assert evaluate_where({"x": 0, "y": 2}, where) is True
     assert evaluate_where({"x": 0, "y": 0}, where) is False

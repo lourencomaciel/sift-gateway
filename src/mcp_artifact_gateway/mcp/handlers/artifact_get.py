@@ -25,6 +25,7 @@ from mcp_artifact_gateway.storage.payload_store import reconstruct_envelope
 if TYPE_CHECKING:
     from mcp_artifact_gateway.mcp.server import GatewayServer
 
+
 async def handle_artifact_get(
     ctx: GatewayServer,
     arguments: dict[str, Any],

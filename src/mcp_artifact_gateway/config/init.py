@@ -215,7 +215,9 @@ def print_init_summary(summary: dict[str, Any], *, dry_run: bool = False) -> Non
     if "docker_postgres" in summary:
         pg = summary["docker_postgres"]
         status = "reused" if pg["already_running"] else "started"
-        print(f"{prefix}Postgres:       {status} container '{pg['container']}' on port {pg['port']}")
+        print(
+            f"{prefix}Postgres:       {status} container '{pg['container']}' on port {pg['port']}"
+        )
     elif "docker_postgres_skipped" in summary:
         print(f"{prefix}Postgres:       {summary['docker_postgres_skipped']}")
 

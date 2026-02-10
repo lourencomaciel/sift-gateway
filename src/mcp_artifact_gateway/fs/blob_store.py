@@ -105,8 +105,7 @@ class BlobStore:
             existing_hash = _sha256_file(path)
             if existing_hash != binary_hash:
                 msg = (
-                    f"existing blob content hash mismatch for {binary_hash}: "
-                    f"found {existing_hash}"
+                    f"existing blob content hash mismatch for {binary_hash}: found {existing_hash}"
                 )
                 raise ValueError(msg)
         else:

@@ -1,4 +1,5 @@
 """Tests for full mapping: root discovery, fields_top, root_path normalization."""
+
 from __future__ import annotations
 
 from mcp_artifact_gateway.mapping.full import run_full_mapping

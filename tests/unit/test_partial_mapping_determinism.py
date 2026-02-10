@@ -1,4 +1,5 @@
 """Tests for partial mapping determinism: same inputs produce same outputs."""
+
 from __future__ import annotations
 
 from mcp_artifact_gateway.mapping.partial import (

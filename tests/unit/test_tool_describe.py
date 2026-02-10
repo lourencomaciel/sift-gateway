@@ -10,6 +10,7 @@ from mcp_artifact_gateway.tools.artifact_describe import (
 
 # ---- validate_describe_args ----
 
+
 def test_validate_describe_args_requires_session_id() -> None:
     result = validate_describe_args({})
     assert result is not None
@@ -18,9 +19,7 @@ def test_validate_describe_args_requires_session_id() -> None:
 
 
 def test_validate_describe_args_requires_artifact_id() -> None:
-    result = validate_describe_args(
-        {"_gateway_context": {"session_id": "sess_1"}}
-    )
+    result = validate_describe_args({"_gateway_context": {"session_id": "sess_1"}})
     assert result is not None
     assert result["code"] == "INVALID_ARGUMENT"
     assert "artifact_id" in result["message"]
@@ -37,6 +36,7 @@ def test_validate_describe_args_accepts_valid_arguments() -> None:
 
 
 # ---- build_describe_response ----
+
 
 def test_build_describe_response_includes_mapping_info() -> None:
     artifact_row = {
