@@ -74,5 +74,6 @@ def create_pool(config: GatewayConfig) -> ConnectionPool:
         conninfo=info.dsn,
         min_size=info.pool_min,
         max_size=info.pool_max,
+        open=True,
         kwargs={"options": f"-c statement_timeout={info.statement_timeout_ms}"},
     )

@@ -38,6 +38,7 @@ def _integration_config(tmp_path: Path) -> GatewayConfig:
         data_dir=tmp_path,
         postgres_dsn=dsn,
         mapping_mode="sync",
+        passthrough_max_bytes=0,
     )
 
 
@@ -166,7 +167,9 @@ def test_mirrored_tool_flow_persists_artifact_with_real_postgres(
         )
         mirrored = server.mirrored_tools["demo.echo"]
 
-        async def _fake_call(_upstream, _tool, args):
+        async def _fake_call(
+            _upstream, _tool, args, data_dir: str | None = None  # noqa: ARG001
+        ):
             return {
                 "content": [
                     {"type": "text", "text": str(args.get("message", ""))}

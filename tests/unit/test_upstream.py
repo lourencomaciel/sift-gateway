@@ -5,6 +5,7 @@ import pytest
 from sidepouch_mcp.config.settings import UpstreamConfig
 from sidepouch_mcp.mcp.upstream import (
     UpstreamInstance,
+    _build_stdio_env,
     call_upstream_tool,
     compute_auth_fingerprint,
     compute_upstream_instance_id,
@@ -269,8 +270,11 @@ async def test_call_upstream_tool_normalizes_result(monkeypatch) -> None:
     assert result["content"] == [{"type": "text", "text": "ok"}]
     assert result["meta"] == {"trace_id": "t-1"}
     created = _FakeClient.instances[0]
-    assert isinstance(created.transport, str)
-    assert created.transport == cfg.url
+    # HTTP configs with headers produce StreamableHttpTransport
+    from fastmcp.client.transports import StreamableHttpTransport
+
+    assert isinstance(created.transport, StreamableHttpTransport)
+    assert created.transport.url == cfg.url
     assert created.calls == [("tool_a", {"x": 1})]
 
 
@@ -300,3 +304,68 @@ async def test_connect_upstreams_preserves_config_order(monkeypatch) -> None:
     upstreams = await connect_upstreams([cfg1, cfg2])
 
     assert [u.prefix for u in upstreams] == ["gh", "jira"]
+
+
+# ---- stdio env isolation ----
+
+
+def test_stdio_env_excludes_arbitrary_parent_env(
+    monkeypatch,
+) -> None:
+    """Arbitrary parent env vars must not leak to upstreams."""
+    monkeypatch.setenv("SIDEPOUCH_TEST_SECRET", "hidden")
+    cfg = _stdio_config(env={})
+    env = _build_stdio_env(cfg)
+    assert "SIDEPOUCH_TEST_SECRET" not in env
+
+
+def test_stdio_env_includes_allowlisted_keys(
+    monkeypatch,
+) -> None:
+    """Allowlisted parent env vars (PATH, HOME) appear."""
+    monkeypatch.setenv("PATH", "/usr/bin")
+    monkeypatch.setenv("HOME", "/home/user")
+    cfg = _stdio_config(env={})
+    env = _build_stdio_env(cfg)
+    assert env["PATH"] == "/usr/bin"
+    assert env["HOME"] == "/home/user"
+
+
+def test_stdio_env_config_env_overrides_base(
+    monkeypatch,
+) -> None:
+    """Explicit config.env values override allowlisted base."""
+    monkeypatch.setenv("PATH", "/original")
+    cfg = _stdio_config(env={"PATH": "/custom"})
+    env = _build_stdio_env(cfg)
+    assert env["PATH"] == "/custom"
+
+
+def test_stdio_env_inherit_parent_env_true(
+    monkeypatch,
+) -> None:
+    """inherit_parent_env=True passes all parent env vars."""
+    monkeypatch.setenv("SIDEPOUCH_TEST_SECRET", "visible")
+    cfg = _stdio_config(env={}, inherit_parent_env=True)
+    env = _build_stdio_env(cfg)
+    assert env.get("SIDEPOUCH_TEST_SECRET") == "visible"
+
+
+@pytest.mark.asyncio
+async def test_stdio_transport_always_gets_env_dict(
+    monkeypatch,
+) -> None:
+    """Stdio transport env is always a dict, never None."""
+    _FakeClient.instances.clear()
+    _FakeClient.tools = []
+    monkeypatch.setattr("sidepouch_mcp.mcp.upstream.Client", _FakeClient)
+
+    cfg = _stdio_config(env={})
+    from sidepouch_mcp.mcp.upstream import _client_transport
+
+    transport = _client_transport(cfg)
+
+    from fastmcp.client.transports import StdioTransport
+
+    assert isinstance(transport, StdioTransport)
+    assert isinstance(transport.env, dict)

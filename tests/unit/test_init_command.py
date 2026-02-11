@@ -49,10 +49,10 @@ class TestRunInit:
         gw_config = json.loads(Path(summary["gateway_config_path"]).read_text())
         assert "github" in gw_config["mcpServers"]
         assert "filesystem" in gw_config["mcpServers"]
-        assert (
-            gw_config["mcpServers"]["github"]["env"]["GITHUB_TOKEN"]
-            == "ghp_secret123"
-        )
+        # Inline env should be externalized (secret_ref instead)
+        github_entry = gw_config["mcpServers"]["github"]
+        assert "env" not in github_entry
+        assert github_entry["_gateway"]["secret_ref"] == "github"
 
     def test_rewrites_source_with_gateway_only(self, tmp_path: Path) -> None:
         source = tmp_path / "claude_desktop_config.json"
@@ -380,3 +380,80 @@ class TestInitDockerProvisioning:
         )
         # Dry run — no files written
         assert not Path(summary["gateway_config_path"]).exists()
+
+
+# -------------------------------------------------------------------
+# Phase 4: Secret externalization and sync metadata tests
+# -------------------------------------------------------------------
+
+
+class TestInitExternalizeSecrets:
+    """Tests for inline secret externalization during init."""
+
+    def test_init_externalizes_inline_secrets(self, tmp_path: Path) -> None:
+        source = tmp_path / "config.json"
+        source.write_text(
+            json.dumps(_claude_desktop_config()),
+            encoding="utf-8",
+        )
+        data_dir = tmp_path / "gateway"
+
+        summary = run_init(source, data_dir=data_dir)
+
+        gw_config = json.loads(Path(summary["gateway_config_path"]).read_text())
+
+        # github had env -> should have secret_ref, no inline env
+        github = gw_config["mcpServers"]["github"]
+        assert "env" not in github
+        assert github["_gateway"]["secret_ref"] == "github"
+
+        # Secret file should exist with the env vars
+        secret_file = data_dir / "state" / "upstream_secrets" / "github.json"
+        assert secret_file.exists()
+        secret_data = json.loads(secret_file.read_text())
+        assert secret_data["env"]["GITHUB_TOKEN"] == "ghp_secret123"
+        assert secret_data["transport"] == "stdio"
+
+        # filesystem had no env -> no secret_ref
+        fs = gw_config["mcpServers"]["filesystem"]
+        assert "env" not in fs
+        assert "_gateway" not in fs or "secret_ref" not in fs.get(
+            "_gateway", {}
+        )
+
+    def test_init_writes_sync_metadata(self, tmp_path: Path) -> None:
+        source = tmp_path / "config.json"
+        source.write_text(
+            json.dumps({"mcpServers": {"tool": {"command": "tool"}}}),
+            encoding="utf-8",
+        )
+        data_dir = tmp_path / "gateway"
+
+        summary = run_init(source, data_dir=data_dir)
+
+        gw_config = json.loads(Path(summary["gateway_config_path"]).read_text())
+        sync = gw_config["_gateway_sync"]
+        assert sync["enabled"] is True
+        assert sync["source_path"] == str(source.resolve())
+        assert sync["gateway_name"] == "artifact-gateway"
+
+    def test_init_gateway_url_rewrites_source_to_url(
+        self, tmp_path: Path
+    ) -> None:
+        source = tmp_path / "config.json"
+        source.write_text(
+            json.dumps({"mcpServers": {"tool": {"command": "tool"}}}),
+            encoding="utf-8",
+        )
+        data_dir = tmp_path / "gateway"
+
+        run_init(
+            source,
+            data_dir=data_dir,
+            gateway_url="http://localhost:8080/mcp",
+        )
+
+        rewritten = json.loads(source.read_text())
+        gw_entry = rewritten["mcpServers"]["artifact-gateway"]
+        assert gw_entry["url"] == "http://localhost:8080/mcp"
+        assert "command" not in gw_entry
