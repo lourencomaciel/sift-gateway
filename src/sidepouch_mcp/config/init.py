@@ -21,7 +21,7 @@ import json
 import os
 from pathlib import Path
 import shutil
-from typing import Any
+from typing import Any, Literal
 
 
 @contextlib.contextmanager
@@ -162,6 +162,7 @@ def run_init(
     gateway_name: str = "artifact-gateway",
     gateway_url: str | None = None,
     dry_run: bool = False,
+    db_backend: Literal["sqlite", "postgres"] = "sqlite",
     postgres_dsn: str | None = None,
 ) -> dict[str, Any]:
     """Migrate MCP servers from source file into the gateway.
@@ -178,8 +179,11 @@ def run_init(
             transport instead of command.
         dry_run: If True, print what would happen without
             making changes.
+        db_backend: Database backend for the generated gateway
+            config. Defaults to ``sqlite``.
         postgres_dsn: Explicit Postgres DSN. Skips Docker
-            auto-provisioning when set.
+            auto-provisioning when set (only used when
+            ``db_backend="postgres"``).
 
     Returns:
         Summary dict with keys: servers_migrated, backup_path,
@@ -223,6 +227,7 @@ def run_init(
 
     new_gateway_config = dict(existing_gateway_config)
     new_gateway_config["mcpServers"] = merged_servers
+    new_gateway_config["db_backend"] = db_backend
     # Remove legacy format if present
     new_gateway_config.pop("upstreams", None)
 
@@ -233,25 +238,39 @@ def run_init(
         "gateway_name": gateway_name,
     }
 
-    # 2.5. Postgres provisioning
-    dsn_from_env = os.environ.get("SIDEPOUCH_MCP_POSTGRES_DSN")
-    dsn_from_config = existing_gateway_config.get("postgres_dsn")
-    dsn_explicitly_set = postgres_dsn or dsn_from_env or dsn_from_config
-
-    if dsn_explicitly_set:
-        resolved_dsn = postgres_dsn or dsn_from_env or dsn_from_config
-        new_gateway_config["postgres_dsn"] = resolved_dsn
-    else:
-        from sidepouch_mcp.config.docker_postgres import (
-            DockerNotFoundError,
-            provision_postgres,
+    # 2.5. Optional Postgres provisioning
+    pg_result = None
+    resolved_postgres_dsn: str | None = None
+    if db_backend == "postgres":
+        dsn_from_env = os.environ.get("SIDEPOUCH_MCP_POSTGRES_DSN")
+        raw_dsn_from_config = existing_gateway_config.get("postgres_dsn")
+        dsn_from_config = (
+            raw_dsn_from_config
+            if isinstance(raw_dsn_from_config, str)
+            else None
+        )
+        resolved_postgres_dsn = (
+            postgres_dsn
+            or dsn_from_env
+            or dsn_from_config
         )
 
-        try:
-            pg_result = provision_postgres(dry_run=dry_run)
-            new_gateway_config["postgres_dsn"] = pg_result.dsn
-        except DockerNotFoundError:
-            pg_result = None
+        if resolved_postgres_dsn:
+            new_gateway_config["postgres_dsn"] = resolved_postgres_dsn
+        else:
+            from sidepouch_mcp.config.docker_postgres import (
+                DockerNotFoundError,
+                provision_postgres,
+            )
+
+            try:
+                pg_result = provision_postgres(dry_run=dry_run)
+                new_gateway_config["postgres_dsn"] = pg_result.dsn
+            except DockerNotFoundError:
+                pg_result = None
+    else:
+        # Keep sqlite setup explicit and avoid carrying stale DSNs.
+        new_gateway_config.pop("postgres_dsn", None)
 
     # 3. Prepare rewritten source file
     #    Preserve the original format (mcpServers vs mcp.servers)
@@ -274,12 +293,13 @@ def run_init(
 
     summary: dict[str, Any] = {
         "servers_migrated": server_names,
+        "db_backend": db_backend,
         "backup_path": str(backup_path),
         "source_path": str(source_path),
         "gateway_config_path": str(gateway_config_path),
     }
 
-    if not dsn_explicitly_set:
+    if db_backend == "postgres" and resolved_postgres_dsn is None:
         if pg_result is not None:
             summary["docker_postgres"] = {
                 "container": pg_result.container_name,
@@ -336,11 +356,13 @@ def print_init_summary(
     """Print a human-readable summary of the init operation."""
     prefix = "[dry run] " if dry_run else ""
     servers = summary["servers_migrated"]
+    db_backend = summary.get("db_backend", "sqlite")
 
     print(f"{prefix}Migrated {len(servers)} server(s) into gateway config:")
     for name in servers:
         print(f"  - {name}")
     print()
+    print(f"{prefix}DB backend:     {db_backend}")
     if "docker_postgres" in summary:
         pg = summary["docker_postgres"]
         status = "reused" if pg["already_running"] else "started"
