@@ -55,9 +55,21 @@ def _add_init_mode_group(
         help="Name for the gateway entry in the rewritten source file",
     )
     init_parser.add_argument(
+        "--db-backend",
+        choices=["sqlite", "postgres"],
+        default="sqlite",
+        help=(
+            "Database backend for generated gateway config "
+            "(default: sqlite)"
+        ),
+    )
+    init_parser.add_argument(
         "--postgres-dsn",
         default=None,
-        help="Postgres connection string (skips Docker auto-provisioning)",
+        help=(
+            "Postgres connection string (used when --db-backend=postgres; "
+            "skips Docker auto-provisioning)"
+        ),
     )
     init_parser.add_argument(
         "--gateway-url",
@@ -180,6 +192,7 @@ def _run_init(args: argparse.Namespace) -> int:
         gateway_name=args.gateway_name,
         gateway_url=args.gateway_url,
         dry_run=args.dry_run,
+        db_backend=args.db_backend,
         postgres_dsn=args.postgres_dsn,
     )
     print_init_summary(summary, dry_run=args.dry_run)

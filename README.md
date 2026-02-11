@@ -125,11 +125,29 @@ uv run sidepouch-mcp init \
 This command:
 
 1. copies source `mcpServers` into `.sidepouch-mcp/state/config.json`;
-2. externalizes inline `env` and `headers` into per-upstream secret
+2. sets `db_backend` to `sqlite` by default;
+3. externalizes inline `env` and `headers` into per-upstream secret
    files under `.sidepouch-mcp/state/upstream_secrets/`;
-3. writes a backup to `<source>.backup`;
-4. rewrites the source config to point to SidePouch only;
-5. stores `_gateway_sync` metadata so future restarts can auto-sync.
+4. writes a backup to `<source>.backup`;
+5. rewrites the source config to point to SidePouch only;
+6. stores `_gateway_sync` metadata so future restarts can auto-sync.
+
+Use PostgreSQL only when explicitly requested:
+
+```bash
+uv run sidepouch-mcp init \
+  --from ~/Library/Application\ Support/Claude/claude_desktop_config.json \
+  --db-backend postgres
+```
+
+Optionally provide a DSN to skip Docker auto-provisioning:
+
+```bash
+uv run sidepouch-mcp init \
+  --from ~/Library/Application\ Support/Claude/claude_desktop_config.json \
+  --db-backend postgres \
+  --postgres-dsn postgresql://user:pass@host:5432/sidepouch
+```
 
 Preview:
 
