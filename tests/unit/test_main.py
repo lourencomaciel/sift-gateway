@@ -231,6 +231,7 @@ def test_serve_dispatches_init_command(
             data_dir=str(data_dir),
             gateway_name="artifact-gateway",
             gateway_url=None,
+            db_backend="sqlite",
             postgres_dsn=None,
         ),
     )
@@ -244,7 +245,7 @@ def test_serve_dispatches_init_command(
     assert json.loads(source.read_text())["mcpServers"]["gh"]["command"] == "gh"
 
 
-def test_init_accepts_postgres_dsn_flag(
+def test_init_accepts_postgres_dsn_flag_when_backend_postgres(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:
     source = tmp_path / "config.json"
@@ -268,6 +269,7 @@ def test_init_accepts_postgres_dsn_flag(
             data_dir=str(data_dir),
             gateway_name="artifact-gateway",
             gateway_url=None,
+            db_backend="postgres",
             postgres_dsn="postgresql://custom:pass@host:5432/db",
         ),
     )
@@ -354,6 +356,31 @@ def test_parse_args_transport_accepts_streamable_http(
     )
     args = _parse_args()
     assert args.transport == "streamable-http"
+
+
+def test_parse_args_init_backend_defaults_to_sqlite(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "sys.argv",
+        ["sidepouch-mcp", "init", "--from", "config.json"],
+    )
+    args = _parse_args()
+    assert args.db_backend == "sqlite"
+
+
+def test_parse_args_init_backend_accepts_postgres(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "sidepouch-mcp",
+            "init",
+            "--from",
+            "config.json",
+            "--db-backend",
+            "postgres",
+        ],
+    )
+    args = _parse_args()
+    assert args.db_backend == "postgres"
 
 
 def test_parse_args_host_default(monkeypatch) -> None:

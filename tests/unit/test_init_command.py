@@ -139,6 +139,7 @@ class TestRunInit:
             json.dumps(
                 {
                     "mcpServers": {"existing": {"command": "existing-cmd"}},
+                    "db_backend": "postgres",
                     "postgres_dsn": "postgresql://localhost/db",
                 }
             )
@@ -151,8 +152,9 @@ class TestRunInit:
         assert gw_config["mcpServers"]["existing"]["command"] == "existing-cmd"
         # New server added
         assert gw_config["mcpServers"]["new_tool"]["command"] == "new-tool"
-        # Other config preserved
-        assert gw_config["postgres_dsn"] == "postgresql://localhost/db"
+        # Default init path is sqlite unless postgres backend is requested.
+        assert gw_config["db_backend"] == "sqlite"
+        assert "postgres_dsn" not in gw_config
 
     def test_empty_source_raises(self, tmp_path: Path) -> None:
         source = tmp_path / "empty.json"
@@ -246,9 +248,28 @@ def _source_with_servers(tmp_path: Path) -> Path:
 
 
 class TestInitDockerProvisioning:
-    """Tests for Docker auto-provisioning integration in run_init."""
+    """Tests for explicit Postgres provisioning paths in run_init."""
 
-    def test_triggers_docker_when_no_dsn(
+    def test_default_sqlite_skips_docker(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        monkeypatch.setenv(
+            "SIDEPOUCH_MCP_POSTGRES_DSN", "postgresql://env@host/db"
+        )
+        source = _source_with_servers(tmp_path)
+
+        with patch(
+            "sidepouch_mcp.config.docker_postgres.provision_postgres",
+        ) as mock_prov:
+            summary = run_init(source, data_dir=tmp_path / "gw")
+
+        mock_prov.assert_not_called()
+        gw_config = json.loads(Path(summary["gateway_config_path"]).read_text())
+        assert gw_config["db_backend"] == "sqlite"
+        assert "postgres_dsn" not in gw_config
+        assert "docker_postgres" not in summary
+
+    def test_triggers_docker_only_for_postgres_backend(
         self, tmp_path: Path, monkeypatch
     ) -> None:
         monkeypatch.delenv("SIDEPOUCH_MCP_POSTGRES_DSN", raising=False)
@@ -265,10 +286,15 @@ class TestInitDockerProvisioning:
             "sidepouch_mcp.config.docker_postgres.provision_postgres",
             return_value=fake_result,
         ) as mock_prov:
-            summary = run_init(source, data_dir=tmp_path / "gw")
+            summary = run_init(
+                source,
+                data_dir=tmp_path / "gw",
+                db_backend="postgres",
+            )
 
         mock_prov.assert_called_once_with(dry_run=False)
         gw_config = json.loads(Path(summary["gateway_config_path"]).read_text())
+        assert gw_config["db_backend"] == "postgres"
         assert gw_config["postgres_dsn"] == fake_result.dsn
         assert (
             summary["docker_postgres"]["container"] == "sidepouch-mcp-postgres"
@@ -286,6 +312,7 @@ class TestInitDockerProvisioning:
             summary = run_init(
                 source,
                 data_dir=tmp_path / "gw",
+                db_backend="postgres",
                 postgres_dsn="postgresql://explicit:pass@host/db",
             )
 
@@ -304,7 +331,11 @@ class TestInitDockerProvisioning:
         with patch(
             "sidepouch_mcp.config.docker_postgres.provision_postgres",
         ) as mock_prov:
-            summary = run_init(source, data_dir=tmp_path / "gw")
+            summary = run_init(
+                source,
+                data_dir=tmp_path / "gw",
+                db_backend="postgres",
+            )
 
         mock_prov.assert_not_called()
         gw_config = json.loads(Path(summary["gateway_config_path"]).read_text())
@@ -329,7 +360,11 @@ class TestInitDockerProvisioning:
         with patch(
             "sidepouch_mcp.config.docker_postgres.provision_postgres",
         ) as mock_prov:
-            summary = run_init(source, data_dir=data_dir)
+            summary = run_init(
+                source,
+                data_dir=data_dir,
+                db_backend="postgres",
+            )
 
         mock_prov.assert_not_called()
         gw_config = json.loads(Path(summary["gateway_config_path"]).read_text())
@@ -349,10 +384,15 @@ class TestInitDockerProvisioning:
             "sidepouch_mcp.config.docker_postgres.provision_postgres",
             side_effect=DockerNotFoundError("Docker not found"),
         ):
-            summary = run_init(source, data_dir=tmp_path / "gw")
+            summary = run_init(
+                source,
+                data_dir=tmp_path / "gw",
+                db_backend="postgres",
+            )
 
         assert "docker_postgres_skipped" in summary
         gw_config = json.loads(Path(summary["gateway_config_path"]).read_text())
+        assert gw_config["db_backend"] == "postgres"
         assert "postgres_dsn" not in gw_config
 
     def test_dry_run_passes_through_to_docker(
@@ -372,7 +412,12 @@ class TestInitDockerProvisioning:
             "sidepouch_mcp.config.docker_postgres.provision_postgres",
             return_value=fake_result,
         ) as mock_prov:
-            summary = run_init(source, data_dir=tmp_path / "gw", dry_run=True)
+            summary = run_init(
+                source,
+                data_dir=tmp_path / "gw",
+                db_backend="postgres",
+                dry_run=True,
+            )
 
         mock_prov.assert_called_once_with(dry_run=True)
         assert (
