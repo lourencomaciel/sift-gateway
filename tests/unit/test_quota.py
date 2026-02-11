@@ -472,6 +472,7 @@ def test_enforce_quota_stops_when_no_candidates_to_prune() -> None:
 
 
 def test_enforce_quota_uses_past_cutoff_for_hard_delete_grace(
+    tmp_path,
     monkeypatch,
 ) -> None:
     conn = _FakeConnection(
@@ -484,6 +485,7 @@ def test_enforce_quota_uses_past_cutoff_for_hard_delete_grace(
 
     def _fake_hard_delete(*_args, **kwargs):
         captured["grace_period_timestamp"] = kwargs["grace_period_timestamp"]
+        captured["blobs_root"] = kwargs["blobs_root"]
         return HardDeleteResult(
             artifacts_deleted=0,
             payloads_deleted=0,
@@ -509,12 +511,14 @@ def test_enforce_quota_uses_past_cutoff_for_hard_delete_grace(
         max_total_storage_bytes=500,
         hard_delete_grace_seconds=60,
         max_prune_rounds=1,
+        blobs_root=tmp_path,
     )
     after = dt.datetime.now(dt.timezone.utc)
 
     cutoff = dt.datetime.fromisoformat(captured["grace_period_timestamp"])
     assert cutoff <= after - dt.timedelta(seconds=59)
     assert cutoff >= before - dt.timedelta(seconds=61)
+    assert captured["blobs_root"] == tmp_path
 
 
 def test_enforce_quota_recomputes_cutoff_each_round(monkeypatch) -> None:

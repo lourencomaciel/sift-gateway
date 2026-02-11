@@ -45,7 +45,11 @@ def probe_db(db_pool: Any) -> dict[str, Any]:
             conn.execute("SELECT 1")
         return {"ok": True}
     except Exception as exc:
-        return {"ok": False, "error": str(exc)}
+        return {
+            "ok": False,
+            "error": "db probe failed",
+            "error_type": type(exc).__name__,
+        }
 
 
 def probe_fs(config: GatewayConfig) -> dict[str, Any]:
@@ -113,8 +117,8 @@ def build_status_response_with_runtime(
             not probed.
         upstreams: Upstream connectivity dicts from
             ``GatewayServer._status_upstreams()``.
-        cursor_secrets_info: Dict with ``signing_version``
-            and ``active_versions`` from cursor secrets.
+        cursor_secrets_info: Optional cursor-secrets metadata
+            from ``GatewayServer._cursor_secrets_info()``.
 
     Returns:
         Structured status dict containing versions, budgets,
@@ -124,12 +128,10 @@ def build_status_response_with_runtime(
         "cursor_ttl_minutes": config.cursor_ttl_minutes,
     }
     if cursor_secrets_info is not None:
-        cursor_section["signing_version"] = cursor_secrets_info.get(
-            "signing_version"
-        )
-        cursor_section["active_versions"] = cursor_secrets_info.get(
-            "active_versions", []
-        )
+        cursor_section["secrets_loaded"] = True
+        active_versions = cursor_secrets_info.get("active_versions")
+        if isinstance(active_versions, list):
+            cursor_section["active_secret_count"] = len(active_versions)
 
     return {
         "type": "gateway_status",

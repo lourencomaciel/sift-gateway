@@ -9,6 +9,7 @@ from sidepouch_mcp.cursor.hmac import CursorExpiredError
 from sidepouch_mcp.cursor.payload import CursorStaleError
 from sidepouch_mcp.cursor.sample_set_hash import compute_sample_set_hash
 from sidepouch_mcp.cursor.secrets import CursorSecrets
+from sidepouch_mcp.fs.blob_store import BlobStore
 from sidepouch_mcp.mcp.server import (
     GatewayServer,
     _check_sample_corruption,
@@ -245,7 +246,7 @@ def test_status_handler_probes_fs_live(tmp_path: Path) -> None:
 
 
 def test_status_handler_includes_cursor_secrets_info(tmp_path: Path) -> None:
-    """handle_status should include signing_version and active_versions when secrets are loaded."""
+    """handle_status should include sanitized cursor secret metadata."""
     secrets = CursorSecrets(
         active={"v1": "secret_a", "v2": "secret_b"},
         signing_version="v2",
@@ -256,8 +257,8 @@ def test_status_handler_includes_cursor_secrets_info(tmp_path: Path) -> None:
     )
     response = asyncio.run(server.handle_status({}))
     cursor = response["cursor"]
-    assert cursor["signing_version"] == "v2"
-    assert cursor["active_versions"] == ["v1", "v2"]
+    assert cursor["secrets_loaded"] is True
+    assert cursor["active_secret_count"] == 2
 
 
 def test_status_handler_omits_cursor_secrets_when_not_loaded(
@@ -268,8 +269,8 @@ def test_status_handler_omits_cursor_secrets_when_not_loaded(
     assert server.cursor_secrets is None
     response = asyncio.run(server.handle_status({}))
     cursor = response["cursor"]
-    assert "signing_version" not in cursor
-    assert "active_versions" not in cursor
+    assert "secrets_loaded" not in cursor
+    assert "active_secret_count" not in cursor
 
 
 def test_status_handler_includes_upstream_connectivity(tmp_path: Path) -> None:
@@ -378,6 +379,82 @@ def test_handle_mirrored_tool_rejects_invalid_chain_seq(tmp_path: Path) -> None:
     )
     assert response["type"] == "gateway_error"
     assert response["code"] == "INVALID_ARGUMENT"
+
+
+def test_handle_mirrored_tool_rejects_oversized_arguments(
+    tmp_path: Path,
+) -> None:
+    config = GatewayConfig(
+        data_dir=tmp_path,
+        max_inbound_request_bytes=32,
+    )
+    server = GatewayServer(config=config, upstreams=[_upstream()])
+    mirrored = server.mirrored_tools["demo.echo"]
+
+    response = asyncio.run(
+        server.handle_mirrored_tool(
+            mirrored,
+            {
+                "_gateway_context": {"session_id": "sess_1"},
+                "message": "x" * 512,
+            },
+        )
+    )
+    assert response["type"] == "gateway_error"
+    assert response["code"] == "INVALID_ARGUMENT"
+    assert response["message"] == "arguments exceed max_inbound_request_bytes"
+    assert response["details"]["max_inbound_request_bytes"] == 32
+    assert response["details"]["actual_bytes"] > 32
+
+
+def test_handle_mirrored_tool_rejects_oversized_reserved_arguments(
+    tmp_path: Path,
+) -> None:
+    config = GatewayConfig(
+        data_dir=tmp_path,
+        max_inbound_request_bytes=64,
+    )
+    server = GatewayServer(config=config, upstreams=[_upstream()])
+    mirrored = server.mirrored_tools["demo.echo"]
+
+    response = asyncio.run(
+        server.handle_mirrored_tool(
+            mirrored,
+            {
+                "_gateway_context": {
+                    "session_id": "sess_1",
+                    "padding": "x" * 512,
+                },
+                "message": "ok",
+            },
+        )
+    )
+    assert response["type"] == "gateway_error"
+    assert response["code"] == "INVALID_ARGUMENT"
+    assert response["message"] == "arguments exceed max_inbound_request_bytes"
+    assert response["details"]["max_inbound_request_bytes"] == 64
+    assert response["details"]["actual_bytes"] > 64
+
+
+def test_handle_mirrored_tool_rejects_non_utf8_json_arguments(
+    tmp_path: Path,
+) -> None:
+    config = GatewayConfig(data_dir=tmp_path, max_inbound_request_bytes=1024)
+    server = GatewayServer(config=config, upstreams=[_upstream()])
+    mirrored = server.mirrored_tools["demo.echo"]
+
+    response = asyncio.run(
+        server.handle_mirrored_tool(
+            mirrored,
+            {
+                "_gateway_context": {"session_id": "sess_1"},
+                "message": "\ud800",
+            },
+        )
+    )
+    assert response["type"] == "gateway_error"
+    assert response["code"] == "INVALID_ARGUMENT"
+    assert response["message"] == "arguments must be valid UTF-8 JSON"
 
 
 def test_handle_mirrored_tool_success_path_without_db(
@@ -2218,10 +2295,11 @@ def test_handle_mirrored_tool_quota_ok_proceeds_to_persist(
         binary_blob_bytes=0, payload_total_bytes=0, total_storage_bytes=100
     )
     _no_breach = QuotaBreaches(False, False, False)
+    captured_quota_kwargs: dict[str, object] = {}
 
-    monkeypatch.setattr(
-        "sidepouch_mcp.mcp.handlers.mirrored_tool.enforce_quota",
-        lambda *a, **kw: QuotaEnforcementResult(
+    def _fake_enforce_quota(*a, **kw):
+        captured_quota_kwargs.update(kw)
+        return QuotaEnforcementResult(
             usage_before=_usage,
             usage_after=None,
             breaches_before=_no_breach,
@@ -2231,7 +2309,11 @@ def test_handle_mirrored_tool_quota_ok_proceeds_to_persist(
             hard_deleted_count=0,
             bytes_reclaimed=0,
             space_cleared=True,
-        ),
+        )
+
+    monkeypatch.setattr(
+        "sidepouch_mcp.mcp.handlers.mirrored_tool.enforce_quota",
+        _fake_enforce_quota,
     )
 
     _fake_handle = ArtifactHandle(
@@ -2273,6 +2355,109 @@ def test_handle_mirrored_tool_quota_ok_proceeds_to_persist(
     )
     assert response["type"] == "gateway_tool_result"
     assert response["artifact_id"] == "art_quota_ok"
+    assert captured_quota_kwargs["remove_fs_blobs"] is False
+    assert captured_quota_kwargs["blobs_root"] is None
+
+
+def test_handle_mirrored_tool_quota_passes_blob_store_root(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    """Quota preflight should pass blob-store root when FS blobs are enabled."""
+    from sidepouch_mcp.jobs.quota import (
+        QuotaBreaches,
+        QuotaEnforcementResult,
+        StorageUsage,
+    )
+
+    config = GatewayConfig(data_dir=tmp_path, passthrough_max_bytes=0)
+    server = GatewayServer(
+        config=config,
+        upstreams=[_upstream()],
+        db_pool=_FakePool(None),  # type: ignore[arg-type]
+        metrics=GatewayMetrics(),
+        blob_store=BlobStore(config.blobs_bin_dir),
+    )
+    mirrored = server.mirrored_tools["demo.echo"]
+
+    async def _fake_call(_instance, _tool_name, _arguments):
+        return {
+            "content": [{"type": "text", "text": "ok"}],
+            "structuredContent": {"ok": True},
+            "isError": False,
+            "meta": {},
+        }
+
+    monkeypatch.setattr(
+        "sidepouch_mcp.mcp.server.call_upstream_tool", _fake_call
+    )
+
+    _usage = StorageUsage(
+        binary_blob_bytes=0, payload_total_bytes=0, total_storage_bytes=100
+    )
+    _no_breach = QuotaBreaches(False, False, False)
+    captured_quota_kwargs: dict[str, object] = {}
+
+    def _fake_enforce_quota(*a, **kw):
+        captured_quota_kwargs.update(kw)
+        return QuotaEnforcementResult(
+            usage_before=_usage,
+            usage_after=None,
+            breaches_before=_no_breach,
+            breaches_after=None,
+            pruned=False,
+            soft_deleted_count=0,
+            hard_deleted_count=0,
+            bytes_reclaimed=0,
+            space_cleared=True,
+        )
+
+    monkeypatch.setattr(
+        "sidepouch_mcp.mcp.handlers.mirrored_tool.enforce_quota",
+        _fake_enforce_quota,
+    )
+
+    _fake_handle = ArtifactHandle(
+        artifact_id="art_quota_blob_root",
+        created_seq=1,
+        generation=1,
+        session_id="sess_1",
+        source_tool="demo.echo",
+        upstream_instance_id="demo",
+        request_key="rk_1",
+        payload_hash_full="h_1",
+        payload_json_bytes=10,
+        payload_binary_bytes_total=0,
+        payload_total_bytes=10,
+        contains_binary_refs=False,
+        map_kind="none",
+        map_status="pending",
+        index_status="pending",
+        status="ok",
+        error_summary=None,
+    )
+
+    monkeypatch.setattr(
+        "sidepouch_mcp.mcp.handlers.mirrored_tool.persist_artifact",
+        lambda connection, config, input_data, binary_hashes: _fake_handle,
+    )
+
+    response = asyncio.run(
+        server.handle_mirrored_tool(
+            mirrored,
+            {
+                "_gateway_context": {
+                    "session_id": "sess_1",
+                    "cache_mode": "fresh",
+                },
+                "message": "hello",
+            },
+        )
+    )
+    assert response["type"] == "gateway_tool_result"
+    assert response["artifact_id"] == "art_quota_blob_root"
+    assert captured_quota_kwargs["remove_fs_blobs"] is True
+    assert captured_quota_kwargs["blobs_root"] == config.blobs_bin_dir
 
 
 def test_handle_mirrored_tool_quota_check_fails_closed_on_generic_error(

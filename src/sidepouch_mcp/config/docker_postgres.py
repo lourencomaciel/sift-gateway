@@ -52,6 +52,21 @@ class PortConflictError(RuntimeError):
 
 
 # ---------------------------------------------------------------------------
+# Redaction helpers
+# ---------------------------------------------------------------------------
+def _redact_docker_arg(arg: str) -> str:
+    """Redact sensitive docker CLI argument values for error reporting."""
+    if arg.startswith("POSTGRES_PASSWORD="):
+        return "POSTGRES_PASSWORD=<redacted>"
+    return arg
+
+
+def _redacted_command(args: list[str]) -> str:
+    """Render a docker command string with sensitive args redacted."""
+    return " ".join(_redact_docker_arg(arg) for arg in args)
+
+
+# ---------------------------------------------------------------------------
 # Result dataclass
 # ---------------------------------------------------------------------------
 @dataclass(frozen=True)
@@ -95,7 +110,8 @@ def _run_docker(
         if not check:
             raise  # pragma: no cover
         raise DockerCommandError(
-            f"docker command failed: {' '.join(args)}\n{exc.stderr or ''}"
+            "docker command failed: "
+            f"{_redacted_command(args)}\n{exc.stderr or ''}"
         ) from exc
 
 
@@ -241,7 +257,7 @@ def _create_and_start_container(
             "-e",
             f"POSTGRES_DB={db}",
             "-p",
-            f"{port}:5432",
+            f"127.0.0.1:{port}:5432",
             "-v",
             f"{volume_name}:/var/lib/postgresql/data",
             "--health-cmd",

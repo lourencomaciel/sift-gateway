@@ -101,6 +101,29 @@ class TestRunDocker:
         with pytest.raises(DockerCommandError):
             _run_docker(["docker", "fail"])
 
+    def test_redacts_password_from_failed_command_error(
+        self, monkeypatch
+    ) -> None:
+        def _fail(*args, **kwargs):
+            raise subprocess.CalledProcessError(1, "docker", stderr="fail")
+
+        monkeypatch.setattr(
+            "sidepouch_mcp.config.docker_postgres.subprocess.run",
+            _fail,
+        )
+        with pytest.raises(DockerCommandError) as excinfo:
+            _run_docker(
+                [
+                    "docker",
+                    "run",
+                    "-e",
+                    "POSTGRES_PASSWORD=super-secret",
+                ]
+            )
+        msg = str(excinfo.value)
+        assert "POSTGRES_PASSWORD=<redacted>" in msg
+        assert "super-secret" not in msg
+
 
 # ---------------------------------------------------------------------------
 # check_docker_available
@@ -348,7 +371,7 @@ class TestContainerLifecycle:
         assert "--name" in cmd
         assert "test-pg" in cmd
         assert "-p" in cmd
-        assert "5433:5432" in cmd
+        assert "127.0.0.1:5433:5432" in cmd
         assert "POSTGRES_PASSWORD=testpass" in cmd
 
 

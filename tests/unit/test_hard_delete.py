@@ -142,6 +142,104 @@ def test_run_hard_delete_batch_removes_records_and_fs_blobs(tmp_path) -> None:
     assert counter_value(metrics.prune_fs_orphans_removed) == 2
 
 
+def test_run_hard_delete_batch_constrains_fs_deletes_to_blobs_root(
+    tmp_path,
+) -> None:
+    blobs_root = tmp_path / "blobs_root"
+    blobs_root.mkdir(parents=True, exist_ok=True)
+    allowed_blob = blobs_root / "allowed.bin"
+    outside_blob = tmp_path / "outside.bin"
+    allowed_blob.write_bytes(b"a" * 30)
+    outside_blob.write_bytes(b"b" * 40)
+
+    connection = _FakeConnection(
+        candidate_rows=[("art_1", "payload_a"), ("art_2", "payload_b")],
+        payload_rows=[("payload_orphan", 100)],
+        blob_rows=[
+            ("hash_1", "bin_1", str(allowed_blob), 30),
+            ("hash_2", "bin_2", str(outside_blob), 40),
+        ],
+    )
+
+    result = run_hard_delete_batch(
+        connection,
+        grace_period_timestamp="2025-01-01T00:00:00Z",
+        batch_size=10,
+        remove_fs_blobs=True,
+        blobs_root=blobs_root,
+    )
+
+    assert result.artifacts_deleted == 2
+    assert result.payloads_deleted == 1
+    assert result.binary_blobs_deleted == 2
+    assert result.fs_blobs_removed == 1
+    assert result.bytes_reclaimed == 170
+    assert not allowed_blob.exists()
+    assert outside_blob.exists()
+
+
+def test_run_hard_delete_batch_blocks_symlink_escape_with_blobs_root(
+    tmp_path,
+) -> None:
+    blobs_root = tmp_path / "blobs_root"
+    blobs_root.mkdir(parents=True, exist_ok=True)
+    outside_dir = tmp_path / "outside"
+    outside_dir.mkdir(parents=True, exist_ok=True)
+    outside_blob = outside_dir / "outside.bin"
+    outside_blob.write_bytes(b"x" * 40)
+
+    # Symlink path lives under blobs_root but resolves outside it.
+    (blobs_root / "ln").symlink_to(outside_dir)
+    escaped_blob_path = blobs_root / "ln" / "outside.bin"
+
+    connection = _FakeConnection(
+        candidate_rows=[("art_1", "payload_a")],
+        payload_rows=[],
+        blob_rows=[("hash_1", "bin_1", str(escaped_blob_path), 40)],
+    )
+
+    result = run_hard_delete_batch(
+        connection,
+        grace_period_timestamp="2025-01-01T00:00:00Z",
+        batch_size=10,
+        remove_fs_blobs=True,
+        blobs_root=blobs_root,
+    )
+
+    assert result.artifacts_deleted == 1
+    assert result.binary_blobs_deleted == 1
+    assert result.fs_blobs_removed == 0
+    assert outside_blob.exists()
+
+
+def test_run_hard_delete_batch_unlinks_symlink_path_not_target(
+    tmp_path,
+) -> None:
+    link_path = tmp_path / "blob_link.bin"
+    real_target = tmp_path / "outside_target.bin"
+    real_target.write_bytes(b"x" * 50)
+    link_path.symlink_to(real_target)
+
+    connection = _FakeConnection(
+        candidate_rows=[("art_1", "payload_a")],
+        payload_rows=[],
+        blob_rows=[("hash_1", "bin_1", str(link_path), 50)],
+    )
+
+    result = run_hard_delete_batch(
+        connection,
+        grace_period_timestamp="2025-01-01T00:00:00Z",
+        batch_size=10,
+        remove_fs_blobs=True,
+    )
+
+    assert result.artifacts_deleted == 1
+    assert result.binary_blobs_deleted == 1
+    assert result.fs_blobs_removed == 1
+    assert not link_path.exists()
+    assert real_target.exists()
+
+
 def test_run_hard_delete_batch_rolls_back_on_error() -> None:
     connection = _FakeConnection(
         candidate_rows=[("art_1", "payload_a")],

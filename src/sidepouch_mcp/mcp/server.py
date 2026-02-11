@@ -379,7 +379,6 @@ class GatewayServer:
                     "instance_id": upstream.instance_id,
                     "connected": True,
                     "tool_count": len(upstream.tools),
-                    "auth_fingerprint": upstream.auth_fingerprint,
                 }
             )
         for prefix, error in sorted(self.upstream_errors.items()):
