@@ -65,6 +65,41 @@ def test_validate_search_args_uses_default_limit() -> None:
     assert result["limit"] == 50
 
 
+def test_validate_search_args_accepts_numeric_string_limit() -> None:
+    result = validate_search_args(
+        {
+            "_gateway_context": {"session_id": "sess_1"},
+            "limit": "75",
+        },
+        max_limit=200,
+    )
+    assert result["limit"] == 75
+
+
+def test_validate_search_args_rejects_non_numeric_limit() -> None:
+    result = validate_search_args(
+        {
+            "_gateway_context": {"session_id": "sess_1"},
+            "limit": "abc",
+        },
+        max_limit=200,
+    )
+    assert result["code"] == "INVALID_ARGUMENT"
+    assert "limit" in result["message"]
+
+
+def test_validate_search_args_rejects_non_positive_limit() -> None:
+    result = validate_search_args(
+        {
+            "_gateway_context": {"session_id": "sess_1"},
+            "limit": 0,
+        },
+        max_limit=200,
+    )
+    assert result["code"] == "INVALID_ARGUMENT"
+    assert "limit" in result["message"]
+
+
 def test_validate_search_args_returns_parsed_fields() -> None:
     result = validate_search_args(
         {

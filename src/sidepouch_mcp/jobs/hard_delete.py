@@ -10,6 +10,7 @@ Exports ``HardDeleteResult`` and ``run_hard_delete_batch``.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import os
 from pathlib import Path
 from typing import Any
 
@@ -125,10 +126,29 @@ def _remove_blob_file(fs_path: str) -> bool:
     Returns:
         True if the file was removed, False on any error.
     """
+    return _remove_blob_file_with_root(fs_path, blobs_root=None)
+
+
+def _remove_blob_file_with_root(
+    fs_path: str, *, blobs_root: Path | None
+) -> bool:
+    """Attempt to unlink a blob file with optional root confinement."""
     try:
-        Path(fs_path).unlink()
+        target = Path(os.path.abspath(fs_path))
+        if blobs_root is not None:
+            root = Path(os.path.abspath(blobs_root)).resolve(strict=False)
+            # Use resolved paths for confinement checks so symlinked
+            # directories cannot escape blobs_root.
+            target_for_check = target.resolve(strict=False)
+            try:
+                target_for_check.relative_to(root)
+            except ValueError:
+                return False
+        target.unlink()
         return True
     except FileNotFoundError:
+        return False
+    except RuntimeError:
         return False
     except OSError:
         return False
@@ -140,6 +160,7 @@ def run_hard_delete_batch(
     grace_period_timestamp: str,
     batch_size: int = 50,
     remove_fs_blobs: bool = True,
+    blobs_root: Path | None = None,
     dialect: Dialect = Dialect.POSTGRES,
     metrics: Any | None = None,
     logger: Any | None = None,
@@ -153,6 +174,8 @@ def run_hard_delete_batch(
         batch_size: Maximum artifacts to process per batch.
         remove_fs_blobs: If True, unlink orphaned blob files
             from the filesystem after commit.
+        blobs_root: Optional root directory used to constrain
+            filesystem blob deletion paths.
         dialect: SQL dialect (Postgres or SQLite).
         metrics: Optional GatewayMetrics for counter updates.
         logger: Optional structured logger override.
@@ -270,7 +293,9 @@ def run_hard_delete_batch(
 
         # Remove FS blobs AFTER commit so a rollback doesn't orphan files
         for fs_path in fs_paths_to_remove:
-            if _remove_blob_file(fs_path):
+            if _remove_blob_file_with_root(
+                fs_path, blobs_root=blobs_root
+            ):
                 fs_blobs_removed += 1
 
         increment_metric(metrics, "prune_hard_deletes", artifacts_deleted)

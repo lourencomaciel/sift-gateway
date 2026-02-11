@@ -132,6 +132,38 @@ def _validate_status_filter(
     return None
 
 
+def _validate_limit(
+    arguments: dict[str, Any], *, max_limit: int
+) -> int | dict[str, Any]:
+    """Validate and normalize the ``limit`` field.
+
+    Accept integer values and numeric strings. Reject booleans,
+    non-numeric strings, and non-positive values.
+
+    Args:
+        arguments: Raw tool arguments.
+        max_limit: Upper bound for the normalized limit.
+
+    Returns:
+        Normalized integer limit, or an INVALID_ARGUMENT error dict.
+    """
+    raw_limit = arguments.get("limit", 50)
+    if isinstance(raw_limit, bool):
+        return _invalid_arg("limit must be a positive integer")
+    if isinstance(raw_limit, int):
+        limit = raw_limit
+    elif isinstance(raw_limit, str):
+        try:
+            limit = int(raw_limit)
+        except ValueError:
+            return _invalid_arg("limit must be a positive integer")
+    else:
+        return _invalid_arg("limit must be a positive integer")
+    if limit <= 0:
+        return _invalid_arg("limit must be a positive integer")
+    return min(limit, max_limit)
+
+
 def validate_search_args(
     arguments: dict[str, Any], *, max_limit: int
 ) -> dict[str, Any]:
@@ -165,7 +197,10 @@ def validate_search_args(
     if err is not None:
         return err
 
-    limit = min(arguments.get("limit", 50), max_limit)
+    limit_result = _validate_limit(arguments, max_limit=max_limit)
+    if isinstance(limit_result, dict):
+        return limit_result
+    limit = limit_result
     cursor = arguments.get("cursor")
 
     return {

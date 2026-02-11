@@ -9,6 +9,7 @@ trigger mapping.  Exports ``handle_mirrored_tool``.
 from __future__ import annotations
 
 import asyncio
+import json
 from typing import TYPE_CHECKING, Any
 
 try:
@@ -97,6 +98,49 @@ def _lookup_cache_mode(context: dict[str, Any] | None) -> str | None:
     if raw in {"allow", "fresh"}:
         return str(raw)
     return None
+
+
+def _json_size_bytes(payload: Any) -> int:
+    """Return UTF-8 byte size of a JSON-serializable payload.
+
+    Raises:
+        ValueError: If payload cannot be represented as valid UTF-8 JSON.
+    """
+    try:
+        encoded = json.dumps(
+            payload,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            default=str,
+        ).encode("utf-8")
+    except (TypeError, ValueError, UnicodeEncodeError) as exc:
+        msg = "arguments must be valid UTF-8 JSON"
+        raise ValueError(msg) from exc
+    return len(encoded)
+
+
+def _truncate_error_text(text: str, max_bytes: int) -> str:
+    """Truncate text to at most ``max_bytes`` UTF-8 bytes."""
+    if max_bytes <= 0:
+        return ""
+    raw = text.encode("utf-8", errors="replace")
+    if len(raw) <= max_bytes:
+        return text
+
+    suffix = " [truncated]"
+    suffix_raw = suffix.encode("utf-8")
+    head_budget = max_bytes - len(suffix_raw)
+    if head_budget <= 0:
+        return raw[:max_bytes].decode("utf-8", errors="ignore")
+
+    head_raw = raw[:head_budget]
+    while head_raw:
+        try:
+            head = head_raw.decode("utf-8")
+            return f"{head}{suffix}"
+        except UnicodeDecodeError:
+            head_raw = head_raw[:-1]
+    return suffix if len(suffix_raw) <= max_bytes else ""
 
 
 _DESCRIBE_COLUMNS = [
@@ -296,6 +340,24 @@ async def handle_mirrored_tool(
         )
 
     forwarded_args = strip_reserved_gateway_args(arguments)
+    try:
+        inbound_bytes = _json_size_bytes(arguments)
+    except ValueError:
+        return gateway_error(
+            "INVALID_ARGUMENT",
+            "arguments must be valid UTF-8 JSON",
+        )
+    if inbound_bytes > ctx.config.max_inbound_request_bytes:
+        return gateway_error(
+            "INVALID_ARGUMENT",
+            "arguments exceed max_inbound_request_bytes",
+            details={
+                "max_inbound_request_bytes": (
+                    ctx.config.max_inbound_request_bytes
+                ),
+                "actual_bytes": inbound_bytes,
+            },
+        )
     violations = validate_against_schema(
         forwarded_args,
         mirrored.upstream_tool.input_schema,
@@ -338,8 +400,11 @@ async def handle_mirrored_tool(
                 forwarded_args=forwarded_args,
             )
         except Exception as exc:
+            error_text = _truncate_error_text(
+                str(exc), ctx.config.max_upstream_error_capture_bytes
+            )
             upstream_result = {
-                "content": [{"type": "text", "text": str(exc)}],
+                "content": [{"type": "text", "text": error_text}],
                 "structuredContent": None,
                 "isError": True,
                 "meta": {"exception_type": type(exc).__name__},
@@ -459,6 +524,11 @@ async def handle_mirrored_tool(
         quota_breaches: QuotaBreaches | None = None
         if ctx.config.quota_enforcement_enabled:
             try:
+                blobs_root = (
+                    ctx.blob_store.blobs_bin_dir
+                    if ctx.blob_store is not None
+                    else None
+                )
                 with ctx.db_pool.connection() as quota_conn:
                     quota_result = enforce_quota(
                         quota_conn,
@@ -469,6 +539,7 @@ async def handle_mirrored_tool(
                         max_prune_rounds=ctx.config.quota_max_prune_rounds,
                         hard_delete_grace_seconds=ctx.config.quota_hard_delete_grace_seconds,
                         remove_fs_blobs=ctx.blob_store is not None,
+                        blobs_root=blobs_root,
                         metrics=ctx.metrics,
                     )
                     quota_breaches = (
@@ -534,8 +605,11 @@ async def handle_mirrored_tool(
                 forwarded_args=forwarded_args,
             )
         except Exception as exc:
+            error_text = _truncate_error_text(
+                str(exc), ctx.config.max_upstream_error_capture_bytes
+            )
             upstream_result = {
-                "content": [{"type": "text", "text": str(exc)}],
+                "content": [{"type": "text", "text": error_text}],
                 "structuredContent": None,
                 "isError": True,
                 "meta": {"exception_type": type(exc).__name__},
