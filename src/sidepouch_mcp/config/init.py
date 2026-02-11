@@ -16,16 +16,27 @@ Use ``sidepouch-mcp init --from <file> --revert`` to restore the backup.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 from pathlib import Path
 import shutil
 from typing import Any
 
+
+@contextlib.contextmanager
+def _suppress_os_error():
+    """Suppress OSError during cleanup (e.g. unlinking a tmp)."""
+    try:
+        yield
+    except OSError:
+        pass
+
 from sidepouch_mcp.config.mcp_servers import (
     extract_mcp_servers,
     read_config_file,
 )
+from sidepouch_mcp.config.upstream_secrets import write_secret
 from sidepouch_mcp.constants import (
     CONFIG_FILENAME,
     DEFAULT_DATA_DIR,
@@ -33,8 +44,20 @@ from sidepouch_mcp.constants import (
 )
 
 
-def _gateway_server_entry() -> dict[str, Any]:
-    """Build the server entry for the gateway itself."""
+def _gateway_server_entry(
+    gateway_url: str | None = None,
+) -> dict[str, Any]:
+    """Build the server entry for the gateway itself.
+
+    Args:
+        gateway_url: Optional URL for the gateway. When provided,
+            the entry uses URL-based transport instead of command.
+
+    Returns:
+        Server entry dict with either ``command`` or ``url`` key.
+    """
+    if gateway_url:
+        return {"url": gateway_url}
     return {"command": "sidepouch-mcp"}
 
 
@@ -57,11 +80,79 @@ def _load_gateway_config(config_path: Path) -> dict[str, Any]:
 
 
 def _write_json(path: Path, data: dict[str, Any]) -> None:
-    """Write JSON with consistent formatting."""
-    path.write_text(
-        json.dumps(data, indent=2, ensure_ascii=False) + "\n",
-        encoding="utf-8",
+    """Atomically write JSON with consistent formatting.
+
+    Writes to a temporary file in the same directory, then
+    renames into place so readers never see a partial file.
+    """
+    import tempfile
+
+    content = json.dumps(data, indent=2, ensure_ascii=False) + "\n"
+    fd, tmp = tempfile.mkstemp(
+        dir=str(path.parent), suffix=".tmp",
     )
+    try:
+        os.write(fd, content.encode("utf-8"))
+        os.close(fd)
+        fd = -1
+        os.replace(tmp, str(path))
+    except BaseException:
+        if fd >= 0:
+            os.close(fd)
+        with _suppress_os_error():
+            os.unlink(tmp)
+        raise
+
+
+def _externalize_server_secrets(
+    data_dir: Path,
+    servers: dict[str, dict[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    """Externalize inline secrets from server configs.
+
+    For each server that has inline ``env`` or ``headers``, writes
+    the secrets to a per-upstream file and replaces the inline
+    values with a ``_gateway.secret_ref``.
+
+    Args:
+        data_dir: Root data directory for SidePouch state.
+        servers: Mutable dict mapping server name to config.
+            Modified in place.
+
+    Returns:
+        The same *servers* dict, with inline secrets replaced by
+        ``_gateway.secret_ref`` entries.
+    """
+    for name, entry in servers.items():
+        if not isinstance(entry, dict):
+            continue
+
+        env = entry.get("env")
+        headers = entry.get("headers")
+        if not env and not headers:
+            continue
+
+        transport = "http" if "url" in entry else "stdio"
+        write_secret(
+            data_dir,
+            name,
+            transport=transport,
+            env=env if env else None,
+            headers=headers if headers else None,
+        )
+
+        # Replace inline secrets with a reference
+        gateway_ext = entry.get("_gateway", {})
+        if not isinstance(gateway_ext, dict):
+            gateway_ext = {}
+        gateway_ext["secret_ref"] = name
+        entry["_gateway"] = gateway_ext
+
+        # Remove inline secrets from the config entry
+        entry.pop("env", None)
+        entry.pop("headers", None)
+
+    return servers
 
 
 def run_init(
@@ -69,26 +160,30 @@ def run_init(
     *,
     data_dir: Path | None = None,
     gateway_name: str = "artifact-gateway",
+    gateway_url: str | None = None,
     dry_run: bool = False,
     postgres_dsn: str | None = None,
 ) -> dict[str, Any]:
     """Migrate MCP servers from source file into the gateway.
 
-    Parameters
-    ----------
-    source_path:
-        Path to the source config file (e.g., claude_desktop_config.json).
-    data_dir:
-        Gateway data directory. Defaults to ``.sidepouch-mcp``.
-    gateway_name:
-        Name for the gateway entry in the rewritten source file.
-    dry_run:
-        If True, print what would happen without making changes.
+    Args:
+        source_path: Path to the source config file
+            (e.g., claude_desktop_config.json).
+        data_dir: Gateway data directory. Defaults to
+            ``.sidepouch-mcp``.
+        gateway_name: Name for the gateway entry in the
+            rewritten source file.
+        gateway_url: Optional URL for the gateway entry.
+            When provided, the rewritten source uses URL-based
+            transport instead of command.
+        dry_run: If True, print what would happen without
+            making changes.
+        postgres_dsn: Explicit Postgres DSN. Skips Docker
+            auto-provisioning when set.
 
     Returns:
-    -------
-    Summary dict with keys: servers_migrated, backup_path, source_path,
-    gateway_config_path.
+        Summary dict with keys: servers_migrated, backup_path,
+        source_path, gateway_config_path.
     """
     source_path = source_path.expanduser().resolve()
     if data_dir is None:
@@ -116,10 +211,27 @@ def run_init(
     merged_servers = dict(servers)  # New servers as base
     merged_servers.update(existing_servers)  # Existing gateway config wins
 
+    # 2.1. Externalize secrets only for servers that won the merge
+    #       (skip those overridden by existing gateway config)
+    if not dry_run:
+        new_only = {
+            k: v for k, v in servers.items() if k not in existing_servers
+        }
+        _externalize_server_secrets(data_dir, new_only)
+        # Update merged_servers with externalized versions
+        merged_servers.update(new_only)
+
     new_gateway_config = dict(existing_gateway_config)
     new_gateway_config["mcpServers"] = merged_servers
     # Remove legacy format if present
     new_gateway_config.pop("upstreams", None)
+
+    # 2.3. Write sync metadata
+    new_gateway_config["_gateway_sync"] = {
+        "enabled": True,
+        "source_path": str(source_path),
+        "gateway_name": gateway_name,
+    }
 
     # 2.5. Postgres provisioning
     dsn_from_env = os.environ.get("SIDEPOUCH_MCP_POSTGRES_DSN")
@@ -141,16 +253,21 @@ def run_init(
         except DockerNotFoundError:
             pg_result = None
 
-    # 3. Prepare rewritten source file (only the gateway as MCP server)
+    # 3. Prepare rewritten source file
     #    Preserve the original format (mcpServers vs mcp.servers)
+    gw_entry = _gateway_server_entry(gateway_url)
     new_source = dict(source_raw)
     is_vscode = "mcpServers" not in source_raw and isinstance(
         source_raw.get("mcp"), dict
     )
     if is_vscode:
-        new_source["mcp"] = {"servers": {gateway_name: _gateway_server_entry()}}
+        new_source["mcp"] = {
+            "servers": {gateway_name: gw_entry},
+        }
     else:
-        new_source["mcpServers"] = {gateway_name: _gateway_server_entry()}
+        new_source["mcpServers"] = {
+            gateway_name: gw_entry,
+        }
 
     # 4. Backup path
     backup_path = source_path.with_suffix(source_path.suffix + ".backup")

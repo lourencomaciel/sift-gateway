@@ -108,6 +108,8 @@ class UpstreamConfig(BaseSettings):
         strict_schema_reuse: Require schema hash match for reuse.
         passthrough_allowed: Allow small-result passthrough.
         dedupe_exclusions: JSONPath exclusions for dedupe hash.
+        secret_ref: Reference to an external secret store entry.
+        inherit_parent_env: Inherit parent process env vars.
     """
 
     model_config = SettingsConfigDict(extra="forbid")
@@ -157,6 +159,57 @@ class UpstreamConfig(BaseSettings):
         default_factory=list,
         description="JSONPath subset exclusions for dedupe hash (§7.2)",
     )
+
+    # Secret and environment inheritance
+    secret_ref: str | None = Field(
+        default=None,
+        description="Reference to an external secret store entry",
+    )
+    inherit_parent_env: bool = Field(
+        default=False,
+        description="Inherit parent process environment variables",
+    )
+
+    @field_validator("secret_ref")
+    @classmethod
+    def _validate_secret_ref(
+        cls, value: str | None,
+    ) -> str | None:
+        """Reject secret_ref values with path traversal.
+
+        Args:
+            value: Candidate secret_ref string.
+
+        Returns:
+            The validated secret_ref or None.
+
+        Raises:
+            ValueError: If *value* contains ``..``, ``/``,
+                ``\\``, or is an absolute path.
+        """
+        if value is None:
+            return None
+        if not value.strip():
+            msg = "secret_ref must not be empty"
+            raise ValueError(msg)
+        if ".." in value:
+            msg = (
+                f"secret_ref {value!r}: must not contain '..'"
+            )
+            raise ValueError(msg)
+        if "/" in value or "\\" in value:
+            msg = (
+                f"secret_ref {value!r}: "
+                "must not contain path separators"
+            )
+            raise ValueError(msg)
+        if Path(value).is_absolute():
+            msg = (
+                f"secret_ref {value!r}: "
+                "must not be an absolute path"
+            )
+            raise ValueError(msg)
+        return value
 
     @field_validator("command")
     @classmethod
@@ -678,7 +731,10 @@ def _load_state_config(data_dir: Path) -> dict[str, object]:
     return raw
 
 
-def _resolve_mcp_servers_format(merged: dict[str, object]) -> dict[str, object]:
+def _resolve_mcp_servers_format(
+    merged: dict[str, object],
+    env_overrides: dict[str, object] | None = None,
+) -> dict[str, object]:
     """Convert mcpServers format to the legacy upstreams array.
 
     Detect ``mcpServers`` or VS Code ``mcp`` keys and
@@ -686,16 +742,19 @@ def _resolve_mcp_servers_format(merged: dict[str, object]) -> dict[str, object]:
     ``GatewayConfig`` expects.  Mutate and return the
     merged dict, stripping format-specific keys.
 
+    When *env_overrides* contains ``upstreams``, those are
+    deep-merged on top of the converted result so that env
+    overrides retain higher precedence than the file.
+
     Args:
         merged: Merged config dict (file + env overrides).
+        env_overrides: Raw env var overrides (before deep
+            merge) so that ``_SparseList`` type info is
+            preserved for correct index-by-index patching.
 
     Returns:
         The same dict with upstreams populated and
         format-specific keys removed.
-
-    Raises:
-        ValueError: If both ``mcpServers`` and legacy
-            ``upstreams`` keys are present.
     """
     from sidepouch_mcp.config.mcp_servers import (
         resolve_mcp_servers_config,
@@ -703,16 +762,8 @@ def _resolve_mcp_servers_format(merged: dict[str, object]) -> dict[str, object]:
 
     has_mcp_servers = "mcpServers" in merged
     has_vscode = isinstance(merged.get("mcp"), dict)
-    has_legacy_upstreams = "upstreams" in merged
 
     uses_new_format = has_mcp_servers or has_vscode
-
-    if uses_new_format and has_legacy_upstreams:
-        msg = (
-            "config contains both 'mcpServers' and legacy 'upstreams'; "
-            "use one format or the other, not both"
-        )
-        raise ValueError(msg)
 
     if not uses_new_format:
         return merged
@@ -721,11 +772,62 @@ def _resolve_mcp_servers_format(merged: dict[str, object]) -> dict[str, object]:
     if upstream_dicts is not None:
         merged["upstreams"] = upstream_dicts
 
+    # Re-apply env upstream overrides on top so that
+    # env > file precedence is honoured.  We use the raw
+    # env_overrides (not merged) because _deep_merge strips
+    # _SparseList to plain list, losing index-patch semantics.
+    raw_env_upstreams = (
+        env_overrides.get("upstreams")
+        if env_overrides is not None
+        else None
+    )
+    if raw_env_upstreams is not None and merged.get("upstreams") is not None:
+        merged["upstreams"] = _deep_merge(
+            merged["upstreams"], raw_env_upstreams,
+        )
+
     # Strip keys that GatewayConfig doesn't know about (extra="forbid")
     merged.pop("mcpServers", None)
     merged.pop("mcp", None)
+    merged.pop("_gateway_sync", None)
 
     return merged
+
+
+def _check_legacy_upstreams(from_file: dict[str, object]) -> None:
+    """Reject legacy ``upstreams`` config format from a file.
+
+    Inspect the raw config dict loaded from the state file
+    and reject configurations that use the legacy ``upstreams``
+    key without the ``mcpServers`` format.
+
+    Args:
+        from_file: Raw config dict from the state config file.
+
+    Raises:
+        ValueError: If the config uses the legacy ``upstreams``
+            format, or mixes both ``mcpServers`` and ``upstreams``.
+    """
+    has_upstreams = "upstreams" in from_file
+    has_mcp = "mcpServers" in from_file
+    has_vscode = isinstance(from_file.get("mcp"), dict)
+    uses_new = has_mcp or has_vscode
+
+    if has_upstreams and uses_new:
+        msg = (
+            "config contains both 'mcpServers' and legacy "
+            "'upstreams'; use one format or the other, not both"
+        )
+        raise ValueError(msg)
+
+    if has_upstreams and not uses_new:
+        msg = (
+            "Legacy 'upstreams' config format is no longer "
+            "supported. Use 'mcpServers' format instead. "
+            "Run 'sidepouch-mcp init --from <config>' "
+            "to migrate."
+        )
+        raise ValueError(msg)
 
 
 def load_gateway_config(
@@ -759,6 +861,7 @@ def load_gateway_config(
         data_dir = Path(DEFAULT_DATA_DIR).resolve()
 
     from_file = _load_state_config(data_dir)
+    _check_legacy_upstreams(from_file)
     merged = _deep_merge(from_file, env_overrides)
     if not isinstance(merged, dict):
         msg = "invalid merged gateway config shape"
@@ -766,7 +869,7 @@ def load_gateway_config(
     merged["data_dir"] = str(data_dir)
 
     # Convert mcpServers format to legacy upstreams if needed
-    merged = _resolve_mcp_servers_format(merged)
+    merged = _resolve_mcp_servers_format(merged, env_overrides)
 
     config = GatewayConfig(**merged)
 
@@ -774,5 +877,18 @@ def load_gateway_config(
     if len(prefixes) != len(set(prefixes)):
         msg = "upstream prefixes must be unique"
         raise ValueError(msg)
+
+    # Reject configs that specify both inline secrets and
+    # secret_ref for any upstream.
+    from sidepouch_mcp.config.upstream_secrets import (
+        validate_no_secret_conflict,
+    )
+
+    for upstream in config.upstreams:
+        validate_no_secret_conflict(
+            upstream.env or None,
+            upstream.headers or None,
+            upstream.secret_ref,
+        )
 
     return config

@@ -112,31 +112,66 @@ uv run sidepouch-mcp
 
 ## Configure upstream MCP servers
 
-SidePouch accepts the standard `mcpServers` format used by Claude Desktop, Cursor, and Claude Code.
+SidePouch accepts the standard `mcpServers` format used by Claude
+Desktop, Cursor, and Claude Code.
 
 ### Migrate an existing config
 
 ```bash
-uv run sidepouch-mcp init --from ~/Library/Application\ Support/Claude/claude_desktop_config.json
+uv run sidepouch-mcp init \
+  --from ~/Library/Application\ Support/Claude/claude_desktop_config.json
 ```
 
 This command:
 
 1. copies source `mcpServers` into `.sidepouch-mcp/state/config.json`;
-2. writes a backup to `<source>.backup`;
-3. rewrites the source config to point to SidePouch only.
+2. externalizes inline `env` and `headers` into per-upstream secret
+   files under `.sidepouch-mcp/state/upstream_secrets/`;
+3. writes a backup to `<source>.backup`;
+4. rewrites the source config to point to SidePouch only;
+5. stores `_gateway_sync` metadata so future restarts can auto-sync.
 
 Preview:
 
 ```bash
-uv run sidepouch-mcp init --from ~/Library/Application\ Support/Claude/claude_desktop_config.json --dry-run
+uv run sidepouch-mcp init \
+  --from ~/Library/Application\ Support/Claude/claude_desktop_config.json \
+  --dry-run
 ```
 
 Revert:
 
 ```bash
-uv run sidepouch-mcp init --from ~/Library/Application\ Support/Claude/claude_desktop_config.json --revert
+uv run sidepouch-mcp init \
+  --from ~/Library/Application\ Support/Claude/claude_desktop_config.json \
+  --revert
 ```
+
+If the client should connect to SidePouch over HTTP instead of stdio,
+pass `--gateway-url`:
+
+```bash
+uv run sidepouch-mcp init \
+  --from claude_desktop_config.json \
+  --gateway-url http://localhost:8080/mcp
+```
+
+This writes a `{"url": "..."}` entry in the source file instead of
+a `command` entry.
+
+### Adding MCPs after initial setup
+
+After `init`, the source config file (e.g. `claude_desktop_config.json`)
+contains only the SidePouch gateway entry. To add a new upstream MCP:
+
+1. Edit the source config and add the new server entry alongside the
+   gateway entry.
+2. Restart SidePouch.
+
+On startup, SidePouch reads the `_gateway_sync` metadata, detects
+new non-gateway entries in the source file, imports them (including
+secret externalization), and rewrites the source file back to
+gateway-only. No manual re-init is needed.
 
 ### Manual config (`mcpServers`)
 
@@ -146,8 +181,8 @@ uv run sidepouch-mcp init --from ~/Library/Application\ Support/Claude/claude_de
     "github": {
       "command": "npx",
       "args": ["-y", "@modelcontextprotocol/server-github"],
-      "env": { "GITHUB_TOKEN": "..." },
       "_gateway": {
+        "secret_ref": "github",
         "semantic_salt_env_keys": ["GITHUB_ORG"],
         "strict_schema_reuse": true,
         "passthrough_allowed": true,
@@ -156,21 +191,56 @@ uv run sidepouch-mcp init --from ~/Library/Application\ Support/Claude/claude_de
     },
     "remote": {
       "url": "https://example.com/mcp",
-      "headers": { "Authorization": "Bearer ..." }
+      "_gateway": {
+        "secret_ref": "remote"
+      }
     }
   }
 }
 ```
+
+Secrets are stored externally in
+`.sidepouch-mcp/state/upstream_secrets/<prefix>.json` (0600 perms).
+Use `_gateway.secret_ref` to reference them instead of placing
+credentials inline. See `docs/config.md` for details.
 
 Transport inference:
 
 - `command` present -> `stdio`
 - `url` present -> `http`
 
-Notes:
+### Environment isolation
 
-- `upstreams` (array format) is still supported for compatibility.
-- You cannot mix `mcpServers` and `upstreams` in the same config file.
+By default, stdio upstream processes receive only a minimal set of
+environment variables: `PATH`, `HOME`, `LANG`, `LC_ALL`, `TMPDIR`,
+`TMP`, `TEMP`, `USER`, `LOGNAME`, `SHELL`. Explicit `env` from
+the config or secret file is merged on top.
+
+Set `_gateway.inherit_parent_env: true` to pass the full parent
+process environment to a specific upstream instead.
+
+## Running in URL mode
+
+SidePouch defaults to stdio transport. To expose the gateway over
+HTTP (SSE or Streamable HTTP):
+
+```bash
+uv run sidepouch-mcp --transport sse --host 127.0.0.1 --port 8080
+```
+
+```bash
+uv run sidepouch-mcp \
+  --transport streamable-http \
+  --host 0.0.0.0 --port 9090 --path /mcp \
+  --auth-token "$SIDEPOUCH_MCP_AUTH_TOKEN"
+```
+
+Security defaults:
+
+- Localhost binds (`127.0.0.1`, `localhost`, `::1`) require no token.
+- Non-local binds (e.g. `0.0.0.0`) require `--auth-token` or the
+  `SIDEPOUCH_MCP_AUTH_TOKEN` environment variable. The process exits
+  with a security error if neither is provided.
 
 ## Configuration model
 
@@ -249,7 +319,7 @@ uv run mypy src
 src/sidepouch_mcp/
   main.py                  # CLI entrypoint
   app.py                   # app composition root
-  config/                  # settings, mcpServers parser, init migration
+  config/                  # settings, mcpServers parser, init, sync, secrets
   db/                      # pool, migrations, repositories
   fs/                      # content-addressed blob storage
   mcp/                     # upstream connections, mirroring, server wiring

@@ -274,8 +274,6 @@ def test_depth_exploration_finds_nested_dict_arrays() -> None:
     paths = {r.root_path for r in roots}
     assert "$.response.records" in paths
 
-    records_root = next(
-        r for r in roots if r.root_path == "$.response.records"
-    )
+    records_root = next(r for r in roots if r.root_path == "$.response.records")
     assert records_root.root_shape == "array"
     assert records_root.count_estimate == 4

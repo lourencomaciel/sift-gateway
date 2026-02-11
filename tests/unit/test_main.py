@@ -4,9 +4,11 @@ import argparse
 import json
 from pathlib import Path
 
+import pytest
+
 from sidepouch_mcp.config.settings import GatewayConfig
 from sidepouch_mcp.lifecycle import CheckResult
-from sidepouch_mcp.main import serve
+from sidepouch_mcp.main import _parse_args, serve
 
 
 class _FakeConnectionContext:
@@ -120,7 +122,16 @@ def test_serve_runs_bootstrap_and_closes_pool(
 
     monkeypatch.setattr(
         "sidepouch_mcp.main._parse_args",
-        lambda: argparse.Namespace(command=None, check=False, data_dir=None),
+        lambda: argparse.Namespace(
+            command=None,
+            check=False,
+            data_dir=None,
+            transport="stdio",
+            host="127.0.0.1",
+            port=8080,
+            path="/mcp",
+            auth_token=None,
+        ),
     )
     monkeypatch.setattr(
         "sidepouch_mcp.main.load_gateway_config",
@@ -166,7 +177,16 @@ def test_serve_drains_mapping_tasks_on_shutdown(
 
     monkeypatch.setattr(
         "sidepouch_mcp.main._parse_args",
-        lambda: argparse.Namespace(command=None, check=False, data_dir=None),
+        lambda: argparse.Namespace(
+            command=None,
+            check=False,
+            data_dir=None,
+            transport="stdio",
+            host="127.0.0.1",
+            port=8080,
+            path="/mcp",
+            auth_token=None,
+        ),
     )
     monkeypatch.setattr(
         "sidepouch_mcp.main.load_gateway_config",
@@ -210,6 +230,7 @@ def test_serve_dispatches_init_command(
             dry_run=True,
             data_dir=str(data_dir),
             gateway_name="artifact-gateway",
+            gateway_url=None,
             postgres_dsn=None,
         ),
     )
@@ -246,6 +267,7 @@ def test_init_accepts_postgres_dsn_flag(
             dry_run=False,
             data_dir=str(data_dir),
             gateway_name="artifact-gateway",
+            gateway_url=None,
             postgres_dsn="postgresql://custom:pass@host:5432/db",
         ),
     )
@@ -302,3 +324,220 @@ def test_gateway_config_db_backend_env_override(
 
     config = load_gateway_config(data_dir_override=str(tmp_path))
     assert config.db_backend == "postgres"
+
+
+# ---- Transport / HTTP bind CLI flag tests ----
+
+
+def test_parse_args_transport_default_is_stdio(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr("sys.argv", ["sidepouch-mcp"])
+    args = _parse_args()
+    assert args.transport == "stdio"
+
+
+def test_parse_args_transport_accepts_sse(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr("sys.argv", ["sidepouch-mcp", "--transport", "sse"])
+    args = _parse_args()
+    assert args.transport == "sse"
+
+
+def test_parse_args_transport_accepts_streamable_http(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        "sys.argv",
+        ["sidepouch-mcp", "--transport", "streamable-http"],
+    )
+    args = _parse_args()
+    assert args.transport == "streamable-http"
+
+
+def test_parse_args_host_default(monkeypatch) -> None:
+    monkeypatch.setattr("sys.argv", ["sidepouch-mcp"])
+    args = _parse_args()
+    assert args.host == "127.0.0.1"
+
+
+def test_parse_args_port_default(monkeypatch) -> None:
+    monkeypatch.setattr("sys.argv", ["sidepouch-mcp"])
+    args = _parse_args()
+    assert args.port == 8080
+
+
+def test_serve_http_transport_calls_run_with_transport_args(
+    tmp_path: Path, monkeypatch
+) -> None:
+    config = GatewayConfig(data_dir=tmp_path)
+    report = CheckResult(fs_ok=True, db_ok=True, upstream_ok=True, details=[])
+    pool = _FakePool()
+    app = _FakeApp()
+    server = _FakeServer(app)
+
+    monkeypatch.setattr(
+        "sidepouch_mcp.main._parse_args",
+        lambda: argparse.Namespace(
+            command=None,
+            check=False,
+            data_dir=None,
+            transport="sse",
+            host="127.0.0.1",
+            port=9090,
+            path="/v1/mcp",
+            auth_token=None,
+        ),
+    )
+    monkeypatch.setattr(
+        "sidepouch_mcp.main.load_gateway_config",
+        lambda **_kwargs: config,
+    )
+    monkeypatch.setattr(
+        "sidepouch_mcp.main.run_startup_check",
+        lambda _config: report,
+    )
+    monkeypatch.setattr(
+        "sidepouch_mcp.app.build_app",
+        lambda *, config, startup_report: (server, pool),
+    )
+
+    exit_code = serve()
+
+    assert exit_code == 0
+    assert app.called is True
+    assert app.kwargs == {
+        "transport": "sse",
+        "host": "127.0.0.1",
+        "port": 9090,
+        "path": "/v1/mcp",
+    }
+
+
+def test_serve_http_transport_with_token_wraps_asgi_and_runs_uvicorn(
+    tmp_path: Path, monkeypatch
+) -> None:
+    config = GatewayConfig(data_dir=tmp_path)
+    report = CheckResult(fs_ok=True, db_ok=True, upstream_ok=True, details=[])
+    pool = _FakePool()
+
+    class _FakeHttpApp(_FakeApp):
+        def __init__(self) -> None:
+            super().__init__()
+            self.http_kwargs: dict[str, object] = {}
+            self.http_asgi = object()
+
+        def http_app(self, **kwargs: object) -> object:
+            self.http_kwargs = dict(kwargs)
+            return self.http_asgi
+
+    app = _FakeHttpApp()
+    server = _FakeServer(app)
+
+    wrapped_asgi = object()
+    middleware_seen: dict[str, object] = {}
+    uvicorn_seen: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        "sidepouch_mcp.main._parse_args",
+        lambda: argparse.Namespace(
+            command=None,
+            check=False,
+            data_dir=str(tmp_path),
+            transport="sse",
+            host="127.0.0.1",
+            port=9090,
+            path="/v1/mcp",
+            auth_token="token-123",
+        ),
+    )
+    monkeypatch.setattr(
+        "sidepouch_mcp.main.load_gateway_config",
+        lambda **_kwargs: config,
+    )
+    monkeypatch.setattr(
+        "sidepouch_mcp.main.run_startup_check",
+        lambda _config: report,
+    )
+    monkeypatch.setattr(
+        "sidepouch_mcp.app.build_app",
+        lambda *, config, startup_report: (server, pool),
+    )
+
+    def _fake_validate_http_bind(host: str, token: str | None) -> None:
+        middleware_seen["validated_host"] = host
+        middleware_seen["validated_token"] = token
+
+    def _fake_bearer_auth_middleware(asgi: object, token: str) -> object:
+        middleware_seen["inner_asgi"] = asgi
+        middleware_seen["middleware_token"] = token
+        return wrapped_asgi
+
+    monkeypatch.setattr(
+        "sidepouch_mcp.mcp.http_auth.validate_http_bind",
+        _fake_validate_http_bind,
+    )
+    monkeypatch.setattr(
+        "sidepouch_mcp.mcp.http_auth.bearer_auth_middleware",
+        _fake_bearer_auth_middleware,
+    )
+
+    import uvicorn
+
+    def _fake_uvicorn_run(asgi: object, *, host: str, port: int) -> None:
+        uvicorn_seen["asgi"] = asgi
+        uvicorn_seen["host"] = host
+        uvicorn_seen["port"] = port
+
+    monkeypatch.setattr(uvicorn, "run", _fake_uvicorn_run)
+
+    exit_code = serve()
+
+    assert exit_code == 0
+    assert app.called is False
+    assert app.http_kwargs == {"transport": "sse", "path": "/v1/mcp"}
+    assert middleware_seen == {
+        "validated_host": "127.0.0.1",
+        "validated_token": "token-123",
+        "inner_asgi": app.http_asgi,
+        "middleware_token": "token-123",
+    }
+    assert uvicorn_seen == {
+        "asgi": wrapped_asgi,
+        "host": "127.0.0.1",
+        "port": 9090,
+    }
+
+
+def test_serve_nonlocal_host_without_token_exits(
+    tmp_path: Path, monkeypatch
+) -> None:
+    config = GatewayConfig(data_dir=tmp_path)
+    report = CheckResult(fs_ok=True, db_ok=True, upstream_ok=True, details=[])
+
+    monkeypatch.setattr(
+        "sidepouch_mcp.main._parse_args",
+        lambda: argparse.Namespace(
+            command=None,
+            check=False,
+            data_dir=None,
+            transport="sse",
+            host="0.0.0.0",
+            port=8080,
+            path="/mcp",
+            auth_token=None,
+        ),
+    )
+    monkeypatch.setattr(
+        "sidepouch_mcp.main.load_gateway_config",
+        lambda **_kwargs: config,
+    )
+    monkeypatch.setattr(
+        "sidepouch_mcp.main.run_startup_check",
+        lambda _config: report,
+    )
+    monkeypatch.delenv("SIDEPOUCH_MCP_AUTH_TOKEN", raising=False)
+
+    with pytest.raises(SystemExit, match="Security error"):
+        serve()

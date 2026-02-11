@@ -32,6 +32,8 @@ _GATEWAY_EXTENSION_FIELDS = frozenset(
         "strict_schema_reuse",
         "passthrough_allowed",
         "dedupe_exclusions",
+        "secret_ref",
+        "inherit_parent_env",
     }
 )
 
