@@ -11,12 +11,35 @@ a frozen dataclass and the ``compute_request_identity`` and
 from __future__ import annotations
 
 from dataclasses import dataclass
+from decimal import Decimal
 from typing import Any
 
 from sidepouch_mcp.canon.decimal_json import loads_decimal
 from sidepouch_mcp.canon.rfc8785 import canonical_bytes
 from sidepouch_mcp.util.hashing import request_key as compute_request_key
 from sidepouch_mcp.util.hashing import sha256_hex
+
+
+def _coerce_floats_to_decimal(value: Any) -> Any:
+    """Recursively convert float values to Decimal.
+
+    Walk dicts and lists depth-first, replacing any ``float``
+    value with its ``Decimal`` equivalent so that the RFC 8785
+    canonical serializer accepts it.
+
+    Args:
+        value: JSON-compatible Python value.
+
+    Returns:
+        The same structure with floats replaced by Decimals.
+    """
+    if isinstance(value, float):
+        return Decimal(str(value))
+    if isinstance(value, dict):
+        return {k: _coerce_floats_to_decimal(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_coerce_floats_to_decimal(item) for item in value]
+    return value
 
 
 @dataclass(frozen=True)
@@ -76,7 +99,7 @@ def compute_request_identity(
         A RequestIdentity with the computed request key and
         constituent parts.
     """
-    canonical_args = canonical_bytes(forwarded_args)
+    canonical_args = canonical_bytes(_coerce_floats_to_decimal(forwarded_args))
     args_hash = sha256_hex(canonical_args)
 
     # Compute request key per spec

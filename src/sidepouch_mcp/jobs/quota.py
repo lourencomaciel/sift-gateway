@@ -120,7 +120,7 @@ SELECT
         FROM payload_blobs WHERE workspace_id = %s), 0)
 """
 
-SOFT_DELETE_LRU_FOR_QUOTA_SQL = """
+SOFT_DELETE_LRU_FOR_QUOTA_SQL_PG = """
 WITH candidates AS (
     SELECT artifact_id, generation, payload_total_bytes
     FROM artifacts
@@ -141,6 +141,22 @@ WHERE a.workspace_id = %s
 RETURNING a.artifact_id, c.payload_total_bytes
 """
 
+SOFT_DELETE_LRU_FOR_QUOTA_SQL_SQLITE = """
+UPDATE artifacts
+SET deleted_at = datetime('now'),
+    generation = generation + 1
+WHERE workspace_id = ?
+  AND deleted_at IS NULL
+  AND artifact_id IN (
+      SELECT artifact_id FROM artifacts
+      WHERE workspace_id = ?
+        AND deleted_at IS NULL
+      ORDER BY last_referenced_at ASC
+      LIMIT ?
+  )
+RETURNING artifact_id, payload_total_bytes
+"""
+
 
 # ---------------------------------------------------------------------------
 # Param helpers
@@ -154,16 +170,32 @@ def storage_usage_params() -> tuple[object, ...]:
     return (WORKSPACE_ID, WORKSPACE_ID, WORKSPACE_ID)
 
 
-def soft_delete_lru_params(batch_size: int = 100) -> tuple[object, ...]:
-    """Build parameter tuple for SOFT_DELETE_LRU_FOR_QUOTA_SQL.
+def soft_delete_lru_params_pg(
+    batch_size: int = 100,
+) -> tuple[object, ...]:
+    """Build parameter tuple for the Postgres LRU soft-delete SQL.
 
     Args:
         batch_size: Maximum artifacts to soft-delete.
 
     Returns:
-        Parameter tuple for the LRU soft-delete query.
+        Parameter tuple for the Postgres variant.
     """
     return (WORKSPACE_ID, batch_size, WORKSPACE_ID)
+
+
+def soft_delete_lru_params_sqlite(
+    batch_size: int = 100,
+) -> tuple[object, ...]:
+    """Build parameter tuple for the SQLite LRU soft-delete SQL.
+
+    Args:
+        batch_size: Maximum artifacts to soft-delete.
+
+    Returns:
+        Parameter tuple for the SQLite variant.
+    """
+    return (WORKSPACE_ID, WORKSPACE_ID, batch_size)
 
 
 # ---------------------------------------------------------------------------
@@ -278,10 +310,16 @@ def soft_delete_lru_batch(
         Tuple of (count, estimated_bytes_freed).
     """
     log = logger or get_logger(component="jobs.quota")
-    rows = connection.execute(
-        SOFT_DELETE_LRU_FOR_QUOTA_SQL,
-        soft_delete_lru_params(batch_size=batch_size),
-    ).fetchall()
+
+    from sidepouch_mcp.db.backend import _SqliteConnectionProxy
+
+    if isinstance(connection, _SqliteConnectionProxy):
+        sql = SOFT_DELETE_LRU_FOR_QUOTA_SQL_SQLITE
+        params = soft_delete_lru_params_sqlite(batch_size=batch_size)
+    else:
+        sql = SOFT_DELETE_LRU_FOR_QUOTA_SQL_PG
+        params = soft_delete_lru_params_pg(batch_size=batch_size)
+    rows = connection.execute(sql, params).fetchall()
 
     count = 0
     estimated_bytes = 0

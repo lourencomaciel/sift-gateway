@@ -399,7 +399,20 @@ def run_mapping_worker(
     )
 
     started_at = time.monotonic()
-    result = run_mapping(mapping_input)
+    try:
+        result = run_mapping(mapping_input)
+    except Exception as exc:
+        result = MappingResult(
+            map_kind="none",
+            map_status="failed",
+            mapped_part_index=None,
+            roots=[],
+            map_budget_fingerprint=None,
+            map_backend_id=None,
+            prng_version=None,
+            map_error=(f"mapping execution error: {type(exc).__name__}: {exc}"),
+            samples=None,
+        )
     final_result = result
     try:
         persisted = persist_mapping_result(

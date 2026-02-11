@@ -44,6 +44,7 @@ from sidepouch_mcp.envelope.model import (
     Envelope,
     JsonContentPart,
 )
+from sidepouch_mcp.fs.blob_store import BinaryRef
 from sidepouch_mcp.obs.logging import LogEvents, get_logger
 from sidepouch_mcp.util.hashing import sha256_hex
 
@@ -313,6 +314,14 @@ VALUES (%s, %s, %s)
 ON CONFLICT (workspace_id, payload_hash_full, binary_hash) DO NOTHING
 """
 
+INSERT_BINARY_BLOB_SQL = """
+INSERT INTO binary_blobs (
+    workspace_id, binary_hash, blob_id, byte_count,
+    mime, fs_path, probe_head_hash, probe_tail_hash, probe_bytes
+) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+ON CONFLICT (workspace_id, binary_hash) DO NOTHING
+"""
+
 
 def _artifact_insert_params(
     row: dict[str, Any],
@@ -380,6 +389,7 @@ def persist_artifact(
     config: GatewayConfig,
     input_data: CreateArtifactInput,
     binary_hashes: list[str] | None = None,
+    binary_refs: list[BinaryRef] | None = None,
     metrics: Any | None = None,
     logger: Any | None = None,
 ) -> ArtifactHandle:
@@ -387,14 +397,19 @@ def persist_artifact(
 
     Canonicalize the envelope, insert payload blob and artifact
     rows, upsert session and artifact-ref rows, and link any
-    binary blob hashes.  Rolls back on failure.
+    binary blob hashes.  When ``binary_refs`` are provided,
+    the corresponding ``binary_blobs`` rows are inserted first
+    to satisfy the FK constraint on ``payload_binary_refs``.
+    Rolls back on failure.
 
     Args:
         connection: Active database connection.
         config: Gateway configuration for encoding settings.
         input_data: Creation input with envelope and metadata.
         binary_hashes: Optional binary blob hashes to link to
-            the payload.
+            the payload via ``payload_binary_refs``.
+        binary_refs: Optional ``BinaryRef`` objects to insert
+            into the ``binary_blobs`` table before linking.
         metrics: Optional metrics collector for counters.
         logger: Optional structured logger override.
 
@@ -454,6 +469,22 @@ def persist_artifact(
             UPSERT_ARTIFACT_REF_SQL,
             (WORKSPACE_ID, input_data.session_id, artifact_id),
         )
+
+        for ref in binary_refs or []:
+            connection.execute(
+                INSERT_BINARY_BLOB_SQL,
+                (
+                    WORKSPACE_ID,
+                    ref.binary_hash,
+                    ref.blob_id,
+                    ref.byte_count,
+                    ref.mime,
+                    ref.fs_path,
+                    ref.probe_head_hash,
+                    ref.probe_tail_hash,
+                    ref.probe_bytes,
+                ),
+            )
 
         for binary_hash in binary_hashes or []:
             connection.execute(

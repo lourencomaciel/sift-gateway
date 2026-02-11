@@ -12,15 +12,6 @@ import asyncio
 import json
 from typing import TYPE_CHECKING, Any
 
-try:
-    import psycopg
-
-    _PG_OPERATIONAL_ERROR: type = psycopg.OperationalError
-    _PG_INTERFACE_ERROR: type = psycopg.InterfaceError
-except ImportError:
-    _PG_OPERATIONAL_ERROR = type(None)  # type: ignore[assignment,misc]
-    _PG_INTERFACE_ERROR = type(None)  # type: ignore[assignment,misc]
-
 from sidepouch_mcp.artifacts.create import (
     CreateArtifactInput,
     compute_payload_sizes,
@@ -62,6 +53,26 @@ from sidepouch_mcp.tools.usage_hint import build_usage_hint
 
 if TYPE_CHECKING:
     from sidepouch_mcp.mcp.server import GatewayServer
+
+
+class _NeverRaised(Exception):
+    """Sentinel exception that is never raised.
+
+    Used as the fallback when ``psycopg`` is not installed so
+    that ``except`` clauses referencing Postgres-specific
+    exceptions remain syntactically valid without catching
+    anything.
+    """
+
+
+try:
+    import psycopg
+
+    _PG_OPERATIONAL_ERROR: type[BaseException] = psycopg.OperationalError
+    _PG_INTERFACE_ERROR: type[BaseException] = psycopg.InterfaceError
+except ImportError:
+    _PG_OPERATIONAL_ERROR = _NeverRaised  # type: ignore[assignment,misc]
+    _PG_INTERFACE_ERROR = _NeverRaised  # type: ignore[assignment,misc]
 
 
 def _extract_session_id(context: dict[str, Any] | None) -> str | None:
@@ -239,6 +250,7 @@ async def _persist_async(
     ctx: GatewayServer,
     input_data: CreateArtifactInput,
     envelope: Envelope,
+    binary_refs: list[Any] | None = None,
 ) -> None:
     """Persist an artifact asynchronously on a best-effort basis.
 
@@ -250,6 +262,9 @@ async def _persist_async(
         ctx: Gateway server providing DB pool and helpers.
         input_data: Pre-built artifact creation input.
         envelope: The envelope to persist.
+        binary_refs: Optional ``BinaryRef`` objects from
+            oversize replacement to insert into
+            ``binary_blobs``.
     """
     try:
         if ctx.db_pool is None:
@@ -261,6 +276,7 @@ async def _persist_async(
                 config=ctx.config,
                 input_data=input_data,
                 binary_hashes=binary_hashes,
+                binary_refs=binary_refs,
             )
     except Exception:
         get_logger(component="mcp.handlers").warning(
@@ -411,7 +427,7 @@ async def handle_mirrored_tool(
             }
 
         try:
-            envelope = ctx._envelope_from_upstream_result(
+            envelope, _binary_refs = ctx._envelope_from_upstream_result(
                 mirrored=mirrored,
                 upstream_result=upstream_result,
             )
@@ -616,7 +632,7 @@ async def handle_mirrored_tool(
             }
 
         try:
-            envelope = ctx._envelope_from_upstream_result(
+            envelope, binary_refs = ctx._envelope_from_upstream_result(
                 mirrored=mirrored,
                 upstream_result=upstream_result,
             )
@@ -637,7 +653,12 @@ async def handle_mirrored_tool(
         )
         if passthrough_eligible:
             asyncio.create_task(
-                _persist_async(ctx, _create_input(envelope), envelope)
+                _persist_async(
+                    ctx,
+                    _create_input(envelope),
+                    envelope,
+                    binary_refs=binary_refs or None,
+                )
             )
             return upstream_result
 
@@ -653,6 +674,7 @@ async def handle_mirrored_tool(
                     config=ctx.config,
                     input_data=_create_input(envelope),
                     binary_hashes=binary_hashes,
+                    binary_refs=binary_refs or None,
                 )
                 # Mapping runs after the artifact is committed.
                 # Failures here are non-fatal — the artifact exists and

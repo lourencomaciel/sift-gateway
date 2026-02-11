@@ -95,6 +95,11 @@ def _validate_filters(
         return {}
     if not isinstance(filters, dict):
         return _invalid_arg("filters must be an object"), None
+    unknown = set(filters.keys()) - SEARCH_FILTERS
+    if unknown:
+        return _invalid_arg(
+            f"unknown filter keys: {', '.join(sorted(unknown))}"
+        ), None
     return filters
 
 

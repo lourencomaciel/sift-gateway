@@ -11,6 +11,7 @@ dicts.  Key exports are ``parse_where_expression``,
 from __future__ import annotations
 
 from dataclasses import dataclass
+from decimal import Decimal
 import re
 from typing import Any, Callable, Mapping
 
@@ -700,7 +701,7 @@ def _absolute_path(path: str) -> str:
 
 
 def _is_numeric(value: Any) -> bool:
-    """Return True if value is int or float but not bool.
+    """Return True if value is int, float, or Decimal but not bool.
 
     Args:
         value: Value to test.
@@ -708,7 +709,9 @@ def _is_numeric(value: Any) -> bool:
     Returns:
         True for numeric non-bool values.
     """
-    return isinstance(value, (int, float)) and not isinstance(value, bool)
+    return isinstance(value, (int, float, Decimal)) and not isinstance(
+        value, bool
+    )
 
 
 def _strict_eq(left: Any, right: Any) -> bool:

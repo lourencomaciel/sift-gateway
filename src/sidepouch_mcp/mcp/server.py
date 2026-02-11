@@ -56,7 +56,7 @@ from sidepouch_mcp.envelope.model import BinaryRefContentPart, Envelope
 from sidepouch_mcp.envelope.normalize import normalize_envelope
 from sidepouch_mcp.envelope.oversize import replace_oversized_json_parts
 from sidepouch_mcp.envelope.responses import gateway_error
-from sidepouch_mcp.fs.blob_store import BlobStore
+from sidepouch_mcp.fs.blob_store import BinaryRef, BlobStore
 from sidepouch_mcp.mapping.runner import MappingInput
 from sidepouch_mcp.mapping.worker import (
     WorkerContext,
@@ -270,8 +270,15 @@ def _normalize_upstream_content(
         List of normalized content-part mappings.
     """
     normalized: list[Mapping[str, Any]] = []
-    if isinstance(structured_content, dict):
+    if isinstance(structured_content, (dict, list)):
         normalized.append({"type": "json", "value": structured_content})
+    elif structured_content is not None:
+        normalized.append(
+            {
+                "type": "text",
+                "text": json.dumps(structured_content, ensure_ascii=False),
+            }
+        )
 
     for block in content or []:
         part_type = block.get("type")
@@ -1017,7 +1024,7 @@ class GatewayServer:
         *,
         mirrored: MirroredTool,
         upstream_result: dict[str, Any],
-    ) -> Envelope:
+    ) -> tuple[Envelope, list[BinaryRef]]:
         """Convert a raw upstream result into a normalized envelope.
 
         Handles error extraction, content normalization, and
@@ -1030,7 +1037,8 @@ class GatewayServer:
                 tool call.
 
         Returns:
-            Normalized Envelope ready for persistence.
+            A tuple of (normalized Envelope, list of BinaryRef
+            objects created by oversize replacement).
         """
         is_error = bool(upstream_result.get("isError", False))
         content = upstream_result.get("content")
@@ -1064,11 +1072,13 @@ class GatewayServer:
             meta=meta,
         )
         if self.blob_store is None:
-            return envelope
+            return envelope, []
+        binary_refs: list[BinaryRef] = []
         transformed = replace_oversized_json_parts(
             envelope,
             max_json_part_parse_bytes=self.config.max_json_part_parse_bytes,
             blob_store=self.blob_store,
+            binary_refs_out=binary_refs,
         )
         warnings = transformed.meta.get("warnings")
         if isinstance(warnings, list):
@@ -1080,7 +1090,7 @@ class GatewayServer:
             )
             if oversize_count > 0:
                 self._increment_metric("oversize_json_count", oversize_count)
-        return transformed
+        return transformed, binary_refs
 
     def _build_non_persisted_handle(
         self,
