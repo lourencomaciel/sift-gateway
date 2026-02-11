@@ -13,7 +13,8 @@ from sidepouch_mcp.jobs.hard_delete import (
     HardDeleteResult,
 )
 from sidepouch_mcp.jobs.quota import (
-    SOFT_DELETE_LRU_FOR_QUOTA_SQL,
+    SOFT_DELETE_LRU_FOR_QUOTA_SQL_PG,
+    SOFT_DELETE_LRU_FOR_QUOTA_SQL_SQLITE,
     STORAGE_USAGE_SQL,
     QuotaBreaches,
     QuotaEnforcementResult,
@@ -23,7 +24,8 @@ from sidepouch_mcp.jobs.quota import (
     enforce_quota,
     query_storage_usage,
     soft_delete_lru_batch,
-    soft_delete_lru_params,
+    soft_delete_lru_params_pg,
+    soft_delete_lru_params_sqlite,
     storage_usage_params,
 )
 from sidepouch_mcp.obs.metrics import GatewayMetrics, counter_value
@@ -89,7 +91,10 @@ class _FakeConnection:
                 self._usage_call_count += 1
                 return _FakeCursor(one=row)
             return _FakeCursor(one=self.usage_row)
-        if normalized == SOFT_DELETE_LRU_FOR_QUOTA_SQL.strip():
+        if normalized in (
+            SOFT_DELETE_LRU_FOR_QUOTA_SQL_PG.strip(),
+            SOFT_DELETE_LRU_FOR_QUOTA_SQL_SQLITE.strip(),
+        ):
             return _FakeCursor(rows=self.soft_delete_rows)
         if normalized == FIND_HARD_DELETE_CANDIDATES_SQL.strip():
             return _FakeCursor(rows=self.candidate_rows)
@@ -121,23 +126,30 @@ def test_storage_usage_sql_queries_payload_blobs() -> None:
     assert "payload_blobs" in STORAGE_USAGE_SQL
 
 
-def test_soft_delete_lru_sql_uses_skip_locked() -> None:
-    assert "SKIP LOCKED" in SOFT_DELETE_LRU_FOR_QUOTA_SQL
+def test_soft_delete_lru_pg_sql_uses_skip_locked() -> None:
+    assert "SKIP LOCKED" in SOFT_DELETE_LRU_FOR_QUOTA_SQL_PG
 
 
-def test_soft_delete_lru_sql_orders_by_last_referenced_at() -> None:
-    assert "last_referenced_at ASC" in SOFT_DELETE_LRU_FOR_QUOTA_SQL
+def test_soft_delete_lru_pg_sql_orders_by_last_referenced_at() -> None:
+    assert "last_referenced_at ASC" in SOFT_DELETE_LRU_FOR_QUOTA_SQL_PG
 
 
-def test_soft_delete_lru_sql_rechecks_deleted_at() -> None:
-    # Outer WHERE must recheck deleted_at IS NULL
-    outer = SOFT_DELETE_LRU_FOR_QUOTA_SQL.split("FROM candidates")[1]
+def test_soft_delete_lru_pg_sql_rechecks_deleted_at() -> None:
+    outer = SOFT_DELETE_LRU_FOR_QUOTA_SQL_PG.split("FROM candidates")[1]
     assert "deleted_at IS NULL" in outer
 
 
-def test_soft_delete_lru_sql_rechecks_generation() -> None:
-    outer = SOFT_DELETE_LRU_FOR_QUOTA_SQL.split("FROM candidates")[1]
+def test_soft_delete_lru_pg_sql_rechecks_generation() -> None:
+    outer = SOFT_DELETE_LRU_FOR_QUOTA_SQL_PG.split("FROM candidates")[1]
     assert "a.generation = c.generation" in outer
+
+
+def test_soft_delete_lru_sqlite_sql_orders_by_last_referenced() -> None:
+    assert "last_referenced_at ASC" in SOFT_DELETE_LRU_FOR_QUOTA_SQL_SQLITE
+
+
+def test_soft_delete_lru_sqlite_sql_rechecks_deleted_at() -> None:
+    assert SOFT_DELETE_LRU_FOR_QUOTA_SQL_SQLITE.count("deleted_at IS NULL") >= 2
 
 
 # ---------------------------------------------------------------------------
@@ -148,14 +160,24 @@ def test_storage_usage_params_returns_correct_tuple() -> None:
     assert params == (WORKSPACE_ID, WORKSPACE_ID, WORKSPACE_ID)
 
 
-def test_soft_delete_lru_params_default_batch() -> None:
-    params = soft_delete_lru_params()
+def test_soft_delete_lru_params_pg_default_batch() -> None:
+    params = soft_delete_lru_params_pg()
     assert params == (WORKSPACE_ID, 100, WORKSPACE_ID)
 
 
-def test_soft_delete_lru_params_custom_batch() -> None:
-    params = soft_delete_lru_params(batch_size=50)
+def test_soft_delete_lru_params_pg_custom_batch() -> None:
+    params = soft_delete_lru_params_pg(batch_size=50)
     assert params == (WORKSPACE_ID, 50, WORKSPACE_ID)
+
+
+def test_soft_delete_lru_params_sqlite_default_batch() -> None:
+    params = soft_delete_lru_params_sqlite()
+    assert params == (WORKSPACE_ID, WORKSPACE_ID, 100)
+
+
+def test_soft_delete_lru_params_sqlite_custom_batch() -> None:
+    params = soft_delete_lru_params_sqlite(batch_size=50)
+    assert params == (WORKSPACE_ID, WORKSPACE_ID, 50)
 
 
 # ---------------------------------------------------------------------------

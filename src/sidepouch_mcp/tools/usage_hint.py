@@ -70,6 +70,14 @@ def build_usage_hint(
     map_status = mapping.get("map_status", "pending")
     roots: list[dict[str, Any]] = describe.get("roots", [])
 
+    # Mapping failed -- advise raw retrieval
+    if map_status == "failed":
+        return (
+            "Mapping failed. Use "
+            f'artifact.get(artifact_id="{artifact_id}") '
+            "to retrieve raw content."
+        )
+
     # Mapping not yet complete
     if map_status not in {"complete", "done", "ready"}:
         return (

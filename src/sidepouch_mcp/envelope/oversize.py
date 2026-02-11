@@ -18,7 +18,7 @@ from sidepouch_mcp.envelope.model import (
     Envelope,
     JsonContentPart,
 )
-from sidepouch_mcp.fs.blob_store import BlobStore
+from sidepouch_mcp.fs.blob_store import BinaryRef, BlobStore
 
 
 def replace_oversized_json_parts(
@@ -26,6 +26,7 @@ def replace_oversized_json_parts(
     *,
     max_json_part_parse_bytes: int,
     blob_store: BlobStore,
+    binary_refs_out: list[BinaryRef] | None = None,
 ) -> Envelope:
     """Replace oversized JSON parts with binary blob refs.
 
@@ -40,6 +41,10 @@ def replace_oversized_json_parts(
         max_json_part_parse_bytes: Byte threshold above which
             a JSON part is considered oversized.
         blob_store: Blob store for writing oversized content.
+        binary_refs_out: Optional output list to collect
+            ``BinaryRef`` objects for each blob written. When
+            provided, callers can use these to insert into the
+            ``binary_blobs`` table during persistence.
 
     Returns:
         A new Envelope with oversized parts replaced and
@@ -55,6 +60,8 @@ def replace_oversized_json_parts(
                 blob_ref = blob_store.put_bytes(
                     encoded, mime="application/json"
                 )
+                if binary_refs_out is not None:
+                    binary_refs_out.append(blob_ref)
                 next_content.append(
                     BinaryRefContentPart(
                         blob_id=blob_ref.blob_id,

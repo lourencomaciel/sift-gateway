@@ -322,6 +322,7 @@ class _RootState:
     array_closed: bool = False
     field_types: dict[str, dict[str, int]] = field(default_factory=dict)
     leaf_paths_seen: int = 0
+    skipped_oversize_records: int = 0
 
 
 # ---------------------------------------------------------------------------
@@ -660,14 +661,21 @@ def run_partial_mapping(
 
         root_score = float(root_state.elements_seen)
 
+        # Per-root stop_reason: attribute the global stop to this
+        # root only if the root's array was still open (being
+        # streamed) when the stop occurred.
+        root_stop_reason: str = "none"
+        if prefix_coverage and not root_state.array_closed:
+            root_stop_reason = state.stop_reason
+
         root_summary: dict[str, Any] = {
             "elements_seen": root_state.elements_seen,
             "sampled_record_count": len(sample_indices),
-            "sampled_prefix_len": state.elements_recognized,
+            "sampled_prefix_len": root_state.elements_seen,
             "prefix_coverage": prefix_coverage,
-            "stop_reason": state.stop_reason if prefix_coverage else "none",
-            "skipped_oversize": state.skipped_oversize_records,
-            "skipped_oversize_records": state.skipped_oversize_records,
+            "stop_reason": root_stop_reason,
+            "skipped_oversize": root_state.skipped_oversize_records,
+            "skipped_oversize_records": (root_state.skipped_oversize_records),
         }
 
         root_inv = RootInventory(
@@ -681,8 +689,8 @@ def run_partial_mapping(
             root_score=root_score,
             sample_indices=sample_indices,
             prefix_coverage=prefix_coverage,
-            stop_reason=state.stop_reason if prefix_coverage else None,
-            sampled_prefix_len=state.elements_recognized,
+            stop_reason=(root_stop_reason if prefix_coverage else None),
+            sampled_prefix_len=root_state.elements_seen,
         )
         result_roots.append(root_inv)
 
@@ -779,6 +787,7 @@ def _finalize_element(
 
     if record_byte_count > budgets.max_record_bytes:
         state.skipped_oversize_records += 1
+        root_state.skipped_oversize_records += 1
         return
 
     record_hash = sha256_hex(record_canonical)

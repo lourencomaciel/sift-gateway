@@ -148,13 +148,18 @@ def _is_json_binary_mime(raw_mime: object) -> bool:
         raw_mime: MIME type value, or non-string to reject.
 
     Returns:
-        True if the MIME type is ``application/json`` or a
-        subtype like ``application/json+foo``.
+        True if the MIME type is ``application/json``, uses
+        the ``+json`` structured syntax suffix (RFC 6838),
+        or uses the ``application/json+*`` prefix convention.
     """
     if not isinstance(raw_mime, str):
         return False
     mime = raw_mime.split(";", 1)[0].strip().lower()
-    return mime == "application/json" or mime.startswith("application/json+")
+    return (
+        mime == "application/json"
+        or mime.endswith("+json")
+        or mime.startswith("application/json+")
+    )
 
 
 def _score_json_part(
