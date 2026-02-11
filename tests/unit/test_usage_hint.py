@@ -138,22 +138,14 @@ def test_multiple_roots_lists_alternatives() -> None:
 
 
 def test_no_fields_top_omits_fields() -> None:
-    desc = _describe(
-        roots=[
-            _root(root_path="$.rows", count_estimate=5)
-        ]
-    )
+    desc = _describe(roots=[_root(root_path="$.rows", count_estimate=5)])
     hint = build_usage_hint("art_7", desc)
     assert "Fields:" not in hint
     assert "5 records" in hint
 
 
 def test_array_root_suggest_find() -> None:
-    desc = _describe(
-        roots=[
-            _root(root_path="$.items", count_estimate=20)
-        ]
-    )
+    desc = _describe(roots=[_root(root_path="$.items", count_estimate=20)])
     hint = build_usage_hint("art_8", desc)
     assert "artifact.find" in hint
 
@@ -177,9 +169,7 @@ def test_fields_limited_to_eight() -> None:
     )
     hint = build_usage_hint("art_10", desc)
     # Should not list all 20 fields
-    field_mentions = sum(
-        1 for i in range(20) if f"field_{i}" in hint
-    )
+    field_mentions = sum(1 for i in range(20) if f"field_{i}" in hint)
     assert field_mentions <= 8
 
 

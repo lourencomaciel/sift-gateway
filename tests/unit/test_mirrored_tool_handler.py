@@ -73,27 +73,27 @@ def _mock_connection(
 
 def test_fetch_inline_describe_happy_path() -> None:
     artifact_row = (
-        "art_1",   # artifact_id
-        "full",    # map_kind
+        "art_1",  # artifact_id
+        "full",  # map_kind
         "complete",  # map_status
-        "v1",      # mapper_version
-        None,      # map_budget_fingerprint
-        None,      # map_backend_id
-        None,      # prng_version
-        0,         # mapped_part_index
-        None,      # deleted_at
-        1,         # generation
+        "v1",  # mapper_version
+        None,  # map_budget_fingerprint
+        None,  # map_backend_id
+        None,  # prng_version
+        0,  # mapped_part_index
+        None,  # deleted_at
+        1,  # generation
     )
     root_row = (
-        "rk1",     # root_key
+        "rk1",  # root_key
         "$.data",  # root_path
-        10,        # count_estimate
-        1.0,       # inventory_coverage
-        None,      # root_summary
-        100,       # root_score
-        "array",   # root_shape
+        10,  # count_estimate
+        1.0,  # inventory_coverage
+        None,  # root_summary
+        100,  # root_score
+        "array",  # root_shape
         {"name": {"string": 10}},  # fields_top
-        None,      # sample_indices
+        None,  # sample_indices
     )
     conn = _mock_connection(
         artifact_row=artifact_row,

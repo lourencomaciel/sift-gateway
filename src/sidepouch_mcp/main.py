@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import os
 from pathlib import Path
 import sys
 from typing import Any
@@ -57,6 +58,15 @@ def _add_init_mode_group(
         "--postgres-dsn",
         default=None,
         help="Postgres connection string (skips Docker auto-provisioning)",
+    )
+    init_parser.add_argument(
+        "--gateway-url",
+        default=None,
+        help=(
+            "URL for the gateway entry in the rewritten "
+            "source file (uses URL transport instead of "
+            "command)"
+        ),
     )
 
 
@@ -105,6 +115,36 @@ def _parse_args() -> argparse.Namespace:
         default=None,
         help="Override DATA_DIR (default: .sidepouch-mcp/)",
     )
+    parser.add_argument(
+        "--transport",
+        choices=["stdio", "sse", "streamable-http"],
+        default="stdio",
+        help="Transport mode (default: stdio)",
+    )
+    parser.add_argument(
+        "--host",
+        default="127.0.0.1",
+        help="Host to bind for HTTP transports",
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=8080,
+        help="Port to bind for HTTP transports",
+    )
+    parser.add_argument(
+        "--path",
+        default="/mcp",
+        help="URL path for HTTP transports",
+    )
+    parser.add_argument(
+        "--auth-token",
+        default=None,
+        help=(
+            "Bearer token for non-local HTTP access. "
+            "Also reads SIDEPOUCH_MCP_AUTH_TOKEN env var"
+        ),
+    )
     _add_init_subcommand(sub)
     return parser.parse_args()
 
@@ -138,6 +178,7 @@ def _run_init(args: argparse.Namespace) -> int:
         source_path,
         data_dir=data_dir,
         gateway_name=args.gateway_name,
+        gateway_url=args.gateway_url,
         dry_run=args.dry_run,
         postgres_dsn=args.postgres_dsn,
     )
@@ -188,17 +229,36 @@ def _print_check_report(
     return 0 if report.ok else 1
 
 
-def _run_server(config: Any, report: Any) -> int:
+def _run_server(
+    config: Any,
+    report: Any,
+    args: argparse.Namespace,
+) -> int:
     """Build the MCP server and run until shutdown.
 
     Args:
         config: Gateway configuration.
         report: Startup check result confirming readiness.
+        args: Parsed CLI arguments with transport options.
 
     Returns:
         Exit code (``0`` on clean shutdown).
     """
     from sidepouch_mcp.app import build_app
+
+    transport = args.transport
+
+    auth_token = None
+    if transport in ("sse", "streamable-http"):
+        from sidepouch_mcp.mcp.http_auth import (
+            bearer_auth_middleware,
+            validate_http_bind,
+        )
+
+        auth_token = args.auth_token or os.environ.get(
+            "SIDEPOUCH_MCP_AUTH_TOKEN"
+        )
+        validate_http_bind(args.host, auth_token)
 
     server, pool = build_app(
         config=config,
@@ -206,7 +266,30 @@ def _run_server(config: Any, report: Any) -> int:
     )
     try:
         app = server.build_fastmcp_app()
-        app.run(show_banner=False)
+        if transport == "stdio":
+            app.run(show_banner=False)
+        else:
+            # Wrap with bearer auth middleware when token set
+            if auth_token:
+                asgi = app.http_app(
+                    transport=transport,
+                    path=args.path,
+                )
+                asgi = bearer_auth_middleware(asgi, auth_token)
+                import uvicorn
+
+                uvicorn.run(
+                    asgi,
+                    host=args.host,
+                    port=args.port,
+                )
+            else:
+                app.run(
+                    transport=transport,
+                    host=args.host,
+                    port=args.port,
+                    path=args.path,
+                )
     finally:
         try:
             asyncio.run(server.drain_mapping_tasks(timeout=5.0))
@@ -232,6 +315,20 @@ def serve() -> int:
     if args.command == "init":
         return _run_init(args)
 
+    # Auto-sync newly added MCPs from source config
+    if not args.check:
+        from sidepouch_mcp.config.sync import run_sync
+        from sidepouch_mcp.constants import DEFAULT_DATA_DIR
+
+        sync_data_dir = (
+            args.data_dir
+            or os.environ.get("SIDEPOUCH_MCP_DATA_DIR")
+            or DEFAULT_DATA_DIR
+        )
+        sync_result = run_sync(sync_data_dir)
+        if sync_result.get("synced", 0) > 0:
+            print(f"Auto-synced {sync_result['synced']} new upstream(s)")
+
     config = load_gateway_config(
         data_dir_override=args.data_dir,
     )
@@ -245,7 +342,7 @@ def serve() -> int:
             print(f"- {item}", file=sys.stderr)
         return 1
 
-    return _run_server(config, report)
+    return _run_server(config, report, args)
 
 
 def cli() -> None:

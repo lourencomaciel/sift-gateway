@@ -452,6 +452,7 @@ class GatewayServer:
                 mirrored.upstream,
                 mirrored.original_name,
                 forwarded_args,
+                data_dir=str(self.config.data_dir),
             )
         except Exception:
             self._increment_metric("upstream_errors")
@@ -1402,7 +1403,9 @@ async def bootstrap_server(
         A fully initialized GatewayServer with connected
         upstreams.
     """
-    upstreams = await connect_upstreams(config.upstreams)
+    upstreams = await connect_upstreams(
+        config.upstreams, data_dir=str(config.data_dir)
+    )
     return GatewayServer(
         config=config,
         db_pool=db_pool,

@@ -147,7 +147,8 @@ class _SqliteCursorProxy:
         """Execute SQL with Postgres-to-SQLite adaptation."""
         if params is not None and "ANY(" in sql.upper():
             sql, params = _SqliteConnectionProxy._expand_any(
-                sql, params,
+                sql,
+                params,
             )
         sql = _SqliteConnectionProxy._adapt(sql)
         params = _SqliteConnectionProxy._adapt_params(params)
@@ -178,7 +179,8 @@ class _SqliteConnectionProxy:
 
     @staticmethod
     def _expand_any(
-        sql: str, params: tuple | list,
+        sql: str,
+        params: tuple | list,
     ) -> tuple[str, tuple]:
         """Expand ``= ANY(%s)`` into ``IN (?, ?, ...)`` with flat params.
 
@@ -202,11 +204,7 @@ class _SqliteConnectionProxy:
         if not isinstance(values, (list, tuple)):
             return sql, tuple(params)
         placeholders = ", ".join("?" for _ in values)
-        sql = (
-            sql[: match.start()]
-            + f"IN ({placeholders})"
-            + sql[match.end() :]
-        )
+        sql = sql[: match.start()] + f"IN ({placeholders})" + sql[match.end() :]
         flat: list = (
             list(params[:param_index])
             + list(values)
@@ -219,9 +217,7 @@ class _SqliteConnectionProxy:
         import re
 
         sql = sql.replace("%s", "?")
-        sql = re.sub(
-            r"\bNOW\(\)", "datetime('now')", sql, flags=re.IGNORECASE
-        )
+        sql = re.sub(r"\bNOW\(\)", "datetime('now')", sql, flags=re.IGNORECASE)
         sql = re.sub(
             r"\s+FOR\s+UPDATE\s+SKIP\s+LOCKED",
             "",

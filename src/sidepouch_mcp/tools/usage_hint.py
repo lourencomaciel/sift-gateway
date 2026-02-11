@@ -112,9 +112,7 @@ def build_usage_hint(
         if not isinstance(sampled_count, int):
             sampled_count = len(sample_indices)
         if isinstance(count, int) and count > sampled_count:
-            parts.append(
-                f"Sampled {sampled_count} of ~{count} records"
-            )
+            parts.append(f"Sampled {sampled_count} of ~{count} records")
 
     # Suggested tool call
     if shape == "array":

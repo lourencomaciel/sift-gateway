@@ -156,6 +156,7 @@ async def _stub_upstream(
     _instance: Any,
     tool_name: str,
     arguments: dict[str, Any],
+    data_dir: str | None = None,  # noqa: ARG001
 ) -> dict[str, Any]:
     """Fake upstream that returns controlled payloads by tool name."""
     entry = _UPSTREAM_DISPATCH.get(tool_name)
@@ -193,8 +194,7 @@ def _e2e_config(tmp_path: Path) -> GatewayConfig:
         postgres_dsn=dsn,
         mapping_mode="sync",
         max_full_map_bytes=2000,
-        inline_envelope_max_json_bytes=100_000,
-        inline_envelope_max_total_bytes=200_000,
+        passthrough_max_bytes=0,
     )
 
 
@@ -779,8 +779,7 @@ def e2e_env_oversize(tmp_path, monkeypatch):
         postgres_dsn=dsn,
         mapping_mode="sync",
         max_full_map_bytes=2000,
-        inline_envelope_max_json_bytes=100_000,
-        inline_envelope_max_total_bytes=200_000,
+        passthrough_max_bytes=0,
         envelope_jsonb_mode="minimal_for_large",
         envelope_jsonb_minimize_threshold_bytes=100,
     )

@@ -25,6 +25,7 @@ Environment variables (`SIDEPOUCH_MCP_*`) > `DATA_DIR/state/config.json` > compi
 | `logs_dir` | `{data_dir}/logs` |
 | `secrets_path` | `{data_dir}/state/secrets.json` |
 | `config_json_path` | `{data_dir}/state/config.json` |
+| `upstream_secrets_dir` | `{data_dir}/state/upstream_secrets/` |
 
 ## Database backend
 
@@ -157,7 +158,9 @@ Results below this threshold are returned as raw upstream responses (gateway is 
 
 ## Upstream configuration
 
-Upstreams are configured as an array. Env var pattern: `SIDEPOUCH_MCP_UPSTREAMS__<INDEX>__<FIELD>`.
+Upstreams are configured via the `mcpServers` dict format (see
+below). Env var pattern:
+`SIDEPOUCH_MCP_UPSTREAMS__<INDEX>__<FIELD>`.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
@@ -173,10 +176,13 @@ Upstreams are configured as an array. Env var pattern: `SIDEPOUCH_MCP_UPSTREAMS_
 | `strict_schema_reuse` | bool | true | Require schema hash match for reuse |
 | `passthrough_allowed` | bool | true | Allow passthrough mode for this upstream |
 | `dedupe_exclusions` | list[str] | `[]` | JSONPath exclusions for dedupe hash |
+| `secret_ref` | str | null | Name of an external secret file (see below) |
+| `inherit_parent_env` | bool | false | Pass full parent env to this upstream |
 
 ### mcpServers format
 
-The gateway also accepts the standard `mcpServers` dict format (Claude Desktop, Cursor, Claude Code):
+The gateway accepts the standard `mcpServers` dict format (Claude
+Desktop, Cursor, Claude Code):
 
 ```json
 {
@@ -184,15 +190,117 @@ The gateway also accepts the standard `mcpServers` dict format (Claude Desktop, 
     "github": {
       "command": "/usr/local/bin/mcp-github",
       "args": ["--config", "github.json"],
-      "env": {}
+      "_gateway": {
+        "secret_ref": "github",
+        "inherit_parent_env": false
+      }
     }
   }
 }
 ```
 
-Transport is inferred: `command` present → stdio, `url` present → http. Gateway-specific extensions go in a `_gateway` namespace within each server entry.
+Transport is inferred: `command` present -> stdio, `url` present
+-> http. Gateway-specific extensions go in a `_gateway` namespace
+within each server entry.
 
-Cannot mix `mcpServers` and legacy `upstreams` in the same config.
+The legacy `upstreams` array format is no longer supported. Run
+`sidepouch-mcp init --from <config>` to migrate.
+
+### `_gateway.secret_ref`
+
+Points to a per-upstream secret file at
+`{data_dir}/state/upstream_secrets/{ref}.json`. The file is
+created automatically by `sidepouch-mcp init` and has 0600
+permissions. Schema:
+
+```json
+{
+  "version": 1,
+  "transport": "stdio",
+  "env": { "GITHUB_TOKEN": "ghp_..." },
+  "headers": null,
+  "updated_at": "2025-01-15T12:00:00+00:00"
+}
+```
+
+- `env` values are merged into the subprocess environment for
+  stdio upstreams.
+- `headers` values are merged into HTTP request headers for
+  http upstreams.
+- A config entry **cannot** specify both inline `env`/`headers`
+  and `secret_ref`. Use one or the other.
+
+### `_gateway.inherit_parent_env`
+
+Controls whether a stdio upstream receives the gateway process's
+full environment or only a safe allowlist:
+
+| Value | Behavior |
+|-------|----------|
+| `false` (default) | Subprocess gets only: `PATH`, `HOME`, `LANG`, `LC_ALL`, `TMPDIR`, `TMP`, `TEMP`, `USER`, `LOGNAME`, `SHELL` |
+| `true` | Subprocess inherits the entire parent environment |
+
+In both cases, values from the secret file (via `secret_ref`)
+are merged next, then explicit `env` overrides from the config
+are applied last. The merge order is:
+
+1. Base env (allowlist or full parent)
+2. Secret file `env` (if `secret_ref` is set)
+3. Inline config `env`
+
+## Sync metadata (`_gateway_sync`)
+
+After `sidepouch-mcp init --from <file>`, the gateway config
+(`state/config.json`) contains a `_gateway_sync` block:
+
+```json
+{
+  "_gateway_sync": {
+    "enabled": true,
+    "source_path": "/path/to/claude_desktop_config.json",
+    "gateway_name": "artifact-gateway"
+  }
+}
+```
+
+On every non-`--check` startup, SidePouch reads this metadata and
+checks the source file for newly added MCP server entries. New
+entries are imported into the gateway config, their secrets are
+externalized, and the source file is rewritten to contain only the
+gateway entry. This makes adding new MCPs a two-step process:
+
+1. Edit the source config and add the new server entry.
+2. Restart SidePouch.
+
+The sync is idempotent. If the source file is missing or
+unreadable, sync is skipped with a warning.
+
+## Server runtime flags
+
+These CLI flags control how the gateway process runs:
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--transport` | `stdio` | Transport mode: `stdio`, `sse`, or `streamable-http` |
+| `--host` | `127.0.0.1` | Bind address for HTTP transports |
+| `--port` | `8080` | Bind port for HTTP transports |
+| `--path` | `/mcp` | URL path for HTTP transports |
+| `--auth-token` | (none) | Bearer token for non-local HTTP access |
+| `--data-dir` | `.sidepouch-mcp` | Override the data directory |
+| `--check` | (flag) | Validate config/DB/FS/upstreams and exit |
+
+The `--auth-token` flag also reads from the
+`SIDEPOUCH_MCP_AUTH_TOKEN` environment variable.
+
+### URL mode security
+
+| Bind address | Auth required? |
+|--------------|----------------|
+| `127.0.0.1`, `localhost`, `::1` | No |
+| Any other (e.g. `0.0.0.0`) | Yes -- `--auth-token` or `SIDEPOUCH_MCP_AUTH_TOKEN` must be set |
+
+Binding to a non-local address without a token exits immediately
+with a security error.
 
 ## Constants
 

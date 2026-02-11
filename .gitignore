@@ -23,7 +23,12 @@ wheels/
 # OS
 .DS_Store
 
+# Local scripts and data
+local/
+.mcp_gateway/
+
 # Planning files (local only)
 findings.md
 progress.md
 quota_plan.md
+security_best_practices_report.md

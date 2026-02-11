@@ -155,6 +155,34 @@ class TestToUpstreamConfigs:
         with pytest.raises(ValueError, match="_gateway must be a JSON object"):
             to_upstream_configs({"gh": {"command": "gh", "_gateway": "bad"}})
 
+    def test_gateway_secret_ref_promoted(self) -> None:
+        configs = to_upstream_configs(
+            {
+                "gh": {
+                    "command": "gh",
+                    "_gateway": {
+                        "secret_ref": "vault://secrets/github",
+                    },
+                }
+            }
+        )
+        c = configs[0]
+        assert c["secret_ref"] == "vault://secrets/github"
+
+    def test_gateway_inherit_parent_env_promoted(self) -> None:
+        configs = to_upstream_configs(
+            {
+                "gh": {
+                    "command": "gh",
+                    "_gateway": {
+                        "inherit_parent_env": True,
+                    },
+                }
+            }
+        )
+        c = configs[0]
+        assert c["inherit_parent_env"] is True
+
     def test_no_gateway_extensions(self) -> None:
         configs = to_upstream_configs({"gh": {"command": "gh"}})
         c = configs[0]
@@ -269,7 +297,9 @@ class TestLoadGatewayConfigMcpServers:
         assert gh.semantic_salt_env_keys == ["GITHUB_ORG"]
         assert gh.strict_schema_reuse is False
 
-    def test_legacy_upstreams_still_works(self, tmp_path: Path) -> None:
+    def test_legacy_upstreams_raises_migration_error(
+        self, tmp_path: Path
+    ) -> None:
         state_dir = tmp_path / "state"
         state_dir.mkdir(parents=True)
         (state_dir / "config.json").write_text(
@@ -285,9 +315,8 @@ class TestLoadGatewayConfigMcpServers:
                 }
             )
         )
-        config = load_gateway_config(data_dir_override=str(tmp_path))
-        assert len(config.upstreams) == 1
-        assert config.upstreams[0].prefix == "gh"
+        with pytest.raises(ValueError, match="no longer supported"):
+            load_gateway_config(data_dir_override=str(tmp_path))
 
     def test_mixed_format_raises(self, tmp_path: Path) -> None:
         state_dir = tmp_path / "state"
