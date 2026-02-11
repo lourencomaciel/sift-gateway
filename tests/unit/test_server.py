@@ -1535,7 +1535,7 @@ def test_handle_mirrored_tool_recovers_db_ok_on_successful_probe(
 
     monkeypatch.setattr(
         "sidepouch_mcp.mcp.handlers.mirrored_tool.persist_artifact",
-        lambda connection, config, input_data, binary_hashes: _fake_handle,
+        lambda **_kw: _fake_handle,
     )
 
     response = asyncio.run(
@@ -1670,7 +1670,7 @@ def test_handle_mirrored_tool_skips_cache_on_non_connectivity_error(
 
     monkeypatch.setattr(
         "sidepouch_mcp.mcp.handlers.mirrored_tool.persist_artifact",
-        lambda connection, config, input_data, binary_hashes: _fake_handle,
+        lambda **_kw: _fake_handle,
     )
 
     response = asyncio.run(
@@ -1896,7 +1896,7 @@ def test_handle_mirrored_tool_succeeds_when_mapping_fails(
 
     monkeypatch.setattr(
         "sidepouch_mcp.mcp.handlers.mirrored_tool.persist_artifact",
-        lambda connection, config, input_data, binary_hashes: _fake_handle,
+        lambda **_kw: _fake_handle,
     )
 
     def _exploding_mapping(self, connection, *, handle, envelope):
@@ -1989,7 +1989,7 @@ def test_handle_mirrored_tool_triggers_mapping_on_single_connection(
 
     monkeypatch.setattr(
         "sidepouch_mcp.mcp.handlers.mirrored_tool.persist_artifact",
-        lambda connection, config, input_data, binary_hashes: _fake_handle,
+        lambda **_kw: _fake_handle,
     )
 
     def _track_mapping(self, connection, *, handle, envelope):
@@ -2338,7 +2338,7 @@ def test_handle_mirrored_tool_quota_ok_proceeds_to_persist(
 
     monkeypatch.setattr(
         "sidepouch_mcp.mcp.handlers.mirrored_tool.persist_artifact",
-        lambda connection, config, input_data, binary_hashes: _fake_handle,
+        lambda **_kw: _fake_handle,
     )
 
     response = asyncio.run(
@@ -2439,7 +2439,7 @@ def test_handle_mirrored_tool_quota_passes_blob_store_root(
 
     monkeypatch.setattr(
         "sidepouch_mcp.mcp.handlers.mirrored_tool.persist_artifact",
-        lambda connection, config, input_data, binary_hashes: _fake_handle,
+        lambda **_kw: _fake_handle,
     )
 
     response = asyncio.run(
@@ -2649,7 +2649,7 @@ def test_handle_mirrored_tool_skips_quota_when_disabled(
 
     monkeypatch.setattr(
         "sidepouch_mcp.mcp.handlers.mirrored_tool.persist_artifact",
-        lambda connection, config, input_data, binary_hashes: _fake_handle,
+        lambda **_kw: _fake_handle,
     )
 
     response = asyncio.run(
