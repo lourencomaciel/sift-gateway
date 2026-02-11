@@ -145,8 +145,8 @@ def test_build_status_response_with_runtime_includes_cursor_secrets_info() -> (
     )
     cursor = result["cursor"]
     assert cursor["cursor_ttl_minutes"] == config.cursor_ttl_minutes
-    assert cursor["signing_version"] == "v2"
-    assert cursor["active_versions"] == ["v1", "v2"]
+    assert cursor["secrets_loaded"] is True
+    assert cursor["active_secret_count"] == 2
 
 
 def test_build_status_response_without_cursor_secrets_omits_secret_fields() -> (
@@ -156,8 +156,8 @@ def test_build_status_response_without_cursor_secrets_omits_secret_fields() -> (
     result = build_status_response_with_runtime(config)
     cursor = result["cursor"]
     assert cursor["cursor_ttl_minutes"] == config.cursor_ttl_minutes
-    assert "signing_version" not in cursor
-    assert "active_versions" not in cursor
+    assert "secrets_loaded" not in cursor
+    assert "active_secret_count" not in cursor
 
 
 def test_build_status_response_with_runtime_upstreams() -> None:
@@ -232,7 +232,8 @@ def test_probe_db_returns_error_when_pool_is_none() -> None:
 def test_probe_db_returns_error_on_exception() -> None:
     result = probe_db(_FailingDbPool())
     assert result["ok"] is False
-    assert "connection refused" in result["error"]
+    assert result["error"] == "db probe failed"
+    assert result["error_type"] == "RuntimeError"
 
 
 # ---------------------------------------------------------------------------
