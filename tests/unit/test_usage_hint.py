@@ -46,7 +46,7 @@ def test_pending_mapping_hint() -> None:
     desc = _describe(map_status="pending")
     hint = build_usage_hint("art_1", desc)
     assert "Mapping in progress" in hint
-    assert "artifact.describe" in hint
+    assert "artifact_describe" in hint
     assert "art_1" in hint
 
 
@@ -63,7 +63,7 @@ def test_ready_status_treated_as_complete() -> None:
 def test_empty_roots_suggests_get() -> None:
     desc = _describe(roots=[])
     hint = build_usage_hint("art_2", desc)
-    assert "artifact.get" in hint
+    assert "artifact_get" in hint
     assert "art_2" in hint
     assert "No structured mapping" in hint
 
@@ -87,7 +87,7 @@ def test_array_root_with_fields() -> None:
     assert "$.result.data" in hint
     assert "name" in hint
     assert "status" in hint
-    assert "artifact.select" in hint
+    assert "artifact_select" in hint
     assert "Minimize context usage" in hint
     assert "art_3" in hint
 
@@ -104,7 +104,7 @@ def test_dict_root_suggests_get() -> None:
     )
     hint = build_usage_hint("art_4", desc)
     assert "dict" in hint
-    assert "artifact.get" in hint
+    assert "artifact_get" in hint
 
 
 def test_sampled_root_mentions_sample() -> None:
@@ -148,7 +148,7 @@ def test_no_fields_top_omits_fields() -> None:
 def test_array_root_suggest_find() -> None:
     desc = _describe(roots=[_root(root_path="$.items", count_estimate=20)])
     hint = build_usage_hint("art_8", desc)
-    assert "artifact.find" in hint
+    assert "artifact_find" in hint
 
 
 def test_hint_always_nonempty() -> None:

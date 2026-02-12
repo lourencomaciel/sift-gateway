@@ -74,7 +74,10 @@ def _extract_pagination_state(
     if not isinstance(pagination_data, dict):
         return None
 
-    return PaginationState.from_dict(pagination_data)
+    try:
+        return PaginationState.from_dict(pagination_data)
+    except (TypeError, ValueError, KeyError):
+        return None
 
 
 def _extract_envelope_dict(row: dict[str, Any]) -> dict[str, Any] | None:
@@ -200,7 +203,11 @@ async def handle_artifact_next_page(
         **state.original_args,
         **state.next_params,
     }
-    next_args["_gateway_context"] = raw_ctx
+    next_gateway_context = dict(raw_ctx)
+    # Force a fresh persisted page so chain_pages for this parent remains
+    # complete even when the same request_key exists in prior chains.
+    next_gateway_context["cache_mode"] = "refresh"
+    next_args["_gateway_context"] = next_gateway_context
     next_args["_gateway_parent_artifact_id"] = artifact_id
     next_args["_gateway_chain_seq"] = state.page_number + 1
 

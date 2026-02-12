@@ -659,6 +659,52 @@ def test_handle_mirrored_tool_success_path_without_db(
     assert response["meta"]["cache"]["reused"] is False
 
 
+def test_handle_mirrored_tool_without_db_never_advertises_next_page(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    config = GatewayConfig(data_dir=tmp_path, passthrough_max_bytes=0)
+    server = GatewayServer(
+        config=config,
+        upstreams=[_upstream_with_pagination()],
+    )
+    mirrored = server.mirrored_tools["demo.echo"]
+
+    async def _fake_call(_instance, _tool_name, _arguments):
+        return {
+            "content": [],
+            "structuredContent": {
+                "data": [{"id": "1"}],
+                "paging": {
+                    "cursors": {"after": "CURSOR_2"},
+                    "next": "https://example.com/page2",
+                },
+            },
+            "isError": False,
+            "meta": {"trace_id": "abc"},
+        }
+
+    monkeypatch.setattr(
+        "sidepouch_mcp.mcp.server.call_upstream_tool", _fake_call
+    )
+
+    response = asyncio.run(
+        server.handle_mirrored_tool(
+            mirrored,
+            {
+                "_gateway_context": {"session_id": "sess_1"},
+                "message": "hello",
+            },
+        )
+    )
+    assert response["type"] == "gateway_tool_result"
+    pagination = response.get("pagination")
+    assert isinstance(pagination, dict)
+    assert pagination["retrieval_status"] == "PARTIAL"
+    assert pagination["has_next_page"] is False
+    assert pagination["next_action"] is None
+
+
 def test_handle_mirrored_tool_returns_cached_artifact_when_reused(
     tmp_path: Path,
     monkeypatch,
@@ -2306,7 +2352,10 @@ def test_artifact_next_page_uses_canonical_envelope_when_jsonb_missing(
     assert captured["arguments"] == {
         "message": "hello",
         "after": "CURSOR_2",
-        "_gateway_context": {"session_id": "sess_1"},
+        "_gateway_context": {
+            "session_id": "sess_1",
+            "cache_mode": "refresh",
+        },
         "_gateway_parent_artifact_id": "art_1",
         "_gateway_chain_seq": 1,
     }

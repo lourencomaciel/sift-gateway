@@ -100,7 +100,7 @@ _BUILTIN_TOOL_DESCRIPTIONS: dict[str, str] = {
     "gateway.status": "Gateway health and configuration snapshot.",
     "artifact.search": (
         "Search artifacts visible to this session. Returns "
-        "summaries; use artifact.get or artifact.select to "
+        "summaries; use artifact_get or artifact_select to "
         "retrieve full data."
     ),
     "artifact.get": (
@@ -116,13 +116,13 @@ _BUILTIN_TOOL_DESCRIPTIONS: dict[str, str] = {
         "Describe an artifact's mapped roots, field types, "
         "and retrieval affordances. Call this first to learn "
         "available root_path and field names before using "
-        "artifact.select or artifact.find."
+        "artifact_select or artifact_find."
     ),
     "artifact.find": (
         "Find matching record locators under mapped roots "
         "using optional where filters. Returns locators "
         "(root_path, index, record_hash) not full records. "
-        "Use artifact.select with select_paths to retrieve "
+        "Use artifact_select with select_paths to retrieve "
         "specific fields from matches."
     ),
     "artifact.chain_pages": (
@@ -220,7 +220,7 @@ _BUILTIN_TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
                 "description": (
                     "JSONPath to root array, e.g. "
                     "'$.result.data'. Get this from "
-                    "artifact.describe."
+                    "artifact_describe."
                 ),
             },
             "select_paths": {

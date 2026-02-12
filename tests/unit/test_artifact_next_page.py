@@ -91,3 +91,9 @@ def test_extract_pagination_state_non_dict_pagination() -> None:
     envelope = {"meta": {"_gateway_pagination": "not_dict"}}
     state = _extract_pagination_state(json.dumps(envelope))
     assert state is None
+
+
+def test_extract_pagination_state_invalid_payload_shape() -> None:
+    envelope = {"meta": {"_gateway_pagination": {"upstream_prefix": "x"}}}
+    state = _extract_pagination_state(json.dumps(envelope))
+    assert state is None

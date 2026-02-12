@@ -770,8 +770,9 @@ async def handle_mirrored_tool(
         )
 
         # Check passthrough eligibility (DB-less path).
-        # Skip passthrough when pagination is detected — the LLM
-        # needs the artifact_id to call artifact.next_page.
+        # Only force a handle when next-page chaining is actually
+        # available; without DB backing, artifact.next_page is not
+        # implemented.
         _, _, payload_total = compute_payload_sizes(envelope)
         passthrough_eligible = can_passthrough(
             payload_total_bytes=payload_total,
@@ -779,7 +780,12 @@ async def handle_mirrored_tool(
             passthrough_allowed=mirrored.upstream.config.passthrough_allowed,
             max_bytes=ctx.config.passthrough_max_bytes,
         )
-        if passthrough_eligible and pagination_assessment is None:
+        pagination_requires_handle = (
+            pagination_assessment is not None
+            and pagination_assessment.state is not None
+            and ctx.db_pool is not None
+        )
+        if passthrough_eligible and not pagination_requires_handle:
             return upstream_result
         handle = ctx._build_non_persisted_handle(
             input_data=_create_input(envelope)
@@ -1102,9 +1108,19 @@ async def handle_mirrored_tool(
             )
 
     pagination_meta = None
-    if pagination_assessment is not None:
+    pagination_assessment_for_response = pagination_assessment
+    if (
+        pagination_assessment_for_response is not None
+        and ctx.db_pool is None
+        and pagination_assessment_for_response.state is not None
+    ):
+        pagination_assessment_for_response = dataclasses.replace(
+            pagination_assessment_for_response,
+            state=None,
+        )
+    if pagination_assessment_for_response is not None:
         pagination_meta = _pagination_response_meta(
-            pagination_assessment, handle.artifact_id
+            pagination_assessment_for_response, handle.artifact_id
         )
 
     return gateway_tool_result(

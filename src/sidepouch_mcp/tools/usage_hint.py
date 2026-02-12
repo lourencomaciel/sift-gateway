@@ -98,7 +98,7 @@ def build_usage_hint(
     if map_status == "failed":
         return (
             "Mapping failed. Use "
-            f'artifact.get(artifact_id="{artifact_id}") '
+            f'artifact_get(artifact_id="{artifact_id}") '
             "to retrieve raw content."
         )
 
@@ -106,7 +106,7 @@ def build_usage_hint(
     if map_status not in {"complete", "done", "ready"}:
         return (
             "Mapping in progress. Call "
-            f'artifact.describe(artifact_id="{artifact_id}") '
+            f'artifact_describe(artifact_id="{artifact_id}") '
             "to check status later."
         )
 
@@ -114,7 +114,7 @@ def build_usage_hint(
     if not roots:
         return (
             "No structured mapping available. Use "
-            f'artifact.get(artifact_id="{artifact_id}") '
+            f'artifact_get(artifact_id="{artifact_id}") '
             "to retrieve raw content."
         )
 
@@ -151,14 +151,14 @@ def build_usage_hint(
         select_fields = fields[:4] if fields else ["*"]
         select_list = ", ".join(f'"{f}"' for f in select_fields)
         parts.append(
-            "Use artifact.select("
+            "Use artifact_select("
             f'artifact_id="{artifact_id}", '
             f'root_path="{path}", '
             f"select_paths=[{select_list}]"
             ") to project specific fields"
         )
         parts.append(
-            "or artifact.find("
+            "or artifact_find("
             f'artifact_id="{artifact_id}", '
             f'root_path="{path}"'
             ") to search for matching record locators"
@@ -170,7 +170,7 @@ def build_usage_hint(
         )
     else:
         parts.append(
-            "Use artifact.get("
+            "Use artifact_get("
             f'artifact_id="{artifact_id}"'
             ") to retrieve the full value"
         )

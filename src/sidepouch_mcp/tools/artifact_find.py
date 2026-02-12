@@ -113,7 +113,7 @@ def build_find_response(
         result["determinism"] = determinism
     result["hint"] = (
         "Items contain locators only (root_path, index or "
-        "sample_index, record_hash). Use artifact.select "
+        "sample_index, record_hash). Use artifact_select "
         "with select_paths to retrieve specific fields "
         "from matched records."
     )

@@ -149,7 +149,7 @@ def test_build_find_response_default_sampled_only() -> None:
 def test_build_find_response_includes_hint() -> None:
     result = build_find_response(items=[], truncated=False)
     assert "hint" in result
-    assert "artifact.select" in result["hint"]
+    assert "artifact_select" in result["hint"]
 
 
 def test_build_find_response_includes_matched_count() -> None:
