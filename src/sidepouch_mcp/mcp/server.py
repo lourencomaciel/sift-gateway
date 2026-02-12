@@ -98,42 +98,13 @@ _SUPPORTED_ENVELOPE_PARTS = {
 }
 _BUILTIN_TOOL_DESCRIPTIONS: dict[str, str] = {
     "gateway.status": "Gateway health and configuration snapshot.",
-    "artifact.search": (
-        "Search artifacts visible to this session. Returns "
-        "summaries; use artifact_get or artifact_select to "
-        "retrieve full data."
-    ),
-    "artifact.get": (
-        "Load a stored artifact envelope or its mapped "
-        "metadata. Pass target='mapped' for mapping roots."
-    ),
-    "artifact.select": (
-        "Project specific fields from a mapped root array. "
-        "Requires artifact_id, root_path (from describe), "
-        "and select_paths (relative field names)."
-    ),
-    "artifact.describe": (
-        "Describe an artifact's mapped roots, field types, "
-        "and retrieval affordances. Call this first to learn "
-        "available root_path and field names before using "
-        "artifact_select or artifact_find."
-    ),
-    "artifact.find": (
-        "Find matching record locators under mapped roots "
-        "using optional where filters. Returns locators "
-        "(root_path, index, record_hash) not full records. "
-        "Use artifact_select with select_paths to retrieve "
-        "specific fields from matches."
-    ),
-    "artifact.chain_pages": (
-        "Return chain-ordered child artifacts of a parent. "
-        "Use for multi-page upstream responses."
-    ),
-    "artifact.next_page": (
-        "Fetch the next page of a paginated upstream response. "
-        "Pass the artifact_id from a result that included "
-        "pagination.has_next_page=true. Returns a new artifact "
-        "chained to the original. "
+    "artifact": (
+        "Interact with stored artifacts. "
+        "Actions: describe (inspect structure), "
+        "get (retrieve data), "
+        "select (project fields from array), "
+        "search (find artifacts), "
+        "next_page (fetch next upstream page). "
         f"{PAGINATION_COMPLETENESS_RULE}"
     ),
 }
@@ -152,127 +123,76 @@ _BUILTIN_TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
         },
         "additionalProperties": True,
     },
-    "artifact.search": {
+    "artifact": {
         "type": "object",
         "properties": {
-            "order_by": {
+            "action": {
                 "type": "string",
-                "enum": ["created_seq_desc", "last_seen_desc"],
-                "description": ("Sort order. Default: created_seq_desc."),
-            },
-            "limit": {
-                "type": "integer",
-                "description": "Max results per page (default 50).",
-            },
-            "cursor": {
-                "type": "string",
-                "description": "Opaque pagination cursor.",
-            },
-            "filters": {
-                "type": "object",
+                "enum": [
+                    "describe",
+                    "get",
+                    "select",
+                    "search",
+                    "next_page",
+                ],
                 "description": (
-                    "Optional filters: source_tool, "
-                    "source_tool_prefix, status (ok|error), "
-                    "request_key, has_binary_refs, etc."
+                    "describe: inspect structure and roots. "
+                    "get: retrieve raw envelope or mapped data. "
+                    "select: project fields from array root. "
+                    "search: find artifacts in this session. "
+                    "next_page: fetch next upstream page."
                 ),
-                "additionalProperties": True,
             },
-        },
-        "additionalProperties": True,
-    },
-    "artifact.get": {
-        "type": "object",
-        "properties": {
             "artifact_id": {
                 "type": "string",
-                "description": "Artifact identifier to retrieve.",
+                "description": (
+                    "Target artifact. Required for all actions except search."
+                ),
             },
             "target": {
                 "type": "string",
                 "enum": ["envelope", "mapped"],
-                "description": ("Retrieval target (default: envelope)."),
+                "description": ("[get] Retrieval target (default: envelope)."),
             },
             "jsonpath": {
                 "type": "string",
-                "description": ("JSONPath filter (only with target=envelope)."),
-            },
-            "cursor": {
-                "type": "string",
-                "description": "Opaque pagination cursor.",
-            },
-            "limit": {
-                "type": "integer",
-                "description": "Max items per page.",
-            },
-        },
-        "required": ["artifact_id"],
-        "additionalProperties": True,
-    },
-    "artifact.select": {
-        "type": "object",
-        "properties": {
-            "artifact_id": {
-                "type": "string",
-                "description": "Artifact to select from.",
+                "description": ("[get] JSONPath filter on envelope."),
             },
             "root_path": {
                 "type": "string",
                 "description": (
-                    "JSONPath to root array, e.g. "
-                    "'$.result.data'. Get this from "
-                    "artifact_describe."
+                    "[select] JSONPath to root array, from describe output."
                 ),
             },
             "select_paths": {
                 "type": "array",
                 "items": {"type": "string"},
                 "description": (
-                    "Relative field names to project, "
-                    "e.g. ['ad_name', 'spend']. No $ prefix."
+                    "[select] Field names to project, "
+                    "e.g. ['name', 'spend']. No $ prefix."
                 ),
             },
             "where": {
-                "description": ("Optional WHERE-DSL filter expression."),
+                "description": ("[select] WHERE-DSL filter expression."),
             },
-            "cursor": {
-                "type": "string",
-                "description": "Opaque pagination cursor.",
-            },
-            "limit": {
-                "type": "integer",
-                "description": "Max items per page.",
-            },
-        },
-        "required": ["artifact_id", "root_path", "select_paths"],
-        "additionalProperties": True,
-    },
-    "artifact.describe": {
-        "type": "object",
-        "properties": {
-            "artifact_id": {
-                "type": "string",
-                "description": "Artifact to describe.",
-            },
-        },
-        "required": ["artifact_id"],
-        "additionalProperties": True,
-    },
-    "artifact.find": {
-        "type": "object",
-        "properties": {
-            "artifact_id": {
-                "type": "string",
-                "description": "Artifact to search within.",
-            },
-            "root_path": {
-                "type": "string",
+            "filters": {
+                "type": "object",
                 "description": (
-                    "Optional root path filter, e.g. '$.result.data'."
+                    "[search] source_tool, status, parent_artifact_id, etc."
+                ),
+                "additionalProperties": True,
+            },
+            "order_by": {
+                "type": "string",
+                "enum": [
+                    "created_seq_desc",
+                    "last_seen_desc",
+                    "chain_seq_asc",
+                ],
+                "description": (
+                    "[search] Sort order. Default: created_seq_desc."
                 ),
             },
-            "where": {
-                "description": ("Optional WHERE-DSL filter expression."),
-            },
             "cursor": {
                 "type": "string",
                 "description": "Opaque pagination cursor.",
@@ -282,40 +202,7 @@ _BUILTIN_TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
                 "description": "Max items per page.",
             },
         },
-        "required": ["artifact_id"],
-        "additionalProperties": True,
-    },
-    "artifact.chain_pages": {
-        "type": "object",
-        "properties": {
-            "parent_artifact_id": {
-                "type": "string",
-                "description": "Parent artifact identifier.",
-            },
-            "cursor": {
-                "type": "string",
-                "description": "Opaque pagination cursor.",
-            },
-            "limit": {
-                "type": "integer",
-                "description": "Max items per page.",
-            },
-        },
-        "required": ["parent_artifact_id"],
-        "additionalProperties": True,
-    },
-    "artifact.next_page": {
-        "type": "object",
-        "properties": {
-            "artifact_id": {
-                "type": "string",
-                "description": (
-                    "Artifact ID from a response with "
-                    "pagination.has_next_page=true."
-                ),
-            },
-        },
-        "required": ["artifact_id"],
+        "required": ["action"],
         "additionalProperties": True,
     },
 }
@@ -1594,13 +1481,7 @@ class GatewayServer:
         """
         return {
             "gateway.status": self.handle_status,
-            "artifact.search": self.handle_artifact_search,
-            "artifact.get": self.handle_artifact_get,
-            "artifact.select": self.handle_artifact_select,
-            "artifact.describe": self.handle_artifact_describe,
-            "artifact.find": self.handle_artifact_find,
-            "artifact.chain_pages": self.handle_artifact_chain_pages,
-            "artifact.next_page": self.handle_artifact_next_page,
+            "artifact": self.handle_artifact,
         }
 
     def register_mirrored_tools(
@@ -1731,124 +1612,101 @@ class GatewayServer:
 
         return await _handle(self, arguments)
 
-    async def handle_artifact_search(
+    async def handle_artifact(
         self, arguments: dict[str, Any]
     ) -> dict[str, Any]:
-        """Handle the artifact.search tool call.
+        """Handle the consolidated artifact tool call.
+
+        Routes to the appropriate handler based on the
+        ``action`` parameter.
 
         Args:
-            arguments: Raw arguments from the MCP client.
+            arguments: Raw arguments from the MCP client,
+                including required ``action`` parameter.
 
         Returns:
-            Search results dict with matching artifacts.
+            Handler result dict or gateway error.
         """
-        from sidepouch_mcp.mcp.handlers.artifact_search import (
-            handle_artifact_search as _handle,
+        from sidepouch_mcp.mcp.handlers.artifact_consolidated import (
+            handle_artifact as _handle,
         )
 
         return await _handle(self, arguments)
+
+    # Convenience wrappers — keep integration callers and
+    # direct handler tests working without action injection.
+
+    async def handle_artifact_search(
+        self, arguments: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Delegate to ``handle_artifact`` with action=search."""
+        return await self.handle_artifact(
+            {**arguments, "action": "search"}
+        )
 
     async def handle_artifact_get(
         self, arguments: dict[str, Any]
     ) -> dict[str, Any]:
-        """Handle the artifact.get tool call.
-
-        Args:
-            arguments: Raw arguments from the MCP client.
-
-        Returns:
-            Artifact envelope or mapped value dict.
-        """
-        from sidepouch_mcp.mcp.handlers.artifact_get import (
-            handle_artifact_get as _handle,
+        """Delegate to ``handle_artifact`` with action=get."""
+        return await self.handle_artifact(
+            {**arguments, "action": "get"}
         )
-
-        return await _handle(self, arguments)
 
     async def handle_artifact_select(
         self, arguments: dict[str, Any]
     ) -> dict[str, Any]:
-        """Handle the artifact.select tool call.
-
-        Args:
-            arguments: Raw arguments from the MCP client.
-
-        Returns:
-            Projected and filtered artifact data dict.
-        """
-        from sidepouch_mcp.mcp.handlers.artifact_select import (
-            handle_artifact_select as _handle,
+        """Delegate to ``handle_artifact`` with action=select."""
+        return await self.handle_artifact(
+            {**arguments, "action": "select"}
         )
-
-        return await _handle(self, arguments)
 
     async def handle_artifact_describe(
         self, arguments: dict[str, Any]
     ) -> dict[str, Any]:
-        """Handle the artifact.describe tool call.
-
-        Args:
-            arguments: Raw arguments from the MCP client.
-
-        Returns:
-            Mapped root descriptions and retrieval affordances.
-        """
-        from sidepouch_mcp.mcp.handlers.artifact_describe import (
-            handle_artifact_describe as _handle,
+        """Delegate to ``handle_artifact`` with action=describe."""
+        return await self.handle_artifact(
+            {**arguments, "action": "describe"}
         )
-
-        return await _handle(self, arguments)
-
-    async def handle_artifact_find(
-        self, arguments: dict[str, Any]
-    ) -> dict[str, Any]:
-        """Handle the artifact.find tool call.
-
-        Args:
-            arguments: Raw arguments from the MCP client.
-
-        Returns:
-            Matching records under mapped roots.
-        """
-        from sidepouch_mcp.mcp.handlers.artifact_find import (
-            handle_artifact_find as _handle,
-        )
-
-        return await _handle(self, arguments)
-
-    async def handle_artifact_chain_pages(
-        self, arguments: dict[str, Any]
-    ) -> dict[str, Any]:
-        """Handle the artifact.chain_pages tool call.
-
-        Args:
-            arguments: Raw arguments from the MCP client.
-
-        Returns:
-            Chain-ordered child artifacts dict.
-        """
-        from sidepouch_mcp.mcp.handlers.artifact_chain_pages import (
-            handle_artifact_chain_pages as _handle,
-        )
-
-        return await _handle(self, arguments)
 
     async def handle_artifact_next_page(
         self, arguments: dict[str, Any]
     ) -> dict[str, Any]:
-        """Handle the artifact.next_page tool call.
-
-        Args:
-            arguments: Raw arguments from the MCP client.
-
-        Returns:
-            Next-page upstream result as a gateway tool result.
-        """
-        from sidepouch_mcp.mcp.handlers.artifact_next_page import (
-            handle_artifact_next_page as _handle,
+        """Delegate to ``handle_artifact`` with action=next_page."""
+        return await self.handle_artifact(
+            {**arguments, "action": "next_page"}
         )
 
-        return await _handle(self, arguments)
+    async def handle_artifact_find(
+        self, arguments: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Legacy wrapper — delegates to the original find handler.
+
+        ``find`` is superseded by ``select`` with ``where``, but
+        the original handler accepts different required params
+        (no ``root_path`` / ``select_paths``), so we call it
+        directly rather than routing through ``action=select``.
+        """
+        from sidepouch_mcp.mcp.handlers.artifact_find import (
+            handle_artifact_find as _find,
+        )
+
+        return await _find(self, arguments)
+
+    async def handle_artifact_chain_pages(
+        self, arguments: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Legacy wrapper — delegates to the original handler.
+
+        The translation-to-search approach has too many contract
+        mismatches (limit cap, cursor tool name, touch semantics,
+        filter passthrough). Delegating directly preserves all
+        original behavior.
+        """
+        from sidepouch_mcp.mcp.handlers.artifact_chain_pages import (
+            handle_artifact_chain_pages as _chain_pages,
+        )
+
+        return await _chain_pages(self, arguments)
 
 
 async def bootstrap_server(

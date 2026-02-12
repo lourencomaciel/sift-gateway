@@ -39,7 +39,7 @@ SEARCH_FILTERS = {
     "created_at_before",
 }
 
-_VALID_ORDER_BY = ("created_seq_desc", "last_seen_desc")
+_VALID_ORDER_BY = ("created_seq_desc", "last_seen_desc", "chain_seq_asc")
 _VALID_STATUS = ("ok", "error")
 
 
@@ -252,7 +252,8 @@ def build_search_query(
                 THEN 'ok' ELSE 'error'
            END AS status,
            a.payload_total_bytes, a.error_summary,
-           a.map_kind, a.map_status
+           a.map_kind, a.map_status,
+           a.chain_seq
     FROM artifact_refs ar
     JOIN artifacts a
       ON a.workspace_id = ar.workspace_id
@@ -335,6 +336,8 @@ def build_search_query(
     # Ordering
     if order_by == "created_seq_desc":
         base += " ORDER BY a.created_seq DESC"
+    elif order_by == "chain_seq_asc":
+        base += " ORDER BY a.chain_seq ASC NULLS LAST, a.created_seq ASC"
     else:
         base += " ORDER BY ar.last_seen_at DESC"
 
