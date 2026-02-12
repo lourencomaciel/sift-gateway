@@ -17,6 +17,10 @@ from __future__ import annotations
 
 from typing import Any
 
+from sidepouch_mcp.pagination.contract import (
+    build_retrieval_pagination_meta,
+)
+
 
 def validate_chain_pages_args(
     arguments: dict[str, Any],
@@ -100,4 +104,8 @@ def build_chain_pages_response(
         ],
         "truncated": truncated,
         "cursor": cursor,
+        "pagination": build_retrieval_pagination_meta(
+            truncated=truncated,
+            cursor=cursor if cursor else None,
+        ),
     }

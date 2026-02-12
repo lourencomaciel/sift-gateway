@@ -9,6 +9,7 @@ trigger mapping.  Exports ``handle_mirrored_tool``.
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import json
 from typing import TYPE_CHECKING, Any
 
@@ -23,7 +24,10 @@ from sidepouch_mcp.cache.reuse import (
     release_advisory_lock,
 )
 from sidepouch_mcp.constants import WORKSPACE_ID
-from sidepouch_mcp.envelope.model import Envelope
+from sidepouch_mcp.envelope.model import (
+    Envelope,
+    JsonContentPart,
+)
 from sidepouch_mcp.envelope.responses import (
     can_passthrough,
     gateway_error,
@@ -41,15 +45,31 @@ from sidepouch_mcp.mcp.mirror import (
     strip_reserved_gateway_args,
     validate_against_schema,
 )
+from sidepouch_mcp.mcp.upstream_errors import (
+    classify_upstream_exception,
+)
 from sidepouch_mcp.obs.logging import get_logger
+from sidepouch_mcp.pagination.contract import (
+    PAGINATION_WARNING_INCOMPLETE_RESULT_SET,
+    RETRIEVAL_STATUS_PARTIAL,
+    UPSTREAM_PARTIAL_REASON_SIGNAL_INCONCLUSIVE,
+    build_upstream_pagination_meta,
+)
+from sidepouch_mcp.pagination.extract import (
+    PaginationAssessment,
+    assess_pagination,
+)
 from sidepouch_mcp.request_identity import compute_request_identity
-from sidepouch_mcp.sessions import upsert_artifact_ref
+from sidepouch_mcp.sessions import upsert_artifact_ref, upsert_session
 from sidepouch_mcp.tools.artifact_describe import (
     FETCH_DESCRIBE_SQL,
     FETCH_ROOTS_SQL,
     build_describe_response,
 )
-from sidepouch_mcp.tools.usage_hint import build_usage_hint
+from sidepouch_mcp.tools.usage_hint import (
+    build_usage_hint,
+    with_pagination_completeness_rule,
+)
 
 if TYPE_CHECKING:
     from sidepouch_mcp.mcp.server import GatewayServer
@@ -97,18 +117,47 @@ def _lookup_cache_mode(context: dict[str, Any] | None) -> str | None:
 
     Args:
         context: Gateway context dict, or ``None`` (defaults
-            to ``"allow"``).
+            to ``"normal"``).
 
     Returns:
-        ``"allow"`` or ``"fresh"`` when valid, ``None`` when
-        the value is unrecognised.
+        Normalized mode:
+        ``"normal"``, ``"bypass"``, or ``"refresh"``.
+        Returns ``None`` when the value is unrecognized.
     """
+    aliases = {
+        "allow": "normal",
+        "normal": "normal",
+        "fresh": "bypass",
+        "bypass": "bypass",
+        "refresh": "refresh",
+    }
     if context is None:
+        return "normal"
+    raw = context.get("cache_mode", "normal")
+    if isinstance(raw, str):
+        return aliases.get(raw)
+    return aliases.get(str(raw))
+
+
+def _cache_mode_allows_reuse(cache_mode: str) -> bool:
+    """Return ``True`` when cache reuse should be attempted."""
+    return cache_mode == "normal"
+
+
+def _cache_mode_skip_reason(cache_mode: str) -> str:
+    """Return machine-readable reason when reuse is skipped."""
+    if cache_mode == "refresh":
+        return "cache_refresh_requested"
+    if cache_mode == "bypass":
+        return "cache_bypass_requested"
+    return "cache_miss"
+
+
+def _storage_cache_mode(cache_mode: str) -> str:
+    """Map normalized cache mode to persisted artifact cache mode field."""
+    if cache_mode == "normal":
         return "allow"
-    raw = context.get("cache_mode", "allow")
-    if raw in {"allow", "fresh"}:
-        return str(raw)
-    return None
+    return "fresh"
 
 
 def _json_size_bytes(payload: Any) -> int:
@@ -246,6 +295,114 @@ def _minimal_describe(
     return describe, build_usage_hint(artifact_id, describe)
 
 
+def _inject_pagination_state(
+    envelope: Envelope,
+    upstream_config: Any,
+    forwarded_args: dict[str, Any],
+    upstream_prefix: str,
+    page_number: int = 0,
+) -> tuple[Envelope, PaginationAssessment | None]:
+    """Extract pagination signals and inject state into meta.
+
+    Inspects the first ``JsonContentPart`` in the envelope for
+    pagination indicators using the upstream's pagination config.
+    When a next page is detected, creates a new envelope with
+    the pagination state stored in ``meta["_gateway_pagination"]``.
+
+    Args:
+        envelope: The envelope from the upstream response.
+        upstream_config: The upstream's ``UpstreamConfig``.
+        forwarded_args: Original tool arguments (reserved keys
+            already stripped).
+        upstream_prefix: Upstream namespace prefix.
+        page_number: Zero-based page number of this response.
+
+    Returns:
+        A ``(envelope, assessment)`` tuple.  The envelope may
+        be replaced if pagination state was injected.  The
+        assessment is ``None`` when no pagination config is
+        present on the upstream.
+    """
+    pagination_config = upstream_config.pagination
+    if pagination_config is None:
+        return envelope, None
+
+    if envelope.status == "error":
+        assessment = PaginationAssessment(
+            state=None,
+            has_more=False,
+            retrieval_status=RETRIEVAL_STATUS_PARTIAL,
+            partial_reason=UPSTREAM_PARTIAL_REASON_SIGNAL_INCONCLUSIVE,
+            warning=PAGINATION_WARNING_INCOMPLETE_RESULT_SET,
+            page_number=page_number,
+        )
+        return envelope, assessment
+
+    json_value = None
+    for part in envelope.content:
+        if isinstance(part, JsonContentPart):
+            json_value = part.value
+            break
+
+    if json_value is None:
+        assessment = PaginationAssessment(
+            state=None,
+            has_more=False,
+            retrieval_status=RETRIEVAL_STATUS_PARTIAL,
+            partial_reason=UPSTREAM_PARTIAL_REASON_SIGNAL_INCONCLUSIVE,
+            warning=PAGINATION_WARNING_INCOMPLETE_RESULT_SET,
+            page_number=page_number,
+        )
+        return envelope, assessment
+
+    assessment = assess_pagination(
+        json_value=json_value,
+        pagination_config=pagination_config,
+        original_args=forwarded_args,
+        upstream_prefix=upstream_prefix,
+        tool_name=envelope.tool,
+        page_number=page_number,
+    )
+    if assessment.state is None:
+        return envelope, assessment
+
+    new_meta = {
+        **envelope.meta,
+        "_gateway_pagination": assessment.state.to_dict(),
+    }
+    return dataclasses.replace(envelope, meta=new_meta), assessment
+
+
+def _pagination_response_meta(
+    assessment: PaginationAssessment,
+    artifact_id: str,
+) -> dict[str, Any]:
+    """Build pagination metadata for a gateway tool response.
+
+    Args:
+        assessment: Canonical pagination assessment.
+        artifact_id: The artifact ID for this page.
+
+    Returns:
+        Dict with pagination info for the LLM.
+    """
+    has_next_page = assessment.has_more and assessment.state is not None
+    page_number = assessment.page_number
+    base = build_upstream_pagination_meta(
+        artifact_id=artifact_id,
+        page_number=page_number,
+        retrieval_status=assessment.retrieval_status,
+        has_more=assessment.has_more,
+        partial_reason=assessment.partial_reason,
+        warning=assessment.warning,
+        has_next_page=has_next_page,
+    )
+    hint = base.get("hint")
+    if isinstance(hint, str):
+        base["hint"] = with_pagination_completeness_rule(hint)
+    return base
+
+
 async def _persist_async(
     ctx: GatewayServer,
     input_data: CreateArtifactInput,
@@ -336,7 +493,8 @@ async def handle_mirrored_tool(
     if cache_mode is None:
         return gateway_error(
             "INVALID_ARGUMENT",
-            "invalid _gateway_context.cache_mode; expected allow|fresh",
+            "invalid _gateway_context.cache_mode; expected "
+            "normal|bypass|refresh (or allow|fresh aliases)",
         )
     parent_artifact_id = arguments.get("_gateway_parent_artifact_id")
     if parent_artifact_id is not None and not isinstance(
@@ -405,10 +563,12 @@ async def handle_mirrored_tool(
             envelope=envelope,
             parent_artifact_id=parent_artifact_id,
             chain_seq=chain_seq,
-            cache_mode=cache_mode,
+            cache_mode=_storage_cache_mode(cache_mode),
         )
 
     reuse = ReuseResult(reused=False)
+    cache_reason = _cache_mode_skip_reason(cache_mode)
+    pagination_assessment: PaginationAssessment | None = None
     if ctx.db_pool is None:
         try:
             upstream_result = await ctx._call_upstream_with_metrics(
@@ -416,6 +576,7 @@ async def handle_mirrored_tool(
                 forwarded_args=forwarded_args,
             )
         except Exception as exc:
+            error_code = classify_upstream_exception(exc)
             error_text = _truncate_error_text(
                 str(exc), ctx.config.max_upstream_error_capture_bytes
             )
@@ -423,7 +584,11 @@ async def handle_mirrored_tool(
                 "content": [{"type": "text", "text": error_text}],
                 "structuredContent": None,
                 "isError": True,
-                "meta": {"exception_type": type(exc).__name__},
+                "meta": {
+                    "exception_type": type(exc).__name__,
+                    "gateway_error_code": error_code,
+                    "gateway_error_detail": error_text,
+                },
             }
 
         try:
@@ -436,7 +601,19 @@ async def handle_mirrored_tool(
                 "UPSTREAM_RESPONSE_INVALID",
                 str(exc),
             )
-        # Check passthrough eligibility (DB-less path)
+
+        page_number = chain_seq or 0
+        envelope, pagination_assessment = _inject_pagination_state(
+            envelope,
+            mirrored.upstream.config,
+            forwarded_args,
+            mirrored.prefix,
+            page_number=page_number,
+        )
+
+        # Check passthrough eligibility (DB-less path).
+        # Skip passthrough when pagination is detected — the LLM
+        # needs the artifact_id to call artifact.next_page.
         _, _, payload_total = compute_payload_sizes(envelope)
         passthrough_eligible = can_passthrough(
             payload_total_bytes=payload_total,
@@ -444,7 +621,7 @@ async def handle_mirrored_tool(
             passthrough_allowed=mirrored.upstream.config.passthrough_allowed,
             max_bytes=ctx.config.passthrough_max_bytes,
         )
-        if passthrough_eligible:
+        if passthrough_eligible and pagination_assessment is None:
             return upstream_result
         handle = ctx._build_non_persisted_handle(
             input_data=_create_input(envelope)
@@ -458,7 +635,7 @@ async def handle_mirrored_tool(
         # from holding a connection during a 30 s upstream call is far worse
         # than an occasional redundant call (persist handles the race via
         # unique artifact IDs).
-        if cache_mode != "fresh":
+        if _cache_mode_allows_reuse(cache_mode):
             try:
                 with ctx.db_pool.connection() as connection:
                     acquired = await acquire_advisory_lock_async(
@@ -485,35 +662,57 @@ async def handle_mirrored_tool(
                             strict_schema_reuse=mirrored.upstream.config.strict_schema_reuse,
                         )
                         if reuse.reused and reuse.artifact_id is not None:
-                            ctx._increment_metric("cache_hits")
+                            ref_attached = False
                             try:
+                                upsert_session(connection, session_id)
                                 upsert_artifact_ref(
                                     connection,
                                     session_id,
                                     reuse.artifact_id,
                                 )
                                 connection.commit()
+                                ref_attached = True
+                            except (
+                                _PG_OPERATIONAL_ERROR,
+                                _PG_INTERFACE_ERROR,
+                            ):
+                                raise
                             except Exception:
                                 get_logger(component="mcp.handlers").warning(
                                     "artifact_ref upsert on cache hit failed",
                                     exc_info=True,
                                 )
-                            desc, hint = _fetch_inline_describe(
-                                connection,
-                                reuse.artifact_id,
+                                cache_reason = "artifact_ref_attach_failed"
+                            if ref_attached:
+                                ctx._increment_metric("cache_hits")
+                                cache_reason = (
+                                    reuse.reason or "request_key_match"
+                                )
+                                desc, hint = _fetch_inline_describe(
+                                    connection,
+                                    reuse.artifact_id,
+                                )
+                                return gateway_tool_result(
+                                    artifact_id=reuse.artifact_id,
+                                    cache_meta={
+                                        "reused": True,
+                                        "reason": cache_reason,
+                                        "request_key": identity.request_key,
+                                        "artifact_id_origin": "cache",
+                                        "cache_mode": cache_mode,
+                                    },
+                                    describe=desc,
+                                    usage_hint=hint,
+                                )
+                            ctx._increment_metric("cache_misses")
+                            reuse = ReuseResult(
+                                reused=False,
+                                reason=cache_reason,
                             )
-                            return gateway_tool_result(
-                                artifact_id=reuse.artifact_id,
-                                cache_meta={
-                                    "reused": True,
-                                    "reason": reuse.reason
-                                    or "request_key_match",
-                                    "request_key": identity.request_key,
-                                },
-                                describe=desc,
-                                usage_hint=hint,
-                            )
-                        ctx._increment_metric("cache_misses")
+                        else:
+                            if reuse.reason is not None:
+                                cache_reason = reuse.reason
+                            ctx._increment_metric("cache_misses")
                     finally:
                         release_advisory_lock(
                             connection,
@@ -530,6 +729,8 @@ async def handle_mirrored_tool(
                     "cache check failed (best-effort)",
                     exc_info=True,
                 )
+        else:
+            cache_reason = _cache_mode_skip_reason(cache_mode)
 
         # Phase 1.5: Quota enforcement preflight.
         # Rejecting here avoids invoking side-effecting upstream tools when
@@ -621,6 +822,7 @@ async def handle_mirrored_tool(
                 forwarded_args=forwarded_args,
             )
         except Exception as exc:
+            error_code = classify_upstream_exception(exc)
             error_text = _truncate_error_text(
                 str(exc), ctx.config.max_upstream_error_capture_bytes
             )
@@ -628,7 +830,11 @@ async def handle_mirrored_tool(
                 "content": [{"type": "text", "text": error_text}],
                 "structuredContent": None,
                 "isError": True,
-                "meta": {"exception_type": type(exc).__name__},
+                "meta": {
+                    "exception_type": type(exc).__name__,
+                    "gateway_error_code": error_code,
+                    "gateway_error_detail": error_text,
+                },
             }
 
         try:
@@ -642,8 +848,19 @@ async def handle_mirrored_tool(
                 str(exc),
             )
 
+        page_number = chain_seq or 0
+        envelope, pagination_assessment = _inject_pagination_state(
+            envelope,
+            mirrored.upstream.config,
+            forwarded_args,
+            mirrored.prefix,
+            page_number=page_number,
+        )
+
         # Phase 2.5: Passthrough check — if the result is small enough,
         # return the raw upstream result immediately and persist async.
+        # Skip passthrough when pagination is detected — the LLM
+        # needs the artifact_id to call artifact.next_page.
         _, _, payload_total = compute_payload_sizes(envelope)
         passthrough_eligible = can_passthrough(
             payload_total_bytes=payload_total,
@@ -651,7 +868,7 @@ async def handle_mirrored_tool(
             passthrough_allowed=mirrored.upstream.config.passthrough_allowed,
             max_bytes=ctx.config.passthrough_max_bytes,
         )
-        if passthrough_eligible:
+        if passthrough_eligible and pagination_assessment is None:
             asyncio.create_task(
                 _persist_async(
                     ctx,
@@ -707,13 +924,22 @@ async def handle_mirrored_tool(
                 "artifact persistence failed",
             )
 
+    pagination_meta = None
+    if pagination_assessment is not None:
+        pagination_meta = _pagination_response_meta(
+            pagination_assessment, handle.artifact_id
+        )
+
     return gateway_tool_result(
         artifact_id=handle.artifact_id,
         cache_meta={
             "reused": False,
-            "reason": reuse.reason,
+            "reason": cache_reason,
             "request_key": identity.request_key,
+            "artifact_id_origin": "fresh",
+            "cache_mode": cache_mode,
         },
         describe=desc,
         usage_hint=hint,
+        pagination=pagination_meta,
     )

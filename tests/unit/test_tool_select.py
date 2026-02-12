@@ -101,6 +101,8 @@ def test_build_select_result_basic() -> None:
     assert result["truncated"] is False
     assert "cursor" not in result
     assert "sampled_only" not in result
+    assert result["pagination"]["layer"] == "artifact_retrieval"
+    assert result["pagination"]["retrieval_status"] == "COMPLETE"
 
 
 def test_build_select_result_with_cursor() -> None:
@@ -111,6 +113,9 @@ def test_build_select_result_with_cursor() -> None:
     )
     assert result["cursor"] == "cur_abc"
     assert result["truncated"] is True
+    assert result["pagination"]["retrieval_status"] == "PARTIAL"
+    assert result["pagination"]["partial_reason"] == "CURSOR_AVAILABLE"
+    assert result["pagination"]["next_cursor"] == "cur_abc"
 
 
 def test_build_select_result_with_sampled_only() -> None:

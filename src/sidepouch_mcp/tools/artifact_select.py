@@ -18,6 +18,10 @@ from __future__ import annotations
 
 from typing import Any, Sequence
 
+from sidepouch_mcp.pagination.contract import (
+    build_retrieval_pagination_meta,
+)
+
 
 def validate_select_args(arguments: dict[str, Any]) -> dict[str, Any] | None:
     """Validate ``artifact.select`` arguments.
@@ -138,6 +142,10 @@ def build_select_result(
     result: dict[str, Any] = {
         "items": items,
         "truncated": truncated,
+        "pagination": build_retrieval_pagination_meta(
+            truncated=truncated,
+            cursor=cursor if cursor else None,
+        ),
     }
     if cursor:
         result["cursor"] = cursor

@@ -116,7 +116,7 @@ def build_status_response_with_runtime(
         fs_health: Result of ``probe_fs()``, or ``None`` if
             not probed.
         upstreams: Upstream connectivity dicts from
-            ``GatewayServer._status_upstreams()``.
+            ``GatewayServer._status_upstreams(...)``.
         cursor_secrets_info: Optional cursor-secrets metadata
             from ``GatewayServer._cursor_secrets_info()``.
 

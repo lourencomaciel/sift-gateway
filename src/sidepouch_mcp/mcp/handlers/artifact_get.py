@@ -14,8 +14,12 @@ from sidepouch_mcp.envelope.responses import gateway_error
 from sidepouch_mcp.mcp.handlers.common import (
     ENVELOPE_COLUMNS,
     ROOT_COLUMNS,
+    extract_json_target,
     row_to_dict,
     rows_to_dicts,
+)
+from sidepouch_mcp.pagination.contract import (
+    build_retrieval_pagination_meta,
 )
 from sidepouch_mcp.query.jsonpath import (
     JsonPathError,
@@ -175,6 +179,10 @@ async def handle_artifact_get(
                     "map_budget_fingerprint": row.get("map_budget_fingerprint"),
                 },
                 "roots": roots,
+                "pagination": build_retrieval_pagination_meta(
+                    truncated=False,
+                    cursor=None,
+                ),
             }
 
         envelope_value = row.get("envelope")
@@ -200,8 +208,11 @@ async def handle_artifact_get(
                 )
 
         if jsonpath is not None:
+            json_target = extract_json_target(
+                envelope, row.get("mapped_part_index")
+            )
             values = evaluate_jsonpath(
-                envelope,
+                json_target,
                 normalized_jsonpath,
                 max_length=ctx.config.max_jsonpath_length,
                 max_segments=ctx.config.max_path_segments,
@@ -243,4 +254,8 @@ async def handle_artifact_get(
         "cursor": next_cursor,
         "omitted": omitted,
         "stats": {"bytes_out": used_bytes},
+        "pagination": build_retrieval_pagination_meta(
+            truncated=truncated,
+            cursor=next_cursor if next_cursor else None,
+        ),
     }

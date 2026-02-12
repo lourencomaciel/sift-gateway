@@ -29,6 +29,23 @@ def test_retrieval_response_shape() -> None:
     assert payload["truncated"] is False
     assert payload["cursor"] is None
     assert payload["stats"]["bytes_out"] == 20
+    assert payload["pagination"]["layer"] == "artifact_retrieval"
+    assert payload["pagination"]["retrieval_status"] == "COMPLETE"
+    assert payload["pagination"]["has_more"] is False
+    assert payload["pagination"]["next_cursor"] is None
+
+
+def test_retrieval_response_partial_includes_next_cursor() -> None:
+    payload = build_retrieval_response(
+        items=[{"id": 1}],
+        truncated=True,
+        cursor="cur_next",
+    )
+    assert payload["pagination"]["layer"] == "artifact_retrieval"
+    assert payload["pagination"]["retrieval_status"] == "PARTIAL"
+    assert payload["pagination"]["partial_reason"] == "CURSOR_AVAILABLE"
+    assert payload["pagination"]["has_more"] is True
+    assert payload["pagination"]["next_cursor"] == "cur_next"
 
 
 def test_apply_output_budgets_truncates() -> None:

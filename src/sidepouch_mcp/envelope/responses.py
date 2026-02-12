@@ -32,6 +32,7 @@ def gateway_tool_result(
     cache_meta: dict[str, Any] | None = None,
     describe: dict[str, Any] | None = None,
     usage_hint: str | None = None,
+    pagination: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Create a gateway tool response with inline describe data.
 
@@ -43,6 +44,11 @@ def gateway_tool_result(
         usage_hint: Natural language hint for the calling model
             describing what the artifact contains and which
             tools to call next.
+        pagination: Pagination metadata when more pages are
+            available or pagination is configured upstream.
+            Includes canonical fields (layer, retrieval_status,
+            partial_reason, has_more, next_action) plus legacy
+            compatibility fields (``has_next_page`` and ``hint``).
 
     Returns:
         Structured result dict with artifact handle, cache info,
@@ -57,6 +63,8 @@ def gateway_tool_result(
         result["describe"] = describe
     if usage_hint is not None:
         result["usage_hint"] = usage_hint
+    if pagination is not None:
+        result["pagination"] = pagination
     return result
 
 

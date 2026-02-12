@@ -176,6 +176,7 @@ below). Env var pattern:
 | `strict_schema_reuse` | bool | true | Require schema hash match for reuse |
 | `passthrough_allowed` | bool | true | Allow passthrough mode for this upstream |
 | `dedupe_exclusions` | list[str] | `[]` | JSONPath exclusions for dedupe hash |
+| `pagination` | object | null | Upstream pagination detection contract (see below) |
 | `secret_ref` | str | null | Name of an external secret file (see below) |
 | `inherit_parent_env` | bool | false | Pass full parent env to this upstream |
 
@@ -192,7 +193,13 @@ Desktop, Cursor, Claude Code):
       "args": ["--config", "github.json"],
       "_gateway": {
         "secret_ref": "github",
-        "inherit_parent_env": false
+        "inherit_parent_env": false,
+        "pagination": {
+          "strategy": "cursor",
+          "cursor_response_path": "$.paging.cursors.after",
+          "cursor_param_name": "after",
+          "has_more_response_path": "$.paging.next"
+        }
       }
     }
   }
@@ -205,6 +212,22 @@ within each server entry.
 
 The legacy `upstreams` array format is no longer supported. Run
 `sidepouch-mcp init --from <config>` to migrate.
+
+### `_gateway.pagination`
+
+Defines how SidePouch detects and advances upstream pagination.
+
+Supported strategies:
+
+- `cursor`
+- `offset`
+- `page_number`
+
+Important validation behavior:
+
+- `offset` and `page_number` require `has_more_response_path`.
+- missing completion signals are treated fail-closed (`PARTIAL`),
+  never as `COMPLETE`.
 
 ### `_gateway.secret_ref`
 

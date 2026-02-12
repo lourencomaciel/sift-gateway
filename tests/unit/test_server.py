@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
+import socket
 
 from sidepouch_mcp.artifacts.create import ArtifactHandle
 from sidepouch_mcp.config.settings import GatewayConfig, UpstreamConfig
@@ -87,9 +88,27 @@ class _FakeCursor:
         return self._row
 
 
+class _FakeDbCursor:
+    rowcount: int = 1
+
+    def __enter__(self) -> _FakeDbCursor:
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        return None
+
+    def execute(
+        self,
+        _query: str,
+        _params: tuple[object, ...] | None = None,
+    ) -> None:
+        return None
+
+
 class _FakeConnection:
     def __init__(self, row: tuple[object, ...] | None) -> None:
         self._row = row
+        self.committed = False
 
     def execute(
         self,
@@ -97,6 +116,12 @@ class _FakeConnection:
         _params: tuple[object, ...] | None = None,
     ) -> _FakeCursor:
         return _FakeCursor(self._row)
+
+    def cursor(self) -> _FakeDbCursor:
+        return _FakeDbCursor()
+
+    def commit(self) -> None:
+        self.committed = True
 
 
 class _FakeConnectionContext:
@@ -245,6 +270,17 @@ def test_status_handler_probes_fs_live(tmp_path: Path) -> None:
     assert response["fs"]["paths"]["blobs_bin_dir"] is True
 
 
+def test_status_handler_rejects_non_boolean_probe_upstreams(
+    tmp_path: Path,
+) -> None:
+    server = _server(tmp_path)
+    response = asyncio.run(
+        server.handle_status({"probe_upstreams": "yes"})
+    )
+    assert response["type"] == "gateway_error"
+    assert response["code"] == "INVALID_ARGUMENT"
+
+
 def test_status_handler_includes_cursor_secrets_info(tmp_path: Path) -> None:
     """handle_status should include sanitized cursor secret metadata."""
     secrets = CursorSecrets(
@@ -275,6 +311,10 @@ def test_status_handler_omits_cursor_secrets_when_not_loaded(
 
 def test_status_handler_includes_upstream_connectivity(tmp_path: Path) -> None:
     server = _server_with_upstream(tmp_path)
+    server.upstream_runtime["demo"] = {
+        "last_error_code": "UPSTREAM_DNS_FAILURE",
+        "last_error_message": "name not known",
+    }
     server.upstream_errors["broken"] = "timeout"
     response = asyncio.run(server.handle_status({}))
     upstreams = response["upstreams"]
@@ -283,9 +323,28 @@ def test_status_handler_includes_upstream_connectivity(tmp_path: Path) -> None:
     assert len(connected) == 1
     assert connected[0]["prefix"] == "demo"
     assert connected[0]["tool_count"] == 1
+    assert connected[0]["transport"] == "stdio"
+    assert "command_resolvable" in connected[0]
+    assert connected[0]["runtime"]["last_error_code"] == "UPSTREAM_DNS_FAILURE"
     assert len(disconnected) == 1
     assert disconnected[0]["prefix"] == "broken"
-    assert disconnected[0]["error"] == "timeout"
+    assert (
+        disconnected[0]["startup_error"]["code"]
+        == "UPSTREAM_STARTUP_FAILURE"
+    )
+    assert disconnected[0]["startup_error"]["message"] == "timeout"
+
+
+def test_status_handler_runs_active_upstream_probes(
+    tmp_path: Path,
+) -> None:
+    server = _server_with_upstream(tmp_path)
+    response = asyncio.run(
+        server.handle_status({"probe_upstreams": True})
+    )
+    upstream = response["upstreams"][0]
+    assert "active_probe" in upstream
+    assert isinstance(upstream["active_probe"]["ok"], bool)
 
 
 def test_cursor_error_updates_metrics(tmp_path: Path) -> None:
@@ -345,9 +404,15 @@ def test_artifact_handlers_return_validation_or_not_implemented(
 def test_build_fastmcp_app_includes_mirrored_tools(tmp_path: Path) -> None:
     server = _server_with_upstream(tmp_path)
     app = server.build_fastmcp_app()
-    tool_names = set(asyncio.run(app.get_tools()).keys())
-    assert "gateway.status" in tool_names
-    assert "demo.echo" in tool_names
+    tools = asyncio.run(app.get_tools())
+    tool_names = set(tools.keys())
+    assert "gateway_status" in tool_names
+    assert "demo_echo" in tool_names
+    assert "retrieval_status == COMPLETE" in tools["demo_echo"].description
+    assert (
+        "retrieval_status == COMPLETE"
+        in tools["artifact_next_page"].description
+    )
 
 
 def test_handle_mirrored_tool_rejects_schema_violations(tmp_path: Path) -> None:
@@ -524,7 +589,197 @@ def test_handle_mirrored_tool_returns_cached_artifact_when_reused(
     assert response["type"] == "gateway_tool_result"
     assert response["artifact_id"] == "art_cached"
     assert response["meta"]["cache"]["reused"] is True
+    assert response["meta"]["cache"]["artifact_id_origin"] == "cache"
+    assert response["meta"]["cache"]["cache_mode"] == "normal"
     assert counter_value(server.metrics.cache_hits) == 1
+
+
+def test_handle_mirrored_tool_falls_back_to_fresh_when_ref_attach_fails(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    config = GatewayConfig(data_dir=tmp_path, passthrough_max_bytes=0)
+    server = GatewayServer(
+        config=config,
+        upstreams=[_upstream()],
+        db_pool=_FakePool(
+            ("art_cached", "payload_hash", "schema_echo", "ready", 3)
+        ),  # type: ignore[arg-type]
+        metrics=GatewayMetrics(),
+    )
+    mirrored = server.mirrored_tools["demo.echo"]
+
+    async def _fake_call(_instance, _tool_name, _arguments):
+        return {
+            "content": [{"type": "text", "text": "fresh"}],
+            "structuredContent": {"ok": True},
+            "isError": False,
+            "meta": {},
+        }
+
+    monkeypatch.setattr(
+        "sidepouch_mcp.mcp.server.call_upstream_tool", _fake_call
+    )
+    monkeypatch.setattr(
+        "sidepouch_mcp.mcp.handlers.mirrored_tool.upsert_artifact_ref",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            RuntimeError("FK violated")
+        ),
+    )
+    monkeypatch.setattr(
+        "sidepouch_mcp.mcp.handlers.mirrored_tool.persist_artifact",
+        lambda **_kwargs: _persisted_handle(),
+    )
+
+    response = asyncio.run(
+        server.handle_mirrored_tool(
+            mirrored,
+            {
+                "_gateway_context": {"session_id": "sess_1"},
+                "message": "hello",
+            },
+        )
+    )
+    assert response["type"] == "gateway_tool_result"
+    assert response["artifact_id"] == "art_new"
+    assert response["meta"]["cache"]["reused"] is False
+    assert response["meta"]["cache"]["reason"] == "artifact_ref_attach_failed"
+    assert response["meta"]["cache"]["artifact_id_origin"] == "fresh"
+
+
+def test_handle_mirrored_tool_cache_mode_bypass_skips_reuse(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    config = GatewayConfig(data_dir=tmp_path, passthrough_max_bytes=0)
+    server = GatewayServer(
+        config=config,
+        upstreams=[_upstream()],
+        db_pool=_FakePool(
+            ("art_cached", "payload_hash", "schema_echo", "ready", 3)
+        ),  # type: ignore[arg-type]
+        metrics=GatewayMetrics(),
+    )
+    mirrored = server.mirrored_tools["demo.echo"]
+
+    async def _fake_call(_instance, _tool_name, _arguments):
+        return {
+            "content": [{"type": "text", "text": "fresh"}],
+            "structuredContent": {"ok": True},
+            "isError": False,
+            "meta": {},
+        }
+
+    monkeypatch.setattr(
+        "sidepouch_mcp.mcp.server.call_upstream_tool", _fake_call
+    )
+    monkeypatch.setattr(
+        "sidepouch_mcp.mcp.handlers.mirrored_tool.persist_artifact",
+        lambda **_kwargs: _persisted_handle(),
+    )
+
+    response = asyncio.run(
+        server.handle_mirrored_tool(
+            mirrored,
+            {
+                "_gateway_context": {
+                    "session_id": "sess_1",
+                    "cache_mode": "bypass",
+                },
+                "message": "hello",
+            },
+        )
+    )
+    assert response["type"] == "gateway_tool_result"
+    assert response["artifact_id"] == "art_new"
+    assert response["meta"]["cache"]["reused"] is False
+    assert response["meta"]["cache"]["cache_mode"] == "bypass"
+    assert response["meta"]["cache"]["reason"] == "cache_bypass_requested"
+
+
+def test_handle_mirrored_tool_cache_mode_refresh_skips_reuse(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    config = GatewayConfig(data_dir=tmp_path, passthrough_max_bytes=0)
+    server = GatewayServer(
+        config=config,
+        upstreams=[_upstream()],
+        db_pool=_FakePool(
+            ("art_cached", "payload_hash", "schema_echo", "ready", 3)
+        ),  # type: ignore[arg-type]
+        metrics=GatewayMetrics(),
+    )
+    mirrored = server.mirrored_tools["demo.echo"]
+
+    async def _fake_call(_instance, _tool_name, _arguments):
+        return {
+            "content": [{"type": "text", "text": "fresh"}],
+            "structuredContent": {"ok": True},
+            "isError": False,
+            "meta": {},
+        }
+
+    monkeypatch.setattr(
+        "sidepouch_mcp.mcp.server.call_upstream_tool", _fake_call
+    )
+    monkeypatch.setattr(
+        "sidepouch_mcp.mcp.handlers.mirrored_tool.persist_artifact",
+        lambda **_kwargs: _persisted_handle(),
+    )
+
+    response = asyncio.run(
+        server.handle_mirrored_tool(
+            mirrored,
+            {
+                "_gateway_context": {
+                    "session_id": "sess_1",
+                    "cache_mode": "refresh",
+                },
+                "message": "hello",
+            },
+        )
+    )
+    assert response["type"] == "gateway_tool_result"
+    assert response["artifact_id"] == "art_new"
+    assert response["meta"]["cache"]["reused"] is False
+    assert response["meta"]["cache"]["cache_mode"] == "refresh"
+    assert response["meta"]["cache"]["reason"] == "cache_refresh_requested"
+
+
+def test_handle_mirrored_tool_sets_stable_upstream_error_code(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    server = GatewayServer(
+        config=GatewayConfig(data_dir=tmp_path),
+        upstreams=[_upstream()],
+        metrics=GatewayMetrics(),
+    )
+    mirrored = server.mirrored_tools["demo.echo"]
+
+    async def _dns_failure(*_args, **_kwargs):
+        raise socket.gaierror("nodename nor servname provided")
+
+    monkeypatch.setattr(
+        "sidepouch_mcp.mcp.server.call_upstream_tool", _dns_failure
+    )
+
+    response = asyncio.run(
+        server.handle_mirrored_tool(
+            mirrored,
+            {
+                "_gateway_context": {"session_id": "sess_1"},
+                "message": "hello",
+            },
+        )
+    )
+    assert response["isError"] is True
+    assert response["meta"]["gateway_error_code"] == "UPSTREAM_DNS_FAILURE"
+    assert (
+        server.upstream_runtime["demo"]["last_error_code"]
+        == "UPSTREAM_DNS_FAILURE"
+    )
 
 
 def test_handle_mirrored_tool_returns_busy_when_lock_times_out(
@@ -722,6 +977,8 @@ def test_artifact_search_db_runtime_returns_items(
         )
     )
     assert response["truncated"] is False
+    assert response["pagination"]["layer"] == "artifact_retrieval"
+    assert response["pagination"]["retrieval_status"] == "COMPLETE"
     assert response["items"][0]["artifact_id"] == "art_1"
     assert conn.committed is True
 
@@ -779,6 +1036,8 @@ def test_artifact_get_db_runtime_returns_envelope_items(
         )
     )
     assert response["target"] == "envelope"
+    assert response["pagination"]["layer"] == "artifact_retrieval"
+    assert response["pagination"]["retrieval_status"] == "COMPLETE"
     assert response["items"][0]["type"] == "mcp_envelope"
     assert conn.committed is True
 
@@ -837,11 +1096,74 @@ def test_artifact_get_cursor_includes_target_and_jsonpath_binding(
     )
     assert response["truncated"] is True
     assert response["cursor"] == "cur_next"
+    assert response["pagination"]["retrieval_status"] == "PARTIAL"
+    assert response["pagination"]["partial_reason"] == "CURSOR_AVAILABLE"
+    assert response["pagination"]["next_cursor"] == "cur_next"
     extra = issued["extra"]
     assert isinstance(extra, dict)
     assert extra["target"] == "envelope"
     assert extra["normalized_jsonpath"] == "$.items[*]"
     assert extra["artifact_generation"] == 1
+
+
+def test_artifact_get_jsonpath_evaluates_against_json_target(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    """Jsonpath evaluates against the mapped JSON part, not the envelope."""
+    envelope = {
+        "type": "mcp_envelope",
+        "content": [
+            {
+                "type": "json",
+                "value": {"users": [{"id": 1}, {"id": 2}]},
+            }
+        ],
+    }
+    conn = _SeqConnection(
+        [
+            _SeqCursor(one=(1,)),
+            _SeqCursor(
+                one=(
+                    "art_1",
+                    "payload_hash",
+                    None,
+                    "full",
+                    "ready",
+                    1,
+                    0,  # mapped_part_index
+                    "",
+                    envelope,
+                    "none",
+                    b"",
+                    0,
+                    False,
+                )
+            ),
+        ]
+    )
+    server = GatewayServer(
+        config=GatewayConfig(data_dir=tmp_path),
+        db_pool=_SeqPool(conn),  # type: ignore[arg-type]
+    )
+    monkeypatch.setattr(
+        server, "_safe_touch_for_retrieval", lambda *args, **kwargs: None
+    )
+    response = asyncio.run(
+        server.handle_artifact_get(
+            {
+                "_gateway_context": {"session_id": "sess_1"},
+                "artifact_id": "art_1",
+                "target": "envelope",
+                "jsonpath": "$.users[*]",
+            }
+        )
+    )
+    # $.users[*] resolves through the JSON content part, not the envelope.
+    assert len(response["items"]) == 2
+    assert response["items"][0] == {"id": 1}
+    assert response["items"][1] == {"id": 2}
+    assert response["pagination"]["retrieval_status"] == "COMPLETE"
 
 
 def test_artifact_get_cursor_target_mismatch_returns_stale(
@@ -1014,6 +1336,7 @@ def test_artifact_select_db_runtime_partial_projects_records(
     assert response["sampled_only"] is True
     assert response["sampled_prefix_len"] == 9
     assert response["items"][0]["projection"]["$.id"] == 1
+    assert response["pagination"]["retrieval_status"] == "COMPLETE"
 
 
 def test_artifact_select_cursor_sample_set_mismatch_returns_stale(
@@ -1146,6 +1469,8 @@ def test_artifact_select_cursor_includes_partial_binding_fields(
     )
     assert response["truncated"] is True
     assert response["cursor"] == "cur_next"
+    assert response["pagination"]["retrieval_status"] == "PARTIAL"
+    assert response["pagination"]["next_cursor"] == "cur_next"
 
     extra = issued["extra"]
     assert isinstance(extra, dict)
@@ -1212,6 +1537,9 @@ def test_artifact_find_db_runtime_filters_samples(
     )
     assert len(response["items"]) == 1
     assert response["items"][0]["sample_index"] == 1
+    assert "record" not in response["items"][0]
+    assert response["matched_count"] == 1
+    assert response["pagination"]["retrieval_status"] == "COMPLETE"
 
 
 def test_artifact_find_cursor_map_budget_mismatch_returns_stale(
@@ -1255,6 +1583,179 @@ def test_artifact_find_cursor_map_budget_mismatch_returns_stale(
     assert response["code"] == "CURSOR_STALE"
     assert "map_budget_fingerprint mismatch" in response["message"]
     assert counter_value(server.metrics.cursor_stale_map_budget) == 1
+
+
+def test_artifact_find_full_mapping_returns_records(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    """artifact.find with map_kind=full returns records from envelope."""
+    envelope = {
+        "type": "mcp_envelope",
+        "content": [
+            {
+                "type": "json",
+                "value": {
+                    "items": [
+                        {"id": 1, "status": "ACTIVE"},
+                        {"id": 2, "status": "PAUSED"},
+                        {"id": 3, "status": "ACTIVE"},
+                    ]
+                },
+            }
+        ],
+    }
+    conn = _SeqConnection(
+        [
+            # artifact_visible
+            _SeqCursor(one=(1,)),
+            # artifact_meta: map_kind=full, map_status=ready
+            _SeqCursor(one=("art_1", "full", "ready", "off", None, 1, "")),
+            # roots
+            _SeqCursor(
+                all_rows=[
+                    (
+                        "items",
+                        "$.items",
+                        3,
+                        1.0,
+                        {},
+                        3.0,
+                        "array",
+                        {"id": {"number": 3}},
+                        None,
+                    )
+                ]
+            ),
+            # FETCH_ARTIFACT_SQL for envelope reconstruction
+            _SeqCursor(
+                one=(
+                    "art_1",
+                    "payload_hash",
+                    None,
+                    "full",
+                    "ready",
+                    1,
+                    0,  # mapped_part_index
+                    "",
+                    envelope,
+                    "none",
+                    b"",
+                    0,
+                    False,
+                )
+            ),
+        ]
+    )
+    server = GatewayServer(
+        config=GatewayConfig(data_dir=tmp_path),
+        db_pool=_SeqPool(conn),  # type: ignore[arg-type]
+    )
+    monkeypatch.setattr(
+        server, "_safe_touch_for_retrieval", lambda *args, **kwargs: None
+    )
+
+    response = asyncio.run(
+        server.handle_artifact_find(
+            {
+                "_gateway_context": {"session_id": "sess_1"},
+                "artifact_id": "art_1",
+            }
+        )
+    )
+    assert len(response["items"]) == 3
+    assert "record" not in response["items"][0]
+    assert response["items"][0]["record_hash"] is not None
+    assert response["items"][0]["index"] == 0
+    assert response["items"][0]["root_path"] == "$.items"
+    assert response["sampled_only"] is False
+    assert response["matched_count"] == 3
+
+
+def test_artifact_find_full_mapping_with_where_filter(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    """artifact.find with map_kind=full applies where filter correctly."""
+    envelope = {
+        "type": "mcp_envelope",
+        "content": [
+            {
+                "type": "json",
+                "value": {
+                    "items": [
+                        {"id": 1, "status": "ACTIVE"},
+                        {"id": 2, "status": "PAUSED"},
+                        {"id": 3, "status": "ACTIVE"},
+                    ]
+                },
+            }
+        ],
+    }
+    conn = _SeqConnection(
+        [
+            _SeqCursor(one=(1,)),
+            _SeqCursor(one=("art_1", "full", "ready", "off", None, 1, "")),
+            _SeqCursor(
+                all_rows=[
+                    (
+                        "items",
+                        "$.items",
+                        3,
+                        1.0,
+                        {},
+                        3.0,
+                        "array",
+                        {"id": {"number": 3}},
+                        None,
+                    )
+                ]
+            ),
+            _SeqCursor(
+                one=(
+                    "art_1",
+                    "payload_hash",
+                    None,
+                    "full",
+                    "ready",
+                    1,
+                    0,
+                    "",
+                    envelope,
+                    "none",
+                    b"",
+                    0,
+                    False,
+                )
+            ),
+        ]
+    )
+    server = GatewayServer(
+        config=GatewayConfig(data_dir=tmp_path),
+        db_pool=_SeqPool(conn),  # type: ignore[arg-type]
+    )
+    monkeypatch.setattr(
+        server, "_safe_touch_for_retrieval", lambda *args, **kwargs: None
+    )
+
+    response = asyncio.run(
+        server.handle_artifact_find(
+            {
+                "_gateway_context": {"session_id": "sess_1"},
+                "artifact_id": "art_1",
+                "where": {
+                    "path": "$.status",
+                    "op": "eq",
+                    "value": "ACTIVE",
+                },
+            }
+        )
+    )
+    assert len(response["items"]) == 2
+    assert "record" not in response["items"][0]
+    assert "record" not in response["items"][1]
+    assert response["sampled_only"] is False
+    assert response["matched_count"] == 2
 
 
 def test_artifact_chain_pages_db_runtime_returns_cursor_when_truncated(
@@ -1312,6 +1813,8 @@ def test_artifact_chain_pages_db_runtime_returns_cursor_when_truncated(
     )
     assert response["truncated"] is True
     assert response["cursor"] == "cur_next"
+    assert response["pagination"]["retrieval_status"] == "PARTIAL"
+    assert response["pagination"]["next_cursor"] == "cur_next"
     assert response["items"][0]["artifact_id"] == "art_page_1"
 
 

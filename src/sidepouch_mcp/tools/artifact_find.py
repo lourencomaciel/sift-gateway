@@ -17,6 +17,10 @@ from __future__ import annotations
 
 from typing import Any, Sequence
 
+from sidepouch_mcp.pagination.contract import (
+    build_retrieval_pagination_meta,
+)
+
 
 def validate_find_args(arguments: dict[str, Any]) -> dict[str, Any] | None:
     """Validate ``artifact.find`` arguments.
@@ -72,19 +76,22 @@ def build_find_response(
     sampled_only: bool = True,
     index_status: str = "off",
     determinism: dict[str, str] | None = None,
+    matched_count: int | None = None,
 ) -> dict[str, Any]:
     """Build the ``artifact.find`` response dict.
 
-    Operates in sample-only mode unless a full-text index is
-    ready (``index_status == "ready"``).
+    Items contain locators only (root_path, index or
+    sample_index, record_hash) — not full record bodies.
 
     Args:
-        items: Matched records from the find operation.
+        items: Matched record locators from the find operation.
         truncated: Whether the result set was truncated.
         cursor: Opaque pagination cursor, or ``None``.
         sampled_only: Whether results come from sampled data.
         index_status: Full-text index readiness status.
         determinism: Dict with determinism contract metadata.
+        matched_count: Total number of records matching the
+            filter before pagination truncation, or ``None``.
 
     Returns:
         Structured response dict for ``artifact.find``.
@@ -93,9 +100,21 @@ def build_find_response(
         "items": items,
         "truncated": truncated,
         "sampled_only": sampled_only and index_status != "ready",
+        "pagination": build_retrieval_pagination_meta(
+            truncated=truncated,
+            cursor=cursor if cursor else None,
+        ),
     }
+    if matched_count is not None:
+        result["matched_count"] = matched_count
     if cursor:
         result["cursor"] = cursor
     if determinism:
         result["determinism"] = determinism
+    result["hint"] = (
+        "Items contain locators only (root_path, index or "
+        "sample_index, record_hash). Use artifact.select "
+        "with select_paths to retrieve specific fields "
+        "from matched records."
+    )
     return result

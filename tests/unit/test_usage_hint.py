@@ -88,6 +88,7 @@ def test_array_root_with_fields() -> None:
     assert "name" in hint
     assert "status" in hint
     assert "artifact.select" in hint
+    assert "Minimize context usage" in hint
     assert "art_3" in hint
 
 

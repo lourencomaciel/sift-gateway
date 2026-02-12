@@ -70,6 +70,8 @@ def test_build_chain_pages_response_formats_rows() -> None:
     assert len(result["items"]) == 2
     assert result["truncated"] is False
     assert result["cursor"] is None
+    assert result["pagination"]["layer"] == "artifact_retrieval"
+    assert result["pagination"]["retrieval_status"] == "COMPLETE"
 
     item0 = result["items"][0]
     assert item0["artifact_id"] == "art_page_1"
@@ -100,6 +102,8 @@ def test_build_chain_pages_response_with_truncated_and_cursor() -> None:
     result = build_chain_pages_response(rows, truncated=True, cursor="cur_next")
     assert result["truncated"] is True
     assert result["cursor"] == "cur_next"
+    assert result["pagination"]["retrieval_status"] == "PARTIAL"
+    assert result["pagination"]["next_cursor"] == "cur_next"
 
 
 def test_build_chain_pages_response_handles_missing_optional_fields() -> None:

@@ -141,6 +141,12 @@ class TestToUpstreamConfigs:
                         "strict_schema_reuse": False,
                         "passthrough_allowed": False,
                         "dedupe_exclusions": ["$.meta.timestamp"],
+                        "pagination": {
+                            "strategy": "cursor",
+                            "cursor_response_path": "$.paging.cursors.after",
+                            "cursor_param_name": "after",
+                            "has_more_response_path": "$.paging.next",
+                        },
                     },
                 }
             }
@@ -150,6 +156,7 @@ class TestToUpstreamConfigs:
         assert c["strict_schema_reuse"] is False
         assert c["passthrough_allowed"] is False
         assert c["dedupe_exclusions"] == ["$.meta.timestamp"]
+        assert c["pagination"]["strategy"] == "cursor"
 
     def test_gateway_extensions_invalid_type_raises(self) -> None:
         with pytest.raises(ValueError, match="_gateway must be a JSON object"):
@@ -286,6 +293,13 @@ class TestLoadGatewayConfigMcpServers:
                             "_gateway": {
                                 "semantic_salt_env_keys": ["GITHUB_ORG"],
                                 "strict_schema_reuse": False,
+                                "pagination": {
+                                    "strategy": "cursor",
+                                    "cursor_response_path": (
+                                        "$.paging.cursors.after"
+                                    ),
+                                    "cursor_param_name": "after",
+                                },
                             },
                         },
                     }
@@ -296,6 +310,9 @@ class TestLoadGatewayConfigMcpServers:
         gh = config.upstreams[0]
         assert gh.semantic_salt_env_keys == ["GITHUB_ORG"]
         assert gh.strict_schema_reuse is False
+        assert gh.pagination is not None
+        assert gh.pagination.strategy == "cursor"
+        assert gh.pagination.cursor_param_name == "after"
 
     def test_legacy_upstreams_raises_migration_error(
         self, tmp_path: Path
