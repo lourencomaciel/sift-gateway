@@ -21,11 +21,12 @@ if TYPE_CHECKING:
 
 _PAGINATION_COLUMNS = [
     "artifact_id",
+    "deleted_at",
     "envelope",
 ]
 
 FETCH_ENVELOPE_META_SQL = """
-SELECT a.artifact_id, pb.envelope
+SELECT a.artifact_id, a.deleted_at, pb.envelope
 FROM artifacts a
 JOIN payload_blobs pb ON pb.workspace_id = a.workspace_id
     AND pb.payload_hash_full = a.payload_hash_full
@@ -134,6 +135,8 @@ async def handle_artifact_next_page(
 
     if row is None:
         return gateway_error("NOT_FOUND", "artifact envelope not found")
+    if row.get("deleted_at") is not None:
+        return gateway_error("GONE", "artifact has been deleted")
 
     state = _extract_pagination_state(row.get("envelope"))
     if state is None:

@@ -52,11 +52,13 @@ from sidepouch_mcp.obs.logging import get_logger
 from sidepouch_mcp.pagination.contract import (
     PAGINATION_WARNING_INCOMPLETE_RESULT_SET,
     RETRIEVAL_STATUS_PARTIAL,
+    UPSTREAM_PARTIAL_REASON_MORE_PAGES_AVAILABLE,
     UPSTREAM_PARTIAL_REASON_SIGNAL_INCONCLUSIVE,
     build_upstream_pagination_meta,
 )
 from sidepouch_mcp.pagination.extract import (
     PaginationAssessment,
+    PaginationState,
     assess_pagination,
 )
 from sidepouch_mcp.request_identity import compute_request_identity
@@ -469,6 +471,25 @@ def _cached_pagination_meta_for_reuse(
             envelope_dict = decoded
     if envelope_dict is None:
         return None
+
+    meta = envelope_dict.get("meta")
+    if isinstance(meta, dict):
+        pagination_raw = meta.get("_gateway_pagination")
+        if isinstance(pagination_raw, dict):
+            try:
+                stored_state = PaginationState.from_dict(pagination_raw)
+            except (TypeError, ValueError, KeyError):
+                stored_state = None
+            if stored_state is not None:
+                assessment = PaginationAssessment(
+                    state=stored_state,
+                    has_more=True,
+                    retrieval_status=RETRIEVAL_STATUS_PARTIAL,
+                    partial_reason=UPSTREAM_PARTIAL_REASON_MORE_PAGES_AVAILABLE,
+                    warning=PAGINATION_WARNING_INCOMPLETE_RESULT_SET,
+                    page_number=stored_state.page_number,
+                )
+                return _pagination_response_meta(assessment, artifact_id)
 
     if envelope_dict.get("status") == "error":
         assessment = PaginationAssessment(

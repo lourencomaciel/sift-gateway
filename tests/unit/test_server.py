@@ -786,6 +786,97 @@ def test_handle_mirrored_tool_cache_hit_includes_pagination_meta(
     }
 
 
+def test_handle_mirrored_tool_cache_hit_uses_stored_pagination_state(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    config = GatewayConfig(data_dir=tmp_path)
+    envelope = {
+        "status": "ok",
+        "meta": {
+            "_gateway_pagination": {
+                "upstream_prefix": "demo",
+                "tool_name": "echo",
+                "original_args": {"message": "hello"},
+                "next_params": {"after": "CURSOR_2"},
+                "page_number": 0,
+            }
+        },
+        "content_summary": {
+            "part_count": 1,
+            "part_types": ["json"],
+        },
+    }
+    conn = _SeqConnection(
+        [
+            _SeqCursor(
+                one=("art_cached", "payload_hash", "schema_echo", "ready", 1)
+            ),
+            _SeqCursor(one=(0, envelope)),
+        ]
+    )
+    server = GatewayServer(
+        config=config,
+        upstreams=[_upstream_with_pagination()],
+        db_pool=_SeqPool(conn),  # type: ignore[arg-type]
+        metrics=GatewayMetrics(),
+    )
+    mirrored = server.mirrored_tools["demo.echo"]
+
+    async def _lock_acquired(*_args, **_kwargs) -> bool:
+        return True
+
+    monkeypatch.setattr(
+        "sidepouch_mcp.mcp.handlers.mirrored_tool.acquire_advisory_lock_async",
+        _lock_acquired,
+    )
+    monkeypatch.setattr(
+        "sidepouch_mcp.mcp.handlers.mirrored_tool.release_advisory_lock",
+        lambda *_args, **_kwargs: None,
+    )
+
+    async def _must_not_call(*_args, **_kwargs):
+        raise AssertionError("upstream should not be called on reuse")
+
+    monkeypatch.setattr(
+        "sidepouch_mcp.mcp.server.call_upstream_tool", _must_not_call
+    )
+    monkeypatch.setattr(
+        "sidepouch_mcp.mcp.handlers.mirrored_tool.upsert_session",
+        lambda *_args, **_kwargs: True,
+    )
+    monkeypatch.setattr(
+        "sidepouch_mcp.mcp.handlers.mirrored_tool.upsert_artifact_ref",
+        lambda *_args, **_kwargs: True,
+    )
+    monkeypatch.setattr(
+        "sidepouch_mcp.mcp.handlers.mirrored_tool._fetch_inline_describe",
+        lambda *_args, **_kwargs: (
+            {"artifact_id": "art_cached", "roots": []},
+            "hint",
+        ),
+    )
+
+    response = asyncio.run(
+        server.handle_mirrored_tool(
+            mirrored,
+            {
+                "_gateway_context": {"session_id": "sess_1"},
+                "message": "hello",
+            },
+        )
+    )
+    pagination = response.get("pagination")
+    assert isinstance(pagination, dict)
+    assert pagination["retrieval_status"] == "PARTIAL"
+    assert pagination["partial_reason"] == "MORE_PAGES_AVAILABLE"
+    assert pagination["has_next_page"] is True
+    assert pagination["next_action"]["tool"] == "artifact_next_page"
+    assert pagination["next_action"]["arguments"] == {
+        "artifact_id": "art_cached"
+    }
+
+
 def test_handle_mirrored_tool_falls_back_to_fresh_when_ref_attach_fails(
     tmp_path: Path,
     monkeypatch,
@@ -2008,6 +2099,38 @@ def test_artifact_chain_pages_db_runtime_returns_cursor_when_truncated(
     assert response["pagination"]["retrieval_status"] == "PARTIAL"
     assert response["pagination"]["next_cursor"] == "cur_next"
     assert response["items"][0]["artifact_id"] == "art_page_1"
+
+
+def test_artifact_next_page_returns_gone_for_deleted_artifact(
+    tmp_path: Path,
+) -> None:
+    conn = _SeqConnection(
+        [
+            _SeqCursor(one=(1,)),
+            _SeqCursor(
+                one=(
+                    "art_1",
+                    "2026-01-01T00:00:00Z",
+                    {"meta": {"warnings": []}},
+                )
+            ),
+        ]
+    )
+    server = GatewayServer(
+        config=GatewayConfig(data_dir=tmp_path),
+        db_pool=_SeqPool(conn),  # type: ignore[arg-type]
+    )
+
+    response = asyncio.run(
+        server.handle_artifact_next_page(
+            {
+                "_gateway_context": {"session_id": "sess_1"},
+                "artifact_id": "art_1",
+            }
+        )
+    )
+    assert response["code"] == "GONE"
+    assert response["message"] == "artifact has been deleted"
 
 
 # ---------------------------------------------------------------------------
