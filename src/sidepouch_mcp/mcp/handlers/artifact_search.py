@@ -30,6 +30,7 @@ _SEARCH_COLUMNS = [
     "error_summary",
     "map_kind",
     "map_status",
+    "chain_seq",
 ]
 
 
@@ -60,10 +61,17 @@ async def handle_artifact_search(
     if "code" in parsed:
         return gateway_error(str(parsed["code"]), str(parsed["message"]))
     if ctx.db_pool is None:
-        return ctx._not_implemented("artifact.search")
+        return ctx._not_implemented("artifact")
 
     session_id = str(parsed["session_id"])
     order_by = str(parsed["order_by"])
+    filters = dict(parsed["filters"])
+    parent_filter = filters.get("parent_artifact_id", "")
+    cursor_artifact_id = ctx._cursor_session_artifact_id(
+        session_id, order_by
+    )
+    if parent_filter:
+        cursor_artifact_id = f"{cursor_artifact_id}:p={parent_filter}"
     limit = min(int(parsed["limit"]), ctx.config.artifact_search_max_limit)
     offset = 0
     cursor_token = parsed.get("cursor")
@@ -71,10 +79,8 @@ async def handle_artifact_search(
         try:
             position = ctx._verify_cursor(
                 token=cursor_token,
-                tool="artifact.search",
-                artifact_id=ctx._cursor_session_artifact_id(
-                    session_id, order_by
-                ),
+                tool="artifact",
+                artifact_id=cursor_artifact_id,
             )
         except (CursorTokenError, CursorExpiredError, CursorStaleError) as exc:
             return ctx._cursor_error(exc)
@@ -85,7 +91,7 @@ async def handle_artifact_search(
 
     sql, params = build_search_query(
         session_id,
-        dict(parsed["filters"]),
+        filters,
         order_by,
         limit,
         offset=offset,
@@ -113,8 +119,8 @@ async def handle_artifact_search(
     next_cursor: str | None = None
     if truncated:
         next_cursor = ctx._issue_cursor(
-            tool="artifact.search",
-            artifact_id=ctx._cursor_session_artifact_id(session_id, order_by),
+            tool="artifact",
+            artifact_id=cursor_artifact_id,
             position_state={"offset": offset + len(page_rows)},
         )
 
@@ -140,6 +146,7 @@ async def handle_artifact_search(
                 "error_summary": row["error_summary"],
                 "map_kind": row["map_kind"],
                 "map_status": row["map_status"],
+                "chain_seq": row.get("chain_seq"),
             }
             for row in page_rows
         ],

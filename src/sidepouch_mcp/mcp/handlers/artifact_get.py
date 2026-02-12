@@ -58,7 +58,7 @@ async def handle_artifact_get(
     if err is not None:
         return gateway_error(str(err["code"]), str(err["message"]))
     if ctx.db_pool is None:
-        return ctx._not_implemented("artifact.get")
+        return ctx._not_implemented("artifact")
 
     raw_ctx = arguments.get("_gateway_context")
     session_id = str(raw_ctx["session_id"]) if isinstance(raw_ctx, dict) else ""
@@ -91,7 +91,7 @@ async def handle_artifact_get(
         try:
             cursor_payload = ctx._verify_cursor_payload(
                 token=cursor_token,
-                tool="artifact.get",
+                tool="artifact",
                 artifact_id=artifact_id,
             )
             position = ctx._cursor_position(cursor_payload)
@@ -238,7 +238,7 @@ async def handle_artifact_get(
         if isinstance(generation, int):
             extra["artifact_generation"] = generation
         next_cursor = ctx._issue_cursor(
-            tool="artifact.get",
+            tool="artifact",
             artifact_id=artifact_id,
             position_state={
                 "offset": offset + len(selected),

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-NEXT_PAGE_TOOL_NAME: Literal["artifact_next_page"] = "artifact_next_page"
+NEXT_PAGE_TOOL_NAME: Literal["artifact"] = "artifact"
 
 PAGINATION_LAYER_UPSTREAM: Literal["upstream"] = "upstream"
 PAGINATION_LAYER_ARTIFACT_RETRIEVAL: Literal["artifact_retrieval"] = (
@@ -84,11 +84,16 @@ def build_upstream_pagination_meta(
     if has_next_page:
         next_action = {
             "tool": NEXT_PAGE_TOOL_NAME,
-            "arguments": {"artifact_id": artifact_id},
+            "arguments": {
+                "action": "next_page",
+                "artifact_id": artifact_id,
+            },
         }
         hint = (
-            "More results are available. Call artifact_next_page with "
-            f'artifact_id="{artifact_id}" to fetch the next page.'
+            "More results are available. Call "
+            'artifact(action="next_page", '
+            f'artifact_id="{artifact_id}") '
+            "to fetch the next page."
         )
     elif retrieval_status == RETRIEVAL_STATUS_PARTIAL:
         hint = (

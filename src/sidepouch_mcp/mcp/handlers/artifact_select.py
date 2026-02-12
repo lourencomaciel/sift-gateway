@@ -78,7 +78,7 @@ async def handle_artifact_select(
     if err is not None:
         return gateway_error(str(err["code"]), str(err["message"]))
     if ctx.db_pool is None:
-        return ctx._not_implemented("artifact.select")
+        return ctx._not_implemented("artifact")
 
     raw_ctx = arguments.get("_gateway_context")
     session_id = str(raw_ctx["session_id"]) if isinstance(raw_ctx, dict) else ""
@@ -130,7 +130,7 @@ async def handle_artifact_select(
         try:
             cursor_payload = ctx._verify_cursor_payload(
                 token=cursor_token,
-                tool="artifact.select",
+                tool="artifact",
                 artifact_id=artifact_id,
             )
             position = ctx._cursor_position(cursor_payload)
@@ -416,7 +416,7 @@ async def handle_artifact_select(
             extra["map_budget_fingerprint"] = map_budget_fingerprint
             extra["sample_set_hash"] = sample_set_hash_val
         next_cursor = ctx._issue_cursor(
-            tool="artifact.select",
+            tool="artifact",
             artifact_id=artifact_id,
             position_state={"offset": offset + len(selected)},
             extra=extra,

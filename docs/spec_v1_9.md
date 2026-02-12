@@ -11,11 +11,9 @@ SidePouch is a local, single-tenant MCP proxy that:
 3. Intercepts every tool call, forwards it upstream, and wraps the result in a **durable artifact envelope** stored to Postgres and the local filesystem.
 4. Returns the result to the caller: small payloads are returned raw (**passthrough mode**); large payloads return a **handle** with artifact ID, inline describe (mapping metadata + discovered roots), and a usage hint.
 5. Generates a **deterministic inventory** (full or partial schema mapping) for each artifact's JSON payload.
-6. Provides bounded, deterministic **retrieval** tools
-   (`artifact.get`, `artifact.select`, `artifact.describe`,
-   `artifact.find`, `artifact.search`, `artifact.chain_pages`) with
-   signed cursor pagination, plus `artifact.next_page` for upstream
-   page chaining.
+6. Provides a consolidated **`artifact`** retrieval tool with
+   actions (`get`, `select`, `describe`, `search`, `next_page`)
+   using signed cursor pagination.
 
 ### Design invariants
 
@@ -142,14 +140,18 @@ Conditional update: `deleted_at IS NULL AND map_status IN (pending, stale) AND g
 
 | Tool | Purpose |
 |------|---------|
-| `gateway.status` | Health, versions, budgets, connectivity |
-| `artifact.search` | List artifacts via `artifact_refs` (no touch on `last_referenced_at`) |
-| `artifact.get` | Retrieve envelope or mapped data with JSONPath; touches `last_referenced_at` |
-| `artifact.select` | Select paths from mapped roots; partial mode returns sampled-only subset |
-| `artifact.describe` | Mapping metadata with partial mapping disclosures |
-| `artifact.find` | Search within mapped data; sample-only unless indexed |
-| `artifact.chain_pages` | Paginate chain sequences ordered by `chain_seq ASC, created_seq ASC` |
-| `artifact.next_page` | Fetch next upstream page using stored pagination state |
+| `gateway_status` | Health, versions, budgets, connectivity |
+| `artifact` | Consolidated retrieval tool with `action` parameter |
+
+#### `artifact` actions
+
+| Action | Purpose |
+|--------|---------|
+| `describe` | Mapping metadata with partial mapping disclosures |
+| `get` | Retrieve envelope or mapped data with JSONPath; touches `last_referenced_at` |
+| `select` | Project fields from mapped roots; partial mode returns sampled-only subset |
+| `search` | List artifacts via `artifact_refs`; supports `chain_seq_asc` ordering for page chains |
+| `next_page` | Fetch next upstream page using stored pagination state |
 
 ### Response shape
 
@@ -179,8 +181,8 @@ Mirrored upstream tool responses include:
     "has_more": true,
     "page_number": 0,
     "next_action": {
-      "tool": "artifact.next_page",
-      "arguments": {"artifact_id": "art_..."}
+      "tool": "artifact",
+      "arguments": {"action": "next_page", "artifact_id": "art_..."}
     },
     "warning": "INCOMPLETE_RESULT_SET|null",
     "has_next_page": true,
@@ -249,10 +251,10 @@ Payloads at or above the passthrough threshold follow the handle-only path: the 
 - **`artifact_id`** and **cache metadata** (reuse status, request key).
 - cache metadata includes `reused`, `request_key`, `reason`,
   `artifact_id_origin` (`cache|fresh`), and normalized `cache_mode`.
-- **`describe`**: inline mapping metadata and discovered roots (same data as `artifact.describe`), fetched on the same DB connection with no extra round-trip.
-- **`usage_hint`**: a heuristic natural language hint (no LLM) describing what the artifact contains, which fields are available, and which retrieval tool to call next (`artifact.select` for arrays, `artifact.get` for dicts).
+- **`describe`**: inline mapping metadata and discovered roots (same data as `artifact(action="describe")`), fetched on the same DB connection with no extra round-trip.
+- **`usage_hint`**: a heuristic natural language hint (no LLM) describing what the artifact contains, which fields are available, and which retrieval action to call next (`select` for arrays, `get` for dicts).
 
-This eliminates the need for a separate `artifact.describe` call — the LLM can go directly from the tool response to `artifact.select` or `artifact.find`. The `artifact.describe` tool remains available for backwards compatibility and for inspecting artifacts after the initial response.
+This eliminates the need for a separate `describe` call — the LLM can go directly from the tool response to `artifact(action="select")`. The `describe` action remains available for inspecting artifacts after the initial response.
 
 ## 15. Workflow recipes
 
@@ -260,11 +262,11 @@ This eliminates the need for a separate `artifact.describe` call — the LLM can
 
 1. Call mirrored tool and receive `artifact_id`.
 2. Use inline `describe` to pick `root_path`.
-3. Call `artifact.select` or `artifact.find` with cursor paging.
+3. Call `artifact(action="select")` with cursor paging.
 4. Continue until `pagination.retrieval_status == "COMPLETE"`.
 
 ### 15.2 Upstream page chaining
 
 1. Inspect mirrored response `pagination.layer = "upstream"`.
-2. If `has_next_page`, call `artifact.next_page` with current `artifact_id`.
+2. If `has_next_page`, call `artifact(action="next_page")` with current `artifact_id`.
 3. Repeat until `pagination.retrieval_status == "COMPLETE"`.
