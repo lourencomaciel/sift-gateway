@@ -186,7 +186,11 @@ async def handle_artifact_next_page(
     if state is None:
         return gateway_error(
             "INVALID_ARGUMENT",
-            "artifact has no pagination state; cannot fetch next page",
+            "artifact has no upstream pagination state. "
+            "next_page fetches additional upstream pages. "
+            "To continue a select query, use "
+            'artifact(action="select", artifact_id=..., '
+            "cursor=...) instead.",
         )
 
     # Phase 2: Locate the mirrored tool.

@@ -893,3 +893,106 @@ def test_ne_with_null_value_present() -> None:
         evaluate_where({"x": None}, {"path": "$.x", "op": "ne", "value": None})
         is False
     )
+
+
+# ---------------------------------------------------------------------------
+# Cast functions: to_number, to_string
+# ---------------------------------------------------------------------------
+
+
+def test_to_number_string_gt() -> None:
+    """to_number converts string to number for ordered comparison."""
+    assert evaluate_where({"spend": "0.45"}, "to_number(spend) > 0") is True
+
+
+def test_to_number_string_zero() -> None:
+    assert evaluate_where({"spend": "0"}, "to_number(spend) > 0") is False
+
+
+def test_to_number_non_numeric_excludes_record() -> None:
+    """Non-convertible strings silently exclude the record."""
+    assert evaluate_where({"spend": "abc"}, "to_number(spend) > 0") is False
+
+
+def test_to_number_already_numeric() -> None:
+    assert evaluate_where({"spend": 42}, "to_number(spend) > 0") is True
+
+
+def test_to_number_integer_string() -> None:
+    assert evaluate_where({"n": "100"}, "to_number(n) >= 100") is True
+
+
+def test_to_number_nested_path() -> None:
+    assert evaluate_where({"a": {"b": "3.14"}}, "to_number(a.b) > 3") is True
+
+
+def test_to_number_eq() -> None:
+    """to_number works with equality operator too."""
+    assert evaluate_where({"x": "42"}, "to_number(x) == 42") is True
+
+
+def test_to_number_ne() -> None:
+    assert evaluate_where({"x": "42"}, "to_number(x) != 0") is True
+
+
+def test_to_number_with_and() -> None:
+    assert (
+        evaluate_where(
+            {"spend": "10.5", "status": "active"},
+            'to_number(spend) > 0 AND status == "active"',
+        )
+        is True
+    )
+
+
+def test_to_number_ast_includes_cast() -> None:
+    """Parsed AST includes cast field."""
+    ast = parse_where_expression("to_number(spend) > 0")
+    assert ast["cast"] == "to_number"
+    assert ast["path"] == "spend"
+    assert ast["op"] == "gt"
+
+
+def test_to_string_from_number() -> None:
+    assert evaluate_where({"code": 200}, 'to_string(code) == "200"') is True
+
+
+def test_to_string_from_bool() -> None:
+    assert evaluate_where({"flag": True}, 'to_string(flag) == "True"') is True
+
+
+def test_to_string_null_excludes_record() -> None:
+    """to_string on null silently excludes the record."""
+    assert evaluate_where({"x": None}, 'to_string(x) == "None"') is False
+
+
+def test_to_number_missing_path_returns_false() -> None:
+    """Missing path with cast returns False (no values)."""
+    assert evaluate_where({}, "to_number(missing) > 0") is False
+
+
+def test_to_number_in_operator() -> None:
+    """Cast works with IN operator."""
+    assert (
+        evaluate_where(
+            {"x": "1"},
+            {"path": "x", "op": "in", "value": [1, 2, 3], "cast": "to_number"},
+        )
+        is True
+    )
+
+
+def test_to_string_contains() -> None:
+    """Cast works with CONTAINS operator."""
+    assert (
+        evaluate_where(
+            {"code": 200},
+            {
+                "path": "code",
+                "op": "contains",
+                "value": "20",
+                "cast": "to_string",
+            },
+        )
+        is True
+    )

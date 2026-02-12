@@ -101,10 +101,21 @@ _BUILTIN_TOOL_DESCRIPTIONS: dict[str, str] = {
     "artifact": (
         "Interact with stored artifacts. "
         "Actions: describe (inspect structure), "
-        "get (retrieve data), "
-        "select (project fields from array), "
-        "search (find artifacts), "
+        "get (retrieve raw envelope or mapped metadata), "
+        "select (project/filter fields from array root), "
+        "search (find artifacts in session), "
         "next_page (fetch next upstream page). "
+        "Workflow: call describe first to see roots and "
+        "fields, then select with explicit field names and "
+        "a where filter. Use count_only=true for counts, "
+        "distinct=true for unique values. "
+        "Continue partial results with "
+        "select + cursor (not next_page). "
+        "next_page is only for fetching additional "
+        "upstream pages. "
+        "Filtering (where) and multi-field projection "
+        "(select_paths) are select-only — "
+        "do not combine them with get. "
         f"{PAGINATION_COMPLETENESS_RULE}"
     ),
 }
@@ -173,7 +184,18 @@ _BUILTIN_TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
                 ),
             },
             "where": {
-                "description": ("[select] WHERE-DSL filter expression."),
+                "description": (
+                    "[select] WHERE-DSL filter. "
+                    "Operators: =, !=, >, <, >=, <=, "
+                    "IN, CONTAINS, EXISTS, AND, OR, NOT. "
+                    "Casts: to_number(path), to_string(path). "
+                    "Paths are relative (no $ prefix). "
+                    "Strings use double quotes. "
+                    "Examples: 'spend != \"0\"', "
+                    "'to_number(spend) > 0', "
+                    '\'status IN ["active", "paused"]\', '
+                    "'EXISTS(email)'."
+                ),
             },
             "filters": {
                 "type": "object",
@@ -191,6 +213,21 @@ _BUILTIN_TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
                 ],
                 "description": (
                     "[search] Sort order. Default: created_seq_desc."
+                ),
+            },
+            "count_only": {
+                "type": "boolean",
+                "description": (
+                    "[select] Return only the count of matching "
+                    "records, no items. Skips projection and "
+                    "pagination."
+                ),
+            },
+            "distinct": {
+                "type": "boolean",
+                "description": (
+                    "[select] Deduplicate projected records. "
+                    "Returns only unique projections."
                 ),
             },
             "cursor": {
@@ -1640,41 +1677,31 @@ class GatewayServer:
         self, arguments: dict[str, Any]
     ) -> dict[str, Any]:
         """Delegate to ``handle_artifact`` with action=search."""
-        return await self.handle_artifact(
-            {**arguments, "action": "search"}
-        )
+        return await self.handle_artifact({**arguments, "action": "search"})
 
     async def handle_artifact_get(
         self, arguments: dict[str, Any]
     ) -> dict[str, Any]:
         """Delegate to ``handle_artifact`` with action=get."""
-        return await self.handle_artifact(
-            {**arguments, "action": "get"}
-        )
+        return await self.handle_artifact({**arguments, "action": "get"})
 
     async def handle_artifact_select(
         self, arguments: dict[str, Any]
     ) -> dict[str, Any]:
         """Delegate to ``handle_artifact`` with action=select."""
-        return await self.handle_artifact(
-            {**arguments, "action": "select"}
-        )
+        return await self.handle_artifact({**arguments, "action": "select"})
 
     async def handle_artifact_describe(
         self, arguments: dict[str, Any]
     ) -> dict[str, Any]:
         """Delegate to ``handle_artifact`` with action=describe."""
-        return await self.handle_artifact(
-            {**arguments, "action": "describe"}
-        )
+        return await self.handle_artifact({**arguments, "action": "describe"})
 
     async def handle_artifact_next_page(
         self, arguments: dict[str, Any]
     ) -> dict[str, Any]:
         """Delegate to ``handle_artifact`` with action=next_page."""
-        return await self.handle_artifact(
-            {**arguments, "action": "next_page"}
-        )
+        return await self.handle_artifact({**arguments, "action": "next_page"})
 
     async def handle_artifact_find(
         self, arguments: dict[str, Any]

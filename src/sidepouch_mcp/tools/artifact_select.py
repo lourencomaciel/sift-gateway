@@ -30,6 +30,10 @@ def validate_select_args(arguments: dict[str, Any]) -> dict[str, Any] | None:
     ``root_path``, and a non-empty ``select_paths`` list with
     relative (non-``$``) paths.
 
+    When a ``cursor`` is present, ``root_path``, ``select_paths``,
+    and ``where`` are optional — they will be extracted from the
+    signed cursor payload by the handler.
+
     Args:
         arguments: Raw tool arguments.
 
@@ -46,23 +50,43 @@ def validate_select_args(arguments: dict[str, Any]) -> dict[str, Any] | None:
     if not arguments.get("artifact_id"):
         return {"code": "INVALID_ARGUMENT", "message": "missing artifact_id"}
 
-    if not arguments.get("root_path"):
+    has_cursor = isinstance(arguments.get("cursor"), str) and bool(
+        arguments["cursor"]
+    )
+    count_only = arguments.get("count_only") is True
+
+    if not arguments.get("root_path") and not has_cursor:
         return {"code": "INVALID_ARGUMENT", "message": "missing root_path"}
 
     select_paths = arguments.get("select_paths")
-    if not isinstance(select_paths, list) or not select_paths:
-        return {
-            "code": "INVALID_ARGUMENT",
-            "message": "select_paths must be a non-empty list",
-        }
-
-    # Validate select_paths don't start with $ (must be relative)
-    for path in select_paths:
-        if isinstance(path, str) and path.startswith("$"):
+    if not has_cursor and not count_only:
+        if not isinstance(select_paths, list) or not select_paths:
             return {
                 "code": "INVALID_ARGUMENT",
-                "message": f"select_path must be relative (no $): {path}",
+                "message": "select_paths must be a non-empty list",
             }
+
+    # Validate individual select_paths entries.
+    if isinstance(select_paths, list):
+        for path in select_paths:
+            if not isinstance(path, str):
+                continue
+            if path == "*":
+                return {
+                    "code": "INVALID_ARGUMENT",
+                    "message": (
+                        "Wildcard '*' is not supported in "
+                        "select_paths. Use explicit field names "
+                        "(e.g. ['ad_name', 'spend']). Run "
+                        "artifact(action='describe') to see "
+                        "available fields."
+                    ),
+                }
+            if path.startswith("$"):
+                return {
+                    "code": "INVALID_ARGUMENT",
+                    "message": (f"select_path must be relative (no $): {path}"),
+                }
 
     return None
 
@@ -111,6 +135,7 @@ def build_select_result(
     items: list[dict[str, Any]],
     truncated: bool,
     cursor: str | None,
+    total_matched: int | None = None,
     sampled_only: bool = False,
     sample_indices_used: list[int] | None = None,
     sampled_prefix_len: int | None = None,
@@ -125,6 +150,8 @@ def build_select_result(
         truncated: Whether the result set was truncated by
             budget limits.
         cursor: Opaque pagination cursor, or ``None``.
+        total_matched: Total number of records that passed
+            the where filter, before pagination/truncation.
         sampled_only: Whether results come from partial
             (sampled) data rather than the full envelope.
         sample_indices_used: Indices of samples that
@@ -147,6 +174,8 @@ def build_select_result(
             cursor=cursor if cursor else None,
         ),
     }
+    if total_matched is not None:
+        result["total_matched"] = total_matched
     if cursor:
         result["cursor"] = cursor
     if omitted:
