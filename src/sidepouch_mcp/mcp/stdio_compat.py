@@ -49,11 +49,37 @@ def _detect_mode(buffer: bytes) -> str | None:
     trimmed = buffer.lstrip(b" \t\r\n")
     if not trimmed:
         return None
-    if trimmed.startswith((b"Content-Length:", b"content-length:")):
-        return "framed"
     if trimmed[:1] in {b"{", b"["}:
         return "line"
+    first_line_end = trimmed.find(b"\n")
+    if first_line_end >= 0:
+        first_line = trimmed[:first_line_end].rstrip(b"\r")
+    else:
+        first_line = trimmed
+    if _looks_like_header_line(first_line):
+        return "framed"
     return None
+
+
+def _looks_like_header_line(line: bytes) -> bool:
+    """Return whether *line* looks like an RFC-7230 header field."""
+    key, sep, _value = line.partition(b":")
+    if not sep:
+        return False
+    key = key.strip()
+    if not key:
+        return False
+
+    header_token_chars = b"!#$%&'*+-.^_`|~"
+    return all(
+        (
+            48 <= byte <= 57
+            or 65 <= byte <= 90
+            or 97 <= byte <= 122
+            or byte in header_token_chars
+        )
+        for byte in key
+    )
 
 
 def _parse_line_message(buffer: bytes) -> _ParseResult | None:

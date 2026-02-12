@@ -12,6 +12,12 @@ import sys
 import time
 from typing import Any
 
+from sidepouch_mcp.mcp.stdio_compat import (
+    _detect_mode,
+    _ModeState,
+    _parse_next_message,
+)
+
 
 class _ServerSession:
     """Manage a sidepouch stdio subprocess for protocol tests."""
@@ -55,11 +61,20 @@ class _ServerSession:
         self._process.stdin.write(body)
         self._process.stdin.flush()
 
-    def send_framed(self, payload: dict[str, Any]) -> None:
+    def send_framed(
+        self,
+        payload: dict[str, Any],
+        *,
+        extra_headers: list[tuple[str, str]] | None = None,
+    ) -> None:
         """Send Content-Length framed JSON payload."""
         assert self._process.stdin is not None
         body = json.dumps(payload).encode("utf-8")
-        frame = f"Content-Length: {len(body)}\r\n\r\n".encode("ascii") + body
+        headers: list[str] = []
+        if extra_headers:
+            headers.extend(f"{key}: {value}" for key, value in extra_headers)
+        headers.append(f"Content-Length: {len(body)}")
+        frame = "\r\n".join(headers).encode("ascii") + b"\r\n\r\n" + body
         self._process.stdin.write(frame)
         self._process.stdin.flush()
 
@@ -213,6 +228,29 @@ def test_stdio_supports_content_length_framing(tmp_path: Path) -> None:
         session.close()
 
 
+def test_stdio_supports_framing_with_non_first_content_length_header(
+    tmp_path: Path,
+) -> None:
+    session = _ServerSession(tmp_path)
+    try:
+        extra_headers = [("Content-Type", "application/json")]
+        session.send_framed(
+            _initialize_payload(), extra_headers=extra_headers
+        )
+        init_response = session.read_framed_message()
+        assert init_response["id"] == 1
+        assert "result" in init_response
+
+        session.send_framed(
+            _initialized_notification(), extra_headers=extra_headers
+        )
+        session.send_framed(_tools_list_payload(), extra_headers=extra_headers)
+        tools_response = session.read_framed_message()
+        assert tools_response["id"] == 2
+    finally:
+        session.close()
+
+
 def test_stdio_keeps_newline_json_compatibility(tmp_path: Path) -> None:
     session = _ServerSession(tmp_path)
     try:
@@ -234,3 +272,18 @@ def test_stdio_keeps_newline_json_compatibility(tmp_path: Path) -> None:
         assert isinstance(resources_response["result"]["resources"], list)
     finally:
         session.close()
+
+
+def test_detect_mode_recognizes_header_prefix_before_content_length() -> None:
+    payload = b'{"jsonrpc":"2.0"}'
+    frame = (
+        b"Content-Type: application/json\r\n"
+        + f"content-length: {len(payload)}".encode("ascii")
+        + b"\r\n\r\n"
+        + payload
+    )
+    assert _detect_mode(frame) == "framed"
+    parsed = _parse_next_message(frame, _ModeState())
+    assert parsed is not None
+    assert parsed.error is None
+    assert parsed.payload == payload
