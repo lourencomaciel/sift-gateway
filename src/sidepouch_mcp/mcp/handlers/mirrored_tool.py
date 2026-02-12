@@ -221,10 +221,15 @@ _DESCRIBE_COLUMNS = [
 _CACHED_PAGINATION_COLUMNS = [
     "chain_seq",
     "envelope",
+    "payload_hash_full",
+    "envelope_canonical_encoding",
+    "envelope_canonical_bytes",
 ]
 
 _FETCH_CACHED_PAGINATION_SQL = """
-SELECT a.chain_seq, pb.envelope
+SELECT a.chain_seq, pb.envelope, a.payload_hash_full,
+       pb.envelope_canonical_encoding,
+       pb.envelope_canonical_bytes
 FROM artifacts a
 JOIN payload_blobs pb ON pb.workspace_id = a.workspace_id
     AND pb.payload_hash_full = a.payload_hash_full
@@ -458,17 +463,38 @@ def _cached_pagination_meta_for_reuse(
         else 0
     )
 
-    envelope_raw = row.get("envelope")
-    envelope_dict: dict[str, Any] | None = None
-    if isinstance(envelope_raw, dict):
-        envelope_dict = envelope_raw
-    elif isinstance(envelope_raw, str):
-        try:
-            decoded = json.loads(envelope_raw)
-        except (json.JSONDecodeError, ValueError):
+    def _load_envelope_dict() -> dict[str, Any] | None:
+        envelope_raw = row.get("envelope")
+        envelope_dict: dict[str, Any] | None = None
+        if isinstance(envelope_raw, dict):
+            envelope_dict = envelope_raw
+        elif isinstance(envelope_raw, str):
+            try:
+                decoded = json.loads(envelope_raw)
+            except (json.JSONDecodeError, ValueError):
+                return None
+            if isinstance(decoded, dict):
+                envelope_dict = decoded
+        if envelope_dict is not None:
+            return envelope_dict
+
+        canonical_bytes_raw = row.get("envelope_canonical_bytes")
+        if canonical_bytes_raw is None:
             return None
-        if isinstance(decoded, dict):
-            envelope_dict = decoded
+        from sidepouch_mcp.storage.payload_store import reconstruct_envelope
+
+        try:
+            return reconstruct_envelope(
+                compressed_bytes=bytes(canonical_bytes_raw),
+                encoding=str(
+                    row.get("envelope_canonical_encoding", "none")
+                ),
+                expected_hash=str(row.get("payload_hash_full", "")),
+            )
+        except ValueError:
+            return None
+
+    envelope_dict = _load_envelope_dict()
     if envelope_dict is None:
         return None
 

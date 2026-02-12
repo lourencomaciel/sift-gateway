@@ -26,8 +26,10 @@ from sidepouch_mcp.mcp.upstream import (
     UpstreamToolSchema,
 )
 from sidepouch_mcp.obs.metrics import GatewayMetrics, counter_value
+from sidepouch_mcp.pagination.extract import PaginationState
 from sidepouch_mcp.query.select_paths import select_paths_hash
 from sidepouch_mcp.query.where_hash import where_hash
+from sidepouch_mcp.storage.payload_store import prepare_payload
 
 
 def _server(tmp_path: Path) -> GatewayServer:
@@ -870,6 +872,109 @@ def test_handle_mirrored_tool_cache_hit_uses_stored_pagination_state(
     assert isinstance(pagination, dict)
     assert pagination["retrieval_status"] == "PARTIAL"
     assert pagination["partial_reason"] == "MORE_PAGES_AVAILABLE"
+    assert pagination["has_next_page"] is True
+    assert pagination["next_action"]["tool"] == "artifact_next_page"
+    assert pagination["next_action"]["arguments"] == {
+        "artifact_id": "art_cached"
+    }
+
+
+def test_handle_mirrored_tool_cache_hit_rebuilds_pagination_from_canonical(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    config = GatewayConfig(data_dir=tmp_path)
+    envelope = {
+        "type": "mcp_envelope",
+        "upstream_instance_id": "inst_demo",
+        "upstream_prefix": "demo",
+        "tool": "echo",
+        "status": "ok",
+        "content": [
+            {
+                "type": "json",
+                "value": {
+                    "data": [{"id": "1"}],
+                    "paging": {
+                        "cursors": {"after": "CURSOR_2"},
+                        "next": "https://example.com/page2",
+                    },
+                },
+            }
+        ],
+        "error": None,
+        "meta": {"warnings": []},
+    }
+    prepared = prepare_payload(envelope)
+    conn = _SeqConnection(
+        [
+            _SeqCursor(
+                one=("art_cached", "payload_hash", "schema_echo", "ready", 1)
+            ),
+            _SeqCursor(
+                one=(
+                    0,
+                    None,
+                    prepared.payload_hash,
+                    prepared.encoding,
+                    prepared.compressed_bytes,
+                )
+            ),
+        ]
+    )
+    server = GatewayServer(
+        config=config,
+        upstreams=[_upstream_with_pagination()],
+        db_pool=_SeqPool(conn),  # type: ignore[arg-type]
+        metrics=GatewayMetrics(),
+    )
+    mirrored = server.mirrored_tools["demo.echo"]
+
+    async def _lock_acquired(*_args, **_kwargs) -> bool:
+        return True
+
+    monkeypatch.setattr(
+        "sidepouch_mcp.mcp.handlers.mirrored_tool.acquire_advisory_lock_async",
+        _lock_acquired,
+    )
+    monkeypatch.setattr(
+        "sidepouch_mcp.mcp.handlers.mirrored_tool.release_advisory_lock",
+        lambda *_args, **_kwargs: None,
+    )
+
+    async def _must_not_call(*_args, **_kwargs):
+        raise AssertionError("upstream should not be called on reuse")
+
+    monkeypatch.setattr(
+        "sidepouch_mcp.mcp.server.call_upstream_tool", _must_not_call
+    )
+    monkeypatch.setattr(
+        "sidepouch_mcp.mcp.handlers.mirrored_tool.upsert_session",
+        lambda *_args, **_kwargs: True,
+    )
+    monkeypatch.setattr(
+        "sidepouch_mcp.mcp.handlers.mirrored_tool.upsert_artifact_ref",
+        lambda *_args, **_kwargs: True,
+    )
+    monkeypatch.setattr(
+        "sidepouch_mcp.mcp.handlers.mirrored_tool._fetch_inline_describe",
+        lambda *_args, **_kwargs: (
+            {"artifact_id": "art_cached", "roots": []},
+            "hint",
+        ),
+    )
+
+    response = asyncio.run(
+        server.handle_mirrored_tool(
+            mirrored,
+            {
+                "_gateway_context": {"session_id": "sess_1"},
+                "message": "hello",
+            },
+        )
+    )
+    pagination = response.get("pagination")
+    assert isinstance(pagination, dict)
     assert pagination["has_next_page"] is True
     assert pagination["next_action"]["tool"] == "artifact_next_page"
     assert pagination["next_action"]["arguments"] == {
@@ -2131,6 +2236,80 @@ def test_artifact_next_page_returns_gone_for_deleted_artifact(
     )
     assert response["code"] == "GONE"
     assert response["message"] == "artifact has been deleted"
+
+
+def test_artifact_next_page_uses_canonical_envelope_when_jsonb_missing(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    state = PaginationState(
+        upstream_prefix="demo",
+        tool_name="echo",
+        original_args={"message": "hello"},
+        next_params={"after": "CURSOR_2"},
+        page_number=0,
+    )
+    envelope = {
+        "type": "mcp_envelope",
+        "upstream_instance_id": "inst_demo",
+        "upstream_prefix": "demo",
+        "tool": "echo",
+        "status": "ok",
+        "content": [],
+        "error": None,
+        "meta": {"_gateway_pagination": state.to_dict()},
+    }
+    prepared = prepare_payload(envelope)
+    conn = _SeqConnection(
+        [
+            _SeqCursor(one=(1,)),
+            _SeqCursor(
+                one=(
+                    "art_1",
+                    None,
+                    prepared.payload_hash,
+                    None,
+                    prepared.encoding,
+                    prepared.compressed_bytes,
+                )
+            ),
+        ]
+    )
+    server = GatewayServer(
+        config=GatewayConfig(data_dir=tmp_path),
+        upstreams=[_upstream_with_pagination()],
+        db_pool=_SeqPool(conn),  # type: ignore[arg-type]
+    )
+
+    captured: dict[str, object] = {}
+
+    async def _fake_next_page_call(_ctx, mirrored, arguments):
+        captured["qualified_name"] = mirrored.qualified_name
+        captured["arguments"] = arguments
+        return {"type": "gateway_tool_result", "artifact_id": "art_2"}
+
+    monkeypatch.setattr(
+        "sidepouch_mcp.mcp.handlers.mirrored_tool.handle_mirrored_tool",
+        _fake_next_page_call,
+    )
+
+    response = asyncio.run(
+        server.handle_artifact_next_page(
+            {
+                "_gateway_context": {"session_id": "sess_1"},
+                "artifact_id": "art_1",
+            }
+        )
+    )
+    assert response["artifact_id"] == "art_2"
+    assert captured["qualified_name"] == "demo.echo"
+    assert captured["arguments"] == {
+        "message": "hello",
+        "after": "CURSOR_2",
+        "_gateway_context": {"session_id": "sess_1"},
+        "_gateway_parent_artifact_id": "art_1",
+        "_gateway_chain_seq": 1,
+    }
 
 
 # ---------------------------------------------------------------------------

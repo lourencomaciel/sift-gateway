@@ -15,6 +15,7 @@ from sidepouch_mcp.constants import WORKSPACE_ID
 from sidepouch_mcp.envelope.responses import gateway_error
 from sidepouch_mcp.mcp.handlers.common import row_to_dict
 from sidepouch_mcp.pagination.extract import PaginationState
+from sidepouch_mcp.storage.payload_store import reconstruct_envelope
 
 if TYPE_CHECKING:
     from sidepouch_mcp.mcp.server import GatewayServer
@@ -22,11 +23,16 @@ if TYPE_CHECKING:
 _PAGINATION_COLUMNS = [
     "artifact_id",
     "deleted_at",
+    "payload_hash_full",
     "envelope",
+    "envelope_canonical_encoding",
+    "envelope_canonical_bytes",
 ]
 
 FETCH_ENVELOPE_META_SQL = """
-SELECT a.artifact_id, a.deleted_at, pb.envelope
+SELECT a.artifact_id, a.deleted_at, a.payload_hash_full,
+       pb.envelope, pb.envelope_canonical_encoding,
+       pb.envelope_canonical_bytes
 FROM artifacts a
 JOIN payload_blobs pb ON pb.workspace_id = a.workspace_id
     AND pb.payload_hash_full = a.payload_hash_full
@@ -69,6 +75,40 @@ def _extract_pagination_state(
         return None
 
     return PaginationState.from_dict(pagination_data)
+
+
+def _extract_envelope_dict(row: dict[str, Any]) -> dict[str, Any] | None:
+    """Load an envelope dict from JSONB or canonical bytes.
+
+    Args:
+        row: Database row containing envelope storage fields.
+
+    Returns:
+        Envelope dict, or ``None`` when loading fails.
+    """
+    envelope_raw = row.get("envelope")
+    if isinstance(envelope_raw, dict):
+        return envelope_raw
+    if isinstance(envelope_raw, str):
+        try:
+            decoded = json.loads(envelope_raw)
+        except (json.JSONDecodeError, ValueError):
+            return None
+        if isinstance(decoded, dict):
+            return decoded
+        return None
+
+    canonical_bytes_raw = row.get("envelope_canonical_bytes")
+    if canonical_bytes_raw is None:
+        return None
+    try:
+        return reconstruct_envelope(
+            compressed_bytes=bytes(canonical_bytes_raw),
+            encoding=str(row.get("envelope_canonical_encoding", "none")),
+            expected_hash=str(row.get("payload_hash_full", "")),
+        )
+    except ValueError:
+        return None
 
 
 async def handle_artifact_next_page(
@@ -138,7 +178,8 @@ async def handle_artifact_next_page(
     if row.get("deleted_at") is not None:
         return gateway_error("GONE", "artifact has been deleted")
 
-    state = _extract_pagination_state(row.get("envelope"))
+    envelope_dict = _extract_envelope_dict(row)
+    state = _extract_pagination_state(envelope_dict)
     if state is None:
         return gateway_error(
             "INVALID_ARGUMENT",
