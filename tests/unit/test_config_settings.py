@@ -3,11 +3,12 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pytest
 from pydantic import ValidationError
+import pytest
 
 from sidepouch_mcp.config.settings import (
     GatewayConfig,
+    PaginationConfig,
     UpstreamConfig,
     _deep_merge,
     _SparseList,
@@ -296,3 +297,29 @@ def test_upstream_config_inherit_parent_env_defaults_to_false() -> None:
         command="gh",
     )
     assert upstream.inherit_parent_env is False
+
+
+def test_pagination_config_offset_requires_has_more_path() -> None:
+    with pytest.raises(ValidationError):
+        PaginationConfig(
+            strategy="offset",
+            offset_param_name="offset",
+            page_size_param_name="limit",
+        )
+
+
+def test_pagination_config_page_number_requires_has_more_path() -> None:
+    with pytest.raises(ValidationError):
+        PaginationConfig(
+            strategy="page_number",
+            page_param_name="page",
+        )
+
+
+def test_pagination_config_cursor_allows_missing_has_more_path() -> None:
+    config = PaginationConfig(
+        strategy="cursor",
+        cursor_response_path="$.paging.cursors.after",
+        cursor_param_name="after",
+    )
+    assert config.has_more_response_path is None

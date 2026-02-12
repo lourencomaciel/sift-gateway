@@ -41,6 +41,77 @@ Design invariants (from v1.9 spec):
 - `artifact.describe`
 - `artifact.find`
 - `artifact.chain_pages`
+- `artifact.next_page`
+
+## Pagination Contract v1
+
+SidePouch exposes layer-explicit pagination metadata:
+
+- mirrored upstream tool responses use `pagination.layer = "upstream"`;
+- retrieval tool responses (`artifact.search/get/select/find/chain_pages`)
+  use `pagination.layer = "artifact_retrieval"`.
+
+Key fields:
+
+- `pagination.retrieval_status`: `PARTIAL` or `COMPLETE`
+- `pagination.partial_reason`: machine-readable partial reason or `null`
+- `pagination.has_more`: whether more data is available
+
+For upstream pagination, compatibility fields remain:
+
+- `pagination.has_next_page`
+- `pagination.hint`
+
+Completion rule:
+
+- do not claim full completeness until
+  `pagination.retrieval_status == "COMPLETE"`.
+
+## Gateway Context Controls
+
+Mirrored tool calls may include `_gateway_context.cache_mode`:
+
+- `normal` (default): reuse by `request_key` when possible;
+- `bypass`: skip reuse and force a fresh upstream call;
+- `refresh`: same as bypass, with explicit refresh intent.
+
+Backward-compatible aliases are still accepted:
+
+- `allow` -> `normal`
+- `fresh` -> `bypass`
+
+Handle responses include consistent cache metadata:
+
+- `reused`
+- `request_key`
+- `reason`
+- `artifact_id_origin` (`cache` or `fresh`)
+- `cache_mode` (normalized mode)
+
+### Session visibility on cache reuse
+
+When a mirrored call returns a reused `artifact_id`, SidePouch first
+attaches that artifact to the caller's session (`artifact_refs`) before
+returning the handle. This guarantees the returned handle is immediately
+retrievable by `artifact.get`, `artifact.describe`, `artifact.select`,
+and `artifact.find` in the same session.
+
+## Artifact-first Recipes
+
+### Large mirrored result -> retrieve deterministically
+
+1. Call mirrored tool (for example `meta_ads_get_campaigns`).
+2. If response includes `artifact_id`, use inline `describe` data to choose
+   `root_path`.
+3. Call `artifact.select` or `artifact.find` with pagination.
+4. Continue paging until `pagination.retrieval_status == "COMPLETE"`.
+
+### Upstream pagination chain
+
+1. Call mirrored tool and inspect `pagination.layer == "upstream"`.
+2. If `pagination.has_next_page` is true, call `artifact.next_page` with the
+   returned `artifact_id`.
+3. Repeat until `pagination.retrieval_status == "COMPLETE"`.
 
 ## Requirements
 

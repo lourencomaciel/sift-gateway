@@ -19,7 +19,13 @@ import os
 from pathlib import Path
 from typing import Literal, Mapping
 
-from pydantic import Field, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_validator,
+    model_validator,
+)
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from sidepouch_mcp.constants import (
@@ -84,6 +90,103 @@ class WhereCanonicalizationMode(str, Enum):
 
     raw_string = "raw_string"
     canonical_ast = "canonical_ast"
+
+
+# ---------------------------------------------------------------------------
+# Pagination config
+# ---------------------------------------------------------------------------
+class PaginationConfig(BaseModel):
+    """Pagination behavior for an upstream MCP server.
+
+    Configures how the gateway detects pagination metadata in
+    upstream responses and constructs follow-up requests.
+
+    Attributes:
+        strategy: Pagination scheme: ``"cursor"``, ``"offset"``,
+            or ``"page_number"``.
+        cursor_response_path: JSONPath to the cursor value in
+            the upstream response (cursor strategy).
+        cursor_param_name: Argument name to inject the cursor
+            value into the next upstream call (cursor strategy).
+        offset_param_name: Argument name for the offset value
+            (offset strategy).
+        page_size_param_name: Argument name to read the page
+            size from original args (offset strategy).
+        page_param_name: Argument name for the page number
+            (page_number strategy).
+        has_more_response_path: JSONPath that, when non-null
+            and non-empty, signals more pages exist.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    strategy: Literal["cursor", "offset", "page_number"]
+
+    # Cursor strategy
+    cursor_response_path: str | None = Field(
+        None, description="JSONPath to cursor value in response"
+    )
+    cursor_param_name: str | None = Field(
+        None, description="Arg name to inject cursor into next call"
+    )
+
+    # Offset strategy
+    offset_param_name: str | None = Field(
+        None, description="Arg name for offset value"
+    )
+    page_size_param_name: str | None = Field(
+        None, description="Arg name to read page size from"
+    )
+
+    # Page number strategy
+    page_param_name: str | None = Field(
+        None, description="Arg name for page number"
+    )
+
+    # Common
+    has_more_response_path: str | None = Field(
+        None, description="JSONPath for has-more signal"
+    )
+
+    @model_validator(mode="after")
+    def _check_strategy_fields(self) -> PaginationConfig:
+        """Validate that required fields are set for the strategy.
+
+        Returns:
+            Self after validation.
+
+        Raises:
+            ValueError: When strategy-specific fields are missing.
+        """
+        if self.strategy == "cursor":
+            if not self.cursor_response_path:
+                msg = "cursor strategy requires cursor_response_path"
+                raise ValueError(msg)
+            if not self.cursor_param_name:
+                msg = "cursor strategy requires cursor_param_name"
+                raise ValueError(msg)
+        elif self.strategy == "offset":
+            if not self.offset_param_name:
+                msg = "offset strategy requires offset_param_name"
+                raise ValueError(msg)
+            if not self.page_size_param_name:
+                msg = "offset strategy requires page_size_param_name"
+                raise ValueError(msg)
+            if not self.has_more_response_path:
+                msg = (
+                    "offset strategy requires has_more_response_path"
+                )
+                raise ValueError(msg)
+        elif self.strategy == "page_number":
+            if not self.page_param_name:
+                msg = "page_number strategy requires page_param_name"
+                raise ValueError(msg)
+            if not self.has_more_response_path:
+                msg = (
+                    "page_number strategy requires has_more_response_path"
+                )
+                raise ValueError(msg)
+        return self
 
 
 # ---------------------------------------------------------------------------
@@ -160,6 +263,12 @@ class UpstreamConfig(BaseSettings):
         description="JSONPath subset exclusions for dedupe hash (§7.2)",
     )
 
+    # Pagination
+    pagination: PaginationConfig | None = Field(
+        None,
+        description="Pagination detection and follow-up config",
+    )
+
     # Secret and environment inheritance
     secret_ref: str | None = Field(
         default=None,
@@ -175,7 +284,7 @@ class UpstreamConfig(BaseSettings):
     def _validate_secret_ref(
         cls, value: str | None,
     ) -> str | None:
-        """Reject secret_ref values with path traversal.
+        r"""Reject secret_ref values with path traversal.
 
         Args:
             value: Candidate secret_ref string.
@@ -441,6 +550,7 @@ _JSON_DECODE_UPSTREAM_FIELDS = {
     "dedupe_exclusions",
     "env",
     "headers",
+    "pagination",
     "semantic_salt_env_keys",
     "semantic_salt_headers",
 }

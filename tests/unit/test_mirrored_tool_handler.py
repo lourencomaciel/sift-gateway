@@ -106,7 +106,7 @@ def test_fetch_inline_describe_happy_path() -> None:
     assert len(desc["roots"]) == 1
     assert desc["roots"][0]["root_path"] == "$.data"
     assert "10 records" in hint
-    assert "artifact.select" in hint
+    assert "artifact_select" in hint
 
 
 def test_fetch_inline_describe_no_artifact_row() -> None:

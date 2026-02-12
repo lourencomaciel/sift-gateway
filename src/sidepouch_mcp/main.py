@@ -280,7 +280,11 @@ def _run_server(
     try:
         app = server.build_fastmcp_app()
         if transport == "stdio":
-            app.run(show_banner=False)
+            from sidepouch_mcp.mcp.stdio_compat import (
+                run_fastmcp_stdio_compat,
+            )
+
+            run_fastmcp_stdio_compat(app, show_banner=False)
         else:
             # Wrap with bearer auth middleware when token set
             if auth_token:
@@ -340,7 +344,10 @@ def serve() -> int:
         )
         sync_result = run_sync(sync_data_dir)
         if sync_result.get("synced", 0) > 0:
-            print(f"Auto-synced {sync_result['synced']} new upstream(s)")
+            print(
+                f"Auto-synced {sync_result['synced']} new upstream(s)",
+                file=sys.stderr,
+            )
 
     config = load_gateway_config(
         data_dir_override=args.data_dir,
@@ -360,6 +367,10 @@ def serve() -> int:
 
 def cli() -> None:
     """Run the gateway CLI and exit with the appropriate code."""
+    from sidepouch_mcp.obs.logging import configure_logging
+
+    configure_logging()
+
     try:
         exit_code = serve()
     except Exception as exc:

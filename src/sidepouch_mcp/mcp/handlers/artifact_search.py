@@ -11,6 +11,9 @@ from sidepouch_mcp.cursor.hmac import (
 from sidepouch_mcp.cursor.payload import CursorStaleError
 from sidepouch_mcp.envelope.responses import gateway_error
 from sidepouch_mcp.mcp.handlers.common import rows_to_dicts
+from sidepouch_mcp.pagination.contract import (
+    build_retrieval_pagination_meta,
+)
 
 if TYPE_CHECKING:
     from sidepouch_mcp.mcp.server import GatewayServer
@@ -143,4 +146,8 @@ async def handle_artifact_search(
         "truncated": truncated,
         "cursor": next_cursor,
         "omitted": len(mapped_rows) - len(page_rows) if truncated else 0,
+        "pagination": build_retrieval_pagination_meta(
+            truncated=truncated,
+            cursor=next_cursor if next_cursor else None,
+        ),
     }

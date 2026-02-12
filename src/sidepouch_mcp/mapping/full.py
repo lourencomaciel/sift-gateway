@@ -144,9 +144,9 @@ def _build_root_inventory(
     elif isinstance(value, dict):
         count = len(value)
         shape = "object"
-        # For objects, treat values as the "elements"
-        vals = list(value.values())
-        fields_top = _build_fields_top(vals) if count > 0 else None
+        # Treat the object itself as a single record so fields_top
+        # shows the object's own keys (matching what select can project).
+        fields_top = _build_fields_top([value]) if count > 0 else None
         score = float(count)
         coverage = 1.0
         summary = {"key_count": count}

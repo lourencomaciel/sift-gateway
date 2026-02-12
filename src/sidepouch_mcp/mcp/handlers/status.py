@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from sidepouch_mcp.envelope.responses import gateway_error
 from sidepouch_mcp.tools.status import (
     build_status_response_with_runtime,
     probe_db,
@@ -27,12 +28,21 @@ async def handle_status(
     Returns:
         Status response with DB, FS, upstream, and cursor health.
     """
+    probe_raw = arguments.get("probe_upstreams", False)
+    if not isinstance(probe_raw, bool):
+        return gateway_error(
+            "INVALID_ARGUMENT",
+            "probe_upstreams must be a boolean when provided",
+        )
+
     db_health = probe_db(ctx.db_pool)
     fs_health = probe_fs(ctx.config)
     return build_status_response_with_runtime(
         ctx.config,
         db_health=db_health,
         fs_health=fs_health,
-        upstreams=ctx._status_upstreams(),
+        upstreams=await ctx._status_upstreams(
+            probe_upstreams=probe_raw
+        ),
         cursor_secrets_info=ctx._cursor_secrets_info(),
     )

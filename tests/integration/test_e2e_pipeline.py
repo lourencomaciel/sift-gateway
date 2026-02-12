@@ -1168,7 +1168,7 @@ def test_e2e_artifact_status(e2e_env):
 
 
 def test_e2e_multi_session_cache_sharing(e2e_env):
-    server, _config, pool = e2e_env
+    server, _config, _pool = e2e_env
     session_a = f"sess_{uuid.uuid4().hex}"
     session_b = f"sess_{uuid.uuid4().hex}"
     unique = f"shared_{uuid.uuid4().hex}"
@@ -1198,31 +1198,14 @@ def test_e2e_multi_session_cache_sharing(e2e_env):
     get_a = _get(server, session_a, artifact_id)
     assert get_a["artifact_id"] == artifact_id
 
-    # Cache reuse does NOT create an artifact_ref for session B, so
-    # session B cannot access the artifact via get/search (by design:
-    # the reuse path returns early without persisting a session ref).
+    # Cache reuse should attach the artifact ref for session B, making
+    # the returned handle immediately retrievable in that session.
     get_b = _get(server, session_b, artifact_id)
-    assert get_b.get("code") == "NOT_FOUND"
+    assert get_b["artifact_id"] == artifact_id
 
-    # Session A finds it in search, session B does not
+    # Both sessions should now see the artifact in search.
     search_a = _search(server, session_a)
     assert any(item["artifact_id"] == artifact_id for item in search_a["items"])
 
     search_b = _search(server, session_b)
-    assert not any(
-        item["artifact_id"] == artifact_id for item in search_b["items"]
-    )
-
-    # Manually insert artifact_ref for session B to verify access works with ref
-    with pool.connection() as conn:
-        conn.execute(
-            "INSERT INTO artifact_refs (workspace_id, session_id, artifact_id, "
-            "first_seen_at, last_seen_at) VALUES (%s, %s, %s, NOW(), NOW()) "
-            "ON CONFLICT DO NOTHING",
-            (WORKSPACE_ID, session_b, artifact_id),
-        )
-        conn.commit()
-
-    # Now session B can access
-    get_b2 = _get(server, session_b, artifact_id)
-    assert get_b2["artifact_id"] == artifact_id
+    assert any(item["artifact_id"] == artifact_id for item in search_b["items"])

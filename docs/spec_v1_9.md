@@ -11,7 +11,11 @@ SidePouch is a local, single-tenant MCP proxy that:
 3. Intercepts every tool call, forwards it upstream, and wraps the result in a **durable artifact envelope** stored to Postgres and the local filesystem.
 4. Returns the result to the caller: small payloads are returned raw (**passthrough mode**); large payloads return a **handle** with artifact ID, inline describe (mapping metadata + discovered roots), and a usage hint.
 5. Generates a **deterministic inventory** (full or partial schema mapping) for each artifact's JSON payload.
-6. Provides bounded, deterministic **retrieval** tools (`artifact.get`, `artifact.select`, `artifact.describe`, `artifact.find`, `artifact.search`, `artifact.chain_pages`) with signed cursor pagination.
+6. Provides bounded, deterministic **retrieval** tools
+   (`artifact.get`, `artifact.select`, `artifact.describe`,
+   `artifact.find`, `artifact.search`, `artifact.chain_pages`) with
+   signed cursor pagination, plus `artifact.next_page` for upstream
+   page chaining.
 
 ### Design invariants
 
@@ -79,6 +83,17 @@ Upstream MCP responses are normalized into a canonical envelope shape:
 - **Stampede lock**: `pg_advisory_lock` derived from `sha256(request_key)` with configurable timeout
 - **Reuse**: by `request_key` (latest by `created_seq DESC`), gated by schema hash if `strict_schema_reuse`
 
+Cache-control modes via `_gateway_context.cache_mode`:
+
+- `normal` (default): allow reuse by request key
+- `bypass`: skip reuse and force fresh upstream execution
+- `refresh`: skip reuse and force fresh execution (explicit refresh intent)
+
+Backward-compatible aliases:
+
+- `allow` -> `normal`
+- `fresh` -> `bypass`
+
 ## 6. Mapping system
 
 ### 6.1 Full mapping
@@ -134,16 +149,57 @@ Conditional update: `deleted_at IS NULL AND map_status IN (pending, stale) AND g
 | `artifact.describe` | Mapping metadata with partial mapping disclosures |
 | `artifact.find` | Search within mapped data; sample-only unless indexed |
 | `artifact.chain_pages` | Paginate chain sequences ordered by `chain_seq ASC, created_seq ASC` |
+| `artifact.next_page` | Fetch next upstream page using stored pagination state |
 
 ### Response shape
 
-All retrieval tools return: `{items, truncated, cursor, omitted, stats}`.
+Retrieval tools return compatibility fields:
+`{items, truncated, cursor, omitted, stats}` plus:
+
+```json
+{
+  "pagination": {
+    "layer": "artifact_retrieval",
+    "retrieval_status": "PARTIAL|COMPLETE",
+    "partial_reason": "CURSOR_AVAILABLE|null",
+    "has_more": true,
+    "next_cursor": "cur_..."
+  }
+}
+```
+
+Mirrored upstream tool responses include:
+
+```json
+{
+  "pagination": {
+    "layer": "upstream",
+    "retrieval_status": "PARTIAL|COMPLETE",
+    "partial_reason": "MORE_PAGES_AVAILABLE|SIGNAL_INCONCLUSIVE|CONFIG_MISSING|NEXT_TOKEN_MISSING|null",
+    "has_more": true,
+    "page_number": 0,
+    "next_action": {
+      "tool": "artifact.next_page",
+      "arguments": {"artifact_id": "art_..."}
+    },
+    "warning": "INCOMPLETE_RESULT_SET|null",
+    "has_next_page": true,
+    "hint": "..."
+  }
+}
+```
+
+Completion semantics are fail-closed: do not claim full completeness
+until `pagination.retrieval_status == "COMPLETE"`.
 
 ## 10. Session tracking and touch policy
 
 - **Creation**: touches `artifacts.last_referenced_at`
 - **Retrieval/describe**: touches if not deleted; else returns GONE
 - **Search**: does NOT touch `last_referenced_at` (only session/artifact_refs)
+- **Cache reuse invariant**: a reused handle MUST be attached to the caller
+  session (`artifact_refs`) before returning. Returned handles are immediately
+  retrievable in that session.
 
 ## 11. Pruning
 
@@ -191,7 +247,24 @@ When the normalized envelope payload is smaller than `passthrough_max_bytes`, th
 Payloads at or above the passthrough threshold follow the handle-only path: the envelope is stored synchronously, the mapping pipeline runs (full or partial depending on payload size), and the caller receives a response containing:
 
 - **`artifact_id`** and **cache metadata** (reuse status, request key).
+- cache metadata includes `reused`, `request_key`, `reason`,
+  `artifact_id_origin` (`cache|fresh`), and normalized `cache_mode`.
 - **`describe`**: inline mapping metadata and discovered roots (same data as `artifact.describe`), fetched on the same DB connection with no extra round-trip.
 - **`usage_hint`**: a heuristic natural language hint (no LLM) describing what the artifact contains, which fields are available, and which retrieval tool to call next (`artifact.select` for arrays, `artifact.get` for dicts).
 
 This eliminates the need for a separate `artifact.describe` call — the LLM can go directly from the tool response to `artifact.select` or `artifact.find`. The `artifact.describe` tool remains available for backwards compatibility and for inspecting artifacts after the initial response.
+
+## 15. Workflow recipes
+
+### 15.1 Large mirrored result retrieval
+
+1. Call mirrored tool and receive `artifact_id`.
+2. Use inline `describe` to pick `root_path`.
+3. Call `artifact.select` or `artifact.find` with cursor paging.
+4. Continue until `pagination.retrieval_status == "COMPLETE"`.
+
+### 15.2 Upstream page chaining
+
+1. Inspect mirrored response `pagination.layer = "upstream"`.
+2. If `has_next_page`, call `artifact.next_page` with current `artifact_id`.
+3. Repeat until `pagination.retrieval_status == "COMPLETE"`.

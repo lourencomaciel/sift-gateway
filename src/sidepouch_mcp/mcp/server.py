@@ -16,11 +16,16 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass, field
+import datetime as dt
+import importlib.util
 import json
+from pathlib import Path
+import shutil
 import time
 from typing import Any, Awaitable, Callable, Mapping
 
 from fastmcp import FastMCP
+from fastmcp.server.dependencies import get_context
 from fastmcp.tools.tool import Tool, ToolResult
 
 from sidepouch_mcp.artifacts.create import (
@@ -71,10 +76,13 @@ from sidepouch_mcp.mcp.upstream import (
     UpstreamInstance,
     call_upstream_tool,
     connect_upstreams,
+    discover_tools,
 )
+from sidepouch_mcp.mcp.upstream_errors import classify_upstream_exception
 from sidepouch_mcp.obs.logging import LogEvents, get_logger
 from sidepouch_mcp.obs.metrics import GatewayMetrics, get_metrics
 from sidepouch_mcp.sessions import touch_for_retrieval, touch_for_search
+from sidepouch_mcp.tools.usage_hint import PAGINATION_COMPLETENESS_RULE
 
 _GENERIC_ARGS_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -88,14 +96,228 @@ _SUPPORTED_ENVELOPE_PARTS = {
     "binary_ref",
     "image_ref",
 }
-_BUILTIN_TOOL_DESCRIPTIONS = {
+_BUILTIN_TOOL_DESCRIPTIONS: dict[str, str] = {
     "gateway.status": "Gateway health and configuration snapshot.",
-    "artifact.search": "Search artifacts visible to a session.",
-    "artifact.get": "Load a stored artifact envelope or mapped value.",
-    "artifact.select": "Project and filter data with bounded traversal.",
-    "artifact.describe": "Describe mapped roots and retrieval affordances.",
-    "artifact.find": "Find matching records under mapped roots.",
-    "artifact.chain_pages": "Return chain-ordered child artifacts.",
+    "artifact.search": (
+        "Search artifacts visible to this session. Returns "
+        "summaries; use artifact_get or artifact_select to "
+        "retrieve full data."
+    ),
+    "artifact.get": (
+        "Load a stored artifact envelope or its mapped "
+        "metadata. Pass target='mapped' for mapping roots."
+    ),
+    "artifact.select": (
+        "Project specific fields from a mapped root array. "
+        "Requires artifact_id, root_path (from describe), "
+        "and select_paths (relative field names)."
+    ),
+    "artifact.describe": (
+        "Describe an artifact's mapped roots, field types, "
+        "and retrieval affordances. Call this first to learn "
+        "available root_path and field names before using "
+        "artifact_select or artifact_find."
+    ),
+    "artifact.find": (
+        "Find matching record locators under mapped roots "
+        "using optional where filters. Returns locators "
+        "(root_path, index, record_hash) not full records. "
+        "Use artifact_select with select_paths to retrieve "
+        "specific fields from matches."
+    ),
+    "artifact.chain_pages": (
+        "Return chain-ordered child artifacts of a parent. "
+        "Use for multi-page upstream responses."
+    ),
+    "artifact.next_page": (
+        "Fetch the next page of a paginated upstream response. "
+        "Pass the artifact_id from a result that included "
+        "pagination.has_next_page=true. Returns a new artifact "
+        "chained to the original. "
+        f"{PAGINATION_COMPLETENESS_RULE}"
+    ),
+}
+_BUILTIN_TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
+    "gateway.status": {
+        "type": "object",
+        "properties": {
+            "probe_upstreams": {
+                "type": "boolean",
+                "description": (
+                    "When true, run active per-upstream "
+                    "tool-list probes in addition to static "
+                    "startup/runtime diagnostics."
+                ),
+            },
+        },
+        "additionalProperties": True,
+    },
+    "artifact.search": {
+        "type": "object",
+        "properties": {
+            "order_by": {
+                "type": "string",
+                "enum": ["created_seq_desc", "last_seen_desc"],
+                "description": ("Sort order. Default: created_seq_desc."),
+            },
+            "limit": {
+                "type": "integer",
+                "description": "Max results per page (default 50).",
+            },
+            "cursor": {
+                "type": "string",
+                "description": "Opaque pagination cursor.",
+            },
+            "filters": {
+                "type": "object",
+                "description": (
+                    "Optional filters: source_tool, "
+                    "source_tool_prefix, status (ok|error), "
+                    "request_key, has_binary_refs, etc."
+                ),
+                "additionalProperties": True,
+            },
+        },
+        "additionalProperties": True,
+    },
+    "artifact.get": {
+        "type": "object",
+        "properties": {
+            "artifact_id": {
+                "type": "string",
+                "description": "Artifact identifier to retrieve.",
+            },
+            "target": {
+                "type": "string",
+                "enum": ["envelope", "mapped"],
+                "description": ("Retrieval target (default: envelope)."),
+            },
+            "jsonpath": {
+                "type": "string",
+                "description": ("JSONPath filter (only with target=envelope)."),
+            },
+            "cursor": {
+                "type": "string",
+                "description": "Opaque pagination cursor.",
+            },
+            "limit": {
+                "type": "integer",
+                "description": "Max items per page.",
+            },
+        },
+        "required": ["artifact_id"],
+        "additionalProperties": True,
+    },
+    "artifact.select": {
+        "type": "object",
+        "properties": {
+            "artifact_id": {
+                "type": "string",
+                "description": "Artifact to select from.",
+            },
+            "root_path": {
+                "type": "string",
+                "description": (
+                    "JSONPath to root array, e.g. "
+                    "'$.result.data'. Get this from "
+                    "artifact_describe."
+                ),
+            },
+            "select_paths": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": (
+                    "Relative field names to project, "
+                    "e.g. ['ad_name', 'spend']. No $ prefix."
+                ),
+            },
+            "where": {
+                "description": ("Optional WHERE-DSL filter expression."),
+            },
+            "cursor": {
+                "type": "string",
+                "description": "Opaque pagination cursor.",
+            },
+            "limit": {
+                "type": "integer",
+                "description": "Max items per page.",
+            },
+        },
+        "required": ["artifact_id", "root_path", "select_paths"],
+        "additionalProperties": True,
+    },
+    "artifact.describe": {
+        "type": "object",
+        "properties": {
+            "artifact_id": {
+                "type": "string",
+                "description": "Artifact to describe.",
+            },
+        },
+        "required": ["artifact_id"],
+        "additionalProperties": True,
+    },
+    "artifact.find": {
+        "type": "object",
+        "properties": {
+            "artifact_id": {
+                "type": "string",
+                "description": "Artifact to search within.",
+            },
+            "root_path": {
+                "type": "string",
+                "description": (
+                    "Optional root path filter, e.g. '$.result.data'."
+                ),
+            },
+            "where": {
+                "description": ("Optional WHERE-DSL filter expression."),
+            },
+            "cursor": {
+                "type": "string",
+                "description": "Opaque pagination cursor.",
+            },
+            "limit": {
+                "type": "integer",
+                "description": "Max items per page.",
+            },
+        },
+        "required": ["artifact_id"],
+        "additionalProperties": True,
+    },
+    "artifact.chain_pages": {
+        "type": "object",
+        "properties": {
+            "parent_artifact_id": {
+                "type": "string",
+                "description": "Parent artifact identifier.",
+            },
+            "cursor": {
+                "type": "string",
+                "description": "Opaque pagination cursor.",
+            },
+            "limit": {
+                "type": "integer",
+                "description": "Max items per page.",
+            },
+        },
+        "required": ["parent_artifact_id"],
+        "additionalProperties": True,
+    },
+    "artifact.next_page": {
+        "type": "object",
+        "properties": {
+            "artifact_id": {
+                "type": "string",
+                "description": (
+                    "Artifact ID from a response with "
+                    "pagination.has_next_page=true."
+                ),
+            },
+        },
+        "required": ["artifact_id"],
+        "additionalProperties": True,
+    },
 }
 
 
@@ -194,6 +416,105 @@ def _check_sample_corruption(
     return None
 
 
+def _mcp_safe_name(qualified_name: str) -> str:
+    """Convert a dotted qualified name to an MCP-safe name.
+
+    MCP clients require tool names matching the pattern
+    ``^[a-zA-Z0-9_-]{1,64}$``.  Dots are replaced with
+    underscores.
+
+    Args:
+        qualified_name: Internal qualified tool name
+            (e.g. ``gateway.status``).
+
+    Returns:
+        MCP-safe tool name (e.g. ``gateway_status``).
+    """
+    return qualified_name.replace(".", "_")
+
+
+def _assert_unique_safe_tool_name(
+    seen: dict[str, str],
+    *,
+    safe_name: str,
+    qualified_name: str,
+) -> None:
+    """Ensure MCP-safe tool names remain collision-free.
+
+    Args:
+        seen: Mapping of MCP-safe names to original qualified names.
+        safe_name: Sanitized MCP-safe name.
+        qualified_name: Original qualified tool name.
+
+    Raises:
+        ValueError: If a different qualified name already mapped to
+            the same safe name.
+    """
+    existing = seen.get(safe_name)
+    if existing is not None and existing != qualified_name:
+        msg = (
+            "tool name collision after MCP-safe sanitization: "
+            f"{existing!r} and {qualified_name!r} -> {safe_name!r}"
+        )
+        raise ValueError(msg)
+    seen[safe_name] = qualified_name
+
+
+def _command_resolvable(command: str | None) -> bool:
+    """Return whether a stdio command appears resolvable on this host."""
+    if not command:
+        return False
+    if "/" in command:
+        candidate = Path(command)
+        return candidate.exists() and candidate.is_file()
+    return shutil.which(command) is not None
+
+
+def _stdio_module_probe(args: list[str]) -> dict[str, Any] | None:
+    """Return module import diagnostics for ``python -m <module>`` launches."""
+    if len(args) < 2 or args[0] != "-m":
+        return None
+    module = args[1]
+    probe: dict[str, Any] = {"module": module}
+    try:
+        spec = importlib.util.find_spec(module)
+    except ModuleNotFoundError as exc:
+        probe["importable"] = False
+        probe["error"] = str(exc)
+        return probe
+    probe["importable"] = spec is not None
+    if spec is None:
+        probe["error"] = "module not found"
+    return probe
+
+
+def _ensure_gateway_context(arguments: dict[str, Any]) -> dict[str, Any]:
+    """Auto-inject ``_gateway_context.session_id`` from MCP transport.
+
+    When the client omits ``_gateway_context`` or its ``session_id``,
+    derives one from the FastMCP session context so that callers
+    (e.g. Claude Code) need not manually supply it.
+
+    Args:
+        arguments: Raw tool arguments from the MCP client.
+
+    Returns:
+        Arguments dict with ``_gateway_context.session_id``
+        guaranteed present.
+    """
+    ctx = arguments.get("_gateway_context")
+    if isinstance(ctx, dict) and ctx.get("session_id"):
+        return arguments
+    try:
+        mcp_ctx = get_context()
+        session_id = mcp_ctx.session_id
+    except RuntimeError:
+        return arguments
+    gw_ctx: dict[str, Any] = dict(ctx) if isinstance(ctx, dict) else {}
+    gw_ctx.setdefault("session_id", session_id)
+    return {**arguments, "_gateway_context": gw_ctx}
+
+
 class RuntimeTool(Tool):
     """FastMCP tool subclass that accepts raw argument dicts.
 
@@ -211,6 +532,9 @@ class RuntimeTool(Tool):
     async def run(self, arguments: dict[str, Any]) -> ToolResult:
         """Execute the handler with raw arguments.
 
+        Auto-injects ``_gateway_context.session_id`` from the
+        MCP transport session when the client omits it.
+
         Args:
             arguments: Raw argument dict passed by the MCP
                 client.
@@ -219,6 +543,7 @@ class RuntimeTool(Tool):
             ToolResult wrapping the handler's structured
             content dict.
         """
+        arguments = _ensure_gateway_context(arguments)
         result = await self.handler(arguments)
         return ToolResult(structured_content=result)
 
@@ -316,6 +641,7 @@ class GatewayServer:
         metrics: Prometheus-style gateway metrics.
         cursor_secrets: HMAC signing secrets for cursors.
         upstream_errors: Map of prefix to connection error.
+        upstream_runtime: Per-upstream runtime probe/failure metadata.
         mirrored_tools: Qualified name to MirroredTool mapping.
     """
 
@@ -328,6 +654,7 @@ class GatewayServer:
     metrics: GatewayMetrics = field(default_factory=get_metrics)
     cursor_secrets: CursorSecrets | None = None
     upstream_errors: dict[str, str] = field(default_factory=dict)
+    upstream_runtime: dict[str, dict[str, Any]] = field(default_factory=dict)
     mirrored_tools: dict[str, MirroredTool] = field(default_factory=dict)
     _mapping_tasks: set[asyncio.Task[None]] = field(default_factory=set)
 
@@ -371,7 +698,57 @@ class GatewayServer:
         """
         return _not_implemented(tool_name)
 
-    def _status_upstreams(self) -> list[dict[str, Any]]:
+    def _record_upstream_failure(
+        self,
+        *,
+        prefix: str,
+        code: str,
+        message: str,
+    ) -> None:
+        """Persist the latest runtime failure metadata for an upstream."""
+        current = dict(self.upstream_runtime.get(prefix, {}))
+        current["last_error_code"] = code
+        current["last_error_message"] = message
+        current["last_error_at"] = dt.datetime.now(dt.timezone.utc).isoformat()
+        self.upstream_runtime[prefix] = current
+
+    def _record_upstream_success(self, *, prefix: str) -> None:
+        """Persist the latest successful upstream-call timestamp."""
+        current = dict(self.upstream_runtime.get(prefix, {}))
+        current["last_success_at"] = dt.datetime.now(
+            dt.timezone.utc
+        ).isoformat()
+        self.upstream_runtime[prefix] = current
+
+    async def _probe_upstream_tools(
+        self,
+        upstream: UpstreamInstance,
+    ) -> dict[str, Any]:
+        """Run an active ``tools/list`` probe for one upstream."""
+        try:
+            tools = await asyncio.wait_for(
+                discover_tools(
+                    upstream.config,
+                    data_dir=str(self.config.data_dir),
+                ),
+                timeout=5.0,
+            )
+        except Exception as exc:
+            return {
+                "ok": False,
+                "error_code": classify_upstream_exception(exc),
+                "error": str(exc),
+            }
+        return {
+            "ok": True,
+            "tool_count": len(tools),
+        }
+
+    async def _status_upstreams(
+        self,
+        *,
+        probe_upstreams: bool = False,
+    ) -> list[dict[str, Any]]:
         """Build upstream status entries for the status response.
 
         Returns:
@@ -379,22 +756,53 @@ class GatewayServer:
             state, tool count, and any errors.
         """
         payload: list[dict[str, Any]] = []
+        by_prefix: dict[str, dict[str, Any]] = {}
         for upstream in self.upstreams:
-            payload.append(
-                {
-                    "prefix": upstream.prefix,
-                    "instance_id": upstream.instance_id,
-                    "connected": True,
-                    "tool_count": len(upstream.tools),
-                }
-            )
+            entry: dict[str, Any] = {
+                "prefix": upstream.prefix,
+                "instance_id": upstream.instance_id,
+                "connected": True,
+                "tool_count": len(upstream.tools),
+                "transport": upstream.config.transport,
+            }
+            if upstream.config.transport == "stdio":
+                entry["command"] = upstream.config.command
+                entry["command_resolvable"] = _command_resolvable(
+                    upstream.config.command
+                )
+                module_probe = _stdio_module_probe(list(upstream.config.args))
+                if module_probe is not None:
+                    entry["module_probe"] = module_probe
+            else:
+                entry["url"] = upstream.config.url
+
+            runtime = self.upstream_runtime.get(upstream.prefix)
+            if runtime:
+                entry["runtime"] = dict(runtime)
+            if probe_upstreams:
+                entry["active_probe"] = await self._probe_upstream_tools(
+                    upstream
+                )
+            payload.append(entry)
+            by_prefix[upstream.prefix] = entry
+
         for prefix, error in sorted(self.upstream_errors.items()):
+            if prefix in by_prefix:
+                by_prefix[prefix]["startup_error"] = {
+                    "code": "UPSTREAM_STARTUP_FAILURE",
+                    "message": error,
+                }
+                continue
             payload.append(
                 {
                     "prefix": prefix,
                     "connected": False,
                     "tool_count": 0,
-                    "error": error,
+                    "transport": None,
+                    "startup_error": {
+                        "code": "UPSTREAM_STARTUP_FAILURE",
+                        "message": error,
+                    },
                 }
             )
         return payload
@@ -460,8 +868,13 @@ class GatewayServer:
                 forwarded_args,
                 data_dir=str(self.config.data_dir),
             )
-        except Exception:
+        except Exception as exc:
             self._increment_metric("upstream_errors")
+            self._record_upstream_failure(
+                prefix=mirrored.prefix,
+                code=classify_upstream_exception(exc),
+                message=str(exc),
+            )
             raise
         finally:
             self._observe_metric(
@@ -470,6 +883,13 @@ class GatewayServer:
             )
         if bool(result.get("isError", False)):
             self._increment_metric("upstream_errors")
+            self._record_upstream_failure(
+                prefix=mirrored.prefix,
+                code="UPSTREAM_TOOL_ERROR",
+                message=_upstream_error_message(result),
+            )
+        else:
+            self._record_upstream_success(prefix=mirrored.prefix)
         return result
 
     # -- Cursor helpers --
@@ -1180,6 +1600,7 @@ class GatewayServer:
             "artifact.describe": self.handle_artifact_describe,
             "artifact.find": self.handle_artifact_find,
             "artifact.chain_pages": self.handle_artifact_chain_pages,
+            "artifact.next_page": self.handle_artifact_next_page,
         }
 
     def register_mirrored_tools(
@@ -1213,32 +1634,55 @@ class GatewayServer:
         """Build a FastMCP application with all registered tools.
 
         Registers both built-in gateway tools and mirrored
-        upstream tools as RuntimeTool instances.
+        upstream tools as RuntimeTool instances.  Tool names
+        are sanitised to satisfy MCP client naming rules.
 
         Returns:
             Configured FastMCP application ready to run.
         """
         app = FastMCP(name="sidepouch-mcp")
+        safe_name_to_qualified: dict[str, str] = {}
 
         for tool_name, handler in self.register_tools().items():
+            schema = _BUILTIN_TOOL_SCHEMAS.get(tool_name, _GENERIC_ARGS_SCHEMA)
+            safe_name = _mcp_safe_name(tool_name)
+            _assert_unique_safe_tool_name(
+                safe_name_to_qualified,
+                safe_name=safe_name,
+                qualified_name=tool_name,
+            )
             app.add_tool(
                 RuntimeTool(
-                    name=tool_name,
+                    name=safe_name,
                     description=_BUILTIN_TOOL_DESCRIPTIONS.get(
                         tool_name, "Gateway tool"
                     ),
-                    parameters=dict(_GENERIC_ARGS_SCHEMA),
+                    parameters=dict(schema),
                     handler=handler,
                 )
             )
 
         mirrored_handlers = self.register_mirrored_tools()
         for tool_name, mirrored in self.mirrored_tools.items():
+            mirrored_description = (
+                mirrored.upstream_tool.description
+                or f"Mirrored upstream tool {mirrored.original_name}"
+            )
+            if not mirrored_description.endswith("."):
+                mirrored_description = f"{mirrored_description}."
+            mirrored_description = (
+                f"{mirrored_description} {PAGINATION_COMPLETENESS_RULE}"
+            )
+            safe_name = _mcp_safe_name(tool_name)
+            _assert_unique_safe_tool_name(
+                safe_name_to_qualified,
+                safe_name=safe_name,
+                qualified_name=tool_name,
+            )
             app.add_tool(
                 RuntimeTool(
-                    name=tool_name,
-                    description=mirrored.upstream_tool.description
-                    or f"Mirrored upstream tool {mirrored.original_name}",
+                    name=safe_name,
+                    description=mirrored_description,
                     parameters=dict(mirrored.upstream_tool.input_schema),
                     handler=mirrored_handlers[tool_name],
                 )
@@ -1385,6 +1829,23 @@ class GatewayServer:
         """
         from sidepouch_mcp.mcp.handlers.artifact_chain_pages import (
             handle_artifact_chain_pages as _handle,
+        )
+
+        return await _handle(self, arguments)
+
+    async def handle_artifact_next_page(
+        self, arguments: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Handle the artifact.next_page tool call.
+
+        Args:
+            arguments: Raw arguments from the MCP client.
+
+        Returns:
+            Next-page upstream result as a gateway tool result.
+        """
+        from sidepouch_mcp.mcp.handlers.artifact_next_page import (
+            handle_artifact_next_page as _handle,
         )
 
         return await _handle(self, arguments)
