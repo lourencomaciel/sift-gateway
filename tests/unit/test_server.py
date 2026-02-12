@@ -4,8 +4,14 @@ import asyncio
 from pathlib import Path
 import socket
 
+import pytest
+
 from sidepouch_mcp.artifacts.create import ArtifactHandle
-from sidepouch_mcp.config.settings import GatewayConfig, UpstreamConfig
+from sidepouch_mcp.config.settings import (
+    GatewayConfig,
+    PaginationConfig,
+    UpstreamConfig,
+)
 from sidepouch_mcp.cursor.hmac import CursorExpiredError
 from sidepouch_mcp.cursor.payload import CursorStaleError
 from sidepouch_mcp.cursor.sample_set_hash import compute_sample_set_hash
@@ -34,6 +40,38 @@ def _upstream(prefix: str = "demo") -> UpstreamInstance:
         prefix=prefix,
         transport="stdio",
         command="/usr/bin/printf",
+    )
+    return UpstreamInstance(
+        config=config,
+        instance_id=f"inst_{prefix}",
+        tools=[
+            UpstreamToolSchema(
+                name="echo",
+                description="Echo tool",
+                input_schema={
+                    "type": "object",
+                    "properties": {"message": {"type": "string"}},
+                    "required": ["message"],
+                },
+                schema_hash="schema_echo",
+            )
+        ],
+    )
+
+
+def _upstream_with_pagination(
+    prefix: str = "demo",
+) -> UpstreamInstance:
+    config = UpstreamConfig(
+        prefix=prefix,
+        transport="stdio",
+        command="/usr/bin/printf",
+        pagination=PaginationConfig(
+            strategy="cursor",
+            cursor_response_path="$.paging.cursors.after",
+            cursor_param_name="after",
+            has_more_response_path="$.paging.next",
+        ),
     )
     return UpstreamInstance(
         config=config,
@@ -274,9 +312,7 @@ def test_status_handler_rejects_non_boolean_probe_upstreams(
     tmp_path: Path,
 ) -> None:
     server = _server(tmp_path)
-    response = asyncio.run(
-        server.handle_status({"probe_upstreams": "yes"})
-    )
+    response = asyncio.run(server.handle_status({"probe_upstreams": "yes"}))
     assert response["type"] == "gateway_error"
     assert response["code"] == "INVALID_ARGUMENT"
 
@@ -329,8 +365,7 @@ def test_status_handler_includes_upstream_connectivity(tmp_path: Path) -> None:
     assert len(disconnected) == 1
     assert disconnected[0]["prefix"] == "broken"
     assert (
-        disconnected[0]["startup_error"]["code"]
-        == "UPSTREAM_STARTUP_FAILURE"
+        disconnected[0]["startup_error"]["code"] == "UPSTREAM_STARTUP_FAILURE"
     )
     assert disconnected[0]["startup_error"]["message"] == "timeout"
 
@@ -339,12 +374,35 @@ def test_status_handler_runs_active_upstream_probes(
     tmp_path: Path,
 ) -> None:
     server = _server_with_upstream(tmp_path)
-    response = asyncio.run(
-        server.handle_status({"probe_upstreams": True})
-    )
+    response = asyncio.run(server.handle_status({"probe_upstreams": True}))
     upstream = response["upstreams"][0]
     assert "active_probe" in upstream
     assert isinstance(upstream["active_probe"]["ok"], bool)
+
+
+def test_status_handler_module_probe_handles_missing_parent_module(
+    tmp_path: Path,
+) -> None:
+    config = UpstreamConfig(
+        prefix="demo",
+        transport="stdio",
+        command="/usr/bin/python3",
+        args=["-m", "a.b.c"],
+    )
+    upstream = UpstreamInstance(
+        config=config,
+        instance_id="inst_demo",
+        tools=[],
+    )
+    server = GatewayServer(
+        config=GatewayConfig(data_dir=tmp_path),
+        upstreams=[upstream],
+    )
+    response = asyncio.run(server.handle_status({}))
+    probe = response["upstreams"][0]["module_probe"]
+    assert probe["module"] == "a.b.c"
+    assert probe["importable"] is False
+    assert isinstance(probe["error"], str)
 
 
 def test_cursor_error_updates_metrics(tmp_path: Path) -> None:
@@ -413,6 +471,50 @@ def test_build_fastmcp_app_includes_mirrored_tools(tmp_path: Path) -> None:
         "retrieval_status == COMPLETE"
         in tools["artifact_next_page"].description
     )
+
+
+def test_build_fastmcp_app_rejects_safe_name_collisions(
+    tmp_path: Path,
+) -> None:
+    config = GatewayConfig(data_dir=tmp_path)
+    upstream_a = UpstreamInstance(
+        config=UpstreamConfig(
+            prefix="acme",
+            transport="stdio",
+            command="/usr/bin/printf",
+        ),
+        instance_id="inst_acme",
+        tools=[
+            UpstreamToolSchema(
+                name="foo_bar",
+                description="Tool A",
+                input_schema={"type": "object", "properties": {}},
+                schema_hash="schema_a",
+            )
+        ],
+    )
+    upstream_b = UpstreamInstance(
+        config=UpstreamConfig(
+            prefix="acme_foo",
+            transport="stdio",
+            command="/usr/bin/printf",
+        ),
+        instance_id="inst_acme_foo",
+        tools=[
+            UpstreamToolSchema(
+                name="bar",
+                description="Tool B",
+                input_schema={"type": "object", "properties": {}},
+                schema_hash="schema_b",
+            )
+        ],
+    )
+    server = GatewayServer(
+        config=config,
+        upstreams=[upstream_a, upstream_b],
+    )
+    with pytest.raises(ValueError, match="sanitization"):
+        server.build_fastmcp_app()
 
 
 def test_handle_mirrored_tool_rejects_schema_violations(tmp_path: Path) -> None:
@@ -592,6 +694,96 @@ def test_handle_mirrored_tool_returns_cached_artifact_when_reused(
     assert response["meta"]["cache"]["artifact_id_origin"] == "cache"
     assert response["meta"]["cache"]["cache_mode"] == "normal"
     assert counter_value(server.metrics.cache_hits) == 1
+
+
+def test_handle_mirrored_tool_cache_hit_includes_pagination_meta(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    config = GatewayConfig(data_dir=tmp_path)
+    envelope = {
+        "status": "ok",
+        "content": [
+            {
+                "type": "json",
+                "value": {
+                    "data": [{"id": "1"}],
+                    "paging": {
+                        "cursors": {"after": "CURSOR_2"},
+                        "next": "https://example.com/page2",
+                    },
+                },
+            }
+        ],
+    }
+    conn = _SeqConnection(
+        [
+            _SeqCursor(
+                one=("art_cached", "payload_hash", "schema_echo", "ready", 1)
+            ),
+            _SeqCursor(one=(0, envelope)),
+        ]
+    )
+    server = GatewayServer(
+        config=config,
+        upstreams=[_upstream_with_pagination()],
+        db_pool=_SeqPool(conn),  # type: ignore[arg-type]
+        metrics=GatewayMetrics(),
+    )
+    mirrored = server.mirrored_tools["demo.echo"]
+
+    async def _lock_acquired(*_args, **_kwargs) -> bool:
+        return True
+
+    monkeypatch.setattr(
+        "sidepouch_mcp.mcp.handlers.mirrored_tool.acquire_advisory_lock_async",
+        _lock_acquired,
+    )
+    monkeypatch.setattr(
+        "sidepouch_mcp.mcp.handlers.mirrored_tool.release_advisory_lock",
+        lambda *_args, **_kwargs: None,
+    )
+
+    async def _must_not_call(*_args, **_kwargs):
+        raise AssertionError("upstream should not be called on reuse")
+
+    monkeypatch.setattr(
+        "sidepouch_mcp.mcp.server.call_upstream_tool", _must_not_call
+    )
+    monkeypatch.setattr(
+        "sidepouch_mcp.mcp.handlers.mirrored_tool.upsert_session",
+        lambda *_args, **_kwargs: True,
+    )
+    monkeypatch.setattr(
+        "sidepouch_mcp.mcp.handlers.mirrored_tool.upsert_artifact_ref",
+        lambda *_args, **_kwargs: True,
+    )
+    monkeypatch.setattr(
+        "sidepouch_mcp.mcp.handlers.mirrored_tool._fetch_inline_describe",
+        lambda *_args, **_kwargs: (
+            {"artifact_id": "art_cached", "roots": []},
+            "hint",
+        ),
+    )
+
+    response = asyncio.run(
+        server.handle_mirrored_tool(
+            mirrored,
+            {
+                "_gateway_context": {"session_id": "sess_1"},
+                "message": "hello",
+            },
+        )
+    )
+    assert response["type"] == "gateway_tool_result"
+    assert response["artifact_id"] == "art_cached"
+    pagination = response.get("pagination")
+    assert isinstance(pagination, dict)
+    assert pagination["has_next_page"] is True
+    assert pagination["next_action"]["tool"] == "artifact_next_page"
+    assert pagination["next_action"]["arguments"] == {
+        "artifact_id": "art_cached"
+    }
 
 
 def test_handle_mirrored_tool_falls_back_to_fresh_when_ref_attach_fails(

@@ -158,9 +158,7 @@ _BUILTIN_TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
             "order_by": {
                 "type": "string",
                 "enum": ["created_seq_desc", "last_seen_desc"],
-                "description": (
-                    "Sort order. Default: created_seq_desc."
-                ),
+                "description": ("Sort order. Default: created_seq_desc."),
             },
             "limit": {
                 "type": "integer",
@@ -192,16 +190,11 @@ _BUILTIN_TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
             "target": {
                 "type": "string",
                 "enum": ["envelope", "mapped"],
-                "description": (
-                    "Retrieval target (default: envelope)."
-                ),
+                "description": ("Retrieval target (default: envelope)."),
             },
             "jsonpath": {
                 "type": "string",
-                "description": (
-                    "JSONPath filter (only with "
-                    "target=envelope)."
-                ),
+                "description": ("JSONPath filter (only with target=envelope)."),
             },
             "cursor": {
                 "type": "string",
@@ -239,9 +232,7 @@ _BUILTIN_TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
                 ),
             },
             "where": {
-                "description": (
-                    "Optional WHERE-DSL filter expression."
-                ),
+                "description": ("Optional WHERE-DSL filter expression."),
             },
             "cursor": {
                 "type": "string",
@@ -276,14 +267,11 @@ _BUILTIN_TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
             "root_path": {
                 "type": "string",
                 "description": (
-                    "Optional root path filter, e.g. "
-                    "'$.result.data'."
+                    "Optional root path filter, e.g. '$.result.data'."
                 ),
             },
             "where": {
-                "description": (
-                    "Optional WHERE-DSL filter expression."
-                ),
+                "description": ("Optional WHERE-DSL filter expression."),
             },
             "cursor": {
                 "type": "string",
@@ -445,6 +433,33 @@ def _mcp_safe_name(qualified_name: str) -> str:
     return qualified_name.replace(".", "_")
 
 
+def _assert_unique_safe_tool_name(
+    seen: dict[str, str],
+    *,
+    safe_name: str,
+    qualified_name: str,
+) -> None:
+    """Ensure MCP-safe tool names remain collision-free.
+
+    Args:
+        seen: Mapping of MCP-safe names to original qualified names.
+        safe_name: Sanitized MCP-safe name.
+        qualified_name: Original qualified tool name.
+
+    Raises:
+        ValueError: If a different qualified name already mapped to
+            the same safe name.
+    """
+    existing = seen.get(safe_name)
+    if existing is not None and existing != qualified_name:
+        msg = (
+            "tool name collision after MCP-safe sanitization: "
+            f"{existing!r} and {qualified_name!r} -> {safe_name!r}"
+        )
+        raise ValueError(msg)
+    seen[safe_name] = qualified_name
+
+
 def _command_resolvable(command: str | None) -> bool:
     """Return whether a stdio command appears resolvable on this host."""
     if not command:
@@ -460,11 +475,17 @@ def _stdio_module_probe(args: list[str]) -> dict[str, Any] | None:
     if len(args) < 2 or args[0] != "-m":
         return None
     module = args[1]
-    spec = importlib.util.find_spec(module)
-    return {
-        "module": module,
-        "importable": spec is not None,
-    }
+    probe: dict[str, Any] = {"module": module}
+    try:
+        spec = importlib.util.find_spec(module)
+    except ModuleNotFoundError as exc:
+        probe["importable"] = False
+        probe["error"] = str(exc)
+        return probe
+    probe["importable"] = spec is not None
+    if spec is None:
+        probe["error"] = "module not found"
+    return probe
 
 
 def _ensure_gateway_context(arguments: dict[str, Any]) -> dict[str, Any]:
@@ -688,9 +709,7 @@ class GatewayServer:
         current = dict(self.upstream_runtime.get(prefix, {}))
         current["last_error_code"] = code
         current["last_error_message"] = message
-        current["last_error_at"] = dt.datetime.now(
-            dt.timezone.utc
-        ).isoformat()
+        current["last_error_at"] = dt.datetime.now(dt.timezone.utc).isoformat()
         self.upstream_runtime[prefix] = current
 
     def _record_upstream_success(self, *, prefix: str) -> None:
@@ -1622,14 +1641,19 @@ class GatewayServer:
             Configured FastMCP application ready to run.
         """
         app = FastMCP(name="sidepouch-mcp")
+        safe_name_to_qualified: dict[str, str] = {}
 
         for tool_name, handler in self.register_tools().items():
-            schema = _BUILTIN_TOOL_SCHEMAS.get(
-                tool_name, _GENERIC_ARGS_SCHEMA
+            schema = _BUILTIN_TOOL_SCHEMAS.get(tool_name, _GENERIC_ARGS_SCHEMA)
+            safe_name = _mcp_safe_name(tool_name)
+            _assert_unique_safe_tool_name(
+                safe_name_to_qualified,
+                safe_name=safe_name,
+                qualified_name=tool_name,
             )
             app.add_tool(
                 RuntimeTool(
-                    name=_mcp_safe_name(tool_name),
+                    name=safe_name,
                     description=_BUILTIN_TOOL_DESCRIPTIONS.get(
                         tool_name, "Gateway tool"
                     ),
@@ -1649,9 +1673,15 @@ class GatewayServer:
             mirrored_description = (
                 f"{mirrored_description} {PAGINATION_COMPLETENESS_RULE}"
             )
+            safe_name = _mcp_safe_name(tool_name)
+            _assert_unique_safe_tool_name(
+                safe_name_to_qualified,
+                safe_name=safe_name,
+                qualified_name=tool_name,
+            )
             app.add_tool(
                 RuntimeTool(
-                    name=_mcp_safe_name(tool_name),
+                    name=safe_name,
                     description=mirrored_description,
                     parameters=dict(mirrored.upstream_tool.input_schema),
                     handler=mirrored_handlers[tool_name],

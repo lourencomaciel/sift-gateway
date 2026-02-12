@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
+NEXT_PAGE_TOOL_NAME: Literal["artifact_next_page"] = "artifact_next_page"
+
 PAGINATION_LAYER_UPSTREAM: Literal["upstream"] = "upstream"
 PAGINATION_LAYER_ARTIFACT_RETRIEVAL: Literal["artifact_retrieval"] = (
     "artifact_retrieval"
@@ -21,15 +23,15 @@ RETRIEVAL_STATUS_COMPLETE: Literal["COMPLETE"] = "COMPLETE"
 UPSTREAM_PARTIAL_REASON_MORE_PAGES_AVAILABLE: Literal[
     "MORE_PAGES_AVAILABLE"
 ] = "MORE_PAGES_AVAILABLE"
-UPSTREAM_PARTIAL_REASON_SIGNAL_INCONCLUSIVE: Literal[
+UPSTREAM_PARTIAL_REASON_SIGNAL_INCONCLUSIVE: Literal["SIGNAL_INCONCLUSIVE"] = (
     "SIGNAL_INCONCLUSIVE"
-] = "SIGNAL_INCONCLUSIVE"
+)
 UPSTREAM_PARTIAL_REASON_CONFIG_MISSING: Literal["CONFIG_MISSING"] = (
     "CONFIG_MISSING"
 )
-UPSTREAM_PARTIAL_REASON_NEXT_TOKEN_MISSING: Literal[
+UPSTREAM_PARTIAL_REASON_NEXT_TOKEN_MISSING: Literal["NEXT_TOKEN_MISSING"] = (
     "NEXT_TOKEN_MISSING"
-] = "NEXT_TOKEN_MISSING"
+)
 
 RETRIEVAL_PARTIAL_REASON_CURSOR_AVAILABLE: Literal["CURSOR_AVAILABLE"] = (
     "CURSOR_AVAILABLE"
@@ -81,11 +83,11 @@ def build_upstream_pagination_meta(
     hint: str
     if has_next_page:
         next_action = {
-            "tool": "artifact.next_page",
+            "tool": NEXT_PAGE_TOOL_NAME,
             "arguments": {"artifact_id": artifact_id},
         }
         hint = (
-            "More results are available. Call artifact.next_page with "
+            "More results are available. Call artifact_next_page with "
             f'artifact_id="{artifact_id}" to fetch the next page.'
         )
     elif retrieval_status == RETRIEVAL_STATUS_PARTIAL:
@@ -128,14 +130,10 @@ def build_retrieval_pagination_meta(
     return {
         "layer": PAGINATION_LAYER_ARTIFACT_RETRIEVAL,
         "retrieval_status": (
-            RETRIEVAL_STATUS_PARTIAL
-            if truncated
-            else RETRIEVAL_STATUS_COMPLETE
+            RETRIEVAL_STATUS_PARTIAL if truncated else RETRIEVAL_STATUS_COMPLETE
         ),
         "partial_reason": (
-            RETRIEVAL_PARTIAL_REASON_CURSOR_AVAILABLE
-            if has_more
-            else None
+            RETRIEVAL_PARTIAL_REASON_CURSOR_AVAILABLE if has_more else None
         ),
         "has_more": has_more,
         "next_cursor": cursor if has_more else None,

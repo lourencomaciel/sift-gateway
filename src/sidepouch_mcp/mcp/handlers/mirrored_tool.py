@@ -216,6 +216,19 @@ _DESCRIBE_COLUMNS = [
     "generation",
 ]
 
+_CACHED_PAGINATION_COLUMNS = [
+    "chain_seq",
+    "envelope",
+]
+
+_FETCH_CACHED_PAGINATION_SQL = """
+SELECT a.chain_seq, pb.envelope
+FROM artifacts a
+JOIN payload_blobs pb ON pb.workspace_id = a.workspace_id
+    AND pb.payload_hash_full = a.payload_hash_full
+WHERE a.workspace_id = %s AND a.artifact_id = %s
+"""
+
 
 def _fetch_inline_describe(
     connection: Any,
@@ -401,6 +414,104 @@ def _pagination_response_meta(
     if isinstance(hint, str):
         base["hint"] = with_pagination_completeness_rule(hint)
     return base
+
+
+def _cached_pagination_meta_for_reuse(
+    connection: Any,
+    *,
+    artifact_id: str,
+    mirrored: MirroredTool,
+    forwarded_args: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Rebuild pagination metadata for a reused cached artifact.
+
+    Args:
+        connection: Active database connection.
+        artifact_id: Reused artifact ID.
+        mirrored: Mirrored tool descriptor.
+        forwarded_args: Forwarded upstream arguments for this request.
+
+    Returns:
+        Pagination metadata dict, or ``None`` when pagination is not
+        configured or cannot be reconstructed.
+    """
+    pagination_config = mirrored.upstream.config.pagination
+    if pagination_config is None:
+        return None
+
+    row = row_to_dict(
+        connection.execute(
+            _FETCH_CACHED_PAGINATION_SQL,
+            (WORKSPACE_ID, artifact_id),
+        ).fetchone(),
+        _CACHED_PAGINATION_COLUMNS,
+    )
+    if row is None:
+        return None
+
+    page_number_raw = row.get("chain_seq")
+    page_number = (
+        page_number_raw
+        if isinstance(page_number_raw, int) and page_number_raw >= 0
+        else 0
+    )
+
+    envelope_raw = row.get("envelope")
+    envelope_dict: dict[str, Any] | None = None
+    if isinstance(envelope_raw, dict):
+        envelope_dict = envelope_raw
+    elif isinstance(envelope_raw, str):
+        try:
+            decoded = json.loads(envelope_raw)
+        except (json.JSONDecodeError, ValueError):
+            return None
+        if isinstance(decoded, dict):
+            envelope_dict = decoded
+    if envelope_dict is None:
+        return None
+
+    if envelope_dict.get("status") == "error":
+        assessment = PaginationAssessment(
+            state=None,
+            has_more=False,
+            retrieval_status=RETRIEVAL_STATUS_PARTIAL,
+            partial_reason=UPSTREAM_PARTIAL_REASON_SIGNAL_INCONCLUSIVE,
+            warning=PAGINATION_WARNING_INCOMPLETE_RESULT_SET,
+            page_number=page_number,
+        )
+        return _pagination_response_meta(assessment, artifact_id)
+
+    json_value = None
+    content = envelope_dict.get("content")
+    if isinstance(content, list):
+        for part in content:
+            if (
+                isinstance(part, dict)
+                and part.get("type") == "json"
+                and "value" in part
+            ):
+                json_value = part["value"]
+                break
+    if json_value is None:
+        assessment = PaginationAssessment(
+            state=None,
+            has_more=False,
+            retrieval_status=RETRIEVAL_STATUS_PARTIAL,
+            partial_reason=UPSTREAM_PARTIAL_REASON_SIGNAL_INCONCLUSIVE,
+            warning=PAGINATION_WARNING_INCOMPLETE_RESULT_SET,
+            page_number=page_number,
+        )
+        return _pagination_response_meta(assessment, artifact_id)
+
+    assessment = assess_pagination(
+        json_value=json_value,
+        pagination_config=pagination_config,
+        original_args=forwarded_args,
+        upstream_prefix=mirrored.prefix,
+        tool_name=mirrored.original_name,
+        page_number=page_number,
+    )
+    return _pagination_response_meta(assessment, artifact_id)
 
 
 async def _persist_async(
@@ -692,6 +803,24 @@ async def handle_mirrored_tool(
                                     connection,
                                     reuse.artifact_id,
                                 )
+                                pagination_meta = None
+                                try:
+                                    pagination_meta = (
+                                        _cached_pagination_meta_for_reuse(
+                                            connection,
+                                            artifact_id=reuse.artifact_id,
+                                            mirrored=mirrored,
+                                            forwarded_args=forwarded_args,
+                                        )
+                                    )
+                                except Exception:
+                                    get_logger(
+                                        component="mcp.handlers"
+                                    ).warning(
+                                        "cached pagination rebuild failed "
+                                        "(best-effort)",
+                                        exc_info=True,
+                                    )
                                 return gateway_tool_result(
                                     artifact_id=reuse.artifact_id,
                                     cache_meta={
@@ -703,6 +832,7 @@ async def handle_mirrored_tool(
                                     },
                                     describe=desc,
                                     usage_hint=hint,
+                                    pagination=pagination_meta,
                                 )
                             ctx._increment_metric("cache_misses")
                             reuse = ReuseResult(
