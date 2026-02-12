@@ -110,6 +110,14 @@ async def _handle_get(
             "INVALID_ARGUMENT",
             "artifact_id is required for action=get",
         )
+    if arguments.get("where") is not None:
+        return gateway_error(
+            "INVALID_ARGUMENT",
+            "The 'where' parameter is only supported with "
+            "action='select'. Use "
+            "artifact(action='select', where=..., "
+            "select_paths=[...]) for filtered queries.",
+        )
     from sidepouch_mcp.mcp.handlers.artifact_get import (
         handle_artifact_get,
     )
@@ -123,33 +131,26 @@ async def _handle_select(
 ) -> dict[str, Any]:
     """Route to the select handler.
 
+    When a ``cursor`` is present, ``root_path`` and
+    ``select_paths`` are optional — the handler extracts
+    them from the signed cursor payload.
+
     Args:
         ctx: Gateway server instance.
         arguments: Tool arguments with ``artifact_id``,
             ``root_path``, ``select_paths``, and optional
-            ``where`` filter.
+            ``where`` filter and ``cursor``.
 
     Returns:
         Projected field data, or gateway error.
     """
-    artifact_id = arguments.get("artifact_id")
-    if not artifact_id:
+    if not arguments.get("artifact_id"):
         return gateway_error(
             "INVALID_ARGUMENT",
             "artifact_id is required for action=select",
         )
-    root_path = arguments.get("root_path")
-    if not root_path:
-        return gateway_error(
-            "INVALID_ARGUMENT",
-            "root_path is required for action=select",
-        )
-    select_paths = arguments.get("select_paths")
-    if not isinstance(select_paths, list) or not select_paths:
-        return gateway_error(
-            "INVALID_ARGUMENT",
-            "select_paths is required for action=select",
-        )
+    # Defer root_path / select_paths validation to the handler
+    # when a cursor is present — embedded values will be extracted.
     from sidepouch_mcp.mcp.handlers.artifact_select import (
         handle_artifact_select,
     )

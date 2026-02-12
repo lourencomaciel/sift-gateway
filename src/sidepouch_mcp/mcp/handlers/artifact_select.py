@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import TYPE_CHECKING, Any, Mapping
 
 from sidepouch_mcp.constants import WORKSPACE_ID
@@ -25,6 +26,7 @@ from sidepouch_mcp.mcp.handlers.common import (
     row_to_dict,
     rows_to_dicts,
 )
+from sidepouch_mcp.pagination.contract import build_retrieval_pagination_meta
 from sidepouch_mcp.query.jsonpath import JsonPathError, evaluate_jsonpath
 from sidepouch_mcp.query.select_paths import (
     canonicalize_select_paths,
@@ -83,9 +85,54 @@ async def handle_artifact_select(
     raw_ctx = arguments.get("_gateway_context")
     session_id = str(raw_ctx["session_id"]) if isinstance(raw_ctx, dict) else ""
     artifact_id = str(arguments["artifact_id"])
-    root_path = str(arguments["root_path"])
-    select_paths_raw = arguments.get("select_paths", [])
-    where_expr = arguments.get("where")
+
+    # Verify cursor first — we may need embedded values.
+    offset = 0
+    cursor_payload: dict[str, Any] | None = None
+    cursor_token = arguments.get("cursor")
+    cursor_has_embedded = False
+    if isinstance(cursor_token, str) and cursor_token:
+        try:
+            cursor_payload = ctx._verify_cursor_payload(
+                token=cursor_token,
+                tool="artifact",
+                artifact_id=artifact_id,
+            )
+            position = ctx._cursor_position(cursor_payload)
+        except (CursorTokenError, CursorExpiredError, CursorStaleError) as exc:
+            return ctx._cursor_error(exc)
+        raw_offset = position.get("offset", 0)
+        if not isinstance(raw_offset, int) or raw_offset < 0:
+            return gateway_error("INVALID_ARGUMENT", "invalid cursor offset")
+        offset = raw_offset
+        cursor_has_embedded = isinstance(
+            cursor_payload.get("select_paths"), list
+        )
+
+    # Extract root_path, select_paths, where — from args or cursor.
+    caller_root_path = arguments.get("root_path")
+    caller_select_paths = arguments.get("select_paths")
+    caller_where = arguments.get("where")
+
+    if cursor_has_embedded and cursor_payload is not None:
+        # Use embedded values for anything the caller omitted.
+        if not caller_root_path:
+            caller_root_path = cursor_payload.get("root_path")
+        if not caller_select_paths:
+            caller_select_paths = cursor_payload.get("select_paths")
+        if caller_where is None:
+            caller_where = cursor_payload.get("where_serialized")
+        # Restore distinct flag from cursor if caller didn't set it.
+        if arguments.get("distinct") is None:
+            if cursor_payload.get("distinct") is True:
+                arguments["distinct"] = True
+
+    root_path = str(caller_root_path) if caller_root_path else ""
+    if not root_path:
+        return gateway_error("INVALID_ARGUMENT", "missing root_path")
+
+    select_paths_raw = caller_select_paths if caller_select_paths else []
+    where_expr = caller_where
     if where_expr is not None and not isinstance(where_expr, (Mapping, str)):
         return gateway_error(
             "INVALID_ARGUMENT", "where must be an object or string"
@@ -122,24 +169,6 @@ async def handle_artifact_select(
                 "INVALID_ARGUMENT",
                 f"invalid where expression: {exc}",
             )
-
-    offset = 0
-    cursor_payload: dict[str, Any] | None = None
-    cursor_token = arguments.get("cursor")
-    if isinstance(cursor_token, str) and cursor_token:
-        try:
-            cursor_payload = ctx._verify_cursor_payload(
-                token=cursor_token,
-                tool="artifact",
-                artifact_id=artifact_id,
-            )
-            position = ctx._cursor_position(cursor_payload)
-        except (CursorTokenError, CursorExpiredError, CursorStaleError) as exc:
-            return ctx._cursor_error(exc)
-        raw_offset = position.get("offset", 0)
-        if not isinstance(raw_offset, int) or raw_offset < 0:
-            return gateway_error("INVALID_ARGUMENT", "invalid cursor offset")
-        offset = raw_offset
 
     with ctx.db_pool.connection() as connection:
         if not ctx._artifact_visible(
@@ -386,6 +415,31 @@ async def handle_artifact_select(
         if callable(commit):
             commit()
 
+    # Deduplicate by projection when distinct is requested.
+    use_distinct = arguments.get("distinct") is True
+    if use_distinct:
+        seen: set[str] = set()
+        unique_items: list[dict[str, Any]] = []
+        for item in items:
+            key = json.dumps(item.get("projection", {}), sort_keys=True)
+            if key not in seen:
+                seen.add(key)
+                unique_items.append(item)
+        items = unique_items
+
+    total_matched = len(items)
+
+    # count_only: return just the count, no items or pagination.
+    if arguments.get("count_only") is True:
+        return {
+            "count": total_matched,
+            "truncated": False,
+            "pagination": build_retrieval_pagination_meta(
+                truncated=False,
+                cursor=None,
+            ),
+        }
+
     max_items = ctx._bounded_limit(arguments.get("limit"))
     selected, truncated, omitted, used_bytes = apply_output_budgets(
         items[offset:],
@@ -394,11 +448,22 @@ async def handle_artifact_select(
     )
     next_cursor: str | None = None
     if truncated:
+        # Serialize where for cursor embedding.
+        where_serialized: str | dict[str, Any] | None = None
+        if where_expr is not None:
+            if isinstance(where_expr, str):
+                where_serialized = where_expr
+            elif isinstance(where_expr, Mapping):
+                where_serialized = dict(where_expr)
         extra: dict[str, Any] = {
             "root_path": root_path,
+            "select_paths": list(select_paths),
+            "where_serialized": where_serialized,
             "select_paths_hash": select_paths_binding_hash,
             "where_hash": where_binding_hash,
         }
+        if use_distinct:
+            extra["distinct"] = True
         generation = artifact_meta.get("generation")
         if isinstance(generation, int):
             extra["artifact_generation"] = generation
@@ -459,6 +524,7 @@ async def handle_artifact_select(
         items=selected,
         truncated=truncated,
         cursor=next_cursor,
+        total_matched=total_matched,
         sampled_only=sampled_only,
         sample_indices_used=sample_indices_used if sampled_only else None,
         sampled_prefix_len=sampled_prefix_len,
