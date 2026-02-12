@@ -261,6 +261,24 @@ def _run_server(
 
     transport = args.transport
 
+    if transport == "stdio" and sys.stdin.isatty():
+        print(
+            "sidepouch-mcp is an MCP server and expects "
+            "JSON-RPC input on stdin.\n"
+            "It should be launched by an MCP client "
+            "(e.g. Claude Desktop), not run directly.\n"
+            "\n"
+            "Useful commands:\n"
+            "  sidepouch-mcp --check          "
+            "Validate config and exit\n"
+            "  sidepouch-mcp --transport sse   "
+            "Run with HTTP transport\n"
+            "  sidepouch-mcp init --from FILE  "
+            "Import MCP config",
+            file=sys.stderr,
+        )
+        return 1
+
     auth_token = None
     if transport in ("sse", "streamable-http"):
         from sidepouch_mcp.mcp.http_auth import (
