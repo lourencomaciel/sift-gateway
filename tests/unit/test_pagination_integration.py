@@ -212,13 +212,16 @@ def test_pagination_response_meta_shape() -> None:
     assert meta["retrieval_status"] == "PARTIAL"
     assert meta["partial_reason"] == "MORE_PAGES_AVAILABLE"
     assert meta["has_more"] is True
-    assert meta["next_action"]["tool"] == "artifact_next_page"
-    assert meta["next_action"]["arguments"] == {"artifact_id": "art_123"}
+    assert meta["next_action"]["tool"] == "artifact"
+    assert meta["next_action"]["arguments"] == {
+        "action": "next_page",
+        "artifact_id": "art_123",
+    }
     assert meta["warning"] == "INCOMPLETE_RESULT_SET"
     assert meta["has_next_page"] is True
     assert meta["page_number"] == 0
     assert "art_123" in meta["hint"]
-    assert "artifact_next_page" in meta["hint"]
+    assert "next_page" in meta["hint"]
     assert "retrieval_status == COMPLETE" in meta["hint"]
 
 

@@ -32,7 +32,7 @@ cur.<version>.<payload_b64u>.<signature_b64u>
 | `traversal_contract_version` | string | `"traversal_v1"` |
 | `workspace_id` | string | `"local"` |
 | `artifact_id` | string | Artifact being paginated |
-| `tool` | string | Tool performing traversal (e.g., `"artifact.get"`) |
+| `tool` | string | Tool performing traversal (`"artifact"`) |
 | `where_canonicalization_mode` | string | `"raw_string"` (default) |
 | `mapper_version` | string | `"mapper_v1"` |
 | `position_state` | dict | Pagination position (e.g., `{"offset": 10}`) |
@@ -71,7 +71,7 @@ On cursor resume, the following fields are verified:
 
 A cursor becomes stale (raises `CursorStaleError`) when any of these conditions occur:
 
-1. **Tool mismatch** — cursor created for `artifact.search` used with `artifact.get`
+1. **Tool mismatch** — cursor created for a different tool name
 2. **Artifact mismatch** — cursor for artifact `art_1` used with `art_2`
 3. **Workspace mismatch** — cursor from different workspace
 4. **Version increments** — `traversal_contract_version` or `mapper_version` changed

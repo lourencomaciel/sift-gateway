@@ -34,21 +34,20 @@ Design invariants (from v1.9 spec):
 
 ## Built-in gateway tools
 
-- `gateway.status`
-- `artifact.search`
-- `artifact.get`
-- `artifact.select`
-- `artifact.describe`
-- `artifact.find`
-- `artifact.chain_pages`
-- `artifact.next_page`
+- `gateway_status` — health and configuration snapshot
+- `artifact` — consolidated retrieval tool with an `action` parameter:
+  - `describe` — inspect artifact structure and mapping roots
+  - `get` — retrieve raw envelope or mapped data
+  - `select` — project specific fields from a mapped root array
+  - `search` — find artifacts visible to this session
+  - `next_page` — fetch the next page of a paginated upstream response
 
 ## Pagination Contract v1
 
 SidePouch exposes layer-explicit pagination metadata:
 
 - mirrored upstream tool responses use `pagination.layer = "upstream"`;
-- retrieval tool responses (`artifact.search/get/select/find/chain_pages`)
+- retrieval tool responses (`artifact` with action search/get/select)
   use `pagination.layer = "artifact_retrieval"`.
 
 Key fields:
@@ -93,8 +92,8 @@ Handle responses include consistent cache metadata:
 When a mirrored call returns a reused `artifact_id`, SidePouch first
 attaches that artifact to the caller's session (`artifact_refs`) before
 returning the handle. This guarantees the returned handle is immediately
-retrievable by `artifact.get`, `artifact.describe`, `artifact.select`,
-and `artifact.find` in the same session.
+retrievable by `artifact(action="get")`, `artifact(action="describe")`,
+and `artifact(action="select")` in the same session.
 
 ## Artifact-first Recipes
 
@@ -103,14 +102,14 @@ and `artifact.find` in the same session.
 1. Call mirrored tool (for example `meta_ads_get_campaigns`).
 2. If response includes `artifact_id`, use inline `describe` data to choose
    `root_path`.
-3. Call `artifact.select` or `artifact.find` with pagination.
+3. Call `artifact(action="select")` with pagination.
 4. Continue paging until `pagination.retrieval_status == "COMPLETE"`.
 
 ### Upstream pagination chain
 
 1. Call mirrored tool and inspect `pagination.layer == "upstream"`.
-2. If `pagination.has_next_page` is true, call `artifact.next_page` with the
-   returned `artifact_id`.
+2. If `pagination.has_next_page` is true, call
+   `artifact(action="next_page")` with the returned `artifact_id`.
 3. Repeat until `pagination.retrieval_status == "COMPLETE"`.
 
 ## Requirements
