@@ -261,6 +261,43 @@ def test_non_json_string_values_produce_no_extra_roots() -> None:
     assert roots[0].root_path == "$.items"
 
 
+def test_object_root_fields_top_shows_own_keys() -> None:
+    """Object root fields_top reports its own keys, not sub-object keys."""
+    data = {
+        "data": [{"id": 1}, {"id": 2}],
+        "paging": {
+            "cursors": {"after": "abc", "before": "xyz"},
+            "next": "https://example.com",
+        },
+    }
+    roots = run_full_mapping(data, max_roots=5)
+    # $.paging is an object root
+    paging_root = next(r for r in roots if r.root_path == "$.paging")
+    assert paging_root.root_shape == "object"
+    ft = paging_root.fields_top
+    assert ft is not None
+    # Should show paging's own keys: cursors and next.
+    assert "cursors" in ft
+    assert ft["cursors"] == {"object": 1}
+    assert "next" in ft
+    assert ft["next"] == {"string": 1}
+    # Should NOT show sub-object keys like "after" or "before".
+    assert "after" not in ft
+    assert "before" not in ft
+
+
+def test_scalar_only_object_root_fields_top() -> None:
+    """Object root with scalar values shows keys with correct types."""
+    data = {"a": 1, "b": "hello", "c": True}
+    roots = run_full_mapping(data, max_roots=3)
+    assert len(roots) == 1
+    ft = roots[0].fields_top
+    assert ft is not None
+    assert ft["a"] == {"number": 1}
+    assert ft["b"] == {"string": 1}
+    assert ft["c"] == {"boolean": 1}
+
+
 def test_depth_exploration_finds_nested_dict_arrays() -> None:
     """Depth exploration discovers arrays nested inside dict values."""
     data = {

@@ -43,6 +43,28 @@ def test_gateway_tool_result_with_describe_and_hint() -> None:
     assert response["meta"] == {"cache": {"reused": False}}
 
 
+def test_gateway_tool_result_with_canonical_pagination() -> None:
+    pagination = {
+        "layer": "upstream",
+        "retrieval_status": "PARTIAL",
+        "partial_reason": "MORE_PAGES_AVAILABLE",
+        "has_more": True,
+        "page_number": 0,
+        "next_action": {
+            "tool": "artifact.next_page",
+            "arguments": {"artifact_id": "art_3"},
+        },
+        "warning": "INCOMPLETE_RESULT_SET",
+        "has_next_page": True,
+        "hint": "More results are available.",
+    }
+    response = gateway_tool_result(
+        artifact_id="art_3",
+        pagination=pagination,
+    )
+    assert response["pagination"] == pagination
+
+
 # -- can_passthrough boundary tests --
 
 

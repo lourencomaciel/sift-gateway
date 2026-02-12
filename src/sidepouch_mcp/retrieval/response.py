@@ -13,6 +13,9 @@ import json
 from typing import Any, Sequence
 
 from sidepouch_mcp.canon.rfc8785 import canonical_bytes
+from sidepouch_mcp.pagination.contract import (
+    build_retrieval_pagination_meta,
+)
 
 
 def apply_output_budgets(
@@ -108,4 +111,8 @@ def build_retrieval_response(
         "cursor": cursor if truncated else None,
         "omitted": omitted,
         "stats": stats or {},
+        "pagination": build_retrieval_pagination_meta(
+            truncated=truncated,
+            cursor=cursor if truncated else None,
+        ),
     }

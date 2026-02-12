@@ -87,15 +87,20 @@ def test_sampled_indices_from_rows_skips_missing_key() -> None:
 
 def test_build_find_response_sampled_only_true_when_index_off() -> None:
     result = build_find_response(
-        items=[{"record": "a"}],
+        items=[{"root_path": "$.data", "index": 0, "record_hash": "abc"}],
         truncated=False,
         sampled_only=True,
         index_status="off",
     )
     assert result["sampled_only"] is True
     assert result["truncated"] is False
-    assert result["items"] == [{"record": "a"}]
+    assert result["items"] == [
+        {"root_path": "$.data", "index": 0, "record_hash": "abc"}
+    ]
     assert "cursor" not in result
+    assert "hint" in result
+    assert result["pagination"]["layer"] == "artifact_retrieval"
+    assert result["pagination"]["retrieval_status"] == "COMPLETE"
 
 
 def test_build_find_response_sampled_only_false_when_index_ready() -> None:
@@ -118,6 +123,9 @@ def test_build_find_response_with_cursor() -> None:
     )
     assert result["truncated"] is True
     assert result["cursor"] == "cursor_abc"
+    assert result["pagination"]["retrieval_status"] == "PARTIAL"
+    assert result["pagination"]["partial_reason"] == "CURSOR_AVAILABLE"
+    assert result["pagination"]["next_cursor"] == "cursor_abc"
 
 
 def test_build_find_response_no_cursor_when_not_truncated() -> None:
@@ -136,6 +144,27 @@ def test_build_find_response_default_sampled_only() -> None:
         truncated=False,
     )
     assert result["sampled_only"] is True
+
+
+def test_build_find_response_includes_hint() -> None:
+    result = build_find_response(items=[], truncated=False)
+    assert "hint" in result
+    assert "artifact_select" in result["hint"]
+
+
+def test_build_find_response_includes_matched_count() -> None:
+    result = build_find_response(
+        items=[{"root_path": "$.data", "index": 0}],
+        truncated=True,
+        cursor="c1",
+        matched_count=42,
+    )
+    assert result["matched_count"] == 42
+
+
+def test_build_find_response_omits_matched_count_when_none() -> None:
+    result = build_find_response(items=[], truncated=False)
+    assert "matched_count" not in result
 
 
 # ---- traverse_sampled (traversal_v1 contract tests) ----

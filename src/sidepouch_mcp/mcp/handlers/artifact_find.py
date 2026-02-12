@@ -13,8 +13,10 @@ from sidepouch_mcp.cursor.payload import CursorStaleError
 from sidepouch_mcp.envelope.responses import gateway_error
 from sidepouch_mcp.mcp.handlers.common import (
     ARTIFACT_META_COLUMNS,
+    ENVELOPE_COLUMNS,
     FETCH_ARTIFACT_META_SQL,
     ROOT_COLUMNS,
+    extract_json_target,
     row_to_dict,
     rows_to_dicts,
 )
@@ -39,6 +41,130 @@ _BATCH_SAMPLE_COLUMNS = [
     "record_bytes",
     "record_hash",
 ]
+
+
+def _find_full_mapping_items(
+    ctx: GatewayServer,
+    connection: Any,
+    artifact_id: str,
+    roots: list[dict[str, Any]],
+    where_expr: Mapping[str, Any] | str | None,
+    items: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    """Populate *items* from a fully-mapped envelope.
+
+    Reconstructs the envelope, extracts the JSON target, then
+    evaluates each root's JSONPath to collect matching records.
+
+    Args:
+        ctx: Gateway server instance.
+        connection: Active database connection.
+        artifact_id: Artifact being queried.
+        roots: Discovered root dicts with ``root_path``.
+        where_expr: Optional where filter expression.
+        items: Mutable list to append matching records into.
+
+    Returns:
+        A gateway error dict on failure, or ``None`` on success.
+    """
+    from sidepouch_mcp.canon.rfc8785 import canonical_bytes as _canon
+    from sidepouch_mcp.query.jsonpath import (
+        JsonPathError,
+        evaluate_jsonpath,
+    )
+    from sidepouch_mcp.storage.payload_store import reconstruct_envelope
+    from sidepouch_mcp.tools.artifact_get import FETCH_ARTIFACT_SQL
+    from sidepouch_mcp.util.hashing import sha256_trunc
+
+    artifact_row = row_to_dict(
+        connection.execute(
+            FETCH_ARTIFACT_SQL,
+            (WORKSPACE_ID, artifact_id),
+        ).fetchone(),
+        ENVELOPE_COLUMNS,
+    )
+    if artifact_row is None:
+        return gateway_error("NOT_FOUND", "artifact not found")
+
+    envelope_value = artifact_row.get("envelope")
+    canonical_bytes_raw = artifact_row.get("envelope_canonical_bytes")
+    if isinstance(envelope_value, dict) and "content" in envelope_value:
+        envelope = envelope_value
+    elif canonical_bytes_raw is None:
+        return gateway_error(
+            "INTERNAL_ERROR",
+            "missing canonical bytes for artifact",
+        )
+    else:
+        try:
+            envelope = reconstruct_envelope(
+                compressed_bytes=bytes(canonical_bytes_raw),
+                encoding=str(
+                    artifact_row.get("envelope_canonical_encoding", "none")
+                ),
+                expected_hash=str(artifact_row.get("payload_hash_full", "")),
+            )
+        except ValueError as exc:
+            return gateway_error(
+                "INTERNAL_ERROR",
+                f"envelope reconstruction failed: {exc}",
+            )
+
+    json_target = extract_json_target(
+        envelope, artifact_row.get("mapped_part_index")
+    )
+
+    for root in roots:
+        rp = root.get("root_path", "$")
+        try:
+            root_values = evaluate_jsonpath(
+                json_target,
+                rp,
+                max_length=ctx.config.max_jsonpath_length,
+                max_segments=ctx.config.max_path_segments,
+                max_wildcard_expansion_total=(
+                    ctx.config.max_wildcard_expansion_total
+                ),
+            )
+        except JsonPathError as exc:
+            return gateway_error("INVALID_ARGUMENT", str(exc))
+
+        records: list[Any]
+        if len(root_values) == 1 and isinstance(root_values[0], list):
+            records = list(root_values[0])
+        else:
+            records = list(root_values)
+
+        for index, record in enumerate(records):
+            if where_expr is not None:
+                try:
+                    matches = evaluate_where(
+                        record,
+                        where_expr,
+                        max_compute_steps=ctx.config.max_compute_steps,
+                        max_wildcard_expansion=ctx.config.max_wildcards,
+                    )
+                except WhereDslError as exc:
+                    return gateway_error("INVALID_ARGUMENT", str(exc))
+                if not matches:
+                    continue
+
+            record_hash: str | None = None
+            if isinstance(record, dict):
+                try:
+                    record_hash = sha256_trunc(_canon(record), 32)
+                except (TypeError, ValueError):
+                    pass
+
+            items.append(
+                {
+                    "root_path": rp,
+                    "index": index,
+                    "record_hash": record_hash,
+                }
+            )
+
+    return None
 
 
 async def handle_artifact_find(
@@ -199,7 +325,9 @@ async def handle_artifact_find(
         }
 
         items: list[dict[str, Any]] = []
-        if root_keys:
+        map_kind = str(artifact_meta.get("map_kind", "none"))
+
+        if map_kind == "partial" and root_keys:
             all_sample_rows = rows_to_dicts(
                 connection.execute(
                     _FETCH_SAMPLES_BATCH_SQL,
@@ -227,8 +355,8 @@ async def handle_artifact_find(
                         matches = evaluate_where(
                             record,
                             where_expr,
-                            max_compute_steps=ctx.config.max_compute_steps,
-                            max_wildcard_expansion=ctx.config.max_wildcards,
+                            max_compute_steps=(ctx.config.max_compute_steps),
+                            max_wildcard_expansion=(ctx.config.max_wildcards),
                         )
                     except WhereDslError as exc:
                         return gateway_error("INVALID_ARGUMENT", str(exc))
@@ -240,10 +368,21 @@ async def handle_artifact_find(
                             sample.get("root_key")
                         ),
                         "sample_index": sample.get("sample_index"),
-                        "record": record,
                         "record_hash": sample.get("record_hash"),
                     }
                 )
+        elif root_keys:
+            # Full mapping: reconstruct envelope, evaluate roots.
+            full_err = _find_full_mapping_items(
+                ctx,
+                connection,
+                artifact_id,
+                roots,
+                where_expr,
+                items,
+            )
+            if full_err is not None:
+                return full_err
 
         ctx._safe_touch_for_retrieval(
             connection,
@@ -285,8 +424,7 @@ async def handle_artifact_find(
             extra=extra,
         )
     determinism: dict[str, str] | None = None
-    # No sampled_only guard: find always uses sampled mode.
-    if map_budget_fingerprint:
+    if map_kind == "partial" and map_budget_fingerprint:
         from sidepouch_mcp.constants import TRAVERSAL_CONTRACT_VERSION
 
         determinism = {
@@ -297,7 +435,8 @@ async def handle_artifact_find(
         items=selected,
         truncated=truncated,
         cursor=next_cursor,
-        sampled_only=True,
+        sampled_only=map_kind == "partial",
         index_status=index_status,
         determinism=determinism,
+        matched_count=len(items),
     )

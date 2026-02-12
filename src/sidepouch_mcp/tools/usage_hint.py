@@ -9,6 +9,30 @@ from __future__ import annotations
 
 from typing import Any
 
+PAGINATION_COMPLETENESS_RULE = (
+    "Do not claim completeness until "
+    "pagination.retrieval_status == COMPLETE."
+)
+
+
+def with_pagination_completeness_rule(text: str) -> str:
+    """Append the pagination completion rule to hint text.
+
+    Args:
+        text: Base hint text.
+
+    Returns:
+        Hint text including the completion rule.
+    """
+    trimmed = text.strip()
+    if not trimmed:
+        return PAGINATION_COMPLETENESS_RULE
+    if trimmed.endswith(PAGINATION_COMPLETENESS_RULE):
+        return trimmed
+    if not trimmed.endswith("."):
+        trimmed = f"{trimmed}."
+    return f"{trimmed} {PAGINATION_COMPLETENESS_RULE}"
+
 
 def _field_names(fields_top: Any, *, limit: int = 8) -> list[str]:
     """Extract up to *limit* field names from a fields_top dict.
@@ -74,7 +98,7 @@ def build_usage_hint(
     if map_status == "failed":
         return (
             "Mapping failed. Use "
-            f'artifact.get(artifact_id="{artifact_id}") '
+            f'artifact_get(artifact_id="{artifact_id}") '
             "to retrieve raw content."
         )
 
@@ -82,7 +106,7 @@ def build_usage_hint(
     if map_status not in {"complete", "done", "ready"}:
         return (
             "Mapping in progress. Call "
-            f'artifact.describe(artifact_id="{artifact_id}") '
+            f'artifact_describe(artifact_id="{artifact_id}") '
             "to check status later."
         )
 
@@ -90,7 +114,7 @@ def build_usage_hint(
     if not roots:
         return (
             "No structured mapping available. Use "
-            f'artifact.get(artifact_id="{artifact_id}") '
+            f'artifact_get(artifact_id="{artifact_id}") '
             "to retrieve raw content."
         )
 
@@ -127,21 +151,26 @@ def build_usage_hint(
         select_fields = fields[:4] if fields else ["*"]
         select_list = ", ".join(f'"{f}"' for f in select_fields)
         parts.append(
-            "Use artifact.select("
+            "Use artifact_select("
             f'artifact_id="{artifact_id}", '
             f'root_path="{path}", '
             f"select_paths=[{select_list}]"
             ") to project specific fields"
         )
         parts.append(
-            "or artifact.find("
+            "or artifact_find("
             f'artifact_id="{artifact_id}", '
             f'root_path="{path}"'
-            ") to retrieve records"
+            ") to search for matching record locators"
+        )
+        parts.append(
+            "Minimize context usage: request only needed fields and "
+            "rows (use select_paths, where, and a small limit), then "
+            "expand only if needed"
         )
     else:
         parts.append(
-            "Use artifact.get("
+            "Use artifact_get("
             f'artifact_id="{artifact_id}"'
             ") to retrieve the full value"
         )
