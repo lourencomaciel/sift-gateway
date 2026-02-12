@@ -121,94 +121,56 @@ and `artifact.find` in the same session.
 
 ## Quick start
 
-1. Install dependencies:
+1. Install:
 
 ```bash
 uv sync
 ```
 
-2. Run SidePouch (uses SQLite by default — no external dependencies):
-
-```bash
-uv run sidepouch-mcp
-```
-
-That's it. The default SQLite backend stores data at `.sidepouch-mcp/state/gateway.db` and requires no setup.
-
-### Using PostgreSQL instead
-
-For production deployments or when you need concurrent multi-process access:
-
-1. Install with the Postgres extra:
-
-```bash
-uv sync --extra postgres
-```
-
-2. Copy environment template and set the backend:
-
-```bash
-cp .env.example .env
-# Edit .env: set SIDEPOUCH_MCP_DB_BACKEND=postgres
-```
-
-3. Start Postgres:
-
-```bash
-docker compose up -d
-```
-
-`docker compose` provisions:
-
-- `sidepouch` (app runtime DB)
-- `sidepouch_test` (integration test DB; created by `scripts/init-test-db.sql` on first container init)
-
-If the container already existed before the init script mount, recreate it:
-
-```bash
-docker compose down -v && docker compose up -d
-```
-
-4. Run startup checks:
-
-```bash
-uv run sidepouch-mcp --check
-```
-
-5. Run SidePouch:
-
-```bash
-uv run sidepouch-mcp
-```
-
-## Configure upstream MCP servers
-
-SidePouch accepts the standard `mcpServers` format used by Claude
-Desktop, Cursor, and Claude Code.
-
-### Migrate an existing config
+2. Import your existing MCP config (e.g. from Claude Desktop):
 
 ```bash
 uv run sidepouch-mcp init \
   --from ~/Library/Application\ Support/Claude/claude_desktop_config.json
 ```
 
-This command:
+3. Restart your MCP client. SidePouch is now running as a proxy in
+   front of your upstream servers.
 
-1. copies source `mcpServers` into `.sidepouch-mcp/state/config.json`;
-2. sets `db_backend` to `sqlite` by default;
-3. externalizes inline `env` and `headers` into per-upstream secret
-   files under `.sidepouch-mcp/state/upstream_secrets/`;
-4. writes a backup to `<source>.backup`;
-5. rewrites the source config to point to SidePouch only;
-6. stores `_gateway_sync` metadata so future restarts can auto-sync.
+The default SQLite backend stores data at
+`.sidepouch-mcp/state/gateway.db` and requires no setup.
 
-Use PostgreSQL only when explicitly requested:
+> SidePouch is an MCP server — your MCP client (Claude Desktop,
+> Cursor, Claude Code, etc.) launches it automatically via the
+> config that `init` writes. You don't need to run it directly.
+> Use `sidepouch-mcp --check` to verify config and health without
+> starting the server.
+
+### Using PostgreSQL instead
+
+For production deployments or when you need concurrent multi-process
+access, pass `--db-backend postgres` during init:
 
 ```bash
+uv sync --extra postgres
+docker compose up -d
+
 uv run sidepouch-mcp init \
   --from ~/Library/Application\ Support/Claude/claude_desktop_config.json \
   --db-backend postgres
+```
+
+`docker compose` provisions:
+
+- `sidepouch` (app runtime DB)
+- `sidepouch_test` (integration test DB; created by
+  `scripts/init-test-db.sql` on first container init)
+
+If the container already existed before the init script mount,
+recreate it:
+
+```bash
+docker compose down -v && docker compose up -d
 ```
 
 Optionally provide a DSN to skip Docker auto-provisioning:
@@ -219,6 +181,27 @@ uv run sidepouch-mcp init \
   --db-backend postgres \
   --postgres-dsn postgresql://user:pass@host:5432/sidepouch
 ```
+
+Verify health at any time:
+
+```bash
+uv run sidepouch-mcp --check
+```
+
+## Configure upstream MCP servers
+
+SidePouch accepts the standard `mcpServers` format used by Claude
+Desktop, Cursor, and Claude Code.
+
+### What `init` does
+
+1. Copies source `mcpServers` into `.sidepouch-mcp/state/config.json`.
+2. Sets `db_backend` to `sqlite` by default.
+3. Externalizes inline `env` and `headers` into per-upstream secret
+   files under `.sidepouch-mcp/state/upstream_secrets/`.
+4. Writes a backup to `<source>.backup`.
+5. Rewrites the source config to point to SidePouch only.
+6. Stores `_gateway_sync` metadata so future restarts can auto-sync.
 
 Preview:
 
