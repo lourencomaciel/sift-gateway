@@ -1922,6 +1922,8 @@ def test_artifact_select_cursor_includes_partial_binding_fields(
     extra = issued["extra"]
     assert isinstance(extra, dict)
     assert extra["root_path"] == "$.items"
+    assert extra["select_paths"] == ["$.id"]
+    assert extra["where_serialized"] is None
     assert extra["select_paths_hash"] == select_paths_hash(["$.id"])
     assert extra["where_hash"] == "__none__"
     assert extra["artifact_generation"] == 1
@@ -3352,3 +3354,328 @@ def test_handle_mirrored_tool_skips_quota_when_disabled(
     assert response["type"] == "gateway_tool_result"
     assert response["artifact_id"] == "art_no_quota"
     assert enforce_called is False
+
+
+def test_artifact_select_includes_total_matched(
+    tmp_path: Path, monkeypatch
+) -> None:
+    conn = _SeqConnection(
+        [
+            _SeqCursor(one=(1,)),
+            _SeqCursor(
+                one=("art_1", "partial", "ready", "off", None, 1, "mbf")
+            ),
+            _SeqCursor(
+                one=(
+                    "rk_1",
+                    "$.items",
+                    100,
+                    "array",
+                    {"id": {"number": 1}},
+                    [0, 1],
+                    {"sampled_prefix_len": 9},
+                )
+            ),
+            _SeqCursor(
+                all_rows=[
+                    (0, {"id": 1, "name": "A"}, 16, "h1"),
+                    (1, {"id": 2, "name": "B"}, 16, "h2"),
+                ]
+            ),
+        ]
+    )
+    server = GatewayServer(
+        config=GatewayConfig(data_dir=tmp_path),
+        db_pool=_SeqPool(conn),  # type: ignore[arg-type]
+    )
+    monkeypatch.setattr(
+        server, "_safe_touch_for_retrieval", lambda *args, **kwargs: None
+    )
+
+    response = asyncio.run(
+        server.handle_artifact(
+            {
+                "action": "select",
+                "_gateway_context": {"session_id": "sess_1"},
+                "artifact_id": "art_1",
+                "root_path": "$.items",
+                "select_paths": ["id"],
+            }
+        )
+    )
+    assert response["total_matched"] == 2
+    assert len(response["items"]) == 2
+
+
+def test_artifact_select_count_only(tmp_path: Path, monkeypatch) -> None:
+    conn = _SeqConnection(
+        [
+            _SeqCursor(one=(1,)),
+            _SeqCursor(
+                one=("art_1", "partial", "ready", "off", None, 1, "mbf")
+            ),
+            _SeqCursor(
+                one=(
+                    "rk_1",
+                    "$.items",
+                    100,
+                    "array",
+                    {"id": {"number": 1}},
+                    [0, 1],
+                    {"sampled_prefix_len": 9},
+                )
+            ),
+            _SeqCursor(
+                all_rows=[
+                    (0, {"id": 1, "name": "A"}, 16, "h1"),
+                    (1, {"id": 2, "name": "B"}, 16, "h2"),
+                ]
+            ),
+        ]
+    )
+    server = GatewayServer(
+        config=GatewayConfig(data_dir=tmp_path),
+        db_pool=_SeqPool(conn),  # type: ignore[arg-type]
+    )
+    monkeypatch.setattr(
+        server, "_safe_touch_for_retrieval", lambda *args, **kwargs: None
+    )
+
+    response = asyncio.run(
+        server.handle_artifact(
+            {
+                "action": "select",
+                "_gateway_context": {"session_id": "sess_1"},
+                "artifact_id": "art_1",
+                "root_path": "$.items",
+                "select_paths": ["id"],
+                "count_only": True,
+            }
+        )
+    )
+    assert response["count"] == 2
+    assert "items" not in response
+    assert response["truncated"] is False
+
+
+def test_artifact_select_count_only_with_where_filter(
+    tmp_path: Path, monkeypatch
+) -> None:
+    conn = _SeqConnection(
+        [
+            _SeqCursor(one=(1,)),
+            _SeqCursor(
+                one=("art_1", "partial", "ready", "off", None, 1, "mbf")
+            ),
+            _SeqCursor(
+                one=(
+                    "rk_1",
+                    "$.items",
+                    100,
+                    "array",
+                    {"id": {"number": 1}},
+                    [0, 1],
+                    {"sampled_prefix_len": 9},
+                )
+            ),
+            _SeqCursor(
+                all_rows=[
+                    (0, {"id": 1, "name": "A"}, 16, "h1"),
+                    (1, {"id": 2, "name": "B"}, 16, "h2"),
+                ]
+            ),
+        ]
+    )
+    server = GatewayServer(
+        config=GatewayConfig(data_dir=tmp_path),
+        db_pool=_SeqPool(conn),  # type: ignore[arg-type]
+    )
+    monkeypatch.setattr(
+        server, "_safe_touch_for_retrieval", lambda *args, **kwargs: None
+    )
+
+    response = asyncio.run(
+        server.handle_artifact(
+            {
+                "action": "select",
+                "_gateway_context": {"session_id": "sess_1"},
+                "artifact_id": "art_1",
+                "root_path": "$.items",
+                "select_paths": ["id"],
+                "where": {"path": "$.id", "op": "eq", "value": 1},
+                "count_only": True,
+            }
+        )
+    )
+    assert response["count"] == 1
+
+
+def test_artifact_select_distinct_deduplicates(
+    tmp_path: Path, monkeypatch
+) -> None:
+    conn = _SeqConnection(
+        [
+            _SeqCursor(one=(1,)),
+            _SeqCursor(
+                one=("art_1", "partial", "ready", "off", None, 1, "mbf")
+            ),
+            _SeqCursor(
+                one=(
+                    "rk_1",
+                    "$.items",
+                    100,
+                    "array",
+                    {"name": {"string": 1}},
+                    [0, 1, 2],
+                    {"sampled_prefix_len": 9},
+                )
+            ),
+            _SeqCursor(
+                all_rows=[
+                    (0, {"name": "A"}, 16, "h1"),
+                    (1, {"name": "A"}, 16, "h2"),
+                    (2, {"name": "B"}, 16, "h3"),
+                ]
+            ),
+        ]
+    )
+    server = GatewayServer(
+        config=GatewayConfig(data_dir=tmp_path),
+        db_pool=_SeqPool(conn),  # type: ignore[arg-type]
+    )
+    monkeypatch.setattr(
+        server, "_safe_touch_for_retrieval", lambda *args, **kwargs: None
+    )
+
+    response = asyncio.run(
+        server.handle_artifact(
+            {
+                "action": "select",
+                "_gateway_context": {"session_id": "sess_1"},
+                "artifact_id": "art_1",
+                "root_path": "$.items",
+                "select_paths": ["name"],
+                "distinct": True,
+            }
+        )
+    )
+    assert response["total_matched"] == 2
+    projections = [item["projection"] for item in response["items"]]
+    assert {"$.name": "A"} in projections
+    assert {"$.name": "B"} in projections
+    assert len(projections) == 2
+
+
+def test_artifact_select_distinct_embeds_in_cursor(
+    tmp_path: Path, monkeypatch
+) -> None:
+    conn = _SeqConnection(
+        [
+            _SeqCursor(one=(1,)),
+            _SeqCursor(
+                one=("art_1", "partial", "ready", "off", None, 1, "mbf")
+            ),
+            _SeqCursor(
+                one=(
+                    "rk_1",
+                    "$.items",
+                    100,
+                    "array",
+                    {"name": {"string": 1}},
+                    [0, 1],
+                    {"sampled_prefix_len": 9},
+                )
+            ),
+            _SeqCursor(
+                all_rows=[
+                    (0, {"name": "A"}, 16, "h1"),
+                    (1, {"name": "B"}, 16, "h2"),
+                ]
+            ),
+        ]
+    )
+    server = GatewayServer(
+        config=GatewayConfig(data_dir=tmp_path),
+        db_pool=_SeqPool(conn),  # type: ignore[arg-type]
+    )
+    monkeypatch.setattr(
+        server, "_safe_touch_for_retrieval", lambda *args, **kwargs: None
+    )
+    issued: dict[str, object] = {}
+
+    def _issue_cursor(**kwargs):
+        issued.update(kwargs)
+        return "cur_next"
+
+    monkeypatch.setattr(server, "_issue_cursor", _issue_cursor)
+
+    response = asyncio.run(
+        server.handle_artifact(
+            {
+                "action": "select",
+                "_gateway_context": {"session_id": "sess_1"},
+                "artifact_id": "art_1",
+                "root_path": "$.items",
+                "select_paths": ["name"],
+                "distinct": True,
+                "limit": 1,
+            }
+        )
+    )
+    assert response["truncated"] is True
+    extra = issued["extra"]
+    assert extra["distinct"] is True
+
+
+def test_artifact_select_rejects_wildcard_star() -> None:
+    from sidepouch_mcp.tools.artifact_select import (
+        validate_select_args,
+    )
+
+    err = validate_select_args(
+        {
+            "_gateway_context": {"session_id": "s"},
+            "artifact_id": "art_1",
+            "root_path": "$.items",
+            "select_paths": ["*"],
+        }
+    )
+    assert err is not None
+    assert err["code"] == "INVALID_ARGUMENT"
+    assert "Wildcard" in err["message"]
+    assert "describe" in err["message"]
+
+
+def test_artifact_get_rejects_where_param(
+    tmp_path: Path,
+) -> None:
+    server = GatewayServer(
+        config=GatewayConfig(data_dir=tmp_path),
+        db_pool=_SeqPool(  # type: ignore[arg-type]
+            _SeqConnection([])
+        ),
+    )
+    response = asyncio.run(
+        server.handle_artifact(
+            {
+                "action": "get",
+                "_gateway_context": {"session_id": "s"},
+                "artifact_id": "art_1",
+                "where": 'spend != "0"',
+            }
+        )
+    )
+    assert response.get("code") == "INVALID_ARGUMENT"
+    assert "select" in response["message"].lower()
+
+
+def test_jsonpath_rejects_union_syntax() -> None:
+    from sidepouch_mcp.query.jsonpath import (
+        JsonPathError,
+        parse_jsonpath,
+    )
+
+    import pytest
+
+    with pytest.raises(JsonPathError, match="union"):
+        parse_jsonpath("$.data[name,spend]")

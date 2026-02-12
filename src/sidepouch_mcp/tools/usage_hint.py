@@ -148,8 +148,11 @@ def build_usage_hint(
 
     # Suggested tool call
     if shape == "array":
-        select_fields = fields[:4] if fields else ["*"]
-        select_list = ", ".join(f'"{f}"' for f in select_fields)
+        if fields:
+            select_fields = fields[:4]
+            select_list = ", ".join(f'"{f}"' for f in select_fields)
+        else:
+            select_list = '"field1", "field2"'
         parts.append(
             'Use artifact(action="select", '
             f'artifact_id="{artifact_id}", '
@@ -157,11 +160,16 @@ def build_usage_hint(
             f"select_paths=[{select_list}]"
             ") to project specific fields"
         )
-        parts.append("Add a where filter to narrow results")
+        parts.append("Add where to filter (e.g. where='to_number(spend) > 0')")
         parts.append(
-            "Minimize context usage: request only needed fields and "
-            "rows (use select_paths, where, and a small limit), then "
-            "expand only if needed"
+            "Use count_only=true for counts, distinct=true for unique values"
+        )
+        parts.append(
+            "Continue partial results with select + cursor (not next_page)"
+        )
+        parts.append(
+            "Minimize context: request only needed "
+            "fields and rows, then expand if needed"
         )
     else:
         parts.append(

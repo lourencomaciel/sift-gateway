@@ -95,7 +95,23 @@ def parse_jsonpath(
             continue
 
         if char != "[":
+            if char == "?" or path[i:].startswith("?("):
+                msg = (
+                    "JSONPath filter predicates (?(@...)) "
+                    "are not supported. Use the 'where' "
+                    "parameter for filtering instead."
+                )
+                raise JsonPathError(msg)
             msg = f"invalid token at offset {i}"
+            raise JsonPathError(msg)
+
+        # Detect filter predicates inside brackets: [?(@...)]
+        if path.startswith("[?(", i):
+            msg = (
+                "JSONPath filter predicates (?(@...)) "
+                "are not supported. Use the 'where' "
+                "parameter for filtering instead."
+            )
             raise JsonPathError(msg)
 
         if path.startswith("[*]", i):
@@ -140,6 +156,16 @@ def parse_jsonpath(
                 msg = f"JSONPath exceeds max segments ({max_segments})"
                 raise JsonPathError(msg)
             continue
+
+        # Detect union syntax: [a,b] or ['a','b']
+        bracket_end = path.find("]", i)
+        if bracket_end != -1 and "," in path[i:bracket_end]:
+            msg = (
+                "JSONPath union syntax is not "
+                "supported. Use 'select_paths' "
+                "for multi-field projection."
+            )
+            raise JsonPathError(msg)
 
         i += 1
         start = i

@@ -100,6 +100,7 @@ class _Token:
 
 
 _IDENT_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+_CAST_FUNCTIONS = frozenset({"to_number", "to_string"})
 _KEYWORDS = {
     "AND",
     "OR",
@@ -532,9 +533,13 @@ class _Parser:
     def _parse_predicate(self) -> dict[str, Any]:
         """Parse a leaf predicate (comparison, IN, etc.).
 
+        Supports optional cast functions: ``to_number(path)``
+        and ``to_string(path)`` wrap the resolved values before
+        comparison.
+
         Returns:
             AST dict with ``path``, ``op``, and optional
-            ``value`` keys.
+            ``value`` and ``cast`` keys.
 
         Raises:
             WhereDslError: If the predicate syntax is
@@ -546,21 +551,42 @@ class _Parser:
             self._expect("RPAREN")
             return {"path": path, "op": "exists"}
 
-        path = self._parse_path()
+        # Detect cast function: to_number(path) or to_string(path)
+        cast_fn: str | None = None
+        cur = self._peek()
+        if (
+            cur.kind == "IDENT"
+            and cur.value in _CAST_FUNCTIONS
+            and self._pos + 1 < len(self._tokens)
+            and self._tokens[self._pos + 1].kind == "LPAREN"
+        ):
+            cast_fn = self._advance().value
+            self._expect("LPAREN")
+            path = self._parse_path()
+            self._expect("RPAREN")
+        else:
+            path = self._parse_path()
+
         if self._match("KEYWORD", "IN") is not None:
             values = self._parse_array_literal()
-            return {
+            result: dict[str, Any] = {
                 "path": path,
                 "op": "in",
                 "value": values,
             }
+            if cast_fn:
+                result["cast"] = cast_fn
+            return result
         if self._match("KEYWORD", "CONTAINS") is not None:
             value = self._parse_literal()
-            return {
+            result = {
                 "path": path,
                 "op": "contains",
                 "value": value,
             }
+            if cast_fn:
+                result["cast"] = cast_fn
+            return result
 
         op_token = self._expect("OP")
         op = _OP_MAP.get(op_token.value)
@@ -568,7 +594,10 @@ class _Parser:
             msg = f"unsupported comparison operator: {op_token.value}"
             raise WhereDslError(msg)
         value = self._parse_literal()
-        return {"path": path, "op": op, "value": value}
+        result = {"path": path, "op": op, "value": value}
+        if cast_fn:
+            result["cast"] = cast_fn
+        return result
 
     def _parse_path(self) -> str:
         """Parse a dotted/bracketed field path.
@@ -714,6 +743,54 @@ def _is_numeric(value: Any) -> bool:
     )
 
 
+_SENTINEL = object()
+
+
+def _apply_cast(values: list[Any], cast_fn: str) -> list[Any]:
+    """Apply a cast function to resolved path values.
+
+    ``to_number``: Convert strings to numbers.  Non-convertible
+    values become the sentinel (filtered out by the caller).
+    Already-numeric values pass through.
+
+    ``to_string``: Convert scalars to their string representation.
+
+    Args:
+        values: Resolved path values.
+        cast_fn: Cast function name (``"to_number"`` or
+            ``"to_string"``).
+
+    Returns:
+        List of cast values, with unconvertible entries replaced
+        by ``_SENTINEL``.
+    """
+    result: list[Any] = []
+    for val in values:
+        if cast_fn == "to_number":
+            if _is_numeric(val):
+                result.append(val)
+            elif isinstance(val, str):
+                try:
+                    if "." in val:
+                        result.append(float(val))
+                    else:
+                        result.append(int(val))
+                except ValueError:
+                    result.append(_SENTINEL)
+            else:
+                result.append(_SENTINEL)
+        elif cast_fn == "to_string":
+            if isinstance(val, str):
+                result.append(val)
+            elif val is None:
+                result.append(_SENTINEL)
+            else:
+                result.append(str(val))
+        else:
+            result.append(val)
+    return result
+
+
 def _strict_eq(left: Any, right: Any) -> bool:
     """Compare two values with type-strict equality.
 
@@ -851,6 +928,10 @@ def _eval_predicate(
         consume_steps=consume_steps,
         max_wildcard_expansion=max_wildcard_expansion,
     )
+    cast_fn = expr.get("cast")
+    if isinstance(cast_fn, str) and cast_fn in _CAST_FUNCTIONS:
+        values = _apply_cast(values, cast_fn)
+        values = [v for v in values if v is not _SENTINEL]
     exists = len(values) > 0
     right = expr.get("value")
     consume_steps(1)
@@ -867,13 +948,25 @@ def _eval_predicate(
         if not exists:
             return False
         if _is_numeric(right):
-            if any(not _is_numeric(left) for left in values):
-                msg = f"{op} operator requires numeric operands"
+            bad = [left for left in values if not _is_numeric(left)]
+            if bad:
+                sample = bad[0]
+                msg = (
+                    f"{op} operator requires numeric operands, "
+                    f"but '{path}' resolved to "
+                    f"{type(sample).__name__} {sample!r}"
+                )
                 raise WhereDslError(msg)
             return any(_ordered_compare(left, right, op) for left in values)
         if isinstance(right, str):
-            if any(not isinstance(left, str) for left in values):
-                msg = f"{op} operator requires string operands"
+            bad = [left for left in values if not isinstance(left, str)]
+            if bad:
+                sample = bad[0]
+                msg = (
+                    f"{op} operator requires string operands, "
+                    f"but '{path}' resolved to "
+                    f"{type(sample).__name__} {sample!r}"
+                )
                 raise WhereDslError(msg)
             return any(_ordered_compare(left, right, op) for left in values)
         msg = f"{op} operator requires numeric or string comparison value"

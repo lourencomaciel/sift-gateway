@@ -132,6 +132,20 @@ def build_retrieval_pagination_meta(
         Pagination metadata dict for retrieval tools.
     """
     has_more = bool(truncated and cursor)
+    if has_more:
+        hint = (
+            "More results available. Resume with the cursor "
+            "returned in this response. "
+            "Do not claim completeness until "
+            "pagination.retrieval_status == COMPLETE."
+        )
+    elif truncated:
+        hint = (
+            "Result set truncated but no cursor available. "
+            "Narrow your query with where or smaller limit."
+        )
+    else:
+        hint = "All matching records returned (retrieval_status=COMPLETE)."
     return {
         "layer": PAGINATION_LAYER_ARTIFACT_RETRIEVAL,
         "retrieval_status": (
@@ -142,4 +156,5 @@ def build_retrieval_pagination_meta(
         ),
         "has_more": has_more,
         "next_cursor": cursor if has_more else None,
+        "hint": hint,
     }

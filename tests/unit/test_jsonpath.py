@@ -169,6 +169,18 @@ def test_parse_rejects_invalid_array_index() -> None:
         parse_jsonpath("$.items[abc]")
 
 
+def test_parse_rejects_filter_predicate_with_helpful_message() -> None:
+    """Filter predicates should give a helpful error, not 'invalid token'."""
+    with pytest.raises(JsonPathError, match="filter predicates"):
+        parse_jsonpath('$.data[?(@.spend!="0")].ad_name')
+
+
+def test_parse_rejects_bare_question_mark() -> None:
+    """Bare ? after a path should also give the helpful message."""
+    with pytest.raises(JsonPathError, match="filter predicates"):
+        parse_jsonpath("$.data?")
+
+
 # ---------------------------------------------------------------------------
 # G70: Caps enforcement — length, segments, wildcard expansion total
 # ---------------------------------------------------------------------------
