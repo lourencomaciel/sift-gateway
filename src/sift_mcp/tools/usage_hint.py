@@ -178,6 +178,14 @@ def build_usage_hint(
             ") to retrieve the full value"
         )
 
+    # Artifact-as-argument forwarding hint
+    parts.append(
+        f'Tip: pass "{artifact_id}" directly as an argument'
+        " to another tool. Use"
+        f' "{artifact_id}:$.path" to pass a specific field'
+        f' (e.g. "{artifact_id}:$.items[0].name")'
+    )
+
     # Alternative roots
     if len(roots) > 1:
         alts = [_root_summary(r) for r in roots[1:4]]

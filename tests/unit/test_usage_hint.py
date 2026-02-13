@@ -191,3 +191,27 @@ def test_select_paths_limited_to_four() -> None:
     quoted_count = select_section.count('"')
     # Each field has opening and closing quotes
     assert quoted_count // 2 <= 4
+
+
+def test_artifact_forwarding_tip_in_array_hint() -> None:
+    desc = _describe(roots=[_root(root_path="$.data", count_estimate=5)])
+    hint = build_usage_hint("art_fwd", desc)
+    assert "art_fwd" in hint
+    assert "pass" in hint.lower()
+    assert "art_fwd:$.path" in hint
+    assert "art_fwd:$.items[0].name" in hint
+
+
+def test_artifact_forwarding_tip_in_dict_hint() -> None:
+    desc = _describe(
+        roots=[
+            _root(
+                root_path="$.config",
+                root_shape="dict",
+                count_estimate=None,
+            )
+        ]
+    )
+    hint = build_usage_hint("art_fwd2", desc)
+    assert "art_fwd2" in hint
+    assert "art_fwd2:$.path" in hint
