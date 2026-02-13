@@ -81,6 +81,45 @@ def _add_init_mode_group(
     )
 
 
+def _add_upstream_subcommand(
+    sub: argparse._SubParsersAction[argparse.ArgumentParser],
+) -> None:
+    """Register the ``upstream`` subcommand tree.
+
+    Args:
+        sub: Subparser action from the root argument parser.
+    """
+    upstream_parser = sub.add_parser(
+        "upstream",
+        help="Manage upstream MCP servers",
+    )
+    upstream_sub = upstream_parser.add_subparsers(
+        dest="upstream_command",
+    )
+
+    add_parser = upstream_sub.add_parser(
+        "add",
+        help="Add upstream(s) from a JSON mcpServers snippet",
+    )
+    add_parser.add_argument(
+        "snippet",
+        help=(
+            "JSON mcpServers snippet, e.g. "
+            '\'{"name": {"command": "npx", "args": [...]}}\''
+        ),
+    )
+    add_parser.add_argument(
+        "--data-dir",
+        default=argparse.SUPPRESS,
+        help="Override DATA_DIR (default: .sift-mcp/)",
+    )
+    add_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Show what would happen without changes",
+    )
+
+
 def _add_init_subcommand(
     sub: argparse._SubParsersAction[argparse.ArgumentParser],
 ) -> None:
@@ -157,7 +196,45 @@ def _parse_args() -> argparse.Namespace:
         ),
     )
     _add_init_subcommand(sub)
+    _add_upstream_subcommand(sub)
     return parser.parse_args()
+
+
+def _run_upstream_add(args: argparse.Namespace) -> int:
+    """Handle the ``upstream add`` subcommand.
+
+    Args:
+        args: Parsed CLI arguments containing the JSON snippet
+            and optional overrides.
+
+    Returns:
+        Exit code (``0`` on success).
+    """
+    import json as json_mod
+
+    from sift_mcp.config.upstream_add import (
+        print_add_summary,
+        run_upstream_add,
+    )
+
+    try:
+        raw = json_mod.loads(args.snippet)
+    except json_mod.JSONDecodeError as exc:
+        msg = f"invalid JSON snippet: {exc}"
+        raise ValueError(msg) from exc
+
+    if not isinstance(raw, dict):
+        msg = "snippet must be a JSON object mapping server names to configs"
+        raise ValueError(msg)
+
+    data_dir = Path(args.data_dir).resolve() if args.data_dir else None
+    summary = run_upstream_add(
+        raw,
+        data_dir=data_dir,
+        dry_run=args.dry_run,
+    )
+    print_add_summary(summary, dry_run=args.dry_run)
+    return 0
 
 
 def _run_init(args: argparse.Namespace) -> int:
@@ -346,6 +423,16 @@ def serve() -> int:
 
     if args.command == "init":
         return _run_init(args)
+
+    if args.command == "upstream":
+        if getattr(args, "upstream_command", None) == "add":
+            return _run_upstream_add(args)
+        # No subcommand given — print help
+        print(
+            "usage: sift-mcp upstream {add} ...",
+            file=sys.stderr,
+        )
+        return 1
 
     # Auto-sync newly added MCPs from source config
     if not args.check:
