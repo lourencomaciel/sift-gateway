@@ -250,16 +250,62 @@ Payloads at or above the passthrough threshold follow the handle-only path: the 
 
 This eliminates the need for a separate `describe` call — the LLM can go directly from the tool response to `artifact(action="select")`. The `describe` action remains available for inspecting artifacts after the initial response.
 
-## 15. Workflow recipes
+## 15. Artifact query references
 
-### 15.1 Large mirrored result retrieval
+Top-level string arguments in mirrored tool calls are inspected for
+artifact references. Matched references are resolved server-side
+before the arguments are forwarded to the upstream tool.
+
+### 15.1 Syntax
+
+| Pattern | Resolves to |
+|---------|-------------|
+| `art_<32hex>` | Full JSON/text payload |
+| `art_<32hex>:$.path` | JSONPath query result |
+
+Detection rules:
+
+1. Match `^art_[0-9a-f]{32}` prefix.
+2. If that is the full string: bare ref (resolve full payload).
+3. If followed by `:$`: split on first `:`, parse remainder as JSONPath.
+4. Anything else: not a reference, pass through unchanged.
+
+Nested values (inside dicts or lists) are never inspected.
+
+### 15.2 Resolution
+
+For each detected reference:
+
+1. Fetch the artifact envelope (reuses `FETCH_ARTIFACT_SQL`).
+2. Validate: not deleted, not binary-only.
+3. Extract JSON target via `extract_json_target`.
+4. If JSONPath query present: evaluate via `evaluate_jsonpath`.
+   - Empty match list → `ResolveError(NOT_FOUND)`.
+   - Single match → return the scalar (unwrapped).
+   - Multiple matches → return the list.
+5. Substitute the resolved value into the argument dict.
+
+### 15.3 Caching invariant
+
+Request identity hashes use the pre-resolution arguments (pointer
+strings). Same reference string = same cache key, regardless of
+the artifact's current content.
+
+### 15.4 DB-less mode
+
+Resolution is skipped entirely when no database is configured
+(no artifacts to resolve).
+
+## 16. Workflow recipes
+
+### 16.1 Large mirrored result retrieval
 
 1. Call mirrored tool and receive `artifact_id`.
 2. Use inline `describe` to pick `root_path`.
 3. Call `artifact(action="select")` with cursor paging.
 4. Continue until `pagination.retrieval_status == "COMPLETE"`.
 
-### 15.2 Upstream page chaining
+### 16.2 Upstream page chaining
 
 1. Inspect mirrored response `pagination.layer = "upstream"`.
 2. If `has_next_page`, call `artifact(action="next_page")` with current `artifact_id`.

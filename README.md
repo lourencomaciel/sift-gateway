@@ -112,6 +112,27 @@ and `artifact(action="select")` in the same session.
    `artifact(action="next_page")` with the returned `artifact_id`.
 3. Repeat until `pagination.retrieval_status == "COMPLETE"`.
 
+### Tool chaining with artifact query references
+
+Pass an `artifact_id` (or `artifact_id:$.jsonpath`) directly as an
+argument to another mirrored tool. Sift resolves the reference
+server-side before forwarding — the LLM never loads the intermediate
+data.
+
+```
+# Bare reference — resolves to the full JSON payload
+tool_b(input="art_7f3a...")
+
+# Query reference — resolves to a specific field
+tool_b(input="art_7f3a...:$.items[0].name")
+
+# Wildcard — resolves to a list of values
+tool_b(emails="art_7f3a...:$.users[*].email")
+```
+
+Only top-level string arguments are inspected. Nested values inside
+dicts or lists are never resolved.
+
 ## Requirements
 
 - Python `>=3.11`
