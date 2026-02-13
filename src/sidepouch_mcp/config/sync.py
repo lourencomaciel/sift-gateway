@@ -24,6 +24,7 @@ def _suppress_os_error():
     except OSError:
         pass
 
+
 from sidepouch_mcp.config.mcp_servers import (
     extract_mcp_servers,
 )
@@ -100,7 +101,8 @@ def _write_json(path: Path, data: dict[str, Any]) -> None:
 
     content = json.dumps(data, indent=2, ensure_ascii=False) + "\n"
     fd, tmp = tempfile.mkstemp(
-        dir=str(path.parent), suffix=".tmp",
+        dir=str(path.parent),
+        suffix=".tmp",
     )
     try:
         os.write(fd, content.encode("utf-8"))

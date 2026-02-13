@@ -114,52 +114,26 @@ def _extract_session_id(context: dict[str, Any] | None) -> str | None:
     return None
 
 
-def _lookup_cache_mode(context: dict[str, Any] | None) -> str | None:
-    """Resolve the cache mode from the gateway context.
+def _extract_allow_reuse(
+    context: dict[str, Any] | None,
+) -> bool:
+    """Read the ``allow_reuse`` flag from the gateway context.
 
     Args:
-        context: Gateway context dict, or ``None`` (defaults
-            to ``"normal"``).
+        context: Gateway context dict, or ``None``.
 
     Returns:
-        Normalized mode:
-        ``"normal"``, ``"bypass"``, or ``"refresh"``.
-        Returns ``None`` when the value is unrecognized.
+        ``True`` when the caller opts into dedup reuse,
+        ``False`` otherwise (the default).
     """
-    aliases = {
-        "allow": "normal",
-        "normal": "normal",
-        "fresh": "bypass",
-        "bypass": "bypass",
-        "refresh": "refresh",
-    }
     if context is None:
-        return "normal"
-    raw = context.get("cache_mode", "normal")
+        return False
+    raw = context.get("allow_reuse", False)
+    if isinstance(raw, bool):
+        return raw
     if isinstance(raw, str):
-        return aliases.get(raw)
-    return aliases.get(str(raw))
-
-
-def _cache_mode_allows_reuse(cache_mode: str) -> bool:
-    """Return ``True`` when cache reuse should be attempted."""
-    return cache_mode == "normal"
-
-
-def _cache_mode_skip_reason(cache_mode: str) -> str:
-    """Return machine-readable reason when reuse is skipped."""
-    if cache_mode == "refresh":
-        return "cache_refresh_requested"
-    if cache_mode == "bypass":
-        return "cache_bypass_requested"
-    return "cache_miss"
-
-
-def _storage_cache_mode(cache_mode: str) -> str:
-    """Map normalized cache mode to persisted artifact cache mode field."""
-    if cache_mode == "normal":
-        return "allow"
-    return "fresh"
+        return raw.lower() in ("true", "1", "yes")
+    return bool(raw)
 
 
 def _json_size_bytes(payload: Any) -> int:
@@ -486,9 +460,7 @@ def _cached_pagination_meta_for_reuse(
         try:
             return reconstruct_envelope(
                 compressed_bytes=bytes(canonical_bytes_raw),
-                encoding=str(
-                    row.get("envelope_canonical_encoding", "none")
-                ),
+                encoding=str(row.get("envelope_canonical_encoding", "none")),
                 expected_hash=str(row.get("payload_hash_full", "")),
             )
         except ValueError:
@@ -647,13 +619,7 @@ async def handle_mirrored_tool(
             "missing _gateway_context.session_id",
         )
 
-    cache_mode = _lookup_cache_mode(context)
-    if cache_mode is None:
-        return gateway_error(
-            "INVALID_ARGUMENT",
-            "invalid _gateway_context.cache_mode; expected "
-            "normal|bypass|refresh (or allow|fresh aliases)",
-        )
+    allow_reuse = _extract_allow_reuse(context)
     parent_artifact_id = arguments.get("_gateway_parent_artifact_id")
     if parent_artifact_id is not None and not isinstance(
         parent_artifact_id, str
@@ -721,11 +687,11 @@ async def handle_mirrored_tool(
             envelope=envelope,
             parent_artifact_id=parent_artifact_id,
             chain_seq=chain_seq,
-            cache_mode=_storage_cache_mode(cache_mode),
+            allow_reuse=allow_reuse,
         )
 
     reuse = ReuseResult(reused=False)
-    cache_reason = _cache_mode_skip_reason(cache_mode)
+    cache_reason = "reuse_disabled" if not allow_reuse else "cache_miss"
     pagination_assessment: PaginationAssessment | None = None
     if ctx.db_pool is None:
         try:
@@ -799,7 +765,7 @@ async def handle_mirrored_tool(
         # from holding a connection during a 30 s upstream call is far worse
         # than an occasional redundant call (persist handles the race via
         # unique artifact IDs).
-        if _cache_mode_allows_reuse(cache_mode):
+        if allow_reuse:
             try:
                 with ctx.db_pool.connection() as connection:
                     acquired = await acquire_advisory_lock_async(
@@ -881,7 +847,7 @@ async def handle_mirrored_tool(
                                         "reason": cache_reason,
                                         "request_key": identity.request_key,
                                         "artifact_id_origin": "cache",
-                                        "cache_mode": cache_mode,
+                                        "allow_reuse": True,
                                     },
                                     describe=desc,
                                     usage_hint=hint,
@@ -913,7 +879,7 @@ async def handle_mirrored_tool(
                     exc_info=True,
                 )
         else:
-            cache_reason = _cache_mode_skip_reason(cache_mode)
+            cache_reason = "reuse_disabled"
 
         # Phase 1.5: Quota enforcement preflight.
         # Rejecting here avoids invoking side-effecting upstream tools when
@@ -1130,7 +1096,7 @@ async def handle_mirrored_tool(
             "reason": cache_reason,
             "request_key": identity.request_key,
             "artifact_id_origin": "fresh",
-            "cache_mode": cache_mode,
+            "allow_reuse": allow_reuse,
         },
         describe=desc,
         usage_hint=hint,

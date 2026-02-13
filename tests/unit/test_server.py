@@ -729,7 +729,10 @@ def test_handle_mirrored_tool_returns_cached_artifact_when_reused(
         server.handle_mirrored_tool(
             mirrored,
             {
-                "_gateway_context": {"session_id": "sess_1"},
+                "_gateway_context": {
+                    "session_id": "sess_1",
+                    "allow_reuse": True,
+                },
                 "message": "hello",
             },
         )
@@ -738,7 +741,7 @@ def test_handle_mirrored_tool_returns_cached_artifact_when_reused(
     assert response["artifact_id"] == "art_cached"
     assert response["meta"]["cache"]["reused"] is True
     assert response["meta"]["cache"]["artifact_id_origin"] == "cache"
-    assert response["meta"]["cache"]["cache_mode"] == "normal"
+    assert response["meta"]["cache"]["allow_reuse"] is True
     assert counter_value(server.metrics.cache_hits) == 1
 
 
@@ -816,7 +819,10 @@ def test_handle_mirrored_tool_cache_hit_includes_pagination_meta(
         server.handle_mirrored_tool(
             mirrored,
             {
-                "_gateway_context": {"session_id": "sess_1"},
+                "_gateway_context": {
+                    "session_id": "sess_1",
+                    "allow_reuse": True,
+                },
                 "message": "hello",
             },
         )
@@ -908,7 +914,10 @@ def test_handle_mirrored_tool_cache_hit_uses_stored_pagination_state(
         server.handle_mirrored_tool(
             mirrored,
             {
-                "_gateway_context": {"session_id": "sess_1"},
+                "_gateway_context": {
+                    "session_id": "sess_1",
+                    "allow_reuse": True,
+                },
                 "message": "hello",
             },
         )
@@ -1014,7 +1023,10 @@ def test_handle_mirrored_tool_cache_hit_rebuilds_pagination_from_canonical(
         server.handle_mirrored_tool(
             mirrored,
             {
-                "_gateway_context": {"session_id": "sess_1"},
+                "_gateway_context": {
+                    "session_id": "sess_1",
+                    "allow_reuse": True,
+                },
                 "message": "hello",
             },
         )
@@ -1070,7 +1082,10 @@ def test_handle_mirrored_tool_falls_back_to_fresh_when_ref_attach_fails(
         server.handle_mirrored_tool(
             mirrored,
             {
-                "_gateway_context": {"session_id": "sess_1"},
+                "_gateway_context": {
+                    "session_id": "sess_1",
+                    "allow_reuse": True,
+                },
                 "message": "hello",
             },
         )
@@ -1082,7 +1097,7 @@ def test_handle_mirrored_tool_falls_back_to_fresh_when_ref_attach_fails(
     assert response["meta"]["cache"]["artifact_id_origin"] == "fresh"
 
 
-def test_handle_mirrored_tool_cache_mode_bypass_skips_reuse(
+def test_handle_mirrored_tool_default_skips_reuse(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -1119,7 +1134,6 @@ def test_handle_mirrored_tool_cache_mode_bypass_skips_reuse(
             {
                 "_gateway_context": {
                     "session_id": "sess_1",
-                    "cache_mode": "bypass",
                 },
                 "message": "hello",
             },
@@ -1128,58 +1142,8 @@ def test_handle_mirrored_tool_cache_mode_bypass_skips_reuse(
     assert response["type"] == "gateway_tool_result"
     assert response["artifact_id"] == "art_new"
     assert response["meta"]["cache"]["reused"] is False
-    assert response["meta"]["cache"]["cache_mode"] == "bypass"
-    assert response["meta"]["cache"]["reason"] == "cache_bypass_requested"
-
-
-def test_handle_mirrored_tool_cache_mode_refresh_skips_reuse(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
-    config = GatewayConfig(data_dir=tmp_path, passthrough_max_bytes=0)
-    server = GatewayServer(
-        config=config,
-        upstreams=[_upstream()],
-        db_pool=_FakePool(
-            ("art_cached", "payload_hash", "schema_echo", "ready", 3)
-        ),  # type: ignore[arg-type]
-        metrics=GatewayMetrics(),
-    )
-    mirrored = server.mirrored_tools["demo.echo"]
-
-    async def _fake_call(_instance, _tool_name, _arguments):
-        return {
-            "content": [{"type": "text", "text": "fresh"}],
-            "structuredContent": {"ok": True},
-            "isError": False,
-            "meta": {},
-        }
-
-    monkeypatch.setattr(
-        "sidepouch_mcp.mcp.server.call_upstream_tool", _fake_call
-    )
-    monkeypatch.setattr(
-        "sidepouch_mcp.mcp.handlers.mirrored_tool.persist_artifact",
-        lambda **_kwargs: _persisted_handle(),
-    )
-
-    response = asyncio.run(
-        server.handle_mirrored_tool(
-            mirrored,
-            {
-                "_gateway_context": {
-                    "session_id": "sess_1",
-                    "cache_mode": "refresh",
-                },
-                "message": "hello",
-            },
-        )
-    )
-    assert response["type"] == "gateway_tool_result"
-    assert response["artifact_id"] == "art_new"
-    assert response["meta"]["cache"]["reused"] is False
-    assert response["meta"]["cache"]["cache_mode"] == "refresh"
-    assert response["meta"]["cache"]["reason"] == "cache_refresh_requested"
+    assert response["meta"]["cache"]["allow_reuse"] is False
+    assert response["meta"]["cache"]["reason"] == "reuse_disabled"
 
 
 def test_handle_mirrored_tool_sets_stable_upstream_error_code(
@@ -1248,7 +1212,10 @@ def test_handle_mirrored_tool_returns_busy_when_lock_times_out(
         server.handle_mirrored_tool(
             mirrored,
             {
-                "_gateway_context": {"session_id": "sess_1"},
+                "_gateway_context": {
+                    "session_id": "sess_1",
+                    "allow_reuse": True,
+                },
                 "message": "hello",
             },
         )
@@ -1312,7 +1279,6 @@ def test_handle_mirrored_tool_runs_inline_mapping_in_sync_mode(
     assert response["type"] == "gateway_tool_result"
     assert inline_calls == ["art_new"]
     assert scheduled_calls == []
-    assert counter_value(server.metrics.cache_misses) == 1
     assert counter_value(server.metrics.upstream_calls) == 1
 
 
@@ -2039,7 +2005,7 @@ def test_artifact_next_page_uses_canonical_envelope_when_jsonb_missing(
         "after": "CURSOR_2",
         "_gateway_context": {
             "session_id": "sess_1",
-            "cache_mode": "refresh",
+            "allow_reuse": False,
         },
         "_gateway_parent_artifact_id": "art_1",
         "_gateway_chain_seq": 1,
@@ -2231,7 +2197,6 @@ def test_handle_mirrored_tool_recovers_db_ok_on_successful_probe(
             {
                 "_gateway_context": {
                     "session_id": "sess_1",
-                    "cache_mode": "fresh",
                 },
                 "message": "hello",
             },
@@ -2364,7 +2329,10 @@ def test_handle_mirrored_tool_skips_cache_on_non_connectivity_error(
         server.handle_mirrored_tool(
             mirrored,
             {
-                "_gateway_context": {"session_id": "sess_1"},
+                "_gateway_context": {
+                    "session_id": "sess_1",
+                    "allow_reuse": True,
+                },
                 "message": "hello",
             },
         )
@@ -2410,14 +2378,13 @@ def test_handle_mirrored_tool_returns_internal_on_db_persist_failure(
         "sidepouch_mcp.mcp.server.call_upstream_tool", _fake_call
     )
 
-    # Use cache_mode=fresh to skip Phase 1 and go straight to Phase 3 (persist).
+    # Default allow_reuse=False skips Phase 1, going straight to Phase 3 (persist).
     response = asyncio.run(
         server.handle_mirrored_tool(
             mirrored,
             {
                 "_gateway_context": {
                     "session_id": "sess_1",
-                    "cache_mode": "fresh",
                 },
                 "message": "hello",
             },
@@ -2471,7 +2438,6 @@ def test_handle_mirrored_tool_keeps_db_ok_on_integrity_error(
             {
                 "_gateway_context": {
                     "session_id": "sess_1",
-                    "cache_mode": "fresh",
                 },
                 "message": "hello",
             },
@@ -2523,7 +2489,6 @@ def test_handle_mirrored_tool_returns_internal_on_non_db_persist_failure(
             {
                 "_gateway_context": {
                     "session_id": "sess_1",
-                    "cache_mode": "fresh",
                 },
                 "message": "hello",
             },
@@ -2599,7 +2564,6 @@ def test_handle_mirrored_tool_succeeds_when_mapping_fails(
             {
                 "_gateway_context": {
                     "session_id": "sess_1",
-                    "cache_mode": "fresh",
                 },
                 "message": "hello",
             },
@@ -2693,7 +2657,6 @@ def test_handle_mirrored_tool_triggers_mapping_on_single_connection(
             {
                 "_gateway_context": {
                     "session_id": "sess_1",
-                    "cache_mode": "fresh",
                 },
                 "message": "hello",
             },
@@ -2771,7 +2734,6 @@ def test_handle_mirrored_tool_quota_exceeded_returns_error(
             {
                 "_gateway_context": {
                     "session_id": "sess_1",
-                    "cache_mode": "fresh",
                 },
                 "message": "hello",
             },
@@ -2848,7 +2810,6 @@ def test_handle_mirrored_tool_quota_exceeded_reports_specific_caps(
             {
                 "_gateway_context": {
                     "session_id": "sess_1",
-                    "cache_mode": "fresh",
                 },
                 "message": "hello",
             },
@@ -2936,7 +2897,6 @@ def test_handle_mirrored_tool_quota_exceeded_skips_upstream_call(
             {
                 "_gateway_context": {
                     "session_id": "sess_1",
-                    "cache_mode": "fresh",
                 },
                 "message": "hello",
             },
@@ -3034,7 +2994,6 @@ def test_handle_mirrored_tool_quota_ok_proceeds_to_persist(
             {
                 "_gateway_context": {
                     "session_id": "sess_1",
-                    "cache_mode": "fresh",
                 },
                 "message": "hello",
             },
@@ -3135,7 +3094,6 @@ def test_handle_mirrored_tool_quota_passes_blob_store_root(
             {
                 "_gateway_context": {
                     "session_id": "sess_1",
-                    "cache_mode": "fresh",
                 },
                 "message": "hello",
             },
@@ -3200,7 +3158,6 @@ def test_handle_mirrored_tool_quota_check_fails_closed_on_generic_error(
             {
                 "_gateway_context": {
                     "session_id": "sess_1",
-                    "cache_mode": "fresh",
                 },
                 "message": "hello",
             },
@@ -3259,7 +3216,6 @@ def test_handle_mirrored_tool_quota_check_marks_unhealthy_on_connectivity_error(
             {
                 "_gateway_context": {
                     "session_id": "sess_1",
-                    "cache_mode": "fresh",
                 },
                 "message": "hello",
             },
@@ -3345,7 +3301,6 @@ def test_handle_mirrored_tool_skips_quota_when_disabled(
             {
                 "_gateway_context": {
                     "session_id": "sess_1",
-                    "cache_mode": "fresh",
                 },
                 "message": "hello",
             },

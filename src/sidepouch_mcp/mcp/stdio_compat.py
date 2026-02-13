@@ -210,9 +210,7 @@ async def stdio_server_compat():
         try:
             async with read_stream_writer:
                 while True:
-                    chunk = await anyio.to_thread.run_sync(
-                        _read_stdin_chunk
-                    )
+                    chunk = await anyio.to_thread.run_sync(_read_stdin_chunk)
                     if not chunk:
                         break
                     buffer += chunk
@@ -239,10 +237,7 @@ async def stdio_server_compat():
                         await read_stream_writer.send(SessionMessage(message))
 
                 # EOF fallback for line-mode clients that omit trailing newline.
-                if (
-                    mode_state.value == "line"
-                    and buffer.strip()
-                ):
+                if mode_state.value == "line" and buffer.strip():
                     try:
                         message = types.JSONRPCMessage.model_validate_json(
                             buffer
@@ -319,9 +314,7 @@ def run_fastmcp_stdio_compat(
 ) -> None:
     """Run a FastMCP app over compatibility stdio transport (sync API)."""
     # Test doubles may expose only ``run()`` and not FastMCP internals.
-    if not hasattr(app, "_lifespan_manager") or not hasattr(
-        app, "_mcp_server"
-    ):
+    if not hasattr(app, "_lifespan_manager") or not hasattr(app, "_mcp_server"):
         app.run(show_banner=show_banner)
         return
     anyio.run(

@@ -63,9 +63,7 @@ def _run(coro):
 def _make_scope(scope_type, auth_header=None):
     headers = []
     if auth_header is not None:
-        headers.append(
-            (b"authorization", auth_header.encode("utf-8"))
-        )
+        headers.append((b"authorization", auth_header.encode("utf-8")))
     return {"type": scope_type, "headers": headers}
 
 

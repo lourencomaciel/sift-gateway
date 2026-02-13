@@ -118,7 +118,8 @@ class CreateArtifactInput:
         envelope: Normalized envelope with tool results.
         parent_artifact_id: Parent artifact for chained calls.
         chain_seq: Position in a chain sequence, or None.
-        cache_mode: "allow" for cache reuse, "fresh" to skip.
+        allow_reuse: True to allow dedup from previous identical
+            requests, False for always-fresh (the default).
     """
 
     session_id: str
@@ -132,7 +133,7 @@ class CreateArtifactInput:
     envelope: Envelope
     parent_artifact_id: str | None = None
     chain_seq: int | None = None
-    cache_mode: str = "allow"  # "allow" | "fresh"
+    allow_reuse: bool = False
 
 
 # ---------------------------------------------------------------------------

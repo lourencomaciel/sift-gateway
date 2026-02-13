@@ -447,7 +447,9 @@ async def call_upstream_tool(
         ``isError`` (bool), and ``meta`` keys.
     """
     transport = _client_transport(
-        instance.config, data_dir, secret=instance.secret_data,
+        instance.config,
+        data_dir,
+        secret=instance.secret_data,
     )
     async with Client(transport, timeout=30.0) as client:
         result = await client.call_tool(tool_name, arguments)

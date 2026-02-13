@@ -59,8 +59,7 @@ def _add_init_mode_group(
         choices=["sqlite", "postgres"],
         default="sqlite",
         help=(
-            "Database backend for generated gateway config "
-            "(default: sqlite)"
+            "Database backend for generated gateway config (default: sqlite)"
         ),
     )
     init_parser.add_argument(

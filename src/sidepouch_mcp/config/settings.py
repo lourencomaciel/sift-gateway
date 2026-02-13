@@ -173,18 +173,14 @@ class PaginationConfig(BaseModel):
                 msg = "offset strategy requires page_size_param_name"
                 raise ValueError(msg)
             if not self.has_more_response_path:
-                msg = (
-                    "offset strategy requires has_more_response_path"
-                )
+                msg = "offset strategy requires has_more_response_path"
                 raise ValueError(msg)
         elif self.strategy == "page_number":
             if not self.page_param_name:
                 msg = "page_number strategy requires page_param_name"
                 raise ValueError(msg)
             if not self.has_more_response_path:
-                msg = (
-                    "page_number strategy requires has_more_response_path"
-                )
+                msg = "page_number strategy requires has_more_response_path"
                 raise ValueError(msg)
         return self
 
@@ -282,7 +278,8 @@ class UpstreamConfig(BaseSettings):
     @field_validator("secret_ref")
     @classmethod
     def _validate_secret_ref(
-        cls, value: str | None,
+        cls,
+        value: str | None,
     ) -> str | None:
         r"""Reject secret_ref values with path traversal.
 
@@ -302,21 +299,13 @@ class UpstreamConfig(BaseSettings):
             msg = "secret_ref must not be empty"
             raise ValueError(msg)
         if ".." in value:
-            msg = (
-                f"secret_ref {value!r}: must not contain '..'"
-            )
+            msg = f"secret_ref {value!r}: must not contain '..'"
             raise ValueError(msg)
         if "/" in value or "\\" in value:
-            msg = (
-                f"secret_ref {value!r}: "
-                "must not contain path separators"
-            )
+            msg = f"secret_ref {value!r}: must not contain path separators"
             raise ValueError(msg)
         if Path(value).is_absolute():
-            msg = (
-                f"secret_ref {value!r}: "
-                "must not be an absolute path"
-            )
+            msg = f"secret_ref {value!r}: must not be an absolute path"
             raise ValueError(msg)
         return value
 
@@ -887,13 +876,12 @@ def _resolve_mcp_servers_format(
     # env_overrides (not merged) because _deep_merge strips
     # _SparseList to plain list, losing index-patch semantics.
     raw_env_upstreams = (
-        env_overrides.get("upstreams")
-        if env_overrides is not None
-        else None
+        env_overrides.get("upstreams") if env_overrides is not None else None
     )
     if raw_env_upstreams is not None and merged.get("upstreams") is not None:
         merged["upstreams"] = _deep_merge(
-            merged["upstreams"], raw_env_upstreams,
+            merged["upstreams"],
+            raw_env_upstreams,
         )
 
     # Strip keys that GatewayConfig doesn't know about (extra="forbid")

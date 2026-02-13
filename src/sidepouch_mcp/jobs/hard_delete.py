@@ -293,9 +293,7 @@ def run_hard_delete_batch(
 
         # Remove FS blobs AFTER commit so a rollback doesn't orphan files
         for fs_path in fs_paths_to_remove:
-            if _remove_blob_file_with_root(
-                fs_path, blobs_root=blobs_root
-            ):
+            if _remove_blob_file_with_root(fs_path, blobs_root=blobs_root):
                 fs_blobs_removed += 1
 
         increment_metric(metrics, "prune_hard_deletes", artifacts_deleted)

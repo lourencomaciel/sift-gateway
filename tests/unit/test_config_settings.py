@@ -158,7 +158,8 @@ def test_legacy_upstreams_key_raises_migration_error(
 
 
 def test_env_upstream_overrides_mcp_servers_format(
-    tmp_path: Path, monkeypatch,
+    tmp_path: Path,
+    monkeypatch,
 ) -> None:
     """Env UPSTREAMS__* overrides must win over mcpServers file."""
     state_dir = tmp_path / "state"
@@ -186,7 +187,8 @@ def test_env_upstream_overrides_mcp_servers_format(
 
 
 def test_env_upstream_env_var_overrides_mcp_servers_env(
-    tmp_path: Path, monkeypatch,
+    tmp_path: Path,
+    monkeypatch,
 ) -> None:
     """Env override adds env vars to mcpServers-defined upstream."""
     state_dir = tmp_path / "state"

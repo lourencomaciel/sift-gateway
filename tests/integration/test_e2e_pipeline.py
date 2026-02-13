@@ -227,13 +227,13 @@ def _call_mirrored(
     session_id: str,
     extra_args: dict[str, Any] | None = None,
     *,
-    cache_mode: str = "fresh",
+    allow_reuse: bool = False,
 ) -> dict[str, Any]:
     mirrored = server.mirrored_tools[tool_qualified_name]
     args: dict[str, Any] = {
         "_gateway_context": {
             "session_id": session_id,
-            "cache_mode": cache_mode,
+            "allow_reuse": allow_reuse,
         },
     }
     if extra_args:
@@ -685,7 +685,7 @@ def test_e2e_cache_reuse(e2e_env):
         "test.get_users",
         session_id,
         extra_args={"message": unique},
-        cache_mode="allow",
+        allow_reuse=True,
     )
     assert resp1["type"] == "gateway_tool_result"
     artifact_id_1 = resp1["artifact_id"]
@@ -696,7 +696,7 @@ def test_e2e_cache_reuse(e2e_env):
         "test.get_users",
         session_id,
         extra_args={"message": unique},
-        cache_mode="allow",
+        allow_reuse=True,
     )
     assert resp2["type"] == "gateway_tool_result"
     assert resp2["meta"]["cache"]["reused"] is True
@@ -1179,7 +1179,7 @@ def test_e2e_multi_session_cache_sharing(e2e_env):
         "test.get_users",
         session_a,
         extra_args={"message": unique},
-        cache_mode="allow",
+        allow_reuse=True,
     )
     artifact_id = resp_a["artifact_id"]
 
@@ -1189,7 +1189,7 @@ def test_e2e_multi_session_cache_sharing(e2e_env):
         "test.get_users",
         session_b,
         extra_args={"message": unique},
-        cache_mode="allow",
+        allow_reuse=True,
     )
     assert resp_b["artifact_id"] == artifact_id
     assert resp_b["meta"]["cache"]["reused"] is True

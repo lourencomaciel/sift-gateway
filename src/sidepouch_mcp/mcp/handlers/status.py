@@ -41,8 +41,6 @@ async def handle_status(
         ctx.config,
         db_health=db_health,
         fs_health=fs_health,
-        upstreams=await ctx._status_upstreams(
-            probe_upstreams=probe_raw
-        ),
+        upstreams=await ctx._status_upstreams(probe_upstreams=probe_raw),
         cursor_secrets_info=ctx._cursor_secrets_info(),
     )

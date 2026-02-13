@@ -67,9 +67,7 @@ async def handle_artifact_search(
     order_by = str(parsed["order_by"])
     filters = dict(parsed["filters"])
     parent_filter = filters.get("parent_artifact_id", "")
-    cursor_artifact_id = ctx._cursor_session_artifact_id(
-        session_id, order_by
-    )
+    cursor_artifact_id = ctx._cursor_session_artifact_id(session_id, order_by)
     if parent_filter:
         cursor_artifact_id = f"{cursor_artifact_id}:p={parent_filter}"
     limit = min(int(parsed["limit"]), ctx.config.artifact_search_max_limit)

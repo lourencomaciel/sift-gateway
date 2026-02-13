@@ -168,7 +168,10 @@ def test_mirrored_tool_flow_persists_artifact_with_real_postgres(
         mirrored = server.mirrored_tools["demo.echo"]
 
         async def _fake_call(
-            _upstream, _tool, args, data_dir: str | None = None  # noqa: ARG001
+            _upstream,
+            _tool,
+            args,
+            data_dir: str | None = None,  # noqa: ARG001
         ):
             return {
                 "content": [
@@ -190,7 +193,6 @@ def test_mirrored_tool_flow_persists_artifact_with_real_postgres(
                 {
                     "_gateway_context": {
                         "session_id": session_id,
-                        "cache_mode": "fresh",
                     },
                     "message": "hello integration",
                 },

@@ -95,6 +95,6 @@ def test_create_artifact_input_defaults() -> None:
         upstream_tool_schema_hash=None,
         envelope=envelope,
     )
-    assert input_data.cache_mode == "allow"
+    assert input_data.allow_reuse is False
     assert input_data.parent_artifact_id is None
     assert input_data.chain_seq is None

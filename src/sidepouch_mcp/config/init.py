@@ -32,6 +32,7 @@ def _suppress_os_error():
     except OSError:
         pass
 
+
 from sidepouch_mcp.config.mcp_servers import (
     extract_mcp_servers,
     read_config_file,
@@ -89,7 +90,8 @@ def _write_json(path: Path, data: dict[str, Any]) -> None:
 
     content = json.dumps(data, indent=2, ensure_ascii=False) + "\n"
     fd, tmp = tempfile.mkstemp(
-        dir=str(path.parent), suffix=".tmp",
+        dir=str(path.parent),
+        suffix=".tmp",
     )
     try:
         os.write(fd, content.encode("utf-8"))
@@ -249,11 +251,7 @@ def run_init(
             if isinstance(raw_dsn_from_config, str)
             else None
         )
-        resolved_postgres_dsn = (
-            postgres_dsn
-            or dsn_from_env
-            or dsn_from_config
-        )
+        resolved_postgres_dsn = postgres_dsn or dsn_from_env or dsn_from_config
 
         if resolved_postgres_dsn:
             new_gateway_config["postgres_dsn"] = resolved_postgres_dsn
