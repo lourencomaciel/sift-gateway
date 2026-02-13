@@ -14,9 +14,15 @@ Typical usage example::
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import dataclass
+import json
+import logging
 import os
-from typing import Any
+from pathlib import Path
+import tempfile
+from typing import Any, Generator
+import uuid
 
 from fastmcp import Client
 from fastmcp.client.transports import StdioTransport
@@ -24,6 +30,172 @@ from fastmcp.client.transports import StdioTransport
 from sift_mcp.canon.rfc8785 import canonical_bytes
 from sift_mcp.config.settings import UpstreamConfig
 from sift_mcp.util.hashing import sha256_trunc
+
+_USER_IDS_FILENAME = "upstream_user_ids.json"
+
+try:
+    import fcntl as _fcntl
+except ImportError:  # Windows
+    _fcntl = None  # type: ignore[assignment]
+
+
+@contextmanager
+def _file_lock(
+    lock_path: Path,
+) -> Generator[None, None, None]:
+    """Acquire an exclusive file lock, portable across platforms.
+
+    Uses ``fcntl.flock`` on POSIX.  On Windows (where ``fcntl``
+    is unavailable) the lock is a no-op — concurrent processes
+    may race, but the atomic-rename write strategy limits damage
+    to a single lost entry that will be regenerated.
+
+    Args:
+        lock_path: Path to the lock file (created if absent).
+
+    Yields:
+        Nothing; the lock is held for the duration of the block.
+    """
+    if _fcntl is None:
+        yield
+        return
+
+    fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR)
+    try:
+        _fcntl.flock(fd, _fcntl.LOCK_EX)
+        yield
+    finally:
+        _fcntl.flock(fd, _fcntl.LOCK_UN)
+        os.close(fd)
+
+
+def _user_ids_path(data_dir: str | None) -> Path:
+    """Return the path to the persistent user IDs file.
+
+    Args:
+        data_dir: Root data directory for Sift state.
+
+    Returns:
+        Absolute path to the user IDs JSON file.
+    """
+    from sift_mcp.constants import DEFAULT_DATA_DIR
+
+    resolved = data_dir or DEFAULT_DATA_DIR
+    return Path(resolved) / "state" / _USER_IDS_FILENAME
+
+
+def _atomic_json_write(
+    path: Path, data: dict[str, str]
+) -> None:
+    """Write *data* as JSON to *path* atomically.
+
+    Uses a temporary file in the same directory followed by an
+    atomic rename so that readers never see a partial file.
+
+    Args:
+        path: Destination file path.
+        data: JSON-serialisable dict to persist.
+    """
+    fd = -1
+    tmp_path: Path | None = None
+    try:
+        fd, tmp = tempfile.mkstemp(
+            dir=str(path.parent), suffix=".tmp"
+        )
+        tmp_path = Path(tmp)
+        os.write(
+            fd,
+            (json.dumps(data, indent=2) + "\n").encode(),
+        )
+        os.fsync(fd)
+        os.close(fd)
+        fd = -1  # mark closed
+        tmp_path.replace(path)
+        tmp_path = None  # rename succeeded; nothing to clean up
+    finally:
+        if fd >= 0:
+            os.close(fd)
+        if tmp_path is not None:
+            tmp_path.unlink(missing_ok=True)
+
+
+def _read_user_ids(path: Path) -> dict[str, str]:
+    """Read and validate the user IDs map from disk.
+
+    Returns an empty dict on missing file, corrupt JSON, or
+    unexpected content type.
+
+    Args:
+        path: Path to the ``upstream_user_ids.json`` file.
+
+    Returns:
+        Parsed user ID map, or empty dict on any error.
+    """
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError, UnicodeDecodeError):
+        logging.getLogger(__name__).warning(
+            "Corrupt %s — rebuilding", path
+        )
+        return {}
+    if isinstance(data, dict):
+        return data
+    logging.getLogger(__name__).warning(
+        "Unexpected type in %s — rebuilding", path
+    )
+    return {}
+
+
+def resolve_external_user_id(
+    config: UpstreamConfig,
+    data_dir: str | None = None,
+) -> str | None:
+    """Resolve the external_user_id for an upstream.
+
+    When ``external_user_id`` is ``"auto"``, a UUID4 is generated
+    on first call and persisted to
+    ``{data_dir}/state/upstream_user_ids.json`` so that subsequent
+    restarts reuse the same identity.  Any other non-None value
+    is returned verbatim.
+
+    Args:
+        config: Upstream configuration with optional
+            ``external_user_id`` field.
+        data_dir: Root data directory for Sift state.
+
+    Returns:
+        The resolved user ID string, or ``None`` if the field
+        is not set.
+    """
+    raw = config.external_user_id
+    if raw is None:
+        return None
+    if raw != "auto":
+        return raw
+
+    # "auto" — load or generate a persistent UUID.
+    # Fast path: read without lock; if prefix exists, return it.
+    path = _user_ids_path(data_dir)
+    stored = _read_user_ids(path)
+    existing = stored.get(config.prefix)
+    if isinstance(existing, str) and existing:
+        return existing
+
+    # Slow path: acquire exclusive lock, re-read (another process
+    # may have written while we waited), then generate if needed.
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with _file_lock(path.with_suffix(".lock")):
+        stored = _read_user_ids(path)
+        existing = stored.get(config.prefix)
+        if isinstance(existing, str) and existing:
+            return existing
+
+        generated = str(uuid.uuid4())
+        stored[config.prefix] = generated
+        _atomic_json_write(path, stored)
+        return generated
 
 
 @dataclass(frozen=True)
@@ -62,6 +234,7 @@ class UpstreamInstance:
     tools: list[UpstreamToolSchema]
     auth_fingerprint: str | None = None
     secret_data: dict | None = None
+    resolved_external_user_id: str | None = None
 
     @property
     def prefix(self) -> str:
@@ -180,11 +353,51 @@ def _build_http_headers(
     return base
 
 
+def _effective_external_user_id(
+    args: list[str],
+    resolved_user_id: str | None,
+) -> str | None:
+    """Determine the effective external user ID.
+
+    If ``args`` already contains ``--external-user-id`` (either as
+    a separate token or ``--external-user-id=<val>``), that value
+    wins and ``resolved_user_id`` is ignored.  Otherwise returns
+    ``resolved_user_id``.
+
+    Args:
+        args: The upstream CLI argument list.
+        resolved_user_id: Value from ``resolve_external_user_id``.
+
+    Returns:
+        The user ID that will actually reach the upstream, or
+        ``None`` when neither source provides one.
+    """
+    for i, token in enumerate(args):
+        if token == "--external-user-id":
+            # --external-user-id <value>
+            if i + 1 < len(args):
+                return args[i + 1]
+            return None  # malformed; treat as absent
+        if token.startswith("--external-user-id="):
+            return token.split("=", 1)[1] or None
+    return resolved_user_id
+
+
+def _args_have_external_user_id(args: list[str]) -> bool:
+    """Check if args already contain --external-user-id."""
+    return any(
+        a == "--external-user-id"
+        or a.startswith("--external-user-id=")
+        for a in args
+    )
+
+
 def _client_transport(
     config: UpstreamConfig,
     data_dir: str | None = None,
     *,
     secret: dict | None = _UNSET,
+    resolved_user_id: str | None = None,
 ) -> Any:
     """Build a fastmcp client transport for ``Client``.
 
@@ -195,15 +408,26 @@ def _client_transport(
             Passed through to ``_build_stdio_env``.
         secret: Pre-resolved secret data dict, or sentinel
             ``_UNSET`` to resolve on demand.
+        resolved_user_id: Pre-resolved external user ID.  When
+            provided, used directly instead of re-resolving
+            from disk.
 
     Returns:
         A fastmcp transport object suitable for ``Client``.
     """
     if config.transport == "stdio":
         env = _build_stdio_env(config, data_dir, secret=secret)
+        args = list(config.args)
+        user_id = (
+            resolved_user_id
+            if resolved_user_id is not None
+            else resolve_external_user_id(config, data_dir)
+        )
+        if user_id and not _args_have_external_user_id(args):
+            args.extend(["--external-user-id", user_id])
         return StdioTransport(
             command=config.command or "",
-            args=list(config.args),
+            args=args,
             env=env,
         )
 
@@ -262,6 +486,8 @@ def _client_result_content(result: Any) -> list[dict[str, Any]]:
 def compute_upstream_instance_id(
     config: UpstreamConfig,
     data_dir: str | None = None,
+    *,
+    resolved_user_id: str | None = None,
 ) -> str:
     """Compute a stable upstream instance identity hash.
 
@@ -273,6 +499,10 @@ def compute_upstream_instance_id(
     Args:
         config: Upstream configuration.
         data_dir: Root data directory for resolving secret refs.
+        resolved_user_id: Pre-resolved external user ID.  When
+            provided, used directly instead of re-resolving from
+            disk.  Pass ``None`` to resolve on demand (legacy
+            callers).
 
     Returns:
         Truncated SHA-256 hex string (32 chars) suitable for
@@ -300,6 +530,18 @@ def compute_upstream_instance_id(
         for key in sorted(config.semantic_salt_headers):
             val = config.headers.get(key, secret_hdrs.get(key, ""))
             identity[f"salt_header_{key}"] = val
+
+    # Include the effective external user ID — only for stdio
+    # where it actually affects the launched process args.
+    if config.transport == "stdio":
+        effective_uid = _effective_external_user_id(
+            list(config.args),
+            resolved_user_id
+            if resolved_user_id is not None
+            else resolve_external_user_id(config, data_dir),
+        )
+        if effective_uid:
+            identity["external_user_id"] = effective_uid
 
     return sha256_trunc(canonical_bytes(identity), 32)
 
@@ -353,18 +595,23 @@ def compute_auth_fingerprint(
 async def discover_tools(
     config: UpstreamConfig,
     data_dir: str | None = None,
+    *,
+    resolved_user_id: str | None = None,
 ) -> list[UpstreamToolSchema]:
     """Fetch and normalize tool list from an upstream server.
 
     Args:
         config: Upstream configuration with transport details.
         data_dir: Root data directory for resolving secret refs.
+        resolved_user_id: Pre-resolved external user ID.
 
     Returns:
         List of ``UpstreamToolSchema`` descriptors with hashed
         input schemas.
     """
-    transport = _client_transport(config, data_dir)
+    transport = _client_transport(
+        config, data_dir, resolved_user_id=resolved_user_id
+    )
     async with Client(transport, timeout=30.0) as client:
         tools = await client.list_tools()
 
@@ -397,13 +644,23 @@ async def connect_upstream(
         Immutable ``UpstreamInstance`` with discovered tools,
         computed instance ID, and optional auth fingerprint.
     """
-    tools = await discover_tools(config, data_dir)
+    user_id = (
+        resolve_external_user_id(config, data_dir)
+        if config.transport == "stdio"
+        else None
+    )
+    tools = await discover_tools(
+        config, data_dir, resolved_user_id=user_id
+    )
     return UpstreamInstance(
         config=config,
-        instance_id=compute_upstream_instance_id(config, data_dir),
+        instance_id=compute_upstream_instance_id(
+            config, data_dir, resolved_user_id=user_id
+        ),
         tools=tools,
         auth_fingerprint=compute_auth_fingerprint(config, data_dir),
         secret_data=_resolve_secret_data(config, data_dir),
+        resolved_external_user_id=user_id,
     )
 
 
@@ -450,6 +707,7 @@ async def call_upstream_tool(
         instance.config,
         data_dir,
         secret=instance.secret_data,
+        resolved_user_id=instance.resolved_external_user_id,
     )
     async with Client(transport, timeout=30.0) as client:
         result = await client.call_tool(tool_name, arguments)
