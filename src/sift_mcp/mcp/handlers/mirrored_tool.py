@@ -964,11 +964,47 @@ async def handle_mirrored_tool(
                 details=quota_details,
             )
 
+        # Phase 1.75: Resolve artifact refs in forwarded args.
+        # Uses a short-lived connection; resolved args are only
+        # sent upstream — identity / cache / storage use the
+        # original pointer-containing forwarded_args.
+        # Import is deferred to avoid a circular dependency
+        # (resolve_refs → handlers.common → handlers.__init__
+        #  → mirrored_tool → resolve_refs).
+        from sift_mcp.mcp.resolve_refs import (
+            ResolveError,
+            resolve_artifact_refs,
+        )
+
+        upstream_args = forwarded_args
+        try:
+            with ctx.db_pool.connection() as resolve_conn:
+                resolved = resolve_artifact_refs(
+                    resolve_conn, forwarded_args
+                )
+                if isinstance(resolved, ResolveError):
+                    return gateway_error(
+                        resolved.code, resolved.message
+                    )
+                upstream_args = resolved
+        except (_PG_OPERATIONAL_ERROR, _PG_INTERFACE_ERROR):
+            ctx.db_ok = False
+            return gateway_error(
+                "INTERNAL",
+                "artifact ref resolution failed;"
+                " gateway marked unhealthy",
+            )
+        except Exception:
+            get_logger(component="mcp.handlers").warning(
+                "artifact ref resolution failed (best-effort)",
+                exc_info=True,
+            )
+
         # Phase 2: Upstream call — no DB connection held.
         try:
             upstream_result = await ctx._call_upstream_with_metrics(
                 mirrored=mirrored,
-                forwarded_args=forwarded_args,
+                forwarded_args=upstream_args,
             )
         except Exception as exc:
             error_code = classify_upstream_exception(exc)
