@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from sidepouch_mcp.fs.resource_store import ResourceStore
-from sidepouch_mcp.util.hashing import sha256_hex
+from sift_mcp.fs.resource_store import ResourceStore
+from sift_mcp.util.hashing import sha256_hex
 
 
 def test_resource_store_internal_writes_file(tmp_path: Path) -> None:

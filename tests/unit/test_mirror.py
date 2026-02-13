@@ -1,13 +1,13 @@
 from __future__ import annotations
 
-from sidepouch_mcp.config.settings import UpstreamConfig
-from sidepouch_mcp.mcp.mirror import (
+from sift_mcp.config.settings import UpstreamConfig
+from sift_mcp.mcp.mirror import (
     build_mirrored_tools,
     extract_gateway_context,
     strip_reserved_gateway_args,
     validate_against_schema,
 )
-from sidepouch_mcp.mcp.upstream import (
+from sift_mcp.mcp.upstream import (
     UpstreamInstance,
     UpstreamToolSchema,
 )

@@ -1,5 +1,5 @@
 [project]
-name = "sidepouch-mcp"
+name = "sift-mcp"
 version = "0.1.0"
 description = "Keep big MCP responses out of your context window. Query them."
 readme = "README.md"
@@ -36,7 +36,7 @@ dev = [
 ]
 
 [project.scripts]
-sidepouch-mcp = "sidepouch_mcp.main:cli"
+sift-mcp = "sift_mcp.main:cli"
 
 [build-system]
 requires = ["uv_build>=0.10.0,<0.11.0"]
@@ -62,7 +62,7 @@ convention = "google"
 
 [tool.ruff.lint.isort]
 force-sort-within-sections = true
-known-first-party = ["sidepouch_mcp"]
+known-first-party = ["sift_mcp"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**/*.py" = [

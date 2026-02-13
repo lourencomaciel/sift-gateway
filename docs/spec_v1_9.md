@@ -1,10 +1,10 @@
-# SidePouch — Design Specification v1.9
+# Sift — Design Specification v1.9
 
 > **Status**: Locked — this document is the authoritative reference for the v1.9 implementation.
 
 ## 1. Overview
 
-SidePouch is a local, single-tenant MCP proxy that:
+Sift is a local, single-tenant MCP proxy that:
 
 1. Discovers tools exposed by upstream MCP servers (stdio or HTTP transport).
 2. Mirrors each tool as `{prefix}.{tool}` with identical schema — no injected fields.

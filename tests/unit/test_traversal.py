@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from sidepouch_mcp.query.jsonpath import evaluate_jsonpath
-from sidepouch_mcp.retrieval.traversal import traverse_deterministic
+from sift_mcp.query.jsonpath import evaluate_jsonpath
+from sift_mcp.retrieval.traversal import traverse_deterministic
 
 
 def test_traversal_object_keys_are_lexicographic() -> None:

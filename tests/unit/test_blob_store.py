@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from sidepouch_mcp.fs.blob_store import BlobStore
+from sift_mcp.fs.blob_store import BlobStore
 
 
 def test_blob_store_put_and_open(tmp_path: Path) -> None:

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from decimal import Decimal
 
-from sidepouch_mcp.retrieval.response import (
+from sift_mcp.retrieval.response import (
     apply_output_budgets,
     build_retrieval_response,
 )

@@ -7,7 +7,7 @@ import stat
 
 import pytest
 
-from sidepouch_mcp.config.upstream_secrets import (
+from sift_mcp.config.upstream_secrets import (
     read_secret,
     resolve_secret_ref,
     secrets_dir,

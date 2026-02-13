@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from decimal import Decimal
 
-from sidepouch_mcp.canon.decimal_json import (
+from sift_mcp.canon.decimal_json import (
     NonFiniteNumberError,
     ensure_no_floats,
     loads_decimal,
