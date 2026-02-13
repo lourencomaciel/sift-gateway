@@ -1,6 +1,6 @@
 """End-to-end integration tests for the full MCP gateway artifact lifecycle.
 
-Requires a live Postgres instance.  Set ``SIDEPOUCH_MCP_TEST_POSTGRES_DSN`` to
+Requires a live Postgres instance.  Set ``SIFT_MCP_TEST_POSTGRES_DSN`` to
 enable these tests; they are auto-skipped when the env var is absent.
 
 The upstream MCP server is stubbed at the ``call_upstream_tool`` function level
@@ -17,17 +17,17 @@ import uuid
 
 import pytest
 
-from sidepouch_mcp.config.settings import GatewayConfig, UpstreamConfig
-from sidepouch_mcp.constants import WORKSPACE_ID
-from sidepouch_mcp.db.conn import create_pool
-from sidepouch_mcp.db.migrate import apply_migrations
-from sidepouch_mcp.mcp.server import GatewayServer
-from sidepouch_mcp.mcp.upstream import (
+from sift_mcp.config.settings import GatewayConfig, UpstreamConfig
+from sift_mcp.constants import WORKSPACE_ID
+from sift_mcp.db.conn import create_pool
+from sift_mcp.db.migrate import apply_migrations
+from sift_mcp.mcp.server import GatewayServer
+from sift_mcp.mcp.upstream import (
     UpstreamInstance,
     UpstreamToolSchema,
 )
 
-_POSTGRES_DSN_ENV = "SIDEPOUCH_MCP_TEST_POSTGRES_DSN"
+_POSTGRES_DSN_ENV = "SIFT_MCP_TEST_POSTGRES_DSN"
 
 
 # ---------------------------------------------------------------------------
@@ -179,7 +179,7 @@ def _migrations_dir() -> Path:
     return (
         Path(__file__).resolve().parents[2]
         / "src"
-        / "sidepouch_mcp"
+        / "sift_mcp"
         / "db"
         / "migrations"
     )
@@ -360,7 +360,7 @@ def e2e_env(tmp_path, monkeypatch):
             config=config, db_pool=pool, upstreams=[upstream]
         )
         monkeypatch.setattr(
-            "sidepouch_mcp.mcp.server.call_upstream_tool",
+            "sift_mcp.mcp.server.call_upstream_tool",
             _stub_upstream,
         )
         yield server, config, pool
@@ -794,7 +794,7 @@ def e2e_env_oversize(tmp_path, monkeypatch):
             config=config, db_pool=pool, upstreams=[upstream]
         )
         monkeypatch.setattr(
-            "sidepouch_mcp.mcp.server.call_upstream_tool",
+            "sift_mcp.mcp.server.call_upstream_tool",
             _stub_upstream,
         )
         yield server, config, pool
@@ -808,8 +808,8 @@ def e2e_env_oversize(tmp_path, monkeypatch):
 
 
 def test_e2e_soft_delete_hard_delete_lifecycle(e2e_env):
-    from sidepouch_mcp.jobs.hard_delete import run_hard_delete_batch
-    from sidepouch_mcp.jobs.soft_delete import (
+    from sift_mcp.jobs.hard_delete import run_hard_delete_batch
+    from sift_mcp.jobs.soft_delete import (
         run_soft_delete_unreferenced,
     )
 
@@ -1074,8 +1074,8 @@ def test_e2e_migration_idempotency(e2e_env):
 
 
 def test_e2e_generation_safe_mapping_race(e2e_env):
-    from sidepouch_mcp.mapping.runner import MappingResult
-    from sidepouch_mcp.mapping.worker import (
+    from sift_mcp.mapping.runner import MappingResult
+    from sift_mcp.mapping.worker import (
         WorkerContext,
         persist_mapping_result,
     )

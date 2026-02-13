@@ -8,13 +8,13 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from sidepouch_mcp.db.backend import (
+from sift_mcp.db.backend import (
     DatabaseBackend,
     Dialect,
     PostgresBackend,
     SqliteBackend,
 )
-from sidepouch_mcp.db.migrate import apply_migrations, load_migrations
+from sift_mcp.db.migrate import apply_migrations, load_migrations
 
 
 class TestDialect:
@@ -167,7 +167,7 @@ class TestSqliteMigrationFiles:
         migrations_dir = (
             Path(__file__).resolve().parents[2]
             / "src"
-            / "sidepouch_mcp"
+            / "sift_mcp"
             / "db"
             / "migrations_sqlite"
         )
@@ -177,7 +177,7 @@ class TestSqliteMigrationFiles:
         migrations_dir = (
             Path(__file__).resolve().parents[2]
             / "src"
-            / "sidepouch_mcp"
+            / "sift_mcp"
             / "db"
             / "migrations_sqlite"
         )
@@ -196,7 +196,7 @@ class TestSqliteMigrationIntegration:
         migrations_dir = (
             Path(__file__).resolve().parents[2]
             / "src"
-            / "sidepouch_mcp"
+            / "sift_mcp"
             / "db"
             / "migrations_sqlite"
         )
@@ -231,7 +231,7 @@ class TestSqliteMigrationIntegration:
         migrations_dir = (
             Path(__file__).resolve().parents[2]
             / "src"
-            / "sidepouch_mcp"
+            / "sift_mcp"
             / "db"
             / "migrations_sqlite"
         )

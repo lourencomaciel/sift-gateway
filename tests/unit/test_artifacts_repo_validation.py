@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from sidepouch_mcp.db.repos.artifacts_repo import validate_artifact_row
+from sift_mcp.db.repos.artifacts_repo import validate_artifact_row
 
 
 def _valid_row() -> dict[str, object]:

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from sidepouch_mcp.tools.artifact_search import (
+from sift_mcp.tools.artifact_search import (
     build_search_query,
     validate_search_args,
 )

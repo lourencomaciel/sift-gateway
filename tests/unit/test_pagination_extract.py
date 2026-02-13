@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from sidepouch_mcp.config.settings import PaginationConfig
-from sidepouch_mcp.pagination.extract import (
+from sift_mcp.config.settings import PaginationConfig
+from sift_mcp.pagination.extract import (
     PaginationAssessment,
     PaginationState,
     _evaluate_path,

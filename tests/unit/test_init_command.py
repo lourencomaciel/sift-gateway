@@ -1,4 +1,4 @@
-"""Tests for sidepouch-mcp init --from migration command."""
+"""Tests for sift-mcp init --from migration command."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from unittest.mock import patch
 
 import pytest
 
-from sidepouch_mcp.config.init import run_init, run_revert
+from sift_mcp.config.init import run_init, run_revert
 
 
 def _claude_desktop_config() -> dict:
@@ -68,8 +68,7 @@ class TestRunInit:
         assert "artifact-gateway" in rewritten["mcpServers"]
         assert len(rewritten["mcpServers"]) == 1
         assert (
-            rewritten["mcpServers"]["artifact-gateway"]["command"]
-            == "sidepouch-mcp"
+            rewritten["mcpServers"]["artifact-gateway"]["command"] == "sift-mcp"
         )
 
     def test_preserves_non_mcp_keys_in_source(self, tmp_path: Path) -> None:
@@ -253,13 +252,11 @@ class TestInitDockerProvisioning:
     def test_default_sqlite_skips_docker(
         self, tmp_path: Path, monkeypatch
     ) -> None:
-        monkeypatch.setenv(
-            "SIDEPOUCH_MCP_POSTGRES_DSN", "postgresql://env@host/db"
-        )
+        monkeypatch.setenv("SIFT_MCP_POSTGRES_DSN", "postgresql://env@host/db")
         source = _source_with_servers(tmp_path)
 
         with patch(
-            "sidepouch_mcp.config.docker_postgres.provision_postgres",
+            "sift_mcp.config.docker_postgres.provision_postgres",
         ) as mock_prov:
             summary = run_init(source, data_dir=tmp_path / "gw")
 
@@ -272,18 +269,18 @@ class TestInitDockerProvisioning:
     def test_triggers_docker_only_for_postgres_backend(
         self, tmp_path: Path, monkeypatch
     ) -> None:
-        monkeypatch.delenv("SIDEPOUCH_MCP_POSTGRES_DSN", raising=False)
+        monkeypatch.delenv("SIFT_MCP_POSTGRES_DSN", raising=False)
         source = _source_with_servers(tmp_path)
         fake_result = _FakeDockerResult(
-            dsn="postgresql://sidepouch:secret@localhost:5432/sidepouch",
-            container_name="sidepouch-mcp-postgres",
+            dsn="postgresql://sift:secret@localhost:5432/sift",
+            container_name="sift-mcp-postgres",
             port=5432,
             password="secret",
             already_running=False,
         )
 
         with patch(
-            "sidepouch_mcp.config.docker_postgres.provision_postgres",
+            "sift_mcp.config.docker_postgres.provision_postgres",
             return_value=fake_result,
         ) as mock_prov:
             summary = run_init(
@@ -296,18 +293,16 @@ class TestInitDockerProvisioning:
         gw_config = json.loads(Path(summary["gateway_config_path"]).read_text())
         assert gw_config["db_backend"] == "postgres"
         assert gw_config["postgres_dsn"] == fake_result.dsn
-        assert (
-            summary["docker_postgres"]["container"] == "sidepouch-mcp-postgres"
-        )
+        assert summary["docker_postgres"]["container"] == "sift-mcp-postgres"
 
     def test_skips_docker_when_cli_dsn_provided(
         self, tmp_path: Path, monkeypatch
     ) -> None:
-        monkeypatch.delenv("SIDEPOUCH_MCP_POSTGRES_DSN", raising=False)
+        monkeypatch.delenv("SIFT_MCP_POSTGRES_DSN", raising=False)
         source = _source_with_servers(tmp_path)
 
         with patch(
-            "sidepouch_mcp.config.docker_postgres.provision_postgres",
+            "sift_mcp.config.docker_postgres.provision_postgres",
         ) as mock_prov:
             summary = run_init(
                 source,
@@ -323,13 +318,11 @@ class TestInitDockerProvisioning:
     def test_skips_docker_when_env_var_set(
         self, tmp_path: Path, monkeypatch
     ) -> None:
-        monkeypatch.setenv(
-            "SIDEPOUCH_MCP_POSTGRES_DSN", "postgresql://env@host/db"
-        )
+        monkeypatch.setenv("SIFT_MCP_POSTGRES_DSN", "postgresql://env@host/db")
         source = _source_with_servers(tmp_path)
 
         with patch(
-            "sidepouch_mcp.config.docker_postgres.provision_postgres",
+            "sift_mcp.config.docker_postgres.provision_postgres",
         ) as mock_prov:
             summary = run_init(
                 source,
@@ -344,7 +337,7 @@ class TestInitDockerProvisioning:
     def test_skips_docker_when_dsn_in_existing_config(
         self, tmp_path: Path, monkeypatch
     ) -> None:
-        monkeypatch.delenv("SIDEPOUCH_MCP_POSTGRES_DSN", raising=False)
+        monkeypatch.delenv("SIFT_MCP_POSTGRES_DSN", raising=False)
         source = _source_with_servers(tmp_path)
         data_dir = tmp_path / "gw"
         state_dir = data_dir / "state"
@@ -358,7 +351,7 @@ class TestInitDockerProvisioning:
         )
 
         with patch(
-            "sidepouch_mcp.config.docker_postgres.provision_postgres",
+            "sift_mcp.config.docker_postgres.provision_postgres",
         ) as mock_prov:
             summary = run_init(
                 source,
@@ -373,15 +366,15 @@ class TestInitDockerProvisioning:
     def test_docker_not_found_falls_back_gracefully(
         self, tmp_path: Path, monkeypatch
     ) -> None:
-        monkeypatch.delenv("SIDEPOUCH_MCP_POSTGRES_DSN", raising=False)
+        monkeypatch.delenv("SIFT_MCP_POSTGRES_DSN", raising=False)
         source = _source_with_servers(tmp_path)
 
-        from sidepouch_mcp.config.docker_postgres import (
+        from sift_mcp.config.docker_postgres import (
             DockerNotFoundError,
         )
 
         with patch(
-            "sidepouch_mcp.config.docker_postgres.provision_postgres",
+            "sift_mcp.config.docker_postgres.provision_postgres",
             side_effect=DockerNotFoundError("Docker not found"),
         ):
             summary = run_init(
@@ -398,18 +391,18 @@ class TestInitDockerProvisioning:
     def test_dry_run_passes_through_to_docker(
         self, tmp_path: Path, monkeypatch
     ) -> None:
-        monkeypatch.delenv("SIDEPOUCH_MCP_POSTGRES_DSN", raising=False)
+        monkeypatch.delenv("SIFT_MCP_POSTGRES_DSN", raising=False)
         source = _source_with_servers(tmp_path)
         fake_result = _FakeDockerResult(
-            dsn="postgresql://sidepouch:<generated>@localhost:5432/sidepouch",
-            container_name="sidepouch-mcp-postgres",
+            dsn="postgresql://sift:<generated>@localhost:5432/sift",
+            container_name="sift-mcp-postgres",
             port=5432,
             password="<generated>",
             already_running=False,
         )
 
         with patch(
-            "sidepouch_mcp.config.docker_postgres.provision_postgres",
+            "sift_mcp.config.docker_postgres.provision_postgres",
             return_value=fake_result,
         ) as mock_prov:
             summary = run_init(
@@ -420,9 +413,7 @@ class TestInitDockerProvisioning:
             )
 
         mock_prov.assert_called_once_with(dry_run=True)
-        assert (
-            summary["docker_postgres"]["container"] == "sidepouch-mcp-postgres"
-        )
+        assert summary["docker_postgres"]["container"] == "sift-mcp-postgres"
         # Dry run — no files written
         assert not Path(summary["gateway_config_path"]).exists()
 

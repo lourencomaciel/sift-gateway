@@ -4,7 +4,7 @@ import asyncio
 
 import pytest
 
-from sidepouch_mcp.mcp.http_auth import (
+from sift_mcp.mcp.http_auth import (
     bearer_auth_middleware,
     is_local_host,
     validate_http_bind,

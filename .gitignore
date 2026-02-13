@@ -12,7 +12,8 @@ wheels/
 # Environment
 .env
 
-# SidePouch data directory
+# Sift data directory
+.sift-mcp/
 .sidepouch-mcp/
 
 # IDE

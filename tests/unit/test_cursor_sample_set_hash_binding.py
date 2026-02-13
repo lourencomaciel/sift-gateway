@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from sidepouch_mcp.cursor.sample_set_hash import (
+from sift_mcp.cursor.sample_set_hash import (
     SampleSetHashBindingError,
     assert_sample_set_hash_binding,
 )

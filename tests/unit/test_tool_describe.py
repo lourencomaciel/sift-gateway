@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from sidepouch_mcp.tools.artifact_describe import (
+from sift_mcp.tools.artifact_describe import (
     build_describe_response,
     validate_describe_args,
 )

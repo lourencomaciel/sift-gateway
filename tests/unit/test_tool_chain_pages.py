@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from sidepouch_mcp.tools.artifact_chain_pages import (
+from sift_mcp.tools.artifact_chain_pages import (
     build_chain_pages_response,
     validate_chain_pages_args,
 )

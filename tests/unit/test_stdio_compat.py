@@ -12,7 +12,7 @@ import sys
 import time
 from typing import Any
 
-from sidepouch_mcp.mcp.stdio_compat import (
+from sift_mcp.mcp.stdio_compat import (
     _detect_mode,
     _ModeState,
     _parse_next_message,
@@ -20,7 +20,7 @@ from sidepouch_mcp.mcp.stdio_compat import (
 
 
 class _ServerSession:
-    """Manage a sidepouch stdio subprocess for protocol tests."""
+    """Manage a sift stdio subprocess for protocol tests."""
 
     def __init__(self, tmp_path: Path) -> None:
         env = dict(os.environ)
@@ -32,7 +32,7 @@ class _ServerSession:
         cmd = [
             sys.executable,
             "-c",
-            "from sidepouch_mcp.main import cli; cli()",
+            "from sift_mcp.main import cli; cli()",
             "--data-dir",
             str(tmp_path),
         ]

@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import http.client
+from pathlib import Path
 import socket
 import subprocess
 import sys
 import time
-from pathlib import Path
 
 
 def _pick_free_port() -> int:
@@ -46,7 +46,7 @@ def _wait_until_listening(
         if proc.poll() is not None:
             stdout, stderr = proc.communicate(timeout=1.0)
             msg = (
-                "sidepouch-mcp exited before startup "
+                "sift-mcp exited before startup "
                 f"(code={proc.returncode})\n"
                 f"stdout:\n{stdout}\n"
                 f"stderr:\n{stderr}"
@@ -59,7 +59,7 @@ def _wait_until_listening(
             time.sleep(0.05)
 
     raise AssertionError(
-        f"Timed out waiting for sidepouch-mcp to listen on 127.0.0.1:{port}"
+        f"Timed out waiting for sift-mcp to listen on 127.0.0.1:{port}"
     )
 
 
@@ -72,7 +72,7 @@ def test_http_auth_token_enforced_end_to_end(tmp_path: Path) -> None:
     cmd = [
         sys.executable,
         "-c",
-        "from sidepouch_mcp.main import cli; cli()",
+        "from sift_mcp.main import cli; cli()",
         "--data-dir",
         str(data_dir),
         "--transport",

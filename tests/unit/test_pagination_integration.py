@@ -3,18 +3,18 @@ from __future__ import annotations
 import dataclasses
 from typing import Any
 
-from sidepouch_mcp.config.settings import PaginationConfig, UpstreamConfig
-from sidepouch_mcp.envelope.model import (
+from sift_mcp.config.settings import PaginationConfig, UpstreamConfig
+from sift_mcp.envelope.model import (
     Envelope,
     JsonContentPart,
     TextContentPart,
 )
-from sidepouch_mcp.envelope.responses import gateway_tool_result
-from sidepouch_mcp.mcp.handlers.mirrored_tool import (
+from sift_mcp.envelope.responses import gateway_tool_result
+from sift_mcp.mcp.handlers.mirrored_tool import (
     _inject_pagination_state,
     _pagination_response_meta,
 )
-from sidepouch_mcp.pagination.extract import (
+from sift_mcp.pagination.extract import (
     PaginationAssessment,
     PaginationState,
 )

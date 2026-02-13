@@ -7,12 +7,12 @@ from pathlib import Path
 
 import pytest
 
-from sidepouch_mcp.config.mcp_servers import (
+from sift_mcp.config.mcp_servers import (
     extract_mcp_servers,
     resolve_mcp_servers_config,
     to_upstream_configs,
 )
-from sidepouch_mcp.config.settings import load_gateway_config
+from sift_mcp.config.settings import load_gateway_config
 
 # ---------------------------------------------------------------------------
 # extract_mcp_servers

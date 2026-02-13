@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from sidepouch_mcp.retrieval.traversal import (
+from sift_mcp.retrieval.traversal import (
     traverse_deterministic,
     traverse_sampled,
 )
-from sidepouch_mcp.tools.artifact_find import (
+from sift_mcp.tools.artifact_find import (
     build_find_response,
     sampled_indices_from_rows,
     validate_find_args,

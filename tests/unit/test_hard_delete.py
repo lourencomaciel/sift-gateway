@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from sidepouch_mcp.constants import WORKSPACE_ID
-from sidepouch_mcp.db.backend import Dialect
-from sidepouch_mcp.jobs.hard_delete import (
+from sift_mcp.constants import WORKSPACE_ID
+from sift_mcp.db.backend import Dialect
+from sift_mcp.jobs.hard_delete import (
     DELETE_ARTIFACTS_BATCH_SQL,
     DELETE_BLOBS_BATCH_SQL,
     DELETE_PAYLOADS_BATCH_SQL,
@@ -12,7 +12,7 @@ from sidepouch_mcp.jobs.hard_delete import (
     hard_delete_candidates_params,
     run_hard_delete_batch,
 )
-from sidepouch_mcp.obs.metrics import GatewayMetrics, counter_value
+from sift_mcp.obs.metrics import GatewayMetrics, counter_value
 
 
 class _FakeCursor:

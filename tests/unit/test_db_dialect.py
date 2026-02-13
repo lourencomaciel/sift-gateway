@@ -6,8 +6,8 @@ import json
 
 import pytest
 
-from sidepouch_mcp.db.backend import Dialect
-from sidepouch_mcp.db.dialect import (
+from sift_mcp.db.backend import Dialect
+from sift_mcp.db.dialect import (
     adapt_params,
     expand_any_clause,
     rewrite_now,
