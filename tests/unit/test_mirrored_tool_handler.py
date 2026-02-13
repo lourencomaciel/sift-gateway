@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-from sidepouch_mcp.mcp.handlers.mirrored_tool import (
+from sift_mcp.mcp.handlers.mirrored_tool import (
     _fetch_inline_describe,
     _minimal_describe,
 )

@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import pytest
 
-from sidepouch_mcp.config.settings import UpstreamConfig
-from sidepouch_mcp.mcp.upstream import (
+from sift_mcp.config.settings import UpstreamConfig
+from sift_mcp.mcp.upstream import (
     UpstreamInstance,
     _build_stdio_env,
     call_upstream_tool,
@@ -238,7 +238,7 @@ async def test_discover_tools_fetches_and_hashes_tool_schemas(
             {"type": "object", "properties": {}},
         ),
     ]
-    monkeypatch.setattr("sidepouch_mcp.mcp.upstream.Client", _FakeClient)
+    monkeypatch.setattr("sift_mcp.mcp.upstream.Client", _FakeClient)
 
     cfg = _stdio_config()
     tools = await discover_tools(cfg)
@@ -258,7 +258,7 @@ async def test_discover_tools_fetches_and_hashes_tool_schemas(
 async def test_call_upstream_tool_normalizes_result(monkeypatch) -> None:
     _FakeClient.instances.clear()
     _FakeClient.tools = []
-    monkeypatch.setattr("sidepouch_mcp.mcp.upstream.Client", _FakeClient)
+    monkeypatch.setattr("sift_mcp.mcp.upstream.Client", _FakeClient)
 
     cfg = _http_config()
     instance = UpstreamInstance(config=cfg, instance_id="inst1", tools=[])
@@ -282,7 +282,7 @@ async def test_call_upstream_tool_normalizes_result(monkeypatch) -> None:
 async def test_connect_upstream_builds_instance(monkeypatch) -> None:
     _FakeClient.instances.clear()
     _FakeClient.tools = [_FakeTool("search", "Search", {"type": "object"})]
-    monkeypatch.setattr("sidepouch_mcp.mcp.upstream.Client", _FakeClient)
+    monkeypatch.setattr("sift_mcp.mcp.upstream.Client", _FakeClient)
 
     cfg = _stdio_config()
     instance = await connect_upstream(cfg)
@@ -296,7 +296,7 @@ async def test_connect_upstream_builds_instance(monkeypatch) -> None:
 async def test_connect_upstreams_preserves_config_order(monkeypatch) -> None:
     _FakeClient.instances.clear()
     _FakeClient.tools = [_FakeTool("search", "Search", {"type": "object"})]
-    monkeypatch.setattr("sidepouch_mcp.mcp.upstream.Client", _FakeClient)
+    monkeypatch.setattr("sift_mcp.mcp.upstream.Client", _FakeClient)
 
     cfg1 = _stdio_config(prefix="gh")
     cfg2 = _http_config(prefix="jira")
@@ -313,10 +313,10 @@ def test_stdio_env_excludes_arbitrary_parent_env(
     monkeypatch,
 ) -> None:
     """Arbitrary parent env vars must not leak to upstreams."""
-    monkeypatch.setenv("SIDEPOUCH_TEST_SECRET", "hidden")
+    monkeypatch.setenv("SIFT_TEST_SECRET", "hidden")
     cfg = _stdio_config(env={})
     env = _build_stdio_env(cfg)
-    assert "SIDEPOUCH_TEST_SECRET" not in env
+    assert "SIFT_TEST_SECRET" not in env
 
 
 def test_stdio_env_includes_allowlisted_keys(
@@ -345,10 +345,10 @@ def test_stdio_env_inherit_parent_env_true(
     monkeypatch,
 ) -> None:
     """inherit_parent_env=True passes all parent env vars."""
-    monkeypatch.setenv("SIDEPOUCH_TEST_SECRET", "visible")
+    monkeypatch.setenv("SIFT_TEST_SECRET", "visible")
     cfg = _stdio_config(env={}, inherit_parent_env=True)
     env = _build_stdio_env(cfg)
-    assert env.get("SIDEPOUCH_TEST_SECRET") == "visible"
+    assert env.get("SIFT_TEST_SECRET") == "visible"
 
 
 @pytest.mark.asyncio
@@ -358,10 +358,10 @@ async def test_stdio_transport_always_gets_env_dict(
     """Stdio transport env is always a dict, never None."""
     _FakeClient.instances.clear()
     _FakeClient.tools = []
-    monkeypatch.setattr("sidepouch_mcp.mcp.upstream.Client", _FakeClient)
+    monkeypatch.setattr("sift_mcp.mcp.upstream.Client", _FakeClient)
 
     cfg = _stdio_config(env={})
-    from sidepouch_mcp.mcp.upstream import _client_transport
+    from sift_mcp.mcp.upstream import _client_transport
 
     transport = _client_transport(cfg)
 

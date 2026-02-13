@@ -3,14 +3,14 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 
-from sidepouch_mcp.cache.reuse import (
+from sift_mcp.cache.reuse import (
     ReuseResult,
     acquire_advisory_lock,
     acquire_advisory_lock_async,
     check_reuse_candidate,
     try_acquire_advisory_lock,
 )
-from sidepouch_mcp.obs.metrics import GatewayMetrics, counter_value
+from sift_mcp.obs.metrics import GatewayMetrics, counter_value
 
 # advisory_lock_keys is tested comprehensively in test_hashing.py
 # (canonical location: util.hashing, re-exported via cache.reuse)
@@ -154,10 +154,10 @@ def test_acquire_advisory_lock_with_timeout_success(monkeypatch) -> None:
     metrics = _Metrics()
     times = iter([0.0, 0.001, 0.002, 0.003, 0.004])
     monkeypatch.setattr(
-        "sidepouch_mcp.cache.reuse.time.monotonic", lambda: next(times)
+        "sift_mcp.cache.reuse.time.monotonic", lambda: next(times)
     )
     monkeypatch.setattr(
-        "sidepouch_mcp.cache.reuse.time.sleep", lambda _seconds: None
+        "sift_mcp.cache.reuse.time.sleep", lambda _seconds: None
     )
 
     acquired = acquire_advisory_lock(
@@ -177,10 +177,10 @@ def test_acquire_advisory_lock_with_timeout_failure(monkeypatch) -> None:
     metrics = _Metrics()
     times = iter([0.0, 0.005, 0.010, 0.011])
     monkeypatch.setattr(
-        "sidepouch_mcp.cache.reuse.time.monotonic", lambda: next(times)
+        "sift_mcp.cache.reuse.time.monotonic", lambda: next(times)
     )
     monkeypatch.setattr(
-        "sidepouch_mcp.cache.reuse.time.sleep", lambda _seconds: None
+        "sift_mcp.cache.reuse.time.sleep", lambda _seconds: None
     )
 
     acquired = acquire_advisory_lock(
@@ -264,7 +264,7 @@ def test_acquire_advisory_lock_async_success(monkeypatch) -> None:
     async def _noop_sleep(_seconds):
         pass
 
-    monkeypatch.setattr("sidepouch_mcp.cache.reuse.asyncio.sleep", _noop_sleep)
+    monkeypatch.setattr("sift_mcp.cache.reuse.asyncio.sleep", _noop_sleep)
 
     acquired = asyncio.run(
         acquire_advisory_lock_async(
@@ -306,7 +306,7 @@ def test_try_acquire_advisory_lock_sqlite_returns_true() -> None:
     """Advisory lock with real SQLite connection acquires per-key lock."""
     import sqlite3
 
-    from sidepouch_mcp.cache.reuse import release_advisory_lock
+    from sift_mcp.cache.reuse import release_advisory_lock
 
     conn = sqlite3.connect(":memory:")
     result = try_acquire_advisory_lock(conn, request_key="rk_sqlite_1")
@@ -319,7 +319,7 @@ def test_try_acquire_advisory_lock_sqlite_no_sql_executed() -> None:
     """SQLite advisory lock acquires without executing any SQL."""
     import sqlite3
 
-    from sidepouch_mcp.cache.reuse import release_advisory_lock
+    from sift_mcp.cache.reuse import release_advisory_lock
 
     conn = sqlite3.connect(":memory:")
     # If it tried to execute pg_try_advisory_xact_lock, it would raise
@@ -333,7 +333,7 @@ def test_try_acquire_advisory_lock_sqlite_second_acquire_fails() -> None:
     """Second acquire for same key on SQLite returns False (lock held)."""
     import sqlite3
 
-    from sidepouch_mcp.cache.reuse import release_advisory_lock
+    from sift_mcp.cache.reuse import release_advisory_lock
 
     conn = sqlite3.connect(":memory:")
     assert try_acquire_advisory_lock(conn, request_key="rk_dup") is True
@@ -346,7 +346,7 @@ def test_try_acquire_advisory_lock_sqlite_release_then_reacquire() -> None:
     """After release, acquire succeeds again on SQLite."""
     import sqlite3
 
-    from sidepouch_mcp.cache.reuse import release_advisory_lock
+    from sift_mcp.cache.reuse import release_advisory_lock
 
     conn = sqlite3.connect(":memory:")
     assert try_acquire_advisory_lock(conn, request_key="rk_rel") is True
@@ -360,7 +360,7 @@ def test_try_acquire_advisory_lock_sqlite_different_keys() -> None:
     """Different keys can both acquire on SQLite (per-key granularity)."""
     import sqlite3
 
-    from sidepouch_mcp.cache.reuse import release_advisory_lock
+    from sift_mcp.cache.reuse import release_advisory_lock
 
     conn = sqlite3.connect(":memory:")
     assert try_acquire_advisory_lock(conn, request_key="rk_a") is True
@@ -372,7 +372,7 @@ def test_try_acquire_advisory_lock_sqlite_different_keys() -> None:
 
 def test_release_advisory_lock_noop_for_postgres() -> None:
     """release_advisory_lock is a no-op for non-SQLite connections."""
-    from sidepouch_mcp.cache.reuse import release_advisory_lock
+    from sift_mcp.cache.reuse import release_advisory_lock
 
     conn = _LockConnection([True])
     # Should not raise
@@ -388,7 +388,7 @@ def test_sqlite_lock_contention_only_one_thread_wins() -> None:
     import sqlite3
     import threading
 
-    from sidepouch_mcp.cache.reuse import release_advisory_lock
+    from sift_mcp.cache.reuse import release_advisory_lock
 
     conn = sqlite3.connect(":memory:")
     key = "rk_contention_1"
@@ -422,7 +422,7 @@ def test_sqlite_lock_contention_different_keys_independent() -> None:
     import sqlite3
     import threading
 
-    from sidepouch_mcp.cache.reuse import release_advisory_lock
+    from sift_mcp.cache.reuse import release_advisory_lock
 
     conn = sqlite3.connect(":memory:")
     num_threads = 10
@@ -456,7 +456,7 @@ def test_sqlite_lock_release_unblocks_next_acquirer() -> None:
     import sqlite3
     import threading
 
-    from sidepouch_mcp.cache.reuse import release_advisory_lock
+    from sift_mcp.cache.reuse import release_advisory_lock
 
     conn = sqlite3.connect(":memory:")
     key = "rk_release_unblock"
@@ -497,7 +497,7 @@ def test_sqlite_lock_acquire_with_timeout_concurrent(monkeypatch) -> None:
     """acquire_advisory_lock with timeout works under contention."""
     import sqlite3
 
-    from sidepouch_mcp.cache.reuse import release_advisory_lock
+    from sift_mcp.cache.reuse import release_advisory_lock
 
     conn = sqlite3.connect(":memory:")
     key = "rk_timeout_contention"
@@ -531,8 +531,8 @@ def test_sqlite_lock_release_removes_from_dict() -> None:
     """release_advisory_lock removes the key from _sqlite_key_locks (no memory leak)."""
     import sqlite3
 
-    from sidepouch_mcp.cache import reuse
-    from sidepouch_mcp.cache.reuse import release_advisory_lock
+    from sift_mcp.cache import reuse
+    from sift_mcp.cache.reuse import release_advisory_lock
 
     conn = sqlite3.connect(":memory:")
     key = "rk_leak_check"
@@ -550,8 +550,8 @@ def test_sqlite_lock_dict_does_not_grow_after_release_cycle() -> None:
     """Acquire/release cycles for many unique keys should not accumulate entries."""
     import sqlite3
 
-    from sidepouch_mcp.cache import reuse
-    from sidepouch_mcp.cache.reuse import release_advisory_lock
+    from sift_mcp.cache import reuse
+    from sift_mcp.cache.reuse import release_advisory_lock
 
     conn = sqlite3.connect(":memory:")
 

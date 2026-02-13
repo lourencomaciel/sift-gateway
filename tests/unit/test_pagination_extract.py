@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from sidepouch_mcp.config.settings import PaginationConfig
-from sidepouch_mcp.pagination.extract import (
+from sift_mcp.config.settings import PaginationConfig
+from sift_mcp.pagination.extract import (
     PaginationAssessment,
     PaginationState,
     _evaluate_path,
@@ -447,7 +447,9 @@ def test_assess_pagination_cursor_complete_on_explicit_terminal() -> None:
     assert assessment.state is None
 
 
-def test_assess_pagination_cursor_inconclusive_without_signal_or_token() -> None:
+def test_assess_pagination_cursor_inconclusive_without_signal_or_token() -> (
+    None
+):
     assessment = assess_pagination(
         json_value={"data": [1], "paging": {"cursors": {}}},
         pagination_config=PaginationConfig(

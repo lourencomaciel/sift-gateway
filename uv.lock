@@ -1853,7 +1853,7 @@ wheels = [
 ]
 
 [[package]]
-name = "sidepouch-mcp"
+name = "sift-mcp"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [

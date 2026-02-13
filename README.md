@@ -1,4 +1,4 @@
-# SidePouch
+# Sift
 
 MCP Artifact Gateway
 
@@ -14,9 +14,9 @@ Standard MCP tool calls are great for immediate answers, but long responses can 
 - follow-up queries need deterministic pagination and bounded traversal;
 - upstream errors are usually not captured as first-class artifacts.
 
-SidePouch moves bulky MCP output out of context, keeps it durable, and makes retrieval deterministic without changing upstream tool schemas.
+Sift moves bulky MCP output out of context, keeps it durable, and makes retrieval deterministic without changing upstream tool schemas.
 
-## What SidePouch does
+## What Sift does
 
 1. Connects to configured upstream MCP servers (stdio or HTTP).
 2. Mirrors each upstream tool as `{prefix}.{tool}`.
@@ -44,7 +44,7 @@ Design invariants (from v1.9 spec):
 
 ## Pagination Contract v1
 
-SidePouch exposes layer-explicit pagination metadata:
+Sift exposes layer-explicit pagination metadata:
 
 - mirrored upstream tool responses use `pagination.layer = "upstream"`;
 - retrieval tool responses (`artifact` with action search/get/select)
@@ -89,7 +89,7 @@ Handle responses include consistent cache metadata:
 
 ### Session visibility on cache reuse
 
-When a mirrored call returns a reused `artifact_id`, SidePouch first
+When a mirrored call returns a reused `artifact_id`, Sift first
 attaches that artifact to the caller's session (`artifact_refs`) before
 returning the handle. This guarantees the returned handle is immediately
 retrievable by `artifact(action="get")`, `artifact(action="describe")`,
@@ -129,20 +129,20 @@ uv sync
 2. Import your existing MCP config (e.g. from Claude Desktop):
 
 ```bash
-uv run sidepouch-mcp init \
+uv run sift-mcp init \
   --from ~/Library/Application\ Support/Claude/claude_desktop_config.json
 ```
 
-3. Restart your MCP client. SidePouch is now running as a proxy in
+3. Restart your MCP client. Sift is now running as a proxy in
    front of your upstream servers.
 
 The default SQLite backend stores data at
-`.sidepouch-mcp/state/gateway.db` and requires no setup.
+`.sift-mcp/state/gateway.db` and requires no setup.
 
-> SidePouch is an MCP server — your MCP client (Claude Desktop,
+> Sift is an MCP server — your MCP client (Claude Desktop,
 > Cursor, Claude Code, etc.) launches it automatically via the
 > config that `init` writes. You don't need to run it directly.
-> Use `sidepouch-mcp --check` to verify config and health without
+> Use `sift-mcp --check` to verify config and health without
 > starting the server.
 
 ### Using PostgreSQL instead
@@ -154,15 +154,15 @@ access, pass `--db-backend postgres` during init:
 uv sync --extra postgres
 docker compose up -d
 
-uv run sidepouch-mcp init \
+uv run sift-mcp init \
   --from ~/Library/Application\ Support/Claude/claude_desktop_config.json \
   --db-backend postgres
 ```
 
 `docker compose` provisions:
 
-- `sidepouch` (app runtime DB)
-- `sidepouch_test` (integration test DB; created by
+- `sift` (app runtime DB)
+- `sift_test` (integration test DB; created by
   `scripts/init-test-db.sql` on first container init)
 
 If the container already existed before the init script mount,
@@ -175,37 +175,37 @@ docker compose down -v && docker compose up -d
 Optionally provide a DSN to skip Docker auto-provisioning:
 
 ```bash
-uv run sidepouch-mcp init \
+uv run sift-mcp init \
   --from ~/Library/Application\ Support/Claude/claude_desktop_config.json \
   --db-backend postgres \
-  --postgres-dsn postgresql://user:pass@host:5432/sidepouch
+  --postgres-dsn postgresql://user:pass@host:5432/sift
 ```
 
 Verify health at any time:
 
 ```bash
-uv run sidepouch-mcp --check
+uv run sift-mcp --check
 ```
 
 ## Configure upstream MCP servers
 
-SidePouch accepts the standard `mcpServers` format used by Claude
+Sift accepts the standard `mcpServers` format used by Claude
 Desktop, Cursor, and Claude Code.
 
 ### What `init` does
 
-1. Copies source `mcpServers` into `.sidepouch-mcp/state/config.json`.
+1. Copies source `mcpServers` into `.sift-mcp/state/config.json`.
 2. Sets `db_backend` to `sqlite` by default.
 3. Externalizes inline `env` and `headers` into per-upstream secret
-   files under `.sidepouch-mcp/state/upstream_secrets/`.
+   files under `.sift-mcp/state/upstream_secrets/`.
 4. Writes a backup to `<source>.backup`.
-5. Rewrites the source config to point to SidePouch only.
+5. Rewrites the source config to point to Sift only.
 6. Stores `_gateway_sync` metadata so future restarts can auto-sync.
 
 Preview:
 
 ```bash
-uv run sidepouch-mcp init \
+uv run sift-mcp init \
   --from ~/Library/Application\ Support/Claude/claude_desktop_config.json \
   --dry-run
 ```
@@ -213,16 +213,16 @@ uv run sidepouch-mcp init \
 Revert:
 
 ```bash
-uv run sidepouch-mcp init \
+uv run sift-mcp init \
   --from ~/Library/Application\ Support/Claude/claude_desktop_config.json \
   --revert
 ```
 
-If the client should connect to SidePouch over HTTP instead of stdio,
+If the client should connect to Sift over HTTP instead of stdio,
 pass `--gateway-url`:
 
 ```bash
-uv run sidepouch-mcp init \
+uv run sift-mcp init \
   --from claude_desktop_config.json \
   --gateway-url http://localhost:8080/mcp
 ```
@@ -233,13 +233,13 @@ a `command` entry.
 ### Adding MCPs after initial setup
 
 After `init`, the source config file (e.g. `claude_desktop_config.json`)
-contains only the SidePouch gateway entry. To add a new upstream MCP:
+contains only the Sift gateway entry. To add a new upstream MCP:
 
 1. Edit the source config and add the new server entry alongside the
    gateway entry.
-2. Restart SidePouch.
+2. Restart Sift.
 
-On startup, SidePouch reads the `_gateway_sync` metadata, detects
+On startup, Sift reads the `_gateway_sync` metadata, detects
 new non-gateway entries in the source file, imports them (including
 secret externalization), and rewrites the source file back to
 gateway-only. No manual re-init is needed.
@@ -271,7 +271,7 @@ gateway-only. No manual re-init is needed.
 ```
 
 Secrets are stored externally in
-`.sidepouch-mcp/state/upstream_secrets/<prefix>.json` (0600 perms).
+`.sift-mcp/state/upstream_secrets/<prefix>.json` (0600 perms).
 Use `_gateway.secret_ref` to reference them instead of placing
 credentials inline. See `docs/config.md` for details.
 
@@ -292,53 +292,53 @@ process environment to a specific upstream instead.
 
 ## Running in URL mode
 
-SidePouch defaults to stdio transport. To expose the gateway over
+Sift defaults to stdio transport. To expose the gateway over
 HTTP (SSE or Streamable HTTP):
 
 ```bash
-uv run sidepouch-mcp --transport sse --host 127.0.0.1 --port 8080
+uv run sift-mcp --transport sse --host 127.0.0.1 --port 8080
 ```
 
 ```bash
-uv run sidepouch-mcp \
+uv run sift-mcp \
   --transport streamable-http \
   --host 0.0.0.0 --port 9090 --path /mcp \
-  --auth-token "$SIDEPOUCH_MCP_AUTH_TOKEN"
+  --auth-token "$SIFT_MCP_AUTH_TOKEN"
 ```
 
 Security defaults:
 
 - Localhost binds (`127.0.0.1`, `localhost`, `::1`) require no token.
 - Non-local binds (e.g. `0.0.0.0`) require `--auth-token` or the
-  `SIDEPOUCH_MCP_AUTH_TOKEN` environment variable. The process exits
+  `SIFT_MCP_AUTH_TOKEN` environment variable. The process exits
   with a security error if neither is provided.
 
 ## Configuration model
 
 Precedence:
 
-1. `SIDEPOUCH_MCP_*` environment variables
+1. `SIFT_MCP_*` environment variables
 2. `DATA_DIR/state/config.json`
 3. compiled defaults
 
 Key defaults:
 
-- `SIDEPOUCH_MCP_DB_BACKEND=sqlite`
-- `SIDEPOUCH_MCP_POSTGRES_DSN=postgresql://localhost:5432/sidepouch`
-- `SIDEPOUCH_MCP_DATA_DIR=.sidepouch-mcp`
-- `SIDEPOUCH_MCP_MAPPING_MODE=hybrid`
-- `SIDEPOUCH_MCP_ENVELOPE_JSONB_MODE=full`
-- `SIDEPOUCH_MCP_ENVELOPE_CANONICAL_ENCODING=zstd`
-- `SIDEPOUCH_MCP_MAX_FULL_MAP_BYTES=10000000`
-- `SIDEPOUCH_MCP_MAX_ITEMS=1000`
-- `SIDEPOUCH_MCP_MAX_BYTES_OUT=5000000`
-- `SIDEPOUCH_MCP_CURSOR_TTL_MINUTES=60`
-- `SIDEPOUCH_MCP_WHERE_CANONICALIZATION_MODE=raw_string`
+- `SIFT_MCP_DB_BACKEND=sqlite`
+- `SIFT_MCP_POSTGRES_DSN=postgresql://localhost:5432/sift`
+- `SIFT_MCP_DATA_DIR=.sift-mcp`
+- `SIFT_MCP_MAPPING_MODE=hybrid`
+- `SIFT_MCP_ENVELOPE_JSONB_MODE=full`
+- `SIFT_MCP_ENVELOPE_CANONICAL_ENCODING=zstd`
+- `SIFT_MCP_MAX_FULL_MAP_BYTES=10000000`
+- `SIFT_MCP_MAX_ITEMS=1000`
+- `SIFT_MCP_MAX_BYTES_OUT=5000000`
+- `SIFT_MCP_CURSOR_TTL_MINUTES=60`
+- `SIFT_MCP_WHERE_CANONICALIZATION_MODE=raw_string`
 
 For the full key/type/default reference, see:
 
 - `docs/config.md`
-- `src/sidepouch_mcp/config/settings.py`
+- `src/sift_mcp/config/settings.py`
 
 ## Docs map
 
@@ -363,12 +363,12 @@ uv run pytest tests/integration -v
 ```
 
 Default test DSN is provided by `tests/integration/conftest.py`:
-`postgresql://sidepouch:sidepouch@localhost:5432/sidepouch_test`
+`postgresql://sift:sift@localhost:5432/sift_test`
 
 Override:
 
 ```bash
-SIDEPOUCH_MCP_TEST_POSTGRES_DSN="postgresql://user:pass@host:5432/db" uv run pytest tests/integration -v
+SIFT_MCP_TEST_POSTGRES_DSN="postgresql://user:pass@host:5432/db" uv run pytest tests/integration -v
 ```
 
 ### Runtime validation
@@ -387,7 +387,7 @@ uv run mypy src
 ## Project layout
 
 ```text
-src/sidepouch_mcp/
+src/sift_mcp/
   main.py                  # CLI entrypoint
   app.py                   # app composition root
   config/                  # settings, mcpServers parser, init, sync, secrets

@@ -6,30 +6,30 @@ import socket
 
 import pytest
 
-from sidepouch_mcp.artifacts.create import ArtifactHandle
-from sidepouch_mcp.config.settings import (
+from sift_mcp.artifacts.create import ArtifactHandle
+from sift_mcp.config.settings import (
     GatewayConfig,
     PaginationConfig,
     UpstreamConfig,
 )
-from sidepouch_mcp.cursor.hmac import CursorExpiredError
-from sidepouch_mcp.cursor.payload import CursorStaleError
-from sidepouch_mcp.cursor.sample_set_hash import compute_sample_set_hash
-from sidepouch_mcp.cursor.secrets import CursorSecrets
-from sidepouch_mcp.fs.blob_store import BlobStore
-from sidepouch_mcp.mcp.server import (
+from sift_mcp.cursor.hmac import CursorExpiredError
+from sift_mcp.cursor.payload import CursorStaleError
+from sift_mcp.cursor.sample_set_hash import compute_sample_set_hash
+from sift_mcp.cursor.secrets import CursorSecrets
+from sift_mcp.fs.blob_store import BlobStore
+from sift_mcp.mcp.server import (
     GatewayServer,
     _check_sample_corruption,
 )
-from sidepouch_mcp.mcp.upstream import (
+from sift_mcp.mcp.upstream import (
     UpstreamInstance,
     UpstreamToolSchema,
 )
-from sidepouch_mcp.obs.metrics import GatewayMetrics, counter_value
-from sidepouch_mcp.pagination.extract import PaginationState
-from sidepouch_mcp.query.select_paths import select_paths_hash
-from sidepouch_mcp.query.where_hash import where_hash
-from sidepouch_mcp.storage.payload_store import prepare_payload
+from sift_mcp.obs.metrics import GatewayMetrics, counter_value
+from sift_mcp.pagination.extract import PaginationState
+from sift_mcp.query.select_paths import select_paths_hash
+from sift_mcp.query.where_hash import where_hash
+from sift_mcp.storage.payload_store import prepare_payload
 
 
 def _server(tmp_path: Path) -> GatewayServer:
@@ -639,9 +639,7 @@ def test_handle_mirrored_tool_success_path_without_db(
             "meta": {"trace_id": "abc"},
         }
 
-    monkeypatch.setattr(
-        "sidepouch_mcp.mcp.server.call_upstream_tool", _fake_call
-    )
+    monkeypatch.setattr("sift_mcp.mcp.server.call_upstream_tool", _fake_call)
 
     response = asyncio.run(
         server.handle_mirrored_tool(
@@ -682,9 +680,7 @@ def test_handle_mirrored_tool_without_db_never_advertises_next_page(
             "meta": {"trace_id": "abc"},
         }
 
-    monkeypatch.setattr(
-        "sidepouch_mcp.mcp.server.call_upstream_tool", _fake_call
-    )
+    monkeypatch.setattr("sift_mcp.mcp.server.call_upstream_tool", _fake_call)
 
     response = asyncio.run(
         server.handle_mirrored_tool(
@@ -722,14 +718,17 @@ def test_handle_mirrored_tool_returns_cached_artifact_when_reused(
         raise AssertionError("upstream should not be called on reuse")
 
     monkeypatch.setattr(
-        "sidepouch_mcp.mcp.server.call_upstream_tool", _must_not_call
+        "sift_mcp.mcp.server.call_upstream_tool", _must_not_call
     )
 
     response = asyncio.run(
         server.handle_mirrored_tool(
             mirrored,
             {
-                "_gateway_context": {"session_id": "sess_1"},
+                "_gateway_context": {
+                    "session_id": "sess_1",
+                    "allow_reuse": True,
+                },
                 "message": "hello",
             },
         )
@@ -738,7 +737,7 @@ def test_handle_mirrored_tool_returns_cached_artifact_when_reused(
     assert response["artifact_id"] == "art_cached"
     assert response["meta"]["cache"]["reused"] is True
     assert response["meta"]["cache"]["artifact_id_origin"] == "cache"
-    assert response["meta"]["cache"]["cache_mode"] == "normal"
+    assert response["meta"]["cache"]["allow_reuse"] is True
     assert counter_value(server.metrics.cache_hits) == 1
 
 
@@ -782,11 +781,11 @@ def test_handle_mirrored_tool_cache_hit_includes_pagination_meta(
         return True
 
     monkeypatch.setattr(
-        "sidepouch_mcp.mcp.handlers.mirrored_tool.acquire_advisory_lock_async",
+        "sift_mcp.mcp.handlers.mirrored_tool.acquire_advisory_lock_async",
         _lock_acquired,
     )
     monkeypatch.setattr(
-        "sidepouch_mcp.mcp.handlers.mirrored_tool.release_advisory_lock",
+        "sift_mcp.mcp.handlers.mirrored_tool.release_advisory_lock",
         lambda *_args, **_kwargs: None,
     )
 
@@ -794,18 +793,18 @@ def test_handle_mirrored_tool_cache_hit_includes_pagination_meta(
         raise AssertionError("upstream should not be called on reuse")
 
     monkeypatch.setattr(
-        "sidepouch_mcp.mcp.server.call_upstream_tool", _must_not_call
+        "sift_mcp.mcp.server.call_upstream_tool", _must_not_call
     )
     monkeypatch.setattr(
-        "sidepouch_mcp.mcp.handlers.mirrored_tool.upsert_session",
+        "sift_mcp.mcp.handlers.mirrored_tool.upsert_session",
         lambda *_args, **_kwargs: True,
     )
     monkeypatch.setattr(
-        "sidepouch_mcp.mcp.handlers.mirrored_tool.upsert_artifact_ref",
+        "sift_mcp.mcp.handlers.mirrored_tool.upsert_artifact_ref",
         lambda *_args, **_kwargs: True,
     )
     monkeypatch.setattr(
-        "sidepouch_mcp.mcp.handlers.mirrored_tool._fetch_inline_describe",
+        "sift_mcp.mcp.handlers.mirrored_tool._fetch_inline_describe",
         lambda *_args, **_kwargs: (
             {"artifact_id": "art_cached", "roots": []},
             "hint",
@@ -816,7 +815,10 @@ def test_handle_mirrored_tool_cache_hit_includes_pagination_meta(
         server.handle_mirrored_tool(
             mirrored,
             {
-                "_gateway_context": {"session_id": "sess_1"},
+                "_gateway_context": {
+                    "session_id": "sess_1",
+                    "allow_reuse": True,
+                },
                 "message": "hello",
             },
         )
@@ -874,11 +876,11 @@ def test_handle_mirrored_tool_cache_hit_uses_stored_pagination_state(
         return True
 
     monkeypatch.setattr(
-        "sidepouch_mcp.mcp.handlers.mirrored_tool.acquire_advisory_lock_async",
+        "sift_mcp.mcp.handlers.mirrored_tool.acquire_advisory_lock_async",
         _lock_acquired,
     )
     monkeypatch.setattr(
-        "sidepouch_mcp.mcp.handlers.mirrored_tool.release_advisory_lock",
+        "sift_mcp.mcp.handlers.mirrored_tool.release_advisory_lock",
         lambda *_args, **_kwargs: None,
     )
 
@@ -886,18 +888,18 @@ def test_handle_mirrored_tool_cache_hit_uses_stored_pagination_state(
         raise AssertionError("upstream should not be called on reuse")
 
     monkeypatch.setattr(
-        "sidepouch_mcp.mcp.server.call_upstream_tool", _must_not_call
+        "sift_mcp.mcp.server.call_upstream_tool", _must_not_call
     )
     monkeypatch.setattr(
-        "sidepouch_mcp.mcp.handlers.mirrored_tool.upsert_session",
+        "sift_mcp.mcp.handlers.mirrored_tool.upsert_session",
         lambda *_args, **_kwargs: True,
     )
     monkeypatch.setattr(
-        "sidepouch_mcp.mcp.handlers.mirrored_tool.upsert_artifact_ref",
+        "sift_mcp.mcp.handlers.mirrored_tool.upsert_artifact_ref",
         lambda *_args, **_kwargs: True,
     )
     monkeypatch.setattr(
-        "sidepouch_mcp.mcp.handlers.mirrored_tool._fetch_inline_describe",
+        "sift_mcp.mcp.handlers.mirrored_tool._fetch_inline_describe",
         lambda *_args, **_kwargs: (
             {"artifact_id": "art_cached", "roots": []},
             "hint",
@@ -908,7 +910,10 @@ def test_handle_mirrored_tool_cache_hit_uses_stored_pagination_state(
         server.handle_mirrored_tool(
             mirrored,
             {
-                "_gateway_context": {"session_id": "sess_1"},
+                "_gateway_context": {
+                    "session_id": "sess_1",
+                    "allow_reuse": True,
+                },
                 "message": "hello",
             },
         )
@@ -980,11 +985,11 @@ def test_handle_mirrored_tool_cache_hit_rebuilds_pagination_from_canonical(
         return True
 
     monkeypatch.setattr(
-        "sidepouch_mcp.mcp.handlers.mirrored_tool.acquire_advisory_lock_async",
+        "sift_mcp.mcp.handlers.mirrored_tool.acquire_advisory_lock_async",
         _lock_acquired,
     )
     monkeypatch.setattr(
-        "sidepouch_mcp.mcp.handlers.mirrored_tool.release_advisory_lock",
+        "sift_mcp.mcp.handlers.mirrored_tool.release_advisory_lock",
         lambda *_args, **_kwargs: None,
     )
 
@@ -992,18 +997,18 @@ def test_handle_mirrored_tool_cache_hit_rebuilds_pagination_from_canonical(
         raise AssertionError("upstream should not be called on reuse")
 
     monkeypatch.setattr(
-        "sidepouch_mcp.mcp.server.call_upstream_tool", _must_not_call
+        "sift_mcp.mcp.server.call_upstream_tool", _must_not_call
     )
     monkeypatch.setattr(
-        "sidepouch_mcp.mcp.handlers.mirrored_tool.upsert_session",
+        "sift_mcp.mcp.handlers.mirrored_tool.upsert_session",
         lambda *_args, **_kwargs: True,
     )
     monkeypatch.setattr(
-        "sidepouch_mcp.mcp.handlers.mirrored_tool.upsert_artifact_ref",
+        "sift_mcp.mcp.handlers.mirrored_tool.upsert_artifact_ref",
         lambda *_args, **_kwargs: True,
     )
     monkeypatch.setattr(
-        "sidepouch_mcp.mcp.handlers.mirrored_tool._fetch_inline_describe",
+        "sift_mcp.mcp.handlers.mirrored_tool._fetch_inline_describe",
         lambda *_args, **_kwargs: (
             {"artifact_id": "art_cached", "roots": []},
             "hint",
@@ -1014,7 +1019,10 @@ def test_handle_mirrored_tool_cache_hit_rebuilds_pagination_from_canonical(
         server.handle_mirrored_tool(
             mirrored,
             {
-                "_gateway_context": {"session_id": "sess_1"},
+                "_gateway_context": {
+                    "session_id": "sess_1",
+                    "allow_reuse": True,
+                },
                 "message": "hello",
             },
         )
@@ -1052,17 +1060,15 @@ def test_handle_mirrored_tool_falls_back_to_fresh_when_ref_attach_fails(
             "meta": {},
         }
 
+    monkeypatch.setattr("sift_mcp.mcp.server.call_upstream_tool", _fake_call)
     monkeypatch.setattr(
-        "sidepouch_mcp.mcp.server.call_upstream_tool", _fake_call
-    )
-    monkeypatch.setattr(
-        "sidepouch_mcp.mcp.handlers.mirrored_tool.upsert_artifact_ref",
+        "sift_mcp.mcp.handlers.mirrored_tool.upsert_artifact_ref",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(
             RuntimeError("FK violated")
         ),
     )
     monkeypatch.setattr(
-        "sidepouch_mcp.mcp.handlers.mirrored_tool.persist_artifact",
+        "sift_mcp.mcp.handlers.mirrored_tool.persist_artifact",
         lambda **_kwargs: _persisted_handle(),
     )
 
@@ -1070,7 +1076,10 @@ def test_handle_mirrored_tool_falls_back_to_fresh_when_ref_attach_fails(
         server.handle_mirrored_tool(
             mirrored,
             {
-                "_gateway_context": {"session_id": "sess_1"},
+                "_gateway_context": {
+                    "session_id": "sess_1",
+                    "allow_reuse": True,
+                },
                 "message": "hello",
             },
         )
@@ -1082,7 +1091,7 @@ def test_handle_mirrored_tool_falls_back_to_fresh_when_ref_attach_fails(
     assert response["meta"]["cache"]["artifact_id_origin"] == "fresh"
 
 
-def test_handle_mirrored_tool_cache_mode_bypass_skips_reuse(
+def test_handle_mirrored_tool_default_skips_reuse(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -1105,11 +1114,9 @@ def test_handle_mirrored_tool_cache_mode_bypass_skips_reuse(
             "meta": {},
         }
 
+    monkeypatch.setattr("sift_mcp.mcp.server.call_upstream_tool", _fake_call)
     monkeypatch.setattr(
-        "sidepouch_mcp.mcp.server.call_upstream_tool", _fake_call
-    )
-    monkeypatch.setattr(
-        "sidepouch_mcp.mcp.handlers.mirrored_tool.persist_artifact",
+        "sift_mcp.mcp.handlers.mirrored_tool.persist_artifact",
         lambda **_kwargs: _persisted_handle(),
     )
 
@@ -1119,7 +1126,6 @@ def test_handle_mirrored_tool_cache_mode_bypass_skips_reuse(
             {
                 "_gateway_context": {
                     "session_id": "sess_1",
-                    "cache_mode": "bypass",
                 },
                 "message": "hello",
             },
@@ -1128,58 +1134,8 @@ def test_handle_mirrored_tool_cache_mode_bypass_skips_reuse(
     assert response["type"] == "gateway_tool_result"
     assert response["artifact_id"] == "art_new"
     assert response["meta"]["cache"]["reused"] is False
-    assert response["meta"]["cache"]["cache_mode"] == "bypass"
-    assert response["meta"]["cache"]["reason"] == "cache_bypass_requested"
-
-
-def test_handle_mirrored_tool_cache_mode_refresh_skips_reuse(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
-    config = GatewayConfig(data_dir=tmp_path, passthrough_max_bytes=0)
-    server = GatewayServer(
-        config=config,
-        upstreams=[_upstream()],
-        db_pool=_FakePool(
-            ("art_cached", "payload_hash", "schema_echo", "ready", 3)
-        ),  # type: ignore[arg-type]
-        metrics=GatewayMetrics(),
-    )
-    mirrored = server.mirrored_tools["demo.echo"]
-
-    async def _fake_call(_instance, _tool_name, _arguments):
-        return {
-            "content": [{"type": "text", "text": "fresh"}],
-            "structuredContent": {"ok": True},
-            "isError": False,
-            "meta": {},
-        }
-
-    monkeypatch.setattr(
-        "sidepouch_mcp.mcp.server.call_upstream_tool", _fake_call
-    )
-    monkeypatch.setattr(
-        "sidepouch_mcp.mcp.handlers.mirrored_tool.persist_artifact",
-        lambda **_kwargs: _persisted_handle(),
-    )
-
-    response = asyncio.run(
-        server.handle_mirrored_tool(
-            mirrored,
-            {
-                "_gateway_context": {
-                    "session_id": "sess_1",
-                    "cache_mode": "refresh",
-                },
-                "message": "hello",
-            },
-        )
-    )
-    assert response["type"] == "gateway_tool_result"
-    assert response["artifact_id"] == "art_new"
-    assert response["meta"]["cache"]["reused"] is False
-    assert response["meta"]["cache"]["cache_mode"] == "refresh"
-    assert response["meta"]["cache"]["reason"] == "cache_refresh_requested"
+    assert response["meta"]["cache"]["allow_reuse"] is False
+    assert response["meta"]["cache"]["reason"] == "reuse_disabled"
 
 
 def test_handle_mirrored_tool_sets_stable_upstream_error_code(
@@ -1196,9 +1152,7 @@ def test_handle_mirrored_tool_sets_stable_upstream_error_code(
     async def _dns_failure(*_args, **_kwargs):
         raise socket.gaierror("nodename nor servname provided")
 
-    monkeypatch.setattr(
-        "sidepouch_mcp.mcp.server.call_upstream_tool", _dns_failure
-    )
+    monkeypatch.setattr("sift_mcp.mcp.server.call_upstream_tool", _dns_failure)
 
     response = asyncio.run(
         server.handle_mirrored_tool(
@@ -1233,7 +1187,7 @@ def test_handle_mirrored_tool_returns_busy_when_lock_times_out(
         return False
 
     monkeypatch.setattr(
-        "sidepouch_mcp.mcp.handlers.mirrored_tool.acquire_advisory_lock_async",
+        "sift_mcp.mcp.handlers.mirrored_tool.acquire_advisory_lock_async",
         _lock_fail,
     )
 
@@ -1241,14 +1195,17 @@ def test_handle_mirrored_tool_returns_busy_when_lock_times_out(
         raise AssertionError("upstream should not be called when lock fails")
 
     monkeypatch.setattr(
-        "sidepouch_mcp.mcp.server.call_upstream_tool", _must_not_call
+        "sift_mcp.mcp.server.call_upstream_tool", _must_not_call
     )
 
     response = asyncio.run(
         server.handle_mirrored_tool(
             mirrored,
             {
-                "_gateway_context": {"session_id": "sess_1"},
+                "_gateway_context": {
+                    "session_id": "sess_1",
+                    "allow_reuse": True,
+                },
                 "message": "hello",
             },
         )
@@ -1282,11 +1239,9 @@ def test_handle_mirrored_tool_runs_inline_mapping_in_sync_mode(
     inline_calls: list[str] = []
     scheduled_calls: list[str] = []
 
+    monkeypatch.setattr("sift_mcp.mcp.server.call_upstream_tool", _fake_call)
     monkeypatch.setattr(
-        "sidepouch_mcp.mcp.server.call_upstream_tool", _fake_call
-    )
-    monkeypatch.setattr(
-        "sidepouch_mcp.mcp.handlers.mirrored_tool.persist_artifact",
+        "sift_mcp.mcp.handlers.mirrored_tool.persist_artifact",
         lambda **_kwargs: _persisted_handle(),
     )
     monkeypatch.setattr(
@@ -1312,7 +1267,6 @@ def test_handle_mirrored_tool_runs_inline_mapping_in_sync_mode(
     assert response["type"] == "gateway_tool_result"
     assert inline_calls == ["art_new"]
     assert scheduled_calls == []
-    assert counter_value(server.metrics.cache_misses) == 1
     assert counter_value(server.metrics.upstream_calls) == 1
 
 
@@ -1341,11 +1295,9 @@ def test_handle_mirrored_tool_schedules_background_mapping_in_async_mode(
     inline_calls: list[str] = []
     scheduled_calls: list[str] = []
 
+    monkeypatch.setattr("sift_mcp.mcp.server.call_upstream_tool", _fake_call)
     monkeypatch.setattr(
-        "sidepouch_mcp.mcp.server.call_upstream_tool", _fake_call
-    )
-    monkeypatch.setattr(
-        "sidepouch_mcp.mcp.handlers.mirrored_tool.persist_artifact",
+        "sift_mcp.mcp.handlers.mirrored_tool.persist_artifact",
         lambda **_kwargs: _persisted_handle(),
     )
     monkeypatch.setattr(
@@ -2019,7 +1971,7 @@ def test_artifact_next_page_uses_canonical_envelope_when_jsonb_missing(
         return {"type": "gateway_tool_result", "artifact_id": "art_2"}
 
     monkeypatch.setattr(
-        "sidepouch_mcp.mcp.handlers.mirrored_tool.handle_mirrored_tool",
+        "sift_mcp.mcp.handlers.mirrored_tool.handle_mirrored_tool",
         _fake_next_page_call,
     )
 
@@ -2039,7 +1991,7 @@ def test_artifact_next_page_uses_canonical_envelope_when_jsonb_missing(
         "after": "CURSOR_2",
         "_gateway_context": {
             "session_id": "sess_1",
-            "cache_mode": "refresh",
+            "allow_reuse": False,
         },
         "_gateway_parent_artifact_id": "art_1",
         "_gateway_chain_seq": 1,
@@ -2196,9 +2148,7 @@ def test_handle_mirrored_tool_recovers_db_ok_on_successful_probe(
             "meta": {},
         }
 
-    monkeypatch.setattr(
-        "sidepouch_mcp.mcp.server.call_upstream_tool", _fake_call
-    )
+    monkeypatch.setattr("sift_mcp.mcp.server.call_upstream_tool", _fake_call)
 
     _fake_handle = ArtifactHandle(
         artifact_id="art_recovered",
@@ -2221,7 +2171,7 @@ def test_handle_mirrored_tool_recovers_db_ok_on_successful_probe(
     )
 
     monkeypatch.setattr(
-        "sidepouch_mcp.mcp.handlers.mirrored_tool.persist_artifact",
+        "sift_mcp.mcp.handlers.mirrored_tool.persist_artifact",
         lambda **_kw: _fake_handle,
     )
 
@@ -2231,7 +2181,6 @@ def test_handle_mirrored_tool_recovers_db_ok_on_successful_probe(
             {
                 "_gateway_context": {
                     "session_id": "sess_1",
-                    "cache_mode": "fresh",
                 },
                 "message": "hello",
             },
@@ -2331,9 +2280,7 @@ def test_handle_mirrored_tool_skips_cache_on_non_connectivity_error(
             "meta": {},
         }
 
-    monkeypatch.setattr(
-        "sidepouch_mcp.mcp.server.call_upstream_tool", _fake_call
-    )
+    monkeypatch.setattr("sift_mcp.mcp.server.call_upstream_tool", _fake_call)
 
     _fake_handle = ArtifactHandle(
         artifact_id="art_cache_skip",
@@ -2356,7 +2303,7 @@ def test_handle_mirrored_tool_skips_cache_on_non_connectivity_error(
     )
 
     monkeypatch.setattr(
-        "sidepouch_mcp.mcp.handlers.mirrored_tool.persist_artifact",
+        "sift_mcp.mcp.handlers.mirrored_tool.persist_artifact",
         lambda **_kw: _fake_handle,
     )
 
@@ -2364,7 +2311,10 @@ def test_handle_mirrored_tool_skips_cache_on_non_connectivity_error(
         server.handle_mirrored_tool(
             mirrored,
             {
-                "_gateway_context": {"session_id": "sess_1"},
+                "_gateway_context": {
+                    "session_id": "sess_1",
+                    "allow_reuse": True,
+                },
                 "message": "hello",
             },
         )
@@ -2406,18 +2356,15 @@ def test_handle_mirrored_tool_returns_internal_on_db_persist_failure(
             "meta": {},
         }
 
-    monkeypatch.setattr(
-        "sidepouch_mcp.mcp.server.call_upstream_tool", _fake_call
-    )
+    monkeypatch.setattr("sift_mcp.mcp.server.call_upstream_tool", _fake_call)
 
-    # Use cache_mode=fresh to skip Phase 1 and go straight to Phase 3 (persist).
+    # Default allow_reuse=False skips Phase 1, going straight to Phase 3 (persist).
     response = asyncio.run(
         server.handle_mirrored_tool(
             mirrored,
             {
                 "_gateway_context": {
                     "session_id": "sess_1",
-                    "cache_mode": "fresh",
                 },
                 "message": "hello",
             },
@@ -2453,15 +2400,13 @@ def test_handle_mirrored_tool_keeps_db_ok_on_integrity_error(
             "meta": {},
         }
 
-    monkeypatch.setattr(
-        "sidepouch_mcp.mcp.server.call_upstream_tool", _fake_call
-    )
+    monkeypatch.setattr("sift_mcp.mcp.server.call_upstream_tool", _fake_call)
 
     def _fk_persist(**_kw):
         raise psycopg.IntegrityError("violates foreign key constraint")
 
     monkeypatch.setattr(
-        "sidepouch_mcp.mcp.handlers.mirrored_tool.persist_artifact",
+        "sift_mcp.mcp.handlers.mirrored_tool.persist_artifact",
         _fk_persist,
     )
 
@@ -2471,7 +2416,6 @@ def test_handle_mirrored_tool_keeps_db_ok_on_integrity_error(
             {
                 "_gateway_context": {
                     "session_id": "sess_1",
-                    "cache_mode": "fresh",
                 },
                 "message": "hello",
             },
@@ -2505,15 +2449,13 @@ def test_handle_mirrored_tool_returns_internal_on_non_db_persist_failure(
             "meta": {},
         }
 
-    monkeypatch.setattr(
-        "sidepouch_mcp.mcp.server.call_upstream_tool", _fake_call
-    )
+    monkeypatch.setattr("sift_mcp.mcp.server.call_upstream_tool", _fake_call)
 
     def _bad_persist(**_kw):
         raise ValueError("canonicalization rejected float")
 
     monkeypatch.setattr(
-        "sidepouch_mcp.mcp.handlers.mirrored_tool.persist_artifact",
+        "sift_mcp.mcp.handlers.mirrored_tool.persist_artifact",
         _bad_persist,
     )
 
@@ -2523,7 +2465,6 @@ def test_handle_mirrored_tool_returns_internal_on_non_db_persist_failure(
             {
                 "_gateway_context": {
                     "session_id": "sess_1",
-                    "cache_mode": "fresh",
                 },
                 "message": "hello",
             },
@@ -2557,9 +2498,7 @@ def test_handle_mirrored_tool_succeeds_when_mapping_fails(
             "meta": {},
         }
 
-    monkeypatch.setattr(
-        "sidepouch_mcp.mcp.server.call_upstream_tool", _fake_call
-    )
+    monkeypatch.setattr("sift_mcp.mcp.server.call_upstream_tool", _fake_call)
 
     _fake_handle = ArtifactHandle(
         artifact_id="art_mapping_fail",
@@ -2582,7 +2521,7 @@ def test_handle_mirrored_tool_succeeds_when_mapping_fails(
     )
 
     monkeypatch.setattr(
-        "sidepouch_mcp.mcp.handlers.mirrored_tool.persist_artifact",
+        "sift_mcp.mcp.handlers.mirrored_tool.persist_artifact",
         lambda **_kw: _fake_handle,
     )
 
@@ -2599,7 +2538,6 @@ def test_handle_mirrored_tool_succeeds_when_mapping_fails(
             {
                 "_gateway_context": {
                     "session_id": "sess_1",
-                    "cache_mode": "fresh",
                 },
                 "message": "hello",
             },
@@ -2650,9 +2588,7 @@ def test_handle_mirrored_tool_triggers_mapping_on_single_connection(
             "meta": {},
         }
 
-    monkeypatch.setattr(
-        "sidepouch_mcp.mcp.server.call_upstream_tool", _fake_call
-    )
+    monkeypatch.setattr("sift_mcp.mcp.server.call_upstream_tool", _fake_call)
 
     _fake_handle = ArtifactHandle(
         artifact_id="art_single_conn",
@@ -2675,7 +2611,7 @@ def test_handle_mirrored_tool_triggers_mapping_on_single_connection(
     )
 
     monkeypatch.setattr(
-        "sidepouch_mcp.mcp.handlers.mirrored_tool.persist_artifact",
+        "sift_mcp.mcp.handlers.mirrored_tool.persist_artifact",
         lambda **_kw: _fake_handle,
     )
 
@@ -2693,7 +2629,6 @@ def test_handle_mirrored_tool_triggers_mapping_on_single_connection(
             {
                 "_gateway_context": {
                     "session_id": "sess_1",
-                    "cache_mode": "fresh",
                 },
                 "message": "hello",
             },
@@ -2715,7 +2650,7 @@ def test_handle_mirrored_tool_quota_exceeded_returns_error(
     monkeypatch,
 ) -> None:
     """When quota enforcement says space_cleared=False, return QUOTA_EXCEEDED."""
-    from sidepouch_mcp.jobs.quota import (
+    from sift_mcp.jobs.quota import (
         QuotaBreaches,
         QuotaEnforcementResult,
         StorageUsage,
@@ -2737,9 +2672,7 @@ def test_handle_mirrored_tool_quota_exceeded_returns_error(
             "meta": {},
         }
 
-    monkeypatch.setattr(
-        "sidepouch_mcp.mcp.server.call_upstream_tool", _fake_call
-    )
+    monkeypatch.setattr("sift_mcp.mcp.server.call_upstream_tool", _fake_call)
 
     _breaches = QuotaBreaches(
         binary_blob_exceeded=False,
@@ -2751,7 +2684,7 @@ def test_handle_mirrored_tool_quota_exceeded_returns_error(
     )
 
     monkeypatch.setattr(
-        "sidepouch_mcp.mcp.handlers.mirrored_tool.enforce_quota",
+        "sift_mcp.mcp.handlers.mirrored_tool.enforce_quota",
         lambda *a, **kw: QuotaEnforcementResult(
             usage_before=_usage,
             usage_after=_usage,
@@ -2771,7 +2704,6 @@ def test_handle_mirrored_tool_quota_exceeded_returns_error(
             {
                 "_gateway_context": {
                     "session_id": "sess_1",
-                    "cache_mode": "fresh",
                 },
                 "message": "hello",
             },
@@ -2792,7 +2724,7 @@ def test_handle_mirrored_tool_quota_exceeded_reports_specific_caps(
     monkeypatch,
 ) -> None:
     """Quota rejection reports only the cap(s) that are still exceeded."""
-    from sidepouch_mcp.jobs.quota import (
+    from sift_mcp.jobs.quota import (
         QuotaBreaches,
         QuotaEnforcementResult,
         StorageUsage,
@@ -2814,9 +2746,7 @@ def test_handle_mirrored_tool_quota_exceeded_reports_specific_caps(
             "meta": {},
         }
 
-    monkeypatch.setattr(
-        "sidepouch_mcp.mcp.server.call_upstream_tool", _fake_call
-    )
+    monkeypatch.setattr("sift_mcp.mcp.server.call_upstream_tool", _fake_call)
 
     _breaches = QuotaBreaches(
         binary_blob_exceeded=True,
@@ -2828,7 +2758,7 @@ def test_handle_mirrored_tool_quota_exceeded_reports_specific_caps(
     )
 
     monkeypatch.setattr(
-        "sidepouch_mcp.mcp.handlers.mirrored_tool.enforce_quota",
+        "sift_mcp.mcp.handlers.mirrored_tool.enforce_quota",
         lambda *a, **kw: QuotaEnforcementResult(
             usage_before=_usage,
             usage_after=_usage,
@@ -2848,7 +2778,6 @@ def test_handle_mirrored_tool_quota_exceeded_reports_specific_caps(
             {
                 "_gateway_context": {
                     "session_id": "sess_1",
-                    "cache_mode": "fresh",
                 },
                 "message": "hello",
             },
@@ -2876,7 +2805,7 @@ def test_handle_mirrored_tool_quota_exceeded_skips_upstream_call(
     monkeypatch,
 ) -> None:
     """Quota rejection is decided before calling upstream tools."""
-    from sidepouch_mcp.jobs.quota import (
+    from sift_mcp.jobs.quota import (
         QuotaBreaches,
         QuotaEnforcementResult,
         StorageUsage,
@@ -2902,9 +2831,7 @@ def test_handle_mirrored_tool_quota_exceeded_skips_upstream_call(
             "meta": {},
         }
 
-    monkeypatch.setattr(
-        "sidepouch_mcp.mcp.server.call_upstream_tool", _fake_call
-    )
+    monkeypatch.setattr("sift_mcp.mcp.server.call_upstream_tool", _fake_call)
 
     _breaches = QuotaBreaches(
         binary_blob_exceeded=False,
@@ -2916,7 +2843,7 @@ def test_handle_mirrored_tool_quota_exceeded_skips_upstream_call(
     )
 
     monkeypatch.setattr(
-        "sidepouch_mcp.mcp.handlers.mirrored_tool.enforce_quota",
+        "sift_mcp.mcp.handlers.mirrored_tool.enforce_quota",
         lambda *a, **kw: QuotaEnforcementResult(
             usage_before=_usage,
             usage_after=_usage,
@@ -2936,7 +2863,6 @@ def test_handle_mirrored_tool_quota_exceeded_skips_upstream_call(
             {
                 "_gateway_context": {
                     "session_id": "sess_1",
-                    "cache_mode": "fresh",
                 },
                 "message": "hello",
             },
@@ -2952,7 +2878,7 @@ def test_handle_mirrored_tool_quota_ok_proceeds_to_persist(
     monkeypatch,
 ) -> None:
     """When quota enforcement says space_cleared=True, proceed to persist."""
-    from sidepouch_mcp.jobs.quota import (
+    from sift_mcp.jobs.quota import (
         QuotaBreaches,
         QuotaEnforcementResult,
         StorageUsage,
@@ -2974,9 +2900,7 @@ def test_handle_mirrored_tool_quota_ok_proceeds_to_persist(
             "meta": {},
         }
 
-    monkeypatch.setattr(
-        "sidepouch_mcp.mcp.server.call_upstream_tool", _fake_call
-    )
+    monkeypatch.setattr("sift_mcp.mcp.server.call_upstream_tool", _fake_call)
 
     _usage = StorageUsage(
         binary_blob_bytes=0, payload_total_bytes=0, total_storage_bytes=100
@@ -2999,7 +2923,7 @@ def test_handle_mirrored_tool_quota_ok_proceeds_to_persist(
         )
 
     monkeypatch.setattr(
-        "sidepouch_mcp.mcp.handlers.mirrored_tool.enforce_quota",
+        "sift_mcp.mcp.handlers.mirrored_tool.enforce_quota",
         _fake_enforce_quota,
     )
 
@@ -3024,7 +2948,7 @@ def test_handle_mirrored_tool_quota_ok_proceeds_to_persist(
     )
 
     monkeypatch.setattr(
-        "sidepouch_mcp.mcp.handlers.mirrored_tool.persist_artifact",
+        "sift_mcp.mcp.handlers.mirrored_tool.persist_artifact",
         lambda **_kw: _fake_handle,
     )
 
@@ -3034,7 +2958,6 @@ def test_handle_mirrored_tool_quota_ok_proceeds_to_persist(
             {
                 "_gateway_context": {
                     "session_id": "sess_1",
-                    "cache_mode": "fresh",
                 },
                 "message": "hello",
             },
@@ -3051,7 +2974,7 @@ def test_handle_mirrored_tool_quota_passes_blob_store_root(
     monkeypatch,
 ) -> None:
     """Quota preflight should pass blob-store root when FS blobs are enabled."""
-    from sidepouch_mcp.jobs.quota import (
+    from sift_mcp.jobs.quota import (
         QuotaBreaches,
         QuotaEnforcementResult,
         StorageUsage,
@@ -3075,9 +2998,7 @@ def test_handle_mirrored_tool_quota_passes_blob_store_root(
             "meta": {},
         }
 
-    monkeypatch.setattr(
-        "sidepouch_mcp.mcp.server.call_upstream_tool", _fake_call
-    )
+    monkeypatch.setattr("sift_mcp.mcp.server.call_upstream_tool", _fake_call)
 
     _usage = StorageUsage(
         binary_blob_bytes=0, payload_total_bytes=0, total_storage_bytes=100
@@ -3100,7 +3021,7 @@ def test_handle_mirrored_tool_quota_passes_blob_store_root(
         )
 
     monkeypatch.setattr(
-        "sidepouch_mcp.mcp.handlers.mirrored_tool.enforce_quota",
+        "sift_mcp.mcp.handlers.mirrored_tool.enforce_quota",
         _fake_enforce_quota,
     )
 
@@ -3125,7 +3046,7 @@ def test_handle_mirrored_tool_quota_passes_blob_store_root(
     )
 
     monkeypatch.setattr(
-        "sidepouch_mcp.mcp.handlers.mirrored_tool.persist_artifact",
+        "sift_mcp.mcp.handlers.mirrored_tool.persist_artifact",
         lambda **_kw: _fake_handle,
     )
 
@@ -3135,7 +3056,6 @@ def test_handle_mirrored_tool_quota_passes_blob_store_root(
             {
                 "_gateway_context": {
                     "session_id": "sess_1",
-                    "cache_mode": "fresh",
                 },
                 "message": "hello",
             },
@@ -3172,15 +3092,13 @@ def test_handle_mirrored_tool_quota_check_fails_closed_on_generic_error(
             "meta": {},
         }
 
-    monkeypatch.setattr(
-        "sidepouch_mcp.mcp.server.call_upstream_tool", _fake_call
-    )
+    monkeypatch.setattr("sift_mcp.mcp.server.call_upstream_tool", _fake_call)
 
     def _exploding_quota(*a, **kw):
         raise RuntimeError("quota check exploded")
 
     monkeypatch.setattr(
-        "sidepouch_mcp.mcp.handlers.mirrored_tool.enforce_quota",
+        "sift_mcp.mcp.handlers.mirrored_tool.enforce_quota",
         _exploding_quota,
     )
 
@@ -3190,7 +3108,7 @@ def test_handle_mirrored_tool_quota_check_fails_closed_on_generic_error(
         raise AssertionError("persist_artifact should not be called")
 
     monkeypatch.setattr(
-        "sidepouch_mcp.mcp.handlers.mirrored_tool.persist_artifact",
+        "sift_mcp.mcp.handlers.mirrored_tool.persist_artifact",
         _unexpected_persist,
     )
 
@@ -3200,7 +3118,6 @@ def test_handle_mirrored_tool_quota_check_fails_closed_on_generic_error(
             {
                 "_gateway_context": {
                     "session_id": "sess_1",
-                    "cache_mode": "fresh",
                 },
                 "message": "hello",
             },
@@ -3249,9 +3166,7 @@ def test_handle_mirrored_tool_quota_check_marks_unhealthy_on_connectivity_error(
             "meta": {},
         }
 
-    monkeypatch.setattr(
-        "sidepouch_mcp.mcp.server.call_upstream_tool", _fake_call
-    )
+    monkeypatch.setattr("sift_mcp.mcp.server.call_upstream_tool", _fake_call)
 
     response = asyncio.run(
         server.handle_mirrored_tool(
@@ -3259,7 +3174,6 @@ def test_handle_mirrored_tool_quota_check_marks_unhealthy_on_connectivity_error(
             {
                 "_gateway_context": {
                     "session_id": "sess_1",
-                    "cache_mode": "fresh",
                 },
                 "message": "hello",
             },
@@ -3286,7 +3200,7 @@ def test_handle_mirrored_tool_skips_quota_when_disabled(
         enforce_called = True
 
     monkeypatch.setattr(
-        "sidepouch_mcp.mcp.handlers.mirrored_tool.enforce_quota",
+        "sift_mcp.mcp.handlers.mirrored_tool.enforce_quota",
         _track_enforce,
     )
 
@@ -3310,9 +3224,7 @@ def test_handle_mirrored_tool_skips_quota_when_disabled(
             "meta": {},
         }
 
-    monkeypatch.setattr(
-        "sidepouch_mcp.mcp.server.call_upstream_tool", _fake_call
-    )
+    monkeypatch.setattr("sift_mcp.mcp.server.call_upstream_tool", _fake_call)
 
     _fake_handle = ArtifactHandle(
         artifact_id="art_no_quota",
@@ -3335,7 +3247,7 @@ def test_handle_mirrored_tool_skips_quota_when_disabled(
     )
 
     monkeypatch.setattr(
-        "sidepouch_mcp.mcp.handlers.mirrored_tool.persist_artifact",
+        "sift_mcp.mcp.handlers.mirrored_tool.persist_artifact",
         lambda **_kw: _fake_handle,
     )
 
@@ -3345,7 +3257,6 @@ def test_handle_mirrored_tool_skips_quota_when_disabled(
             {
                 "_gateway_context": {
                     "session_id": "sess_1",
-                    "cache_mode": "fresh",
                 },
                 "message": "hello",
             },
@@ -3628,7 +3539,7 @@ def test_artifact_select_distinct_embeds_in_cursor(
 
 
 def test_artifact_select_rejects_wildcard_star() -> None:
-    from sidepouch_mcp.tools.artifact_select import (
+    from sift_mcp.tools.artifact_select import (
         validate_select_args,
     )
 
@@ -3670,12 +3581,12 @@ def test_artifact_get_rejects_where_param(
 
 
 def test_jsonpath_rejects_union_syntax() -> None:
-    from sidepouch_mcp.query.jsonpath import (
+    import pytest
+
+    from sift_mcp.query.jsonpath import (
         JsonPathError,
         parse_jsonpath,
     )
-
-    import pytest
 
     with pytest.raises(JsonPathError, match="union"):
         parse_jsonpath("$.data[name,spend]")

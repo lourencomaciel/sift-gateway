@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import dataclasses
 
-from sidepouch_mcp.artifacts.create import (
+from sift_mcp.artifacts.create import (
     ArtifactHandle,
     CreateArtifactInput,
 )
-from sidepouch_mcp.envelope.model import Envelope, JsonContentPart
+from sift_mcp.envelope.model import Envelope, JsonContentPart
 
 
 # ---------------------------------------------------------------------------
@@ -95,6 +95,6 @@ def test_create_artifact_input_defaults() -> None:
         upstream_tool_schema_hash=None,
         envelope=envelope,
     )
-    assert input_data.cache_mode == "allow"
+    assert input_data.allow_reuse is False
     assert input_data.parent_artifact_id is None
     assert input_data.chain_seq is None

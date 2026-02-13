@@ -2,13 +2,13 @@ from __future__ import annotations
 
 from decimal import Decimal
 
-from sidepouch_mcp.canon.rfc8785 import canonical_bytes
-from sidepouch_mcp.request_identity import (
+from sift_mcp.canon.rfc8785 import canonical_bytes
+from sift_mcp.request_identity import (
     RequestIdentity,
     compute_dedupe_hash,
     compute_request_identity,
 )
-from sidepouch_mcp.util.hashing import sha256_hex
+from sift_mcp.util.hashing import sha256_hex
 
 # ---- compute_request_identity ----
 

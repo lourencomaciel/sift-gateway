@@ -11,7 +11,7 @@ from __future__ import annotations
 import dataclasses
 from unittest.mock import MagicMock
 
-from sidepouch_mcp.sessions import (
+from sift_mcp.sessions import (
     _TOUCH_ARTIFACT_SQL,
     _UPSERT_ARTIFACT_REF_SQL,
     _UPSERT_SESSION_SQL,

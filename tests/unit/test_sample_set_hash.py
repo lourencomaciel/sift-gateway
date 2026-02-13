@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from sidepouch_mcp.cursor.sample_set_hash import compute_sample_set_hash
+from sift_mcp.cursor.sample_set_hash import compute_sample_set_hash
 
 
 def test_sample_set_hash_is_deterministic() -> None:

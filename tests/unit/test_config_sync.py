@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from sidepouch_mcp.config.sync import run_sync
+from sift_mcp.config.sync import run_sync
 
 
 def _write_json(path: Path, data: dict) -> None:
@@ -64,7 +64,7 @@ class TestRunSync:
             gateway_servers={},
             source_servers={
                 "artifact-gateway": {
-                    "command": "sidepouch-mcp",
+                    "command": "sift-mcp",
                 },
                 "github": {
                     "command": "npx",
@@ -92,7 +92,7 @@ class TestRunSync:
             gateway_servers={},
             source_servers={
                 "artifact-gateway": {
-                    "command": "sidepouch-mcp",
+                    "command": "sift-mcp",
                 },
                 "github": {
                     "command": "npx",
@@ -107,10 +107,7 @@ class TestRunSync:
 
         source = json.loads(source_path.read_text(encoding="utf-8"))
         assert list(source["mcpServers"].keys()) == ["artifact-gateway"]
-        assert (
-            source["mcpServers"]["artifact-gateway"]["command"]
-            == "sidepouch-mcp"
-        )
+        assert source["mcpServers"]["artifact-gateway"]["command"] == "sift-mcp"
 
     def test_sync_idempotent_when_no_new_entries(self, tmp_path: Path) -> None:
         data_dir, config_path, source_path = _setup_gateway_and_source(
@@ -120,7 +117,7 @@ class TestRunSync:
             },
             source_servers={
                 "artifact-gateway": {
-                    "command": "sidepouch-mcp",
+                    "command": "sift-mcp",
                 },
                 "github": {
                     "command": "npx",
@@ -173,7 +170,7 @@ class TestRunSync:
             gateway_servers={},
             source_servers={
                 "artifact-gateway": {
-                    "command": "sidepouch-mcp",
+                    "command": "sift-mcp",
                 },
                 "github": {
                     "command": "npx",
@@ -209,7 +206,7 @@ class TestSyncDisabled:
             gateway_servers={},
             source_servers={
                 "artifact-gateway": {
-                    "command": "sidepouch-mcp",
+                    "command": "sift-mcp",
                 },
                 "github": {"command": "npx"},
             },
@@ -229,7 +226,7 @@ class TestSyncDisabled:
 
 class TestIsGatewayEntry:
     def test_matches_by_name(self) -> None:
-        from sidepouch_mcp.config.sync import (
+        from sift_mcp.config.sync import (
             _is_gateway_entry,
         )
 
@@ -240,30 +237,30 @@ class TestIsGatewayEntry:
         )
 
     def test_matches_by_command(self) -> None:
-        from sidepouch_mcp.config.sync import (
+        from sift_mcp.config.sync import (
             _is_gateway_entry,
         )
 
         assert _is_gateway_entry(
             "some-name",
-            {"command": "sidepouch-mcp"},
+            {"command": "sift-mcp"},
             "artifact-gateway",
         )
 
-    def test_url_with_sidepouch_is_not_gateway(self) -> None:
+    def test_url_with_sift_is_not_gateway(self) -> None:
         """URL substring no longer identifies gateway entries."""
-        from sidepouch_mcp.config.sync import (
+        from sift_mcp.config.sync import (
             _is_gateway_entry,
         )
 
         assert not _is_gateway_entry(
             "my-gateway",
-            {"url": "http://localhost:8080/sidepouch"},
+            {"url": "http://localhost:8080/sift"},
             "artifact-gateway",
         )
 
     def test_non_gateway_entry(self) -> None:
-        from sidepouch_mcp.config.sync import (
+        from sift_mcp.config.sync import (
             _is_gateway_entry,
         )
 

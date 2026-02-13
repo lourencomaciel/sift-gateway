@@ -4,14 +4,14 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from sidepouch_mcp.config.settings import GatewayConfig
-from sidepouch_mcp.mapping.runner import (
+from sift_mcp.config.settings import GatewayConfig
+from sift_mcp.mapping.runner import (
     MappingInput,
     MappingResult,
     RootInventory,
     SampleRecord,
 )
-from sidepouch_mcp.mapping.worker import (
+from sift_mcp.mapping.worker import (
     CONDITIONAL_MAP_UPDATE_SQL,
     DELETE_ROOTS_SQL,
     INSERT_ROOT_SQL,
@@ -22,7 +22,7 @@ from sidepouch_mcp.mapping.worker import (
     run_mapping_worker,
     should_run_mapping,
 )
-from sidepouch_mcp.obs.metrics import GatewayMetrics, counter_value
+from sift_mcp.obs.metrics import GatewayMetrics, counter_value
 
 
 class _FakeCursor:
@@ -223,7 +223,7 @@ def test_run_mapping_worker_records_metrics(
     result = _partial_ready_result()
 
     monkeypatch.setattr(
-        "sidepouch_mcp.mapping.worker.run_mapping",
+        "sift_mcp.mapping.worker.run_mapping",
         lambda _mapping_input: result,
     )
 
@@ -294,7 +294,7 @@ def _full_ready_result() -> MappingResult:
 
 def test_persist_full_mapping_writes_roots_no_samples() -> None:
     """Full mapping writes roots but does not write samples."""
-    from sidepouch_mcp.mapping.worker import DELETE_SAMPLES_SQL
+    from sift_mcp.mapping.worker import DELETE_SAMPLES_SQL
 
     connection = _FakeConnection(conditional_rowcount=1)
     result = _full_ready_result()
@@ -346,7 +346,7 @@ def test_validate_sample_alignment_rejects_mismatch() -> None:
     """_validate_sample_alignment raises ValueError on index mismatch."""
     import pytest
 
-    from sidepouch_mcp.mapping.worker import _validate_sample_alignment
+    from sift_mcp.mapping.worker import _validate_sample_alignment
 
     root = RootInventory(
         root_key="items",
@@ -404,7 +404,7 @@ def test_run_mapping_worker_records_full_metrics(
     result = _full_ready_result()
 
     monkeypatch.setattr(
-        "sidepouch_mcp.mapping.worker.run_mapping",
+        "sift_mcp.mapping.worker.run_mapping",
         lambda _mi: result,
     )
     run_mapping_worker(
@@ -442,7 +442,7 @@ def test_run_mapping_worker_records_failed_metrics(
         map_error="test error",
     )
     monkeypatch.setattr(
-        "sidepouch_mcp.mapping.worker.run_mapping",
+        "sift_mcp.mapping.worker.run_mapping",
         lambda _mi: failed,
     )
     run_mapping_worker(
@@ -469,7 +469,7 @@ def test_run_mapping_worker_emits_structured_log(
     connection = _FakeConnection(conditional_rowcount=1)
     result = _full_ready_result()
     monkeypatch.setattr(
-        "sidepouch_mcp.mapping.worker.run_mapping",
+        "sift_mcp.mapping.worker.run_mapping",
         lambda _mi: result,
     )
 
@@ -496,7 +496,7 @@ def test_run_mapping_worker_emits_structured_log(
         ),
         logger=logger,
     )
-    from sidepouch_mcp.obs.logging import LogEvents
+    from sift_mcp.obs.logging import LogEvents
 
     assert LogEvents.MAPPING_STARTED in log_events
     assert LogEvents.MAPPING_COMPLETED in log_events
@@ -518,7 +518,7 @@ def test_run_mapping_worker_emits_failed_log(
         map_error="test error",
     )
     monkeypatch.setattr(
-        "sidepouch_mcp.mapping.worker.run_mapping",
+        "sift_mcp.mapping.worker.run_mapping",
         lambda _mi: failed,
     )
 
@@ -545,7 +545,7 @@ def test_run_mapping_worker_emits_failed_log(
         ),
         logger=logger,
     )
-    from sidepouch_mcp.obs.logging import LogEvents
+    from sift_mcp.obs.logging import LogEvents
 
     assert LogEvents.MAPPING_STARTED in log_events
     assert LogEvents.MAPPING_FAILED in log_events
