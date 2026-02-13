@@ -35,6 +35,7 @@ _GATEWAY_EXTENSION_FIELDS = frozenset(
         "pagination",
         "secret_ref",
         "inherit_parent_env",
+        "external_user_id",
     }
 )
 

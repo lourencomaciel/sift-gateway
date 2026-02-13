@@ -209,6 +209,9 @@ class UpstreamConfig(BaseSettings):
         dedupe_exclusions: JSONPath exclusions for dedupe hash.
         secret_ref: Reference to an external secret store entry.
         inherit_parent_env: Inherit parent process env vars.
+        external_user_id: Stable user identity for upstream
+            auth persistence.  ``"auto"`` generates and persists
+            a UUID; any other value is used verbatim.
     """
 
     model_config = SettingsConfigDict(extra="forbid")
@@ -273,6 +276,18 @@ class UpstreamConfig(BaseSettings):
     inherit_parent_env: bool = Field(
         default=False,
         description="Inherit parent process environment variables",
+    )
+
+    # Persistent identity for upstream auth
+    external_user_id: str | None = Field(
+        default=None,
+        description=(
+            "Stable user identity for upstream auth persistence. "
+            "Set to 'auto' to generate and persist a UUID. "
+            "Any other value is used verbatim. When set, "
+            "'--external-user-id <value>' is appended to "
+            "stdio args at launch time."
+        ),
     )
 
     @field_validator("secret_ref")
