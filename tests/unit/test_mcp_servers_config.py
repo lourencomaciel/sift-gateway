@@ -190,6 +190,21 @@ class TestToUpstreamConfigs:
         c = configs[0]
         assert c["inherit_parent_env"] is True
 
+    def test_gateway_external_user_id_promoted(self) -> None:
+        configs = to_upstream_configs(
+            {
+                "pd": {
+                    "command": "npx",
+                    "args": ["-y", "@pipedream/mcp", "stdio"],
+                    "_gateway": {
+                        "external_user_id": "auto",
+                    },
+                }
+            }
+        )
+        c = configs[0]
+        assert c["external_user_id"] == "auto"
+
     def test_no_gateway_extensions(self) -> None:
         configs = to_upstream_configs({"gh": {"command": "gh"}})
         c = configs[0]
