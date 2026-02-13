@@ -6,9 +6,9 @@ from pathlib import Path
 
 import pytest
 
-from sidepouch_mcp.cache.reuse import try_acquire_advisory_lock
-from sidepouch_mcp.db.backend import SqliteBackend
-from sidepouch_mcp.db.migrate import apply_migrations
+from sift_mcp.cache.reuse import try_acquire_advisory_lock
+from sift_mcp.db.backend import SqliteBackend
+from sift_mcp.db.migrate import apply_migrations
 
 
 @pytest.fixture()
@@ -18,7 +18,7 @@ def sqlite_backend(tmp_path: Path) -> SqliteBackend:
     migrations_dir = (
         Path(__file__).resolve().parents[2]
         / "src"
-        / "sidepouch_mcp"
+        / "sift_mcp"
         / "db"
         / "migrations_sqlite"
     )

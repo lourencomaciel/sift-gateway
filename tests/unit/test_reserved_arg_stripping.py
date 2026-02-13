@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from sidepouch_mcp.envelope.normalize import strip_reserved_args
+from sift_mcp.envelope.normalize import strip_reserved_args
 
 
 def test_strips_gateway_context() -> None:

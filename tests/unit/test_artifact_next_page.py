@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import json
 
-from sidepouch_mcp.mcp.handlers.artifact_next_page import (
+from sift_mcp.mcp.handlers.artifact_next_page import (
     _extract_pagination_state,
 )
-from sidepouch_mcp.pagination.extract import PaginationState
+from sift_mcp.pagination.extract import PaginationState
 
 
 def _envelope_json(

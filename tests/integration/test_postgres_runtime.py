@@ -7,27 +7,27 @@ import uuid
 
 import pytest
 
-from sidepouch_mcp.artifacts.create import (
+from sift_mcp.artifacts.create import (
     CreateArtifactInput,
     persist_artifact,
 )
-from sidepouch_mcp.config.settings import GatewayConfig, UpstreamConfig
-from sidepouch_mcp.constants import WORKSPACE_ID
-from sidepouch_mcp.db.conn import create_pool
-from sidepouch_mcp.db.migrate import apply_migrations
-from sidepouch_mcp.envelope.model import (
+from sift_mcp.config.settings import GatewayConfig, UpstreamConfig
+from sift_mcp.constants import WORKSPACE_ID
+from sift_mcp.db.conn import create_pool
+from sift_mcp.db.migrate import apply_migrations
+from sift_mcp.envelope.model import (
     BinaryRefContentPart,
     Envelope,
     JsonContentPart,
 )
-from sidepouch_mcp.jobs.hard_delete import run_hard_delete_batch
-from sidepouch_mcp.mcp.server import GatewayServer
-from sidepouch_mcp.mcp.upstream import (
+from sift_mcp.jobs.hard_delete import run_hard_delete_batch
+from sift_mcp.mcp.server import GatewayServer
+from sift_mcp.mcp.upstream import (
     UpstreamInstance,
     UpstreamToolSchema,
 )
 
-_POSTGRES_DSN_ENV = "SIDEPOUCH_MCP_TEST_POSTGRES_DSN"
+_POSTGRES_DSN_ENV = "SIFT_MCP_TEST_POSTGRES_DSN"
 
 
 def _integration_config(tmp_path: Path) -> GatewayConfig:
@@ -46,7 +46,7 @@ def _migrations_dir() -> Path:
     return (
         Path(__file__).resolve().parents[2]
         / "src"
-        / "sidepouch_mcp"
+        / "sift_mcp"
         / "db"
         / "migrations"
     )
@@ -168,7 +168,10 @@ def test_mirrored_tool_flow_persists_artifact_with_real_postgres(
         mirrored = server.mirrored_tools["demo.echo"]
 
         async def _fake_call(
-            _upstream, _tool, args, data_dir: str | None = None  # noqa: ARG001
+            _upstream,
+            _tool,
+            args,
+            data_dir: str | None = None,  # noqa: ARG001
         ):
             return {
                 "content": [
@@ -180,7 +183,7 @@ def test_mirrored_tool_flow_persists_artifact_with_real_postgres(
             }
 
         monkeypatch.setattr(
-            "sidepouch_mcp.mcp.server.call_upstream_tool", _fake_call
+            "sift_mcp.mcp.server.call_upstream_tool", _fake_call
         )
 
         session_id = f"sess_int_{uuid.uuid4().hex}"
@@ -190,7 +193,6 @@ def test_mirrored_tool_flow_persists_artifact_with_real_postgres(
                 {
                     "_gateway_context": {
                         "session_id": session_id,
-                        "cache_mode": "fresh",
                     },
                     "message": "hello integration",
                 },

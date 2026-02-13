@@ -12,7 +12,7 @@ import sys
 import time
 from typing import Any
 
-from sidepouch_mcp.mcp.stdio_compat import (
+from sift_mcp.mcp.stdio_compat import (
     _detect_mode,
     _ModeState,
     _parse_next_message,
@@ -20,7 +20,7 @@ from sidepouch_mcp.mcp.stdio_compat import (
 
 
 class _ServerSession:
-    """Manage a sidepouch stdio subprocess for protocol tests."""
+    """Manage a sift stdio subprocess for protocol tests."""
 
     def __init__(self, tmp_path: Path) -> None:
         env = dict(os.environ)
@@ -32,7 +32,7 @@ class _ServerSession:
         cmd = [
             sys.executable,
             "-c",
-            "from sidepouch_mcp.main import cli; cli()",
+            "from sift_mcp.main import cli; cli()",
             "--data-dir",
             str(tmp_path),
         ]
@@ -102,7 +102,9 @@ class _ServerSession:
                 continue
             if self._process.poll() is not None:
                 break
-        raise AssertionError(f"timed out waiting for line message: {self._stderr()}")
+        raise AssertionError(
+            f"timed out waiting for line message: {self._stderr()}"
+        )
 
     def read_framed_message(self, timeout: float = 5.0) -> dict[str, Any]:
         """Read one Content-Length framed JSON message."""
@@ -234,9 +236,7 @@ def test_stdio_supports_framing_with_non_first_content_length_header(
     session = _ServerSession(tmp_path)
     try:
         extra_headers = [("Content-Type", "application/json")]
-        session.send_framed(
-            _initialize_payload(), extra_headers=extra_headers
-        )
+        session.send_framed(_initialize_payload(), extra_headers=extra_headers)
         init_response = session.read_framed_message()
         assert init_response["id"] == 1
         assert "result" in init_response

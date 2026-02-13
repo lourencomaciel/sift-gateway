@@ -1,10 +1,10 @@
-# SidePouch — Design Specification v1.9
+# Sift — Design Specification v1.9
 
 > **Status**: Locked — this document is the authoritative reference for the v1.9 implementation.
 
 ## 1. Overview
 
-SidePouch is a local, single-tenant MCP proxy that:
+Sift is a local, single-tenant MCP proxy that:
 
 1. Discovers tools exposed by upstream MCP servers (stdio or HTTP transport).
 2. Mirrors each tool as `{prefix}.{tool}` with identical schema — no injected fields.
@@ -81,16 +81,10 @@ Upstream MCP responses are normalized into a canonical envelope shape:
 - **Stampede lock**: `pg_advisory_lock` derived from `sha256(request_key)` with configurable timeout
 - **Reuse**: by `request_key` (latest by `created_seq DESC`), gated by schema hash if `strict_schema_reuse`
 
-Cache-control modes via `_gateway_context.cache_mode`:
+Reuse control via `_gateway_context.allow_reuse` (boolean):
 
-- `normal` (default): allow reuse by request key
-- `bypass`: skip reuse and force fresh upstream execution
-- `refresh`: skip reuse and force fresh execution (explicit refresh intent)
-
-Backward-compatible aliases:
-
-- `allow` -> `normal`
-- `fresh` -> `bypass`
+- `false` (default): every upstream call is fresh — no request-key dedup
+- `true`: opt-in to request-key dedup; advisory lock + reuse check active
 
 ## 6. Mapping system
 
@@ -250,7 +244,7 @@ Payloads at or above the passthrough threshold follow the handle-only path: the 
 
 - **`artifact_id`** and **cache metadata** (reuse status, request key).
 - cache metadata includes `reused`, `request_key`, `reason`,
-  `artifact_id_origin` (`cache|fresh`), and normalized `cache_mode`.
+  `artifact_id_origin` (`cache|fresh`), and `allow_reuse` (boolean).
 - **`describe`**: inline mapping metadata and discovered roots (same data as `artifact(action="describe")`), fetched on the same DB connection with no extra round-trip.
 - **`usage_hint`**: a heuristic natural language hint (no LLM) describing what the artifact contains, which fields are available, and which retrieval action to call next (`select` for arrays, `get` for dicts).
 

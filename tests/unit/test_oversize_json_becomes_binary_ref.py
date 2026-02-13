@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-from sidepouch_mcp.envelope.model import (
+from sift_mcp.envelope.model import (
     BinaryRefContentPart,
     Envelope,
     JsonContentPart,
 )
-from sidepouch_mcp.envelope.oversize import replace_oversized_json_parts
-from sidepouch_mcp.fs.blob_store import BlobStore
+from sift_mcp.envelope.oversize import replace_oversized_json_parts
+from sift_mcp.fs.blob_store import BlobStore
 
 
 def test_oversized_json_part_becomes_binary_ref(tmp_path) -> None:

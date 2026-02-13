@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import datetime as dt
 
-from sidepouch_mcp.cursor.payload import (
+from sift_mcp.cursor.payload import (
     CursorStaleError,
     assert_cursor_binding,
     build_cursor_payload,

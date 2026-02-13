@@ -10,7 +10,7 @@
 - `artifact_ref` insertion on cache hit so reused artifacts are retrievable
 
 ### Changed
-- Rebranded from "MCP Artifact Gateway" to "SidePouch"
+- Rebranded from "MCP Artifact Gateway" to "Sift"
 - Replaced silent `except Exception: pass` blocks with warning logs
 - Removed unused `orjson` dependency
 
@@ -22,7 +22,7 @@
 - Passthrough mode: small results returned raw, larger results stored as artifacts
 - Determinism artifacts in responses; cursor stale logging
 - Lifecycle checks: migration validation, `--check` output, clean shutdown
-- Standard `mcpServers` config format and `sidepouch-mcp init` command
+- Standard `mcpServers` config format and `sift-mcp init` command
 - Quota enforcement with LRU prune on storage cap breach
 - E2E integration tests
 - Sample corruption detection and expanded where DSL/hash test coverage

@@ -5,22 +5,22 @@ from __future__ import annotations
 from decimal import Decimal
 import hashlib
 
-from sidepouch_mcp.canon import (
+from sift_mcp.canon import (
     canonical_bytes,
     compress_bytes,
     decompress_bytes,
 )
-from sidepouch_mcp.config.settings import (
+from sift_mcp.config.settings import (
     CanonicalEncoding,
     EnvelopeJsonbMode,
 )
-from sidepouch_mcp.constants import CANONICALIZER_VERSION
-from sidepouch_mcp.storage.payload_store import (
+from sift_mcp.constants import CANONICALIZER_VERSION
+from sift_mcp.storage.payload_store import (
     PreparedPayload,
     prepare_payload,
     reconstruct_envelope,
 )
-from sidepouch_mcp.util.hashing import payload_hash_full
+from sift_mcp.util.hashing import payload_hash_full
 
 
 def _sample_envelope() -> dict:

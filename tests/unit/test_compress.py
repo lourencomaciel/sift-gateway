@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from sidepouch_mcp.canon.compress import compress_bytes, decompress_bytes
+from sift_mcp.canon.compress import compress_bytes, decompress_bytes
 
 
 def test_gzip_roundtrip() -> None:

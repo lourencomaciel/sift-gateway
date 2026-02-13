@@ -6,7 +6,7 @@ from pathlib import Path
 from pydantic import ValidationError
 import pytest
 
-from sidepouch_mcp.config.settings import (
+from sift_mcp.config.settings import (
     GatewayConfig,
     PaginationConfig,
     UpstreamConfig,
@@ -42,18 +42,16 @@ def test_env_overrides_state_config(tmp_path: Path, monkeypatch) -> None:
         json.dumps({"postgres_dsn": "postgresql://from-file/db"}),
         encoding="utf-8",
     )
-    monkeypatch.setenv("SIDEPOUCH_MCP_POSTGRES_DSN", "postgresql://from-env/db")
+    monkeypatch.setenv("SIFT_MCP_POSTGRES_DSN", "postgresql://from-env/db")
 
     config = load_gateway_config(data_dir_override=str(tmp_path))
     assert config.postgres_dsn == "postgresql://from-env/db"
 
 
 def test_nested_env_overrides_state_config(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setenv("SIDEPOUCH_MCP_UPSTREAMS__0__PREFIX", "gh")
-    monkeypatch.setenv("SIDEPOUCH_MCP_UPSTREAMS__0__TRANSPORT", "http")
-    monkeypatch.setenv(
-        "SIDEPOUCH_MCP_UPSTREAMS__0__URL", "https://from-env.example"
-    )
+    monkeypatch.setenv("SIFT_MCP_UPSTREAMS__0__PREFIX", "gh")
+    monkeypatch.setenv("SIFT_MCP_UPSTREAMS__0__TRANSPORT", "http")
+    monkeypatch.setenv("SIFT_MCP_UPSTREAMS__0__URL", "https://from-env.example")
 
     config = load_gateway_config(data_dir_override=str(tmp_path))
     assert len(config.upstreams) == 1
@@ -64,11 +62,11 @@ def test_nested_env_overrides_state_config(tmp_path: Path, monkeypatch) -> None:
 def test_nested_env_json_leaf_values_are_decoded(
     tmp_path: Path, monkeypatch
 ) -> None:
-    monkeypatch.setenv("SIDEPOUCH_MCP_UPSTREAMS__0__PREFIX", "gh")
-    monkeypatch.setenv("SIDEPOUCH_MCP_UPSTREAMS__0__TRANSPORT", "stdio")
-    monkeypatch.setenv("SIDEPOUCH_MCP_UPSTREAMS__0__COMMAND", "gh")
+    monkeypatch.setenv("SIFT_MCP_UPSTREAMS__0__PREFIX", "gh")
+    monkeypatch.setenv("SIFT_MCP_UPSTREAMS__0__TRANSPORT", "stdio")
+    monkeypatch.setenv("SIFT_MCP_UPSTREAMS__0__COMMAND", "gh")
     monkeypatch.setenv(
-        "SIDEPOUCH_MCP_UPSTREAMS__0__ARGS", '["api","/repos/example"]'
+        "SIFT_MCP_UPSTREAMS__0__ARGS", '["api","/repos/example"]'
     )
 
     config = load_gateway_config(data_dir_override=str(tmp_path))
@@ -76,12 +74,10 @@ def test_nested_env_json_leaf_values_are_decoded(
 
 
 def test_nested_env_map_keys_preserve_case(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setenv("SIDEPOUCH_MCP_UPSTREAMS__0__PREFIX", "gh")
-    monkeypatch.setenv("SIDEPOUCH_MCP_UPSTREAMS__0__TRANSPORT", "stdio")
-    monkeypatch.setenv("SIDEPOUCH_MCP_UPSTREAMS__0__COMMAND", "gh")
-    monkeypatch.setenv(
-        "SIDEPOUCH_MCP_UPSTREAMS__0__ENV__OPENAI_API_KEY", "secret"
-    )
+    monkeypatch.setenv("SIFT_MCP_UPSTREAMS__0__PREFIX", "gh")
+    monkeypatch.setenv("SIFT_MCP_UPSTREAMS__0__TRANSPORT", "stdio")
+    monkeypatch.setenv("SIFT_MCP_UPSTREAMS__0__COMMAND", "gh")
+    monkeypatch.setenv("SIFT_MCP_UPSTREAMS__0__ENV__OPENAI_API_KEY", "secret")
 
     config = load_gateway_config(data_dir_override=str(tmp_path))
     assert config.upstreams[0].env == {"OPENAI_API_KEY": "secret"}
@@ -90,12 +86,10 @@ def test_nested_env_map_keys_preserve_case(tmp_path: Path, monkeypatch) -> None:
 def test_nested_env_map_leaf_json_like_string_stays_string(
     tmp_path: Path, monkeypatch
 ) -> None:
-    monkeypatch.setenv("SIDEPOUCH_MCP_UPSTREAMS__0__PREFIX", "gh")
-    monkeypatch.setenv("SIDEPOUCH_MCP_UPSTREAMS__0__TRANSPORT", "http")
-    monkeypatch.setenv("SIDEPOUCH_MCP_UPSTREAMS__0__URL", "https://api.example")
-    monkeypatch.setenv(
-        "SIDEPOUCH_MCP_UPSTREAMS__0__HEADERS__X_CONFIG", '{"k":"v"}'
-    )
+    monkeypatch.setenv("SIFT_MCP_UPSTREAMS__0__PREFIX", "gh")
+    monkeypatch.setenv("SIFT_MCP_UPSTREAMS__0__TRANSPORT", "http")
+    monkeypatch.setenv("SIFT_MCP_UPSTREAMS__0__URL", "https://api.example")
+    monkeypatch.setenv("SIFT_MCP_UPSTREAMS__0__HEADERS__X_CONFIG", '{"k":"v"}')
 
     config = load_gateway_config(data_dir_override=str(tmp_path))
     assert config.upstreams[0].headers == {"X_CONFIG": '{"k":"v"}'}
@@ -112,7 +106,7 @@ def test_env_top_level_list_override_replaces_file_list(
     tmp_path: Path, monkeypatch
 ) -> None:
     monkeypatch.setenv(
-        "SIDEPOUCH_MCP_UPSTREAMS",
+        "SIFT_MCP_UPSTREAMS",
         '[{"prefix":"c","transport":"http","url":"https://c.example"}]',
     )
 
@@ -123,12 +117,10 @@ def test_env_top_level_list_override_replaces_file_list(
 def test_nested_env_list_field_override_replaces_file_list(
     tmp_path: Path, monkeypatch
 ) -> None:
-    monkeypatch.setenv("SIDEPOUCH_MCP_UPSTREAMS__0__PREFIX", "gh")
-    monkeypatch.setenv("SIDEPOUCH_MCP_UPSTREAMS__0__TRANSPORT", "stdio")
-    monkeypatch.setenv("SIDEPOUCH_MCP_UPSTREAMS__0__COMMAND", "gh")
-    monkeypatch.setenv(
-        "SIDEPOUCH_MCP_UPSTREAMS__0__ARGS", '["api","/new/path"]'
-    )
+    monkeypatch.setenv("SIFT_MCP_UPSTREAMS__0__PREFIX", "gh")
+    monkeypatch.setenv("SIFT_MCP_UPSTREAMS__0__TRANSPORT", "stdio")
+    monkeypatch.setenv("SIFT_MCP_UPSTREAMS__0__COMMAND", "gh")
+    monkeypatch.setenv("SIFT_MCP_UPSTREAMS__0__ARGS", '["api","/new/path"]')
 
     config = load_gateway_config(data_dir_override=str(tmp_path))
     assert config.upstreams[0].args == ["api", "/new/path"]
@@ -158,7 +150,8 @@ def test_legacy_upstreams_key_raises_migration_error(
 
 
 def test_env_upstream_overrides_mcp_servers_format(
-    tmp_path: Path, monkeypatch,
+    tmp_path: Path,
+    monkeypatch,
 ) -> None:
     """Env UPSTREAMS__* overrides must win over mcpServers file."""
     state_dir = tmp_path / "state"
@@ -176,7 +169,7 @@ def test_env_upstream_overrides_mcp_servers_format(
         encoding="utf-8",
     )
     monkeypatch.setenv(
-        "SIDEPOUCH_MCP_UPSTREAMS__0__URL",
+        "SIFT_MCP_UPSTREAMS__0__URL",
         "https://from-env.example",
     )
 
@@ -186,7 +179,8 @@ def test_env_upstream_overrides_mcp_servers_format(
 
 
 def test_env_upstream_env_var_overrides_mcp_servers_env(
-    tmp_path: Path, monkeypatch,
+    tmp_path: Path,
+    monkeypatch,
 ) -> None:
     """Env override adds env vars to mcpServers-defined upstream."""
     state_dir = tmp_path / "state"
@@ -204,7 +198,7 @@ def test_env_upstream_env_var_overrides_mcp_servers_env(
         encoding="utf-8",
     )
     monkeypatch.setenv(
-        "SIDEPOUCH_MCP_UPSTREAMS__0__ENV__GITHUB_TOKEN",
+        "SIFT_MCP_UPSTREAMS__0__ENV__GITHUB_TOKEN",
         "tok_from_env",
     )
 

@@ -5,14 +5,14 @@ from __future__ import annotations
 import datetime as dt
 from decimal import Decimal
 
-from sidepouch_mcp.constants import WORKSPACE_ID
-from sidepouch_mcp.jobs.hard_delete import (
+from sift_mcp.constants import WORKSPACE_ID
+from sift_mcp.jobs.hard_delete import (
     FIND_HARD_DELETE_CANDIDATES_SQL,
     FIND_UNREFERENCED_BLOBS_SQL,
     FIND_UNREFERENCED_PAYLOADS_SQL,
     HardDeleteResult,
 )
-from sidepouch_mcp.jobs.quota import (
+from sift_mcp.jobs.quota import (
     SOFT_DELETE_LRU_FOR_QUOTA_SQL_PG,
     SOFT_DELETE_LRU_FOR_QUOTA_SQL_SQLITE,
     STORAGE_USAGE_SQL,
@@ -28,7 +28,7 @@ from sidepouch_mcp.jobs.quota import (
     soft_delete_lru_params_sqlite,
     storage_usage_params,
 )
-from sidepouch_mcp.obs.metrics import GatewayMetrics, counter_value
+from sift_mcp.obs.metrics import GatewayMetrics, counter_value
 
 
 # ---------------------------------------------------------------------------
@@ -517,11 +517,11 @@ def test_enforce_quota_uses_past_cutoff_for_hard_delete_grace(
         )
 
     monkeypatch.setattr(
-        "sidepouch_mcp.jobs.quota.soft_delete_lru_batch",
+        "sift_mcp.jobs.quota.soft_delete_lru_batch",
         _fake_soft_delete,
     )
     monkeypatch.setattr(
-        "sidepouch_mcp.jobs.quota.run_hard_delete_batch",
+        "sift_mcp.jobs.quota.run_hard_delete_batch",
         _fake_hard_delete,
     )
 
@@ -578,15 +578,15 @@ def test_enforce_quota_recomputes_cutoff_each_round(monkeypatch) -> None:
         )
 
     monkeypatch.setattr(
-        "sidepouch_mcp.jobs.quota._hard_delete_cutoff_timestamp",
+        "sift_mcp.jobs.quota._hard_delete_cutoff_timestamp",
         _fake_cutoff,
     )
     monkeypatch.setattr(
-        "sidepouch_mcp.jobs.quota.soft_delete_lru_batch",
+        "sift_mcp.jobs.quota.soft_delete_lru_batch",
         _fake_soft_delete,
     )
     monkeypatch.setattr(
-        "sidepouch_mcp.jobs.quota.run_hard_delete_batch",
+        "sift_mcp.jobs.quota.run_hard_delete_batch",
         _fake_hard_delete,
     )
 

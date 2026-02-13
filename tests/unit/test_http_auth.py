@@ -4,7 +4,7 @@ import asyncio
 
 import pytest
 
-from sidepouch_mcp.mcp.http_auth import (
+from sift_mcp.mcp.http_auth import (
     bearer_auth_middleware,
     is_local_host,
     validate_http_bind,
@@ -63,9 +63,7 @@ def _run(coro):
 def _make_scope(scope_type, auth_header=None):
     headers = []
     if auth_header is not None:
-        headers.append(
-            (b"authorization", auth_header.encode("utf-8"))
-        )
+        headers.append((b"authorization", auth_header.encode("utf-8")))
     return {"type": scope_type, "headers": headers}
 
 

@@ -6,9 +6,9 @@ from pathlib import Path
 
 import pytest
 
-from sidepouch_mcp.config.settings import GatewayConfig
-from sidepouch_mcp.lifecycle import CheckResult
-from sidepouch_mcp.main import _parse_args, serve
+from sift_mcp.config.settings import GatewayConfig
+from sift_mcp.lifecycle import CheckResult
+from sift_mcp.main import _parse_args, serve
 
 
 class _FakeConnectionContext:
@@ -55,15 +55,15 @@ def test_serve_check_mode_prints_startup_report(
     report = CheckResult(fs_ok=True, db_ok=True, upstream_ok=True, details=[])
 
     monkeypatch.setattr(
-        "sidepouch_mcp.main._parse_args",
+        "sift_mcp.main._parse_args",
         lambda: argparse.Namespace(command=None, check=True, data_dir=None),
     )
     monkeypatch.setattr(
-        "sidepouch_mcp.main.load_gateway_config",
+        "sift_mcp.main.load_gateway_config",
         lambda **_kwargs: config,
     )
     monkeypatch.setattr(
-        "sidepouch_mcp.main.run_startup_check", lambda _config: report
+        "sift_mcp.main.run_startup_check", lambda _config: report
     )
 
     exit_code = serve()
@@ -93,15 +93,15 @@ def test_serve_returns_one_when_startup_check_fails(
     )
 
     monkeypatch.setattr(
-        "sidepouch_mcp.main._parse_args",
+        "sift_mcp.main._parse_args",
         lambda: argparse.Namespace(command=None, check=False, data_dir=None),
     )
     monkeypatch.setattr(
-        "sidepouch_mcp.main.load_gateway_config",
+        "sift_mcp.main.load_gateway_config",
         lambda **_kwargs: config,
     )
     monkeypatch.setattr(
-        "sidepouch_mcp.main.run_startup_check", lambda _config: report
+        "sift_mcp.main.run_startup_check", lambda _config: report
     )
 
     exit_code = serve()
@@ -121,7 +121,7 @@ def test_serve_runs_bootstrap_and_closes_pool(
     server = _FakeServer(app)
 
     monkeypatch.setattr(
-        "sidepouch_mcp.main._parse_args",
+        "sift_mcp.main._parse_args",
         lambda: argparse.Namespace(
             command=None,
             check=False,
@@ -134,14 +134,14 @@ def test_serve_runs_bootstrap_and_closes_pool(
         ),
     )
     monkeypatch.setattr(
-        "sidepouch_mcp.main.load_gateway_config",
+        "sift_mcp.main.load_gateway_config",
         lambda **_kwargs: config,
     )
     monkeypatch.setattr(
-        "sidepouch_mcp.main.run_startup_check", lambda _config: report
+        "sift_mcp.main.run_startup_check", lambda _config: report
     )
     monkeypatch.setattr(
-        "sidepouch_mcp.app.build_app",
+        "sift_mcp.app.build_app",
         lambda *, config, startup_report: (server, pool),
     )
 
@@ -176,7 +176,7 @@ def test_serve_drains_mapping_tasks_on_shutdown(
     server = _DrainableServer(app)
 
     monkeypatch.setattr(
-        "sidepouch_mcp.main._parse_args",
+        "sift_mcp.main._parse_args",
         lambda: argparse.Namespace(
             command=None,
             check=False,
@@ -189,14 +189,14 @@ def test_serve_drains_mapping_tasks_on_shutdown(
         ),
     )
     monkeypatch.setattr(
-        "sidepouch_mcp.main.load_gateway_config",
+        "sift_mcp.main.load_gateway_config",
         lambda **_kwargs: config,
     )
     monkeypatch.setattr(
-        "sidepouch_mcp.main.run_startup_check", lambda _config: report
+        "sift_mcp.main.run_startup_check", lambda _config: report
     )
     monkeypatch.setattr(
-        "sidepouch_mcp.app.build_app",
+        "sift_mcp.app.build_app",
         lambda *, config, startup_report: (server, pool),
     )
 
@@ -222,7 +222,7 @@ def test_serve_dispatches_init_command(
     data_dir = tmp_path / "gateway"
 
     monkeypatch.setattr(
-        "sidepouch_mcp.main._parse_args",
+        "sift_mcp.main._parse_args",
         lambda: argparse.Namespace(
             command="init",
             source=str(source),
@@ -260,7 +260,7 @@ def test_init_accepts_postgres_dsn_flag_when_backend_postgres(
     data_dir = tmp_path / "gateway"
 
     monkeypatch.setattr(
-        "sidepouch_mcp.main._parse_args",
+        "sift_mcp.main._parse_args",
         lambda: argparse.Namespace(
             command="init",
             source=str(source),
@@ -320,9 +320,9 @@ def test_gateway_config_sqlite_busy_timeout_customizable(
 def test_gateway_config_db_backend_env_override(
     tmp_path: Path, monkeypatch
 ) -> None:
-    """SIDEPOUCH_MCP_DB_BACKEND env var overrides default."""
-    monkeypatch.setenv("SIDEPOUCH_MCP_DB_BACKEND", "postgres")
-    from sidepouch_mcp.config.settings import load_gateway_config
+    """SIFT_MCP_DB_BACKEND env var overrides default."""
+    monkeypatch.setenv("SIFT_MCP_DB_BACKEND", "postgres")
+    from sift_mcp.config.settings import load_gateway_config
 
     config = load_gateway_config(data_dir_override=str(tmp_path))
     assert config.db_backend == "postgres"
@@ -334,7 +334,7 @@ def test_gateway_config_db_backend_env_override(
 def test_parse_args_transport_default_is_stdio(
     monkeypatch,
 ) -> None:
-    monkeypatch.setattr("sys.argv", ["sidepouch-mcp"])
+    monkeypatch.setattr("sys.argv", ["sift-mcp"])
     args = _parse_args()
     assert args.transport == "stdio"
 
@@ -342,7 +342,7 @@ def test_parse_args_transport_default_is_stdio(
 def test_parse_args_transport_accepts_sse(
     monkeypatch,
 ) -> None:
-    monkeypatch.setattr("sys.argv", ["sidepouch-mcp", "--transport", "sse"])
+    monkeypatch.setattr("sys.argv", ["sift-mcp", "--transport", "sse"])
     args = _parse_args()
     assert args.transport == "sse"
 
@@ -352,7 +352,7 @@ def test_parse_args_transport_accepts_streamable_http(
 ) -> None:
     monkeypatch.setattr(
         "sys.argv",
-        ["sidepouch-mcp", "--transport", "streamable-http"],
+        ["sift-mcp", "--transport", "streamable-http"],
     )
     args = _parse_args()
     assert args.transport == "streamable-http"
@@ -361,7 +361,7 @@ def test_parse_args_transport_accepts_streamable_http(
 def test_parse_args_init_backend_defaults_to_sqlite(monkeypatch) -> None:
     monkeypatch.setattr(
         "sys.argv",
-        ["sidepouch-mcp", "init", "--from", "config.json"],
+        ["sift-mcp", "init", "--from", "config.json"],
     )
     args = _parse_args()
     assert args.db_backend == "sqlite"
@@ -371,7 +371,7 @@ def test_parse_args_init_backend_accepts_postgres(monkeypatch) -> None:
     monkeypatch.setattr(
         "sys.argv",
         [
-            "sidepouch-mcp",
+            "sift-mcp",
             "init",
             "--from",
             "config.json",
@@ -384,13 +384,13 @@ def test_parse_args_init_backend_accepts_postgres(monkeypatch) -> None:
 
 
 def test_parse_args_host_default(monkeypatch) -> None:
-    monkeypatch.setattr("sys.argv", ["sidepouch-mcp"])
+    monkeypatch.setattr("sys.argv", ["sift-mcp"])
     args = _parse_args()
     assert args.host == "127.0.0.1"
 
 
 def test_parse_args_port_default(monkeypatch) -> None:
-    monkeypatch.setattr("sys.argv", ["sidepouch-mcp"])
+    monkeypatch.setattr("sys.argv", ["sift-mcp"])
     args = _parse_args()
     assert args.port == 8080
 
@@ -405,7 +405,7 @@ def test_serve_http_transport_calls_run_with_transport_args(
     server = _FakeServer(app)
 
     monkeypatch.setattr(
-        "sidepouch_mcp.main._parse_args",
+        "sift_mcp.main._parse_args",
         lambda: argparse.Namespace(
             command=None,
             check=False,
@@ -418,15 +418,15 @@ def test_serve_http_transport_calls_run_with_transport_args(
         ),
     )
     monkeypatch.setattr(
-        "sidepouch_mcp.main.load_gateway_config",
+        "sift_mcp.main.load_gateway_config",
         lambda **_kwargs: config,
     )
     monkeypatch.setattr(
-        "sidepouch_mcp.main.run_startup_check",
+        "sift_mcp.main.run_startup_check",
         lambda _config: report,
     )
     monkeypatch.setattr(
-        "sidepouch_mcp.app.build_app",
+        "sift_mcp.app.build_app",
         lambda *, config, startup_report: (server, pool),
     )
 
@@ -467,7 +467,7 @@ def test_serve_http_transport_with_token_wraps_asgi_and_runs_uvicorn(
     uvicorn_seen: dict[str, object] = {}
 
     monkeypatch.setattr(
-        "sidepouch_mcp.main._parse_args",
+        "sift_mcp.main._parse_args",
         lambda: argparse.Namespace(
             command=None,
             check=False,
@@ -480,15 +480,15 @@ def test_serve_http_transport_with_token_wraps_asgi_and_runs_uvicorn(
         ),
     )
     monkeypatch.setattr(
-        "sidepouch_mcp.main.load_gateway_config",
+        "sift_mcp.main.load_gateway_config",
         lambda **_kwargs: config,
     )
     monkeypatch.setattr(
-        "sidepouch_mcp.main.run_startup_check",
+        "sift_mcp.main.run_startup_check",
         lambda _config: report,
     )
     monkeypatch.setattr(
-        "sidepouch_mcp.app.build_app",
+        "sift_mcp.app.build_app",
         lambda *, config, startup_report: (server, pool),
     )
 
@@ -502,11 +502,11 @@ def test_serve_http_transport_with_token_wraps_asgi_and_runs_uvicorn(
         return wrapped_asgi
 
     monkeypatch.setattr(
-        "sidepouch_mcp.mcp.http_auth.validate_http_bind",
+        "sift_mcp.mcp.http_auth.validate_http_bind",
         _fake_validate_http_bind,
     )
     monkeypatch.setattr(
-        "sidepouch_mcp.mcp.http_auth.bearer_auth_middleware",
+        "sift_mcp.mcp.http_auth.bearer_auth_middleware",
         _fake_bearer_auth_middleware,
     )
 
@@ -544,7 +544,7 @@ def test_serve_nonlocal_host_without_token_exits(
     report = CheckResult(fs_ok=True, db_ok=True, upstream_ok=True, details=[])
 
     monkeypatch.setattr(
-        "sidepouch_mcp.main._parse_args",
+        "sift_mcp.main._parse_args",
         lambda: argparse.Namespace(
             command=None,
             check=False,
@@ -557,14 +557,14 @@ def test_serve_nonlocal_host_without_token_exits(
         ),
     )
     monkeypatch.setattr(
-        "sidepouch_mcp.main.load_gateway_config",
+        "sift_mcp.main.load_gateway_config",
         lambda **_kwargs: config,
     )
     monkeypatch.setattr(
-        "sidepouch_mcp.main.run_startup_check",
+        "sift_mcp.main.run_startup_check",
         lambda _config: report,
     )
-    monkeypatch.delenv("SIDEPOUCH_MCP_AUTH_TOKEN", raising=False)
+    monkeypatch.delenv("SIFT_MCP_AUTH_TOKEN", raising=False)
 
     with pytest.raises(SystemExit, match="Security error"):
         serve()
