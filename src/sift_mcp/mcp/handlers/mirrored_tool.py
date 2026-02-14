@@ -49,7 +49,7 @@ from sift_mcp.mcp.mirror import (
 from sift_mcp.mcp.upstream_errors import (
     classify_upstream_exception,
 )
-from sift_mcp.obs.logging import get_logger
+from sift_mcp.obs.logging import LogEvents, get_logger
 from sift_mcp.pagination.auto import (
     AutoPaginationResult,
     _count_json_records,
@@ -629,12 +629,10 @@ async def _auto_paginate_loop(
         elapsed = time.monotonic() - started
         if elapsed >= timeout:
             log.info(
-                "auto-pagination timeout",
-                extra={
-                    "pages_fetched": pages_fetched,
-                    "total_records": total_records,
-                    "elapsed": elapsed,
-                },
+                LogEvents.AUTO_PAGINATION_TIMEOUT,
+                pages_fetched=pages_fetched,
+                total_records=total_records,
+                elapsed=elapsed,
             )
             return AutoPaginationResult(
                 envelope=merge_envelopes(
@@ -669,8 +667,8 @@ async def _auto_paginate_loop(
                     resolved = resolve_artifact_refs(resolve_conn, next_args)
                     if isinstance(resolved, ResolveError):
                         log.warning(
-                            "auto-pagination ref resolution error: %s",
-                            resolved.message,
+                            LogEvents.AUTO_PAGINATION_REF_RESOLUTION_ERROR,
+                            error=resolved.message,
                         )
                         return AutoPaginationResult(
                             envelope=merge_envelopes(
@@ -687,7 +685,7 @@ async def _auto_paginate_loop(
                     upstream_next_args = resolved
             except Exception:
                 log.warning(
-                    "auto-pagination artifact ref resolution failed",
+                    LogEvents.AUTO_PAGINATION_REF_RESOLUTION_ERROR,
                     exc_info=True,
                 )
                 return AutoPaginationResult(
@@ -716,11 +714,9 @@ async def _auto_paginate_loop(
             )
         except asyncio.TimeoutError:
             log.info(
-                "auto-pagination upstream call timed out",
-                extra={
-                    "pages_fetched": pages_fetched,
-                    "remaining": remaining,
-                },
+                LogEvents.AUTO_PAGINATION_UPSTREAM_TIMEOUT,
+                pages_fetched=pages_fetched,
+                remaining=remaining,
             )
             return AutoPaginationResult(
                 envelope=merge_envelopes(
@@ -736,7 +732,7 @@ async def _auto_paginate_loop(
             )
         except Exception:
             log.warning(
-                "auto-pagination upstream call failed",
+                LogEvents.AUTO_PAGINATION_UPSTREAM_FAILURE,
                 exc_info=True,
             )
             return AutoPaginationResult(
@@ -754,8 +750,8 @@ async def _auto_paginate_loop(
 
         if bool(upstream_result.get("isError", False)):
             log.info(
-                "auto-pagination upstream returned error",
-                extra={"pages_fetched": pages_fetched},
+                LogEvents.AUTO_PAGINATION_UPSTREAM_ERROR_RESULT,
+                pages_fetched=pages_fetched,
             )
             return AutoPaginationResult(
                 envelope=merge_envelopes(
@@ -779,7 +775,7 @@ async def _auto_paginate_loop(
             )
         except ValueError:
             log.warning(
-                "auto-pagination envelope normalization failed",
+                LogEvents.AUTO_PAGINATION_ENVELOPE_NORMALIZATION_FAILED,
                 exc_info=True,
             )
             return AutoPaginationResult(
@@ -808,8 +804,8 @@ async def _auto_paginate_loop(
         page_json = _extract_json_content(page_envelope)
         if page_json is None:
             log.info(
-                "auto-pagination stopped: binary/non-JSON content",
-                extra={"pages_fetched": pages_fetched},
+                LogEvents.AUTO_PAGINATION_BINARY_CONTENT_STOP,
+                pages_fetched=pages_fetched,
             )
             return AutoPaginationResult(
                 envelope=merge_envelopes(

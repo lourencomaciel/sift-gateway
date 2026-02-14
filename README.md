@@ -35,19 +35,17 @@ Design invariants (from v1.9 spec):
 ## Built-in gateway tools
 
 - `gateway_status` — health and configuration snapshot
-- `artifact` — consolidated retrieval tool with an `action` parameter:
-  - `describe` — inspect artifact structure and mapping roots
-  - `get` — retrieve raw envelope or mapped data
-  - `select` — project specific fields from a mapped root array
-  - `search` — find artifacts visible to this session
-  - `next_page` — fetch the next page of a paginated upstream response
+- `artifact` — consolidated retrieval tool with:
+  - `action="query"` — retrieval/search entrypoint (requires `query_kind`)
+  - `query_kind="describe|get|select|search"` — explicit query behavior
+  - `action="next_page"` — fetch next page of a paginated upstream response
 
 ## Pagination Contract v1
 
 Sift exposes layer-explicit pagination metadata:
 
 - mirrored upstream tool responses use `pagination.layer = "upstream"`;
-- retrieval tool responses (`artifact` with action search/get/select)
+- retrieval tool responses (`artifact` with `action="query"`)
   use `pagination.layer = "artifact_retrieval"`.
 
 Key fields:
@@ -68,16 +66,10 @@ Completion rule:
 
 ## Gateway Context Controls
 
-Mirrored tool calls may include `_gateway_context.cache_mode`:
+Mirrored tool calls may include `_gateway_context.allow_reuse`:
 
-- `normal` (default): reuse by `request_key` when possible;
-- `bypass`: skip reuse and force a fresh upstream call;
-- `refresh`: same as bypass, with explicit refresh intent.
-
-Backward-compatible aliases are still accepted:
-
-- `allow` -> `normal`
-- `fresh` -> `bypass`
+- `false` (default): always create a fresh artifact.
+- `true`: allow request-key dedupe and reuse compatible artifacts.
 
 Handle responses include consistent cache metadata:
 
@@ -85,15 +77,16 @@ Handle responses include consistent cache metadata:
 - `request_key`
 - `reason`
 - `artifact_id_origin` (`cache` or `fresh`)
-- `cache_mode` (normalized mode)
+- `allow_reuse`
 
 ### Session visibility on cache reuse
 
 When a mirrored call returns a reused `artifact_id`, Sift first
 attaches that artifact to the caller's session (`artifact_refs`) before
 returning the handle. This guarantees the returned handle is immediately
-retrievable by `artifact(action="get")`, `artifact(action="describe")`,
-and `artifact(action="select")` in the same session.
+retrievable by `artifact(action="query", query_kind="get")`,
+`artifact(action="query", query_kind="describe")`, and
+`artifact(action="query", query_kind="select")` in the same session.
 
 ## Artifact-first Recipes
 
@@ -102,7 +95,7 @@ and `artifact(action="select")` in the same session.
 1. Call mirrored tool (for example `meta_ads_get_campaigns`).
 2. If response includes `artifact_id`, use inline `describe` data to choose
    `root_path`.
-3. Call `artifact(action="select")` with pagination.
+3. Call `artifact(action="query", query_kind="select")` with pagination.
 4. Continue paging until `pagination.retrieval_status == "COMPLETE"`.
 
 ### Upstream pagination chain
@@ -390,6 +383,8 @@ For the full key/type/default reference, see:
 
 - Architecture and invariants: `docs/spec_v1_9.md`
 - Configuration reference: `docs/config.md`
+- Error taxonomy: `docs/errors.md`
+- Observability and logging events: `docs/observability.md`
 - Traversal ordering contract: `docs/traversal_contract.md`
 - Cursor format and staleness rules: `docs/cursor_contract.md`
 
@@ -427,6 +422,7 @@ PYTHONPATH=src uv run python scripts/validate.py
 
 ```bash
 uv run ruff check src
+PYTHONPATH=src uv run python scripts/check_docs_consistency.py
 uv run mypy src
 ```
 
@@ -454,6 +450,8 @@ tests/
 docs/
   spec_v1_9.md
   config.md
+  errors.md
+  observability.md
   traversal_contract.md
   cursor_contract.md
 ```

@@ -1,4 +1,8 @@
-"""artifact.find handler."""
+"""Legacy ``artifact.find`` handler retained for compatibility.
+
+Prefer ``artifact(action="query", query_kind="select", where=...)`` for
+new callers.
+"""
 
 from __future__ import annotations
 
@@ -92,7 +96,7 @@ def _find_full_mapping_items(
         envelope = envelope_value
     elif canonical_bytes_raw is None:
         return gateway_error(
-            "INTERNAL_ERROR",
+            "INTERNAL",
             "missing canonical bytes for artifact",
         )
     else:
@@ -106,7 +110,7 @@ def _find_full_mapping_items(
             )
         except ValueError as exc:
             return gateway_error(
-                "INTERNAL_ERROR",
+                "INTERNAL",
                 f"envelope reconstruction failed: {exc}",
             )
 

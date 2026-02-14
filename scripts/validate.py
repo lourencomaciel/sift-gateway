@@ -16,19 +16,18 @@ Usage::
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 import re
 import shutil
 import sys
 import tempfile
 import traceback
-import uuid
-from pathlib import Path
 from typing import Any
+import uuid
 
 # ---------------------------------------------------------------------------
 # Imports from the gateway package
 # ---------------------------------------------------------------------------
-
 from sift_mcp.config.settings import GatewayConfig, UpstreamConfig
 from sift_mcp.constants import WORKSPACE_ID
 from sift_mcp.db.conn import create_pool
@@ -194,11 +193,14 @@ def _call_mirrored(
     session_id: str,
     extra_args: dict[str, Any] | None = None,
     *,
-    cache_mode: str = "fresh",
+    allow_reuse: bool = False,
 ) -> dict[str, Any]:
     mirrored = server.mirrored_tools[tool_qualified_name]
     args: dict[str, Any] = {
-        "_gateway_context": {"session_id": session_id, "cache_mode": cache_mode},
+        "_gateway_context": {
+            "session_id": session_id,
+            "allow_reuse": allow_reuse,
+        },
     }
     if extra_args:
         args.update(extra_args)
@@ -293,8 +295,6 @@ def _setup(dsn: str, data_dir: Path):
         postgres_dsn=dsn,
         mapping_mode="sync",
         max_full_map_bytes=2000,
-        inline_envelope_max_json_bytes=100_000,
-        inline_envelope_max_total_bytes=200_000,
     )
     for d in [config.state_dir, config.blobs_bin_dir, config.tmp_dir]:
         d.mkdir(parents=True, exist_ok=True)
@@ -327,8 +327,6 @@ def _setup_oversize(dsn: str, data_dir: Path):
         postgres_dsn=dsn,
         mapping_mode="sync",
         max_full_map_bytes=2000,
-        inline_envelope_max_json_bytes=100_000,
-        inline_envelope_max_total_bytes=200_000,
         envelope_jsonb_mode="minimal_for_large",
         envelope_jsonb_minimize_threshold_bytes=100,
     )
@@ -397,7 +395,7 @@ def check_full_pipeline(server: GatewayServer) -> None:
 
 
 def check_cache_fresh(server: GatewayServer) -> None:
-    """cache_mode='fresh' always creates a new artifact."""
+    """allow_reuse=False always creates a fresh artifact."""
     sid = f"sess_{uuid.uuid4().hex}"
     unique = f"fresh_{uuid.uuid4().hex}"
 
@@ -407,19 +405,19 @@ def check_cache_fresh(server: GatewayServer) -> None:
 
 
 def check_cache_reuse(server: GatewayServer) -> None:
-    """cache_mode='allow' reuses by request_key."""
+    """allow_reuse=True enables request_key-based reuse."""
     sid = f"sess_{uuid.uuid4().hex}"
     unique = f"reuse_{uuid.uuid4().hex}"
 
     resp1 = _call_mirrored(
         server, "test.get_users", sid,
-        extra_args={"k": unique}, cache_mode="allow",
+        extra_args={"k": unique}, allow_reuse=True,
     )
     aid1 = resp1["artifact_id"]
 
     resp2 = _call_mirrored(
         server, "test.get_users", sid,
-        extra_args={"k": unique}, cache_mode="allow",
+        extra_args={"k": unique}, allow_reuse=True,
     )
     assert resp2["meta"]["cache"]["reused"] is True, "cache not reused"
     assert resp2["artifact_id"] == aid1, "reused different artifact_id"
@@ -604,6 +602,7 @@ _CHECKS = [
 
 
 def main() -> int:
+    """Run end-to-end validation checks and return process exit code."""
     import os
 
     dsn = os.getenv("SIFT_MCP_TEST_POSTGRES_DSN", _DEFAULT_DSN)

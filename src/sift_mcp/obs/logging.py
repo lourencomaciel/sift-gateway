@@ -113,6 +113,27 @@ class LogEvents:
     PRUNE_BYTES_RECLAIMED = "gateway.prune.bytes_reclaimed"
     PRUNE_FS_RECONCILE = "gateway.prune.fs_reconcile"
 
+    # Auto-pagination
+    AUTO_PAGINATION_TIMEOUT = "gateway.auto_pagination.timeout"
+    AUTO_PAGINATION_REF_RESOLUTION_ERROR = (
+        "gateway.auto_pagination.ref_resolution_error"
+    )
+    AUTO_PAGINATION_UPSTREAM_TIMEOUT = (
+        "gateway.auto_pagination.upstream_timeout"
+    )
+    AUTO_PAGINATION_UPSTREAM_FAILURE = (
+        "gateway.auto_pagination.upstream_failure"
+    )
+    AUTO_PAGINATION_UPSTREAM_ERROR_RESULT = (
+        "gateway.auto_pagination.upstream_error_result"
+    )
+    AUTO_PAGINATION_ENVELOPE_NORMALIZATION_FAILED = (
+        "gateway.auto_pagination.envelope_normalization_failed"
+    )
+    AUTO_PAGINATION_BINARY_CONTENT_STOP = (
+        "gateway.auto_pagination.binary_content_stop"
+    )
+
     # Advisory lock
     ADVISORY_LOCK_ACQUIRED = "gateway.lock.acquired"
     ADVISORY_LOCK_TIMEOUT = "gateway.lock.timeout"

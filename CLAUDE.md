@@ -45,5 +45,5 @@
 - Env vars starting with `[` or `{` auto-parse as JSON for list/dict fields
 - Tests monkeypatch module-level imports; when moving code between modules, update test patches too
 - No shared pytest fixtures in root conftest — helpers are module-local
-- Passthrough mode: results < passthrough_max_bytes (default 8 KB) returned raw; larger results return handle-only with artifact_id
+- Passthrough mode: results < passthrough_max_bytes (default 8 KB) returned raw; larger results return gateway handle payload (`artifact_id`, cache meta, inline describe, usage hint)
 - Binary responses (with blob refs) never passthrough regardless of size
