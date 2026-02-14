@@ -3,10 +3,28 @@ name = "sift-mcp"
 version = "0.1.0"
 description = "Keep big MCP responses out of your context window. Query them."
 readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
 authors = [
     { name = "zmaciel", email = "46382529+zmaciel@users.noreply.github.com" }
 ]
 requires-python = ">=3.11"
+keywords = [
+    "mcp",
+    "model-context-protocol",
+    "gateway",
+    "artifacts",
+    "llm",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Utilities",
+]
 dependencies = [
     # MCP framework
     "fastmcp>=2.0.0",
@@ -22,6 +40,12 @@ dependencies = [
     # Prometheus metrics
     "prometheus_client>=0.20.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/zmaciel/sift-mcp"
+Repository = "https://github.com/zmaciel/sift-mcp"
+Issues = "https://github.com/zmaciel/sift-mcp/issues"
+Changelog = "https://github.com/zmaciel/sift-mcp/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
 postgres = [

@@ -43,3 +43,37 @@ python -m mypy src                 # strict type checking
 2. Make changes, keeping commits focused
 3. Ensure all checks pass: `ruff check`, `ruff format --check`, `mypy`, `pytest`
 4. Open a PR with a clear description of what changed and why
+
+## Maintainer Release Workflow
+
+1. Update `pyproject.toml` version and move release notes from
+   `Unreleased` in `CHANGELOG.md`.
+2. Merge release changes to `main`.
+3. Create and push a tag that matches `v*` (for example `v0.1.1`):
+
+```bash
+git tag v0.1.1
+git push origin v0.1.1
+```
+
+4. Push the tag and let GitHub Actions run
+   `.github/workflows/release.yml`:
+   - `verify_build` runs lint, type checks, unit tests, build, twine check,
+     and wheel smoke commands.
+   - `publish_testpypi` publishes to TestPyPI (`testpypi` environment).
+5. After validating TestPyPI, manually run
+   `.github/workflows/publish-pypi.yml` from Actions with input
+   `tag=vX.Y.Z` (for example `v0.1.1`).
+6. Confirm TestPyPI and PyPI install/upgrade paths:
+   - `pipx install sift-mcp`
+   - `uv tool install sift-mcp`
+
+### Trusted Publisher Setup (One-Time)
+
+Configure Trusted Publishers in both TestPyPI and PyPI with:
+
+- GitHub repository: `zmaciel/sift-mcp`
+- TestPyPI workflow: `.github/workflows/release.yml`
+- TestPyPI environment: `testpypi`
+- PyPI workflow: `.github/workflows/publish-pypi.yml`
+- PyPI environment: `pypi`
