@@ -180,8 +180,8 @@ class _SqliteConnectionProxy:
     @staticmethod
     def _expand_any(
         sql: str,
-        params: tuple | list,
-    ) -> tuple[str, tuple]:
+        params: tuple[object, ...] | list[object],
+    ) -> tuple[str, tuple[object, ...]]:
         """Expand ``= ANY(%s)`` into ``IN (?, ?, ...)`` with flat params.
 
         Must be called before ``_adapt`` so that ``%s`` markers are
@@ -205,7 +205,7 @@ class _SqliteConnectionProxy:
             return sql, tuple(params)
         placeholders = ", ".join("?" for _ in values)
         sql = sql[: match.start()] + f"IN ({placeholders})" + sql[match.end() :]
-        flat: list = (
+        flat: list[object] = (
             list(params[:param_index])
             + list(values)
             + list(params[param_index + 1 :])

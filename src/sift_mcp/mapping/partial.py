@@ -18,7 +18,7 @@ import struct
 import sys
 from typing import Any, BinaryIO
 
-import ijson
+import ijson  # type: ignore[import-untyped]
 
 from sift_mcp.canon.rfc8785 import canonical_bytes
 from sift_mcp.constants import (

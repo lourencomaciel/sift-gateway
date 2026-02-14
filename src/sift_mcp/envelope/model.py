@@ -10,7 +10,7 @@ frozen dataclasses with ``to_dict`` serialization.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from sift_mcp.constants import ENVELOPE_TYPE
 
@@ -203,7 +203,9 @@ class Envelope:
     content: list[ContentPart] = field(default_factory=list)
     error: ErrorBlock | None = None
     meta: dict[str, Any] = field(default_factory=dict)
-    type: Literal["mcp_envelope"] = ENVELOPE_TYPE
+    type: Literal["mcp_envelope"] = cast(
+        Literal["mcp_envelope"], ENVELOPE_TYPE
+    )
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize the envelope and all content parts to a dict.

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import struct
+from typing import Any
 
 from sift_mcp.canon.rfc8785 import canonical_bytes
 from sift_mcp.constants import BLOB_ID_PREFIX
@@ -169,7 +170,7 @@ def map_budget_fingerprint(
     traversal_contract_version: str,
     map_backend_id: str,
     prng_version: str,
-    budgets: dict,
+    budgets: dict[str, Any],
 ) -> str:
     """Compute a truncated fingerprint of mapping budgets.
 
@@ -188,7 +189,7 @@ def map_budget_fingerprint(
     Returns:
         32-character hex fingerprint string.
     """
-    payload: dict = {
+    payload: dict[str, Any] = {
         "map_backend_id": map_backend_id,
         "mapper_version": mapper_version,
         "prng_version": prng_version,

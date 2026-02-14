@@ -16,7 +16,7 @@ import secrets
 import socket
 import subprocess
 import time
-from typing import Any
+from typing import Any, cast
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -137,7 +137,7 @@ def _inspect_container(container_name: str) -> list[dict[str, Any]] | None:
             ["docker", "inspect", container_name],
             check=True,
         )
-        return json.loads(result.stdout)
+        return cast(list[dict[str, Any]], json.loads(result.stdout))
     except DockerCommandError:
         return None
 
@@ -160,10 +160,12 @@ def _container_exists(container_name: str) -> bool:
 # ---------------------------------------------------------------------------
 def _get_container_env(info: list[dict[str, Any]], key: str) -> str | None:
     """Extract an environment variable value from inspect output."""
-    env_list = info[0].get("Config", {}).get("Env", [])
+    env_list_raw = info[0].get("Config", {}).get("Env", [])
+    if not isinstance(env_list_raw, list):
+        return None
     prefix = f"{key}="
-    for entry in env_list:
-        if entry.startswith(prefix):
+    for entry in env_list_raw:
+        if isinstance(entry, str) and entry.startswith(prefix):
             return entry[len(prefix) :]
     return None
 

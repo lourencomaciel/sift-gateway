@@ -188,8 +188,8 @@ async def handle_artifact_next_page(
             "INVALID_ARGUMENT",
             "artifact has no upstream pagination state. "
             "next_page fetches additional upstream pages. "
-            "To continue a select query, use "
-            'artifact(action="select", artifact_id=..., '
+            "To continue an artifact query, use "
+            'artifact(action="query", artifact_id=..., '
             "cursor=...) instead.",
         )
 

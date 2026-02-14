@@ -15,6 +15,7 @@ from typing import Any
 from sift_mcp.canon.rfc8785 import canonical_bytes
 from sift_mcp.envelope.model import (
     BinaryRefContentPart,
+    ContentPart,
     Envelope,
     JsonContentPart,
 )
@@ -51,7 +52,7 @@ def replace_oversized_json_parts(
         warnings appended.
     """
     warnings: list[dict[str, Any]] = list(envelope.meta.get("warnings", []))
-    next_content = []
+    next_content: list[ContentPart] = []
 
     for idx, part in enumerate(envelope.content):
         if isinstance(part, JsonContentPart):

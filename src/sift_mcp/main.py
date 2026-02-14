@@ -387,7 +387,7 @@ def _run_server(
         else:
             # Wrap with bearer auth middleware when token set
             if auth_token:
-                asgi = app.http_app(
+                asgi: Any = app.http_app(
                     transport=transport,
                     path=args.path,
                 )

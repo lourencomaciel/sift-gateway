@@ -1,7 +1,8 @@
 """Extract and assess upstream pagination signals.
 
-Detect pagination cursors, offsets, or page numbers in upstream
-tool responses using per-upstream JSONPath configuration.  Exports
+Detect pagination cursors, offsets, page numbers, or arbitrary
+next-parameter maps in upstream tool responses using per-upstream
+JSONPath configuration.  Exports
 ``assess_pagination`` (canonical assessment) and
 ``extract_pagination_state`` (compatibility wrapper).
 """
@@ -239,6 +240,19 @@ def _build_next_params(
         next_params[param] = current_page + 1
         return next_params
 
+    if strategy == "param_map":
+        raw_map = pagination_config.next_params_response_paths or {}
+        if not raw_map:
+            return None
+        for param_name, response_path in raw_map.items():
+            value = _evaluate_path(json_value, response_path)
+            if value is None:
+                return None
+            if isinstance(value, str) and not value.strip():
+                return None
+            next_params[param_name] = value
+        return next_params
+
     return None
 
 
@@ -306,7 +320,9 @@ def assess_pagination(
             page_number=page_number,
         )
 
-    partial_reason = UPSTREAM_PARTIAL_REASON_SIGNAL_INCONCLUSIVE
+    partial_reason: UpstreamPartialReason = (
+        UPSTREAM_PARTIAL_REASON_SIGNAL_INCONCLUSIVE
+    )
     if has_more_signal is True:
         partial_reason = UPSTREAM_PARTIAL_REASON_NEXT_TOKEN_MISSING
 

@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import datetime as dt
-from numbers import Number
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
@@ -217,15 +217,32 @@ def _parse_storage_usage(row: tuple[object, ...] | None) -> StorageUsage:
             payload_total_bytes=0,
             total_storage_bytes=0,
         )
-    # psycopg may return Decimal for SUM(BIGINT); accept any numeric type.
-    binary_blob_bytes = int(row[0]) if isinstance(row[0], Number) else 0
-    payload_total_bytes = int(row[1]) if isinstance(row[1], Number) else 0
-    payload_json_bytes_sum = int(row[2]) if isinstance(row[2], Number) else 0
+    # psycopg may return Decimal for SUM(BIGINT).
+    binary_blob_bytes = _coerce_numeric_to_int(row[0])
+    payload_total_bytes = _coerce_numeric_to_int(row[1])
+    payload_json_bytes_sum = _coerce_numeric_to_int(row[2])
     return StorageUsage(
         binary_blob_bytes=binary_blob_bytes,
         payload_total_bytes=payload_total_bytes,
         total_storage_bytes=payload_json_bytes_sum + binary_blob_bytes,
     )
+
+
+def _coerce_numeric_to_int(value: object) -> int:
+    """Convert supported numeric DB return types to int.
+
+    Args:
+        value: Database value from aggregate queries.
+
+    Returns:
+        Integer representation for int/float/Decimal values;
+        ``0`` for unsupported types.
+    """
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, (int, float, Decimal)):
+        return int(value)
+    return 0
 
 
 def check_breaches(

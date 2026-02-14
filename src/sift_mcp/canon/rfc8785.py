@@ -41,10 +41,17 @@ def _decimal_to_plain(value: Decimal) -> str:
     Returns:
         Plain decimal string (e.g. ``"123.45"``).
     """
+    if not value.is_finite():
+        msg = "non-finite Decimal is not allowed in canonical JSON"
+        raise ValueError(msg)
     normalized = value.normalize()
     sign = "-" if normalized.is_signed() else ""
     digits = "".join(str(d) for d in normalized.as_tuple().digits)
-    exponent = normalized.as_tuple().exponent
+    exponent_raw = normalized.as_tuple().exponent
+    if not isinstance(exponent_raw, int):
+        msg = "non-finite Decimal is not allowed in canonical JSON"
+        raise ValueError(msg)
+    exponent = exponent_raw
 
     if not digits:
         return "0"

@@ -46,7 +46,7 @@ def test_pending_mapping_hint() -> None:
     desc = _describe(map_status="pending")
     hint = build_usage_hint("art_1", desc)
     assert "Mapping in progress" in hint
-    assert 'artifact(action="describe"' in hint
+    assert 'artifact(action="query"' in hint
     assert "art_1" in hint
 
 
@@ -63,7 +63,7 @@ def test_ready_status_treated_as_complete() -> None:
 def test_empty_roots_suggests_get() -> None:
     desc = _describe(roots=[])
     hint = build_usage_hint("art_2", desc)
-    assert 'artifact(action="get"' in hint
+    assert 'artifact(action="query"' in hint
     assert "art_2" in hint
     assert "No structured mapping" in hint
 
@@ -87,7 +87,7 @@ def test_array_root_with_fields() -> None:
     assert "$.result.data" in hint
     assert "name" in hint
     assert "status" in hint
-    assert 'artifact(action="select"' in hint
+    assert 'artifact(action="query"' in hint
     assert "Minimize context" in hint
     assert "art_3" in hint
 
@@ -104,7 +104,7 @@ def test_dict_root_suggests_get() -> None:
     )
     hint = build_usage_hint("art_4", desc)
     assert "dict" in hint
-    assert 'artifact(action="get"' in hint
+    assert 'artifact(action="query"' in hint
 
 
 def test_sampled_root_mentions_sample() -> None:

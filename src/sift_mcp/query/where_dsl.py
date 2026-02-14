@@ -13,7 +13,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from decimal import Decimal
 import re
-from typing import Any, Callable, Mapping
+from typing import Any, Callable, Mapping, cast
 
 from sift_mcp.canon.rfc8785 import canonical_bytes
 from sift_mcp.query.jsonpath import (
@@ -81,7 +81,7 @@ def canonicalize_where_ast(
     Returns:
         New dict with canonical key and clause ordering.
     """
-    return _canonicalize(dict(where))
+    return cast(dict[str, Any], _canonicalize(dict(where)))
 
 
 @dataclass(frozen=True)
@@ -806,7 +806,7 @@ def _strict_eq(left: Any, right: Any) -> bool:
     """
     if isinstance(left, bool) != isinstance(right, bool):
         return False
-    return left == right
+    return bool(left == right)
 
 
 def _any_in_match(values: list[Any], right: Any) -> bool:
@@ -840,12 +840,12 @@ def _ordered_compare(left: Any, right: Any, op: str) -> bool:
         Result of the comparison.
     """
     if op == "gt":
-        return left > right
+        return bool(left > right)
     if op == "gte":
-        return left >= right
+        return bool(left >= right)
     if op == "lt":
-        return left < right
-    return left <= right
+        return bool(left < right)
+    return bool(left <= right)
 
 
 def _values_at_path(

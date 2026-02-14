@@ -381,6 +381,59 @@ def test_page_number_strategy_no_more() -> None:
     assert state is None
 
 
+# -- extract_pagination_state: param_map strategy --
+
+
+def _param_map_config() -> PaginationConfig:
+    return PaginationConfig(
+        strategy="param_map",
+        next_params_response_paths={
+            "page_token": "$.next.page_token",
+            "checkpoint": "$.next.checkpoint",
+        },
+        has_more_response_path="$.has_more",
+    )
+
+
+def test_param_map_strategy_extracts_multiple_params() -> None:
+    json_value = {
+        "has_more": True,
+        "next": {
+            "page_token": "tok_2",
+            "checkpoint": "cp_9",
+        },
+    }
+    state = extract_pagination_state(
+        json_value=json_value,
+        pagination_config=_param_map_config(),
+        original_args={"limit": 100},
+        upstream_prefix="api",
+        tool_name="list_events",
+    )
+    assert state is not None
+    assert state.next_params == {
+        "page_token": "tok_2",
+        "checkpoint": "cp_9",
+    }
+
+
+def test_param_map_strategy_missing_mapped_value_returns_none() -> None:
+    json_value = {
+        "has_more": True,
+        "next": {
+            "page_token": "tok_2",
+        },
+    }
+    state = extract_pagination_state(
+        json_value=json_value,
+        pagination_config=_param_map_config(),
+        original_args={},
+        upstream_prefix="api",
+        tool_name="list_events",
+    )
+    assert state is None
+
+
 # -- extract_pagination_state: unknown strategy --
 
 
@@ -485,5 +538,26 @@ def test_assess_pagination_cursor_missing_token_with_has_more_signal() -> None:
     assert assessment.retrieval_status == "PARTIAL"
     assert assessment.partial_reason == "NEXT_TOKEN_MISSING"
     assert assessment.warning == "INCOMPLETE_RESULT_SET"
+    assert assessment.has_more is False
+    assert assessment.state is None
+
+
+def test_assess_pagination_param_map_complete_on_terminal_signal() -> None:
+    assessment = assess_pagination(
+        json_value={
+            "has_more": False,
+            "next": {
+                "page_token": "tok_2",
+                "checkpoint": "cp_9",
+            },
+        },
+        pagination_config=_param_map_config(),
+        original_args={},
+        upstream_prefix="api",
+        tool_name="list_events",
+    )
+    assert assessment.retrieval_status == "COMPLETE"
+    assert assessment.partial_reason is None
+    assert assessment.warning is None
     assert assessment.has_more is False
     assert assessment.state is None

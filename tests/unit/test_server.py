@@ -436,13 +436,19 @@ def test_artifact_handlers_return_validation_or_not_implemented(
 ) -> None:
     server = _server(tmp_path)
 
-    invalid_get = asyncio.run(server.handle_artifact({"action": "get"}))
-    assert invalid_get["code"] == "INVALID_ARGUMENT"
+    invalid_legacy = asyncio.run(
+        server.handle_artifact({"action": "get"})
+    )
+    assert invalid_legacy["code"] == "INVALID_ARGUMENT"
+    assert "query" in invalid_legacy["message"]
+
+    invalid_query = asyncio.run(server.handle_artifact({"action": "query"}))
+    assert invalid_query["code"] == "INVALID_ARGUMENT"
 
     valid_get = asyncio.run(
         server.handle_artifact(
             {
-                "action": "get",
+                "action": "query",
                 "_gateway_context": {"session_id": "sess_1"},
                 "artifact_id": "art_1",
             }
@@ -453,7 +459,7 @@ def test_artifact_handlers_return_validation_or_not_implemented(
     valid_search = asyncio.run(
         server.handle_artifact(
             {
-                "action": "search",
+                "action": "query",
                 "_gateway_context": {"session_id": "sess_1"},
                 "filters": {},
             }
@@ -1361,7 +1367,7 @@ def test_artifact_search_db_runtime_returns_items(
     response = asyncio.run(
         server.handle_artifact(
             {
-                "action": "search",
+                "action": "query",
                 "_gateway_context": {"session_id": "sess_1"},
                 "filters": {},
             }
@@ -1420,7 +1426,7 @@ def test_artifact_get_db_runtime_returns_envelope_items(
     response = asyncio.run(
         server.handle_artifact(
             {
-                "action": "get",
+                "action": "query",
                 "_gateway_context": {"session_id": "sess_1"},
                 "artifact_id": "art_1",
                 "target": "envelope",
@@ -1478,7 +1484,7 @@ def test_artifact_get_cursor_includes_target_and_jsonpath_binding(
     response = asyncio.run(
         server.handle_artifact(
             {
-                "action": "get",
+                "action": "query",
                 "_gateway_context": {"session_id": "sess_1"},
                 "artifact_id": "art_1",
                 "target": "envelope",
@@ -1545,7 +1551,7 @@ def test_artifact_get_jsonpath_evaluates_against_json_target(
     response = asyncio.run(
         server.handle_artifact(
             {
-                "action": "get",
+                "action": "query",
                 "_gateway_context": {"session_id": "sess_1"},
                 "artifact_id": "art_1",
                 "target": "envelope",
@@ -1607,7 +1613,7 @@ def test_artifact_get_cursor_target_mismatch_returns_stale(
     response = asyncio.run(
         server.handle_artifact(
             {
-                "action": "get",
+                "action": "query",
                 "_gateway_context": {"session_id": "sess_1"},
                 "artifact_id": "art_1",
                 "target": "envelope",
@@ -1674,7 +1680,7 @@ def test_artifact_describe_db_runtime_returns_roots(
     response = asyncio.run(
         server.handle_artifact(
             {
-                "action": "describe",
+                "action": "query",
                 "_gateway_context": {"session_id": "sess_1"},
                 "artifact_id": "art_1",
             }
@@ -1721,7 +1727,7 @@ def test_artifact_select_db_runtime_partial_projects_records(
     response = asyncio.run(
         server.handle_artifact(
             {
-                "action": "select",
+                "action": "query",
                 "_gateway_context": {"session_id": "sess_1"},
                 "artifact_id": "art_1",
                 "root_path": "$.items",
@@ -1795,7 +1801,7 @@ def test_artifact_select_cursor_sample_set_mismatch_returns_stale(
     response = asyncio.run(
         server.handle_artifact(
             {
-                "action": "select",
+                "action": "query",
                 "_gateway_context": {"session_id": "sess_1"},
                 "artifact_id": "art_1",
                 "root_path": "$.items",
@@ -1857,7 +1863,7 @@ def test_artifact_select_cursor_includes_partial_binding_fields(
     response = asyncio.run(
         server.handle_artifact(
             {
-                "action": "select",
+                "action": "query",
                 "_gateway_context": {"session_id": "sess_1"},
                 "artifact_id": "art_1",
                 "root_path": "$.items",
@@ -2075,7 +2081,7 @@ def test_artifact_select_returns_internal_on_sample_corruption(
     response = asyncio.run(
         server.handle_artifact(
             {
-                "action": "select",
+                "action": "query",
                 "_gateway_context": {"session_id": "sess_1"},
                 "artifact_id": "art_1",
                 "root_path": "$.items",
@@ -2333,7 +2339,13 @@ def test_handle_mirrored_tool_returns_internal_on_db_persist_failure(
     import psycopg
 
     class _FailPool:
+        def __init__(self) -> None:
+            self._checkouts = 0
+
         def connection(self):
+            self._checkouts += 1
+            if self._checkouts == 1:
+                return _FakeConnectionContext(None)
             raise psycopg.OperationalError("connection lost")
 
     server = GatewayServer(
@@ -2357,7 +2369,6 @@ def test_handle_mirrored_tool_returns_internal_on_db_persist_failure(
         }
 
     monkeypatch.setattr("sift_mcp.mcp.server.call_upstream_tool", _fake_call)
-
     # Default allow_reuse=False skips Phase 1, going straight to Phase 3 (persist).
     response = asyncio.run(
         server.handle_mirrored_tool(
@@ -2552,19 +2563,19 @@ def test_handle_mirrored_tool_triggers_mapping_on_single_connection(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
-    """Mapping reuses the persist connection — no second pool checkout required."""
+    """Mapping reuses persist connection after one resolve checkout."""
     import psycopg
 
     checkout_count = 0
     mapping_called = False
 
-    class _SingleCheckoutPool:
-        """Allow exactly one connection() call; second would raise."""
+    class _TwoCheckoutPool:
+        """Allow resolve + persist checkouts; third would raise."""
 
         def connection(self):
             nonlocal checkout_count
             checkout_count += 1
-            if checkout_count > 1:
+            if checkout_count > 2:
                 raise psycopg.OperationalError("pool exhausted")
             return _FakeConnectionContext(None)
 
@@ -2575,7 +2586,7 @@ def test_handle_mirrored_tool_triggers_mapping_on_single_connection(
             passthrough_max_bytes=0,
         ),
         upstreams=[_upstream()],
-        db_pool=_SingleCheckoutPool(),  # type: ignore[arg-type]
+        db_pool=_TwoCheckoutPool(),  # type: ignore[arg-type]
         metrics=GatewayMetrics(),
     )
     mirrored = server.mirrored_tools["demo.echo"]
@@ -2589,7 +2600,6 @@ def test_handle_mirrored_tool_triggers_mapping_on_single_connection(
         }
 
     monkeypatch.setattr("sift_mcp.mcp.server.call_upstream_tool", _fake_call)
-
     _fake_handle = ArtifactHandle(
         artifact_id="art_single_conn",
         created_seq=1,
@@ -2636,7 +2646,7 @@ def test_handle_mirrored_tool_triggers_mapping_on_single_connection(
     )
     assert response["type"] == "gateway_tool_result"
     assert response["artifact_id"] == "art_single_conn"
-    assert checkout_count == 1  # only one connection checkout
+    assert checkout_count == 2  # resolve + persist/mapping
     assert mapping_called is True  # mapping still ran
 
 
@@ -3306,7 +3316,7 @@ def test_artifact_select_includes_total_matched(
     response = asyncio.run(
         server.handle_artifact(
             {
-                "action": "select",
+                "action": "query",
                 "_gateway_context": {"session_id": "sess_1"},
                 "artifact_id": "art_1",
                 "root_path": "$.items",
@@ -3355,7 +3365,7 @@ def test_artifact_select_count_only(tmp_path: Path, monkeypatch) -> None:
     response = asyncio.run(
         server.handle_artifact(
             {
-                "action": "select",
+                "action": "query",
                 "_gateway_context": {"session_id": "sess_1"},
                 "artifact_id": "art_1",
                 "root_path": "$.items",
@@ -3408,7 +3418,7 @@ def test_artifact_select_count_only_with_where_filter(
     response = asyncio.run(
         server.handle_artifact(
             {
-                "action": "select",
+                "action": "query",
                 "_gateway_context": {"session_id": "sess_1"},
                 "artifact_id": "art_1",
                 "root_path": "$.items",
@@ -3461,7 +3471,7 @@ def test_artifact_select_distinct_deduplicates(
     response = asyncio.run(
         server.handle_artifact(
             {
-                "action": "select",
+                "action": "query",
                 "_gateway_context": {"session_id": "sess_1"},
                 "artifact_id": "art_1",
                 "root_path": "$.items",
@@ -3523,7 +3533,7 @@ def test_artifact_select_distinct_embeds_in_cursor(
     response = asyncio.run(
         server.handle_artifact(
             {
-                "action": "select",
+                "action": "query",
                 "_gateway_context": {"session_id": "sess_1"},
                 "artifact_id": "art_1",
                 "root_path": "$.items",
@@ -3554,7 +3564,7 @@ def test_artifact_select_rejects_wildcard_star() -> None:
     assert err is not None
     assert err["code"] == "INVALID_ARGUMENT"
     assert "Wildcard" in err["message"]
-    assert "describe" in err["message"]
+    assert "action='query'" in err["message"]
 
 
 def test_artifact_get_rejects_where_param(
@@ -3569,15 +3579,16 @@ def test_artifact_get_rejects_where_param(
     response = asyncio.run(
         server.handle_artifact(
             {
-                "action": "get",
+                "action": "query",
                 "_gateway_context": {"session_id": "s"},
                 "artifact_id": "art_1",
+                "target": "envelope",
                 "where": 'spend != "0"',
             }
         )
     )
     assert response.get("code") == "INVALID_ARGUMENT"
-    assert "select" in response["message"].lower()
+    assert "combine get and select" in response["message"].lower()
 
 
 def test_jsonpath_rejects_union_syntax() -> None:

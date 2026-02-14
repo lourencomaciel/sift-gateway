@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 import sys
-from typing import Any
+from typing import Any, cast
 
 import structlog
 
@@ -61,7 +61,10 @@ def get_logger(**initial_context: Any) -> structlog.stdlib.BoundLogger:
     Returns:
         A structlog BoundLogger instance.
     """
-    return structlog.get_logger(**initial_context)
+    return cast(
+        structlog.stdlib.BoundLogger,
+        structlog.get_logger(**initial_context),
+    )
 
 
 # Pre-defined event names for consistency
