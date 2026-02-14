@@ -20,6 +20,7 @@ from pathlib import Path
 import sys
 from typing import Any
 
+from sift_mcp import __version__
 from sift_mcp.config import load_gateway_config
 from sift_mcp.lifecycle import run_startup_check
 
@@ -159,6 +160,12 @@ def _parse_args() -> argparse.Namespace:
         "--check",
         action="store_true",
         help="Validate config, DB, FS, upstreams and exit",
+    )
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"%(prog)s {__version__}",
+        help="Show the installed version and exit",
     )
     parser.add_argument(
         "--data-dir",

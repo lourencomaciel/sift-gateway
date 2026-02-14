@@ -136,21 +136,39 @@ dicts or lists are never resolved.
 ## Requirements
 
 - Python `>=3.11`
-- [`uv`](https://docs.astral.sh/uv/)
+- [`pipx`](https://pipx.pypa.io/) or [`uv`](https://docs.astral.sh/uv/)
 - Docker (only needed for PostgreSQL backend)
 
-## Quick start
+## Install (users)
 
-1. Install:
+```bash
+pipx install sift-mcp
+# or
+uv tool install sift-mcp
+```
+
+Upgrade:
+
+```bash
+pipx upgrade sift-mcp
+# or
+uv tool upgrade sift-mcp
+```
+
+## Development setup
 
 ```bash
 uv sync
 ```
 
+## Quick start
+
+1. Install `sift-mcp` (see **Install (users)** above).
+
 2. Import your existing MCP config (e.g. from Claude Desktop):
 
 ```bash
-uv run sift-mcp init \
+sift-mcp init \
   --from ~/Library/Application\ Support/Claude/claude_desktop_config.json
 ```
 
@@ -172,10 +190,17 @@ For production deployments or when you need concurrent multi-process
 access, pass `--db-backend postgres` during init:
 
 ```bash
+# If you install from PyPI as a tool:
+pipx install "sift-mcp[postgres]"
+# or
+uv tool install "sift-mcp[postgres]"
+
+# If you're running from a source checkout:
 uv sync --extra postgres
+
 docker compose up -d
 
-uv run sift-mcp init \
+sift-mcp init \
   --from ~/Library/Application\ Support/Claude/claude_desktop_config.json \
   --db-backend postgres
 ```
@@ -196,7 +221,7 @@ docker compose down -v && docker compose up -d
 Optionally provide a DSN to skip Docker auto-provisioning:
 
 ```bash
-uv run sift-mcp init \
+sift-mcp init \
   --from ~/Library/Application\ Support/Claude/claude_desktop_config.json \
   --db-backend postgres \
   --postgres-dsn postgresql://user:pass@host:5432/sift
@@ -205,7 +230,7 @@ uv run sift-mcp init \
 Verify health at any time:
 
 ```bash
-uv run sift-mcp --check
+sift-mcp --check
 ```
 
 ## Configure upstream MCP servers
