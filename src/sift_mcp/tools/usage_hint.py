@@ -97,7 +97,7 @@ def build_usage_hint(
     if map_status == "failed":
         return (
             "Mapping failed. Use "
-            f'artifact(action="query", artifact_id="{artifact_id}", '
+            f'artifact(action="query", query_kind="get", artifact_id="{artifact_id}", '
             'target="envelope") '
             "to retrieve raw content."
         )
@@ -106,7 +106,7 @@ def build_usage_hint(
     if map_status not in {"complete", "done", "ready"}:
         return (
             "Mapping in progress. Call "
-            f'artifact(action="query", artifact_id="{artifact_id}") '
+            f'artifact(action="query", query_kind="describe", artifact_id="{artifact_id}") '
             "to check status later."
         )
 
@@ -114,7 +114,7 @@ def build_usage_hint(
     if not roots:
         return (
             "No structured mapping available. Use "
-            f'artifact(action="query", artifact_id="{artifact_id}", '
+            f'artifact(action="query", query_kind="get", artifact_id="{artifact_id}", '
             'target="envelope") '
             "to retrieve raw content."
         )
@@ -156,6 +156,7 @@ def build_usage_hint(
             select_list = '"field1", "field2"'
         parts.append(
             'Use artifact(action="query", '
+            'query_kind="select", '
             f'artifact_id="{artifact_id}", '
             f'root_path="{path}", '
             f"select_paths=[{select_list}]"
@@ -166,8 +167,7 @@ def build_usage_hint(
             "Use count_only=true for counts, distinct=true for unique values"
         )
         parts.append(
-            "Continue partial results with query + cursor "
-            "(not next_page)"
+            "Continue partial results with query + cursor (not next_page)"
         )
         parts.append(
             "Minimize context: request only needed "
@@ -176,6 +176,7 @@ def build_usage_hint(
     else:
         parts.append(
             'Use artifact(action="query", '
+            'query_kind="get", '
             f'artifact_id="{artifact_id}", '
             'target="envelope"'
             ") to retrieve the full value"

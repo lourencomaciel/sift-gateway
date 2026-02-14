@@ -26,6 +26,11 @@ from sift_mcp.mcp.handlers.common import (
     row_to_dict,
     rows_to_dicts,
 )
+from sift_mcp.mcp.lineage import (
+    compute_related_set_hash,
+    compute_root_signature,
+    resolve_related_artifacts,
+)
 from sift_mcp.pagination.contract import build_retrieval_pagination_meta
 from sift_mcp.query.jsonpath import JsonPathError, evaluate_jsonpath
 from sift_mcp.query.select_paths import (
@@ -72,8 +77,11 @@ async def handle_artifact_select(
     from sift_mcp.tools.artifact_select import (
         FETCH_ROOT_SQL,
         FETCH_SAMPLES_SQL,
+        _apply_select_sort,
         build_select_result,
+        parse_select_order_by,
         validate_select_args,
+        validate_select_order_by,
     )
 
     err = validate_select_args(arguments)
@@ -84,7 +92,19 @@ async def handle_artifact_select(
 
     raw_ctx = arguments.get("_gateway_context")
     session_id = str(raw_ctx["session_id"]) if isinstance(raw_ctx, dict) else ""
-    artifact_id = str(arguments["artifact_id"])
+    anchor_artifact_id = str(arguments["artifact_id"])
+    raw_scope = arguments.get("scope")
+    scope: str | None = None
+    if raw_scope is not None:
+        if not isinstance(raw_scope, str) or raw_scope not in {
+            "all_related",
+            "single",
+        }:
+            return gateway_error(
+                "INVALID_ARGUMENT",
+                "scope must be one of: all_related, single",
+            )
+        scope = raw_scope
 
     # Verify cursor first — we may need embedded values.
     offset = 0
@@ -96,7 +116,7 @@ async def handle_artifact_select(
             cursor_payload = ctx._verify_cursor_payload(
                 token=cursor_token,
                 tool="artifact",
-                artifact_id=artifact_id,
+                artifact_id=anchor_artifact_id,
             )
             position = ctx._cursor_position(cursor_payload)
         except (CursorTokenError, CursorExpiredError, CursorStaleError) as exc:
@@ -105,9 +125,19 @@ async def handle_artifact_select(
         if not isinstance(raw_offset, int) or raw_offset < 0:
             return gateway_error("INVALID_ARGUMENT", "invalid cursor offset")
         offset = raw_offset
+        if scope is None:
+            cursor_scope = cursor_payload.get("scope")
+            if cursor_scope in {"all_related", "single"}:
+                scope = str(cursor_scope)
+            elif isinstance(cursor_payload.get("artifact_generation"), int):
+                # Backward-compatibility for pre-scope cursors.
+                scope = "single"
         cursor_has_embedded = isinstance(
             cursor_payload.get("select_paths"), list
         )
+
+    if scope is None:
+        scope = "all_related"
 
     # Extract root_path, select_paths, where — from args or cursor.
     caller_root_path = arguments.get("root_path")
@@ -126,6 +156,11 @@ async def handle_artifact_select(
         if arguments.get("distinct") is None:
             if cursor_payload.get("distinct") is True:
                 arguments["distinct"] = True
+        # Restore order_by from cursor if caller omitted it.
+        if arguments.get("order_by") is None:
+            cursor_order_by = cursor_payload.get("order_by")
+            if isinstance(cursor_order_by, str) and cursor_order_by:
+                arguments["order_by"] = cursor_order_by
 
     root_path = str(caller_root_path) if caller_root_path else ""
     if not root_path:
@@ -170,73 +205,179 @@ async def handle_artifact_select(
                 f"invalid where expression: {exc}",
             )
 
-    with ctx.db_pool.connection() as connection:
-        if not ctx._artifact_visible(
-            connection,
-            session_id=session_id,
-            artifact_id=artifact_id,
-        ):
-            return gateway_error("NOT_FOUND", "artifact not found")
+    related_rows: list[dict[str, Any]] = []
+    related_ids: list[str] = []
+    related_set_hash: str | None = None
+    missing_root_artifacts: list[str] = []
+    warnings: list[dict[str, Any]] = []
+    items: list[dict[str, Any]] = []
+    sampled_only_single = False
+    single_sample_rows: list[dict[str, Any]] = []
+    single_root_row: dict[str, Any] | None = None
+    single_map_budget_fingerprint = ""
+    anchor_meta: dict[str, Any] | None = None
 
-        artifact_meta = row_to_dict(
-            connection.execute(
-                FETCH_ARTIFACT_META_SQL,
-                (WORKSPACE_ID, artifact_id),
-            ).fetchone(),
-            ARTIFACT_META_COLUMNS,
-        )
-        if artifact_meta is None:
-            return gateway_error("NOT_FOUND", "artifact not found")
-        if artifact_meta.get("deleted_at") is not None:
-            ctx._safe_touch_for_retrieval(
+    with ctx.db_pool.connection() as connection:
+        if scope == "single":
+            if not ctx._artifact_visible(
                 connection,
                 session_id=session_id,
-                artifact_id=artifact_id,
+                artifact_id=anchor_artifact_id,
+            ):
+                return gateway_error("NOT_FOUND", "artifact not found")
+            related_ids = [anchor_artifact_id]
+        else:
+            related_rows = resolve_related_artifacts(
+                connection,
+                session_id=session_id,
+                anchor_artifact_id=anchor_artifact_id,
             )
-            commit = getattr(connection, "commit", None)
-            if callable(commit):
-                commit()
-            return gateway_error("GONE", "artifact has been deleted")
-        if artifact_meta.get("map_status") != "ready":
+            if not related_rows:
+                return gateway_error("NOT_FOUND", "artifact not found")
+            if len(related_rows) > ctx.config.related_query_max_artifacts:
+                return gateway_error(
+                    "RESOURCE_EXHAUSTED",
+                    "lineage query exceeds related artifact limit",
+                    details={
+                        "artifact_count": len(related_rows),
+                        "max_artifacts": ctx.config.related_query_max_artifacts,
+                    },
+                )
+            related_ids = [
+                artifact_id
+                for row in related_rows
+                if isinstance((artifact_id := row.get("artifact_id")), str)
+            ]
+            related_set_hash = compute_related_set_hash(related_rows)
+
+        if not related_ids:
+            return gateway_error("NOT_FOUND", "artifact not found")
+
+        candidate_rows: list[
+            tuple[str, dict[str, Any], dict[str, Any]]
+        ] = []
+        signature_groups: dict[str, list[str]] = {}
+        for artifact_id in related_ids:
+            artifact_meta = row_to_dict(
+                connection.execute(
+                    FETCH_ARTIFACT_META_SQL,
+                    (WORKSPACE_ID, artifact_id),
+                ).fetchone(),
+                ARTIFACT_META_COLUMNS,
+            )
+            if artifact_meta is None:
+                continue
+            if artifact_id == anchor_artifact_id:
+                anchor_meta = artifact_meta
+            if artifact_meta.get("deleted_at") is not None:
+                if scope == "single":
+                    ctx._safe_touch_for_retrieval(
+                        connection,
+                        session_id=session_id,
+                        artifact_id=artifact_id,
+                    )
+                    commit = getattr(connection, "commit", None)
+                    if callable(commit):
+                        commit()
+                    return gateway_error("GONE", "artifact has been deleted")
+                continue
+            if artifact_meta.get("map_status") != "ready":
+                if scope == "single":
+                    return gateway_error(
+                        "INVALID_ARGUMENT",
+                        "artifact mapping is not ready",
+                    )
+                missing_root_artifacts.append(artifact_id)
+                continue
+            root_row = row_to_dict(
+                connection.execute(
+                    FETCH_ROOT_SQL,
+                    (WORKSPACE_ID, artifact_id, root_path),
+                ).fetchone(),
+                _SELECT_ROOT_COLUMNS,
+            )
+            if root_row is None:
+                missing_root_artifacts.append(artifact_id)
+                continue
+            signature = compute_root_signature(
+                root_path=root_path,
+                root_shape=root_row.get("root_shape"),
+                fields_top=root_row.get("fields_top"),
+                map_kind=artifact_meta.get("map_kind"),
+            )
+            signature_groups.setdefault(signature, []).append(artifact_id)
+            candidate_rows.append((artifact_id, artifact_meta, root_row))
+
+        if not candidate_rows:
+            details: dict[str, Any] = {}
+            if missing_root_artifacts:
+                details = {
+                    "root_path": root_path,
+                    "skipped_artifacts": len(missing_root_artifacts),
+                    "artifact_ids": missing_root_artifacts,
+                }
+            return gateway_error(
+                "NOT_FOUND",
+                "root_path not found",
+                details=details,
+            )
+
+        if len(signature_groups) > 1:
             return gateway_error(
                 "INVALID_ARGUMENT",
-                "artifact mapping is not ready",
+                "incompatible lineage schema for root_path",
+                details={
+                    "code": "INCOMPATIBLE_LINEAGE_SCHEMA",
+                    "root_path": root_path,
+                    "signature_groups": [
+                        {
+                            "signature": signature,
+                            "artifact_ids": sorted(artifact_ids),
+                        }
+                        for signature, artifact_ids in sorted(
+                            signature_groups.items()
+                        )
+                    ],
+                },
             )
 
-        root_row = row_to_dict(
-            connection.execute(
-                FETCH_ROOT_SQL,
-                (WORKSPACE_ID, artifact_id, root_path),
-            ).fetchone(),
-            _SELECT_ROOT_COLUMNS,
-        )
-        if root_row is None:
-            return gateway_error("NOT_FOUND", "root_path not found")
-
-        items: list[dict[str, Any]] = []
-        map_kind = str(artifact_meta.get("map_kind", "none"))
-        sampled_only = map_kind == "partial"
-        sample_rows: list[dict[str, Any]] = []
-        map_budget_fingerprint = (
-            str(artifact_meta.get("map_budget_fingerprint"))
-            if isinstance(artifact_meta.get("map_budget_fingerprint"), str)
-            else ""
-        )
-
-        if sampled_only:
-            sample_rows = rows_to_dicts(
-                connection.execute(
-                    FETCH_SAMPLES_SQL,
-                    (WORKSPACE_ID, artifact_id, root_row["root_key"]),
-                ).fetchall(),
-                SAMPLE_COLUMNS,
+        if missing_root_artifacts:
+            warnings.append(
+                {
+                    "code": "MISSING_ROOT_PATH",
+                    "root_path": root_path,
+                    "skipped_artifacts": len(missing_root_artifacts),
+                    "artifact_ids": missing_root_artifacts,
+                }
             )
-            corruption = ctx._check_sample_corruption(root_row, sample_rows)
-            if corruption is not None:
-                return corruption
 
         if cursor_payload is not None:
             try:
+                if isinstance(cursor_payload.get("scope"), str):
+                    ctx._assert_cursor_field(
+                        cursor_payload,
+                        field="scope",
+                        expected=scope,
+                    )
+                if scope == "all_related":
+                    ctx._assert_cursor_field(
+                        cursor_payload,
+                        field="anchor_artifact_id",
+                        expected=anchor_artifact_id,
+                    )
+                    ctx._assert_cursor_field(
+                        cursor_payload,
+                        field="related_set_hash",
+                        expected=related_set_hash,
+                    )
+                else:
+                    generation = anchor_meta.get("generation") if anchor_meta else None
+                    if isinstance(generation, int):
+                        ctx._assert_cursor_field(
+                            cursor_payload,
+                            field="artifact_generation",
+                            expected=generation,
+                        )
                 ctx._assert_cursor_field(
                     cursor_payload,
                     field="root_path",
@@ -252,72 +393,114 @@ async def handle_artifact_select(
                     field="where_hash",
                     expected=where_binding_hash,
                 )
-                generation = artifact_meta.get("generation")
-                if isinstance(generation, int):
+                cursor_order_by = cursor_payload.get("order_by")
+                effective_order_by = arguments.get("order_by")
+                if (
+                    cursor_order_by is not None
+                    or effective_order_by is not None
+                ):
                     ctx._assert_cursor_field(
                         cursor_payload,
-                        field="artifact_generation",
-                        expected=generation,
+                        field="order_by",
+                        expected=effective_order_by or "",
                     )
-                if sampled_only:
-                    ctx._assert_cursor_field(
-                        cursor_payload,
-                        field="map_budget_fingerprint",
-                        expected=map_budget_fingerprint,
-                    )
-                    sample_indices = sorted(
-                        int(sample_index)
-                        for sample in sample_rows
-                        if isinstance(
-                            (sample_index := sample.get("sample_index")), int
-                        )
-                    )
-                    expected_sample_set_hash = compute_sample_set_hash(
-                        root_path=root_path,
-                        sample_indices=sample_indices,
-                        map_budget_fingerprint=map_budget_fingerprint,
-                    )
-                    assert_sample_set_hash_binding(
-                        cursor_payload, expected_sample_set_hash
-                    )
-            except (CursorStaleError, SampleSetHashBindingError) as exc:
-                if isinstance(exc, SampleSetHashBindingError):
-                    return ctx._cursor_error(CursorStaleError(str(exc)))
+            except CursorStaleError as exc:
                 return ctx._cursor_error(exc)
 
-        if sampled_only:
-            for sample in sample_rows:
-                record = sample.get("record")
-                if where_expr is not None:
-                    try:
-                        matches = evaluate_where(
-                            record,
-                            where_expr,
-                            max_compute_steps=ctx.config.max_compute_steps,
-                            max_wildcard_expansion=ctx.config.max_wildcards,
+        for artifact_id, artifact_meta, root_row in candidate_rows:
+            map_kind = str(artifact_meta.get("map_kind", "none"))
+            sampled_only = map_kind == "partial"
+
+            if sampled_only:
+                sample_rows = rows_to_dicts(
+                    connection.execute(
+                        FETCH_SAMPLES_SQL,
+                        (WORKSPACE_ID, artifact_id, root_row["root_key"]),
+                    ).fetchall(),
+                    SAMPLE_COLUMNS,
+                )
+                corruption = ctx._check_sample_corruption(root_row, sample_rows)
+                if corruption is not None:
+                    return corruption
+
+                if scope == "single" and artifact_id == anchor_artifact_id:
+                    sampled_only_single = True
+                    single_sample_rows = sample_rows
+                    single_root_row = root_row
+                    single_map_budget_fingerprint = (
+                        str(artifact_meta.get("map_budget_fingerprint"))
+                        if isinstance(
+                            artifact_meta.get("map_budget_fingerprint"), str
                         )
-                    except WhereDslError as exc:
-                        return gateway_error("INVALID_ARGUMENT", str(exc))
-                    if not matches:
-                        continue
-                projection = project_select_paths(
-                    record,
-                    select_paths,
-                    missing_as_null=ctx.config.select_missing_as_null,
-                    max_jsonpath_length=ctx.config.max_jsonpath_length,
-                    max_path_segments=ctx.config.max_path_segments,
-                    max_wildcard_expansion_total=ctx.config.max_wildcard_expansion_total,
-                )
-                items.append(
-                    {
-                        "_locator": {
-                            "root_path": root_path,
-                            "sample_index": sample.get("sample_index"),
-                        },
-                        "projection": projection,
-                    }
-                )
-        else:
+                        else ""
+                    )
+                    if cursor_payload is not None:
+                        try:
+                            ctx._assert_cursor_field(
+                                cursor_payload,
+                                field="map_budget_fingerprint",
+                                expected=single_map_budget_fingerprint,
+                            )
+                            sample_indices = sorted(
+                                int(sample_index)
+                                for sample in sample_rows
+                                if isinstance(
+                                    (
+                                        sample_index := sample.get(
+                                            "sample_index"
+                                        )
+                                    ),
+                                    int,
+                                )
+                            )
+                            expected_sample_set_hash = compute_sample_set_hash(
+                                root_path=root_path,
+                                sample_indices=sample_indices,
+                                map_budget_fingerprint=single_map_budget_fingerprint,
+                            )
+                            assert_sample_set_hash_binding(
+                                cursor_payload, expected_sample_set_hash
+                            )
+                        except SampleSetHashBindingError as exc:
+                            return ctx._cursor_error(
+                                CursorStaleError(str(exc))
+                            )
+
+                for sample in sample_rows:
+                    record = sample.get("record")
+                    if where_expr is not None:
+                        try:
+                            matches = evaluate_where(
+                                record,
+                                where_expr,
+                                max_compute_steps=ctx.config.max_compute_steps,
+                                max_wildcard_expansion=ctx.config.max_wildcards,
+                            )
+                        except WhereDslError as exc:
+                            return gateway_error("INVALID_ARGUMENT", str(exc))
+                        if not matches:
+                            continue
+                    projection = project_select_paths(
+                        record,
+                        select_paths,
+                        missing_as_null=ctx.config.select_missing_as_null,
+                        max_jsonpath_length=ctx.config.max_jsonpath_length,
+                        max_path_segments=ctx.config.max_path_segments,
+                        max_wildcard_expansion_total=ctx.config.max_wildcard_expansion_total,
+                    )
+                    items.append(
+                        {
+                            "_locator": {
+                                "artifact_id": artifact_id,
+                                "root_path": root_path,
+                                "sample_index": sample.get("sample_index"),
+                            },
+                            "projection": projection,
+                        }
+                    )
+                continue
+
+            sampled_only_single = False
             artifact_row = row_to_dict(
                 connection.execute(
                     FETCH_ARTIFACT_SQL,
@@ -326,23 +509,22 @@ async def handle_artifact_select(
                 ENVELOPE_COLUMNS,
             )
             if artifact_row is None:
-                return gateway_error("NOT_FOUND", "artifact not found")
+                continue
             envelope_value = artifact_row.get("envelope")
             canonical_bytes_raw = artifact_row.get("envelope_canonical_bytes")
             if isinstance(envelope_value, dict) and "content" in envelope_value:
                 envelope = envelope_value
             elif canonical_bytes_raw is None:
                 return gateway_error(
-                    "INTERNAL_ERROR", "missing canonical bytes for artifact"
+                    "INTERNAL_ERROR",
+                    "missing canonical bytes for artifact",
                 )
             else:
                 try:
                     envelope = reconstruct_envelope(
                         compressed_bytes=bytes(canonical_bytes_raw),
                         encoding=str(
-                            artifact_row.get(
-                                "envelope_canonical_encoding", "none"
-                            )
+                            artifact_row.get("envelope_canonical_encoding", "none")
                         ),
                         expected_hash=str(
                             artifact_row.get("payload_hash_full", "")
@@ -357,7 +539,6 @@ async def handle_artifact_select(
             json_target = extract_json_target(
                 envelope, artifact_row.get("mapped_part_index")
             )
-
             try:
                 root_values = evaluate_jsonpath(
                     json_target,
@@ -399,6 +580,7 @@ async def handle_artifact_select(
                 items.append(
                     {
                         "_locator": {
+                            "artifact_id": artifact_id,
                             "root_path": root_path,
                             "index": index,
                         },
@@ -406,10 +588,10 @@ async def handle_artifact_select(
                     }
                 )
 
-        ctx._safe_touch_for_retrieval(
+        ctx._safe_touch_for_retrieval_many(
             connection,
             session_id=session_id,
-            artifact_id=artifact_id,
+            artifact_ids=related_ids,
         )
         commit = getattr(connection, "commit", None)
         if callable(commit):
@@ -426,6 +608,22 @@ async def handle_artifact_select(
                 seen.add(key)
                 unique_items.append(item)
         items = unique_items
+
+    # Apply select-style order_by sorting.
+    raw_order_by = arguments.get("order_by")
+    order_by_binding: str | None = None
+    parsed_order = None
+    if isinstance(raw_order_by, str) and raw_order_by.strip():
+        order_by_binding = raw_order_by
+        order_by_for_parse = raw_order_by.strip()
+        order_err = validate_select_order_by(order_by_for_parse)
+        if order_err is not None:
+            return gateway_error(
+                str(order_err["code"]), str(order_err["message"])
+            )
+        parsed_order = parse_select_order_by(order_by_for_parse)
+        if parsed_order is not None:
+            items = _apply_select_sort(items, parsed_order)
 
     total_matched = len(items)
 
@@ -464,25 +662,32 @@ async def handle_artifact_select(
         }
         if use_distinct:
             extra["distinct"] = True
-        generation = artifact_meta.get("generation")
-        if isinstance(generation, int):
-            extra["artifact_generation"] = generation
-        if sampled_only:
+        if order_by_binding is not None:
+            extra["order_by"] = order_by_binding
+        extra["scope"] = scope
+        if scope == "all_related":
+            extra["anchor_artifact_id"] = anchor_artifact_id
+            extra["related_set_hash"] = related_set_hash
+        else:
+            generation = anchor_meta.get("generation") if anchor_meta else None
+            if isinstance(generation, int):
+                extra["artifact_generation"] = generation
+        if sampled_only_single:
             sample_indices = sorted(
                 int(sample_index)
-                for sample in sample_rows
+                for sample in single_sample_rows
                 if isinstance((sample_index := sample.get("sample_index")), int)
             )
             sample_set_hash_val = compute_sample_set_hash(
                 root_path=root_path,
                 sample_indices=sample_indices,
-                map_budget_fingerprint=map_budget_fingerprint,
+                map_budget_fingerprint=single_map_budget_fingerprint,
             )
-            extra["map_budget_fingerprint"] = map_budget_fingerprint
+            extra["map_budget_fingerprint"] = single_map_budget_fingerprint
             extra["sample_set_hash"] = sample_set_hash_val
         next_cursor = ctx._issue_cursor(
             tool="artifact",
-            artifact_id=artifact_id,
+            artifact_id=anchor_artifact_id,
             position_state={"offset": offset + len(selected)},
             extra=extra,
         )
@@ -493,8 +698,8 @@ async def handle_artifact_select(
         and isinstance(item["_locator"].get("sample_index"), int)
     ]
     sampled_prefix_len: int | None = None
-    root_summary = root_row.get("root_summary")
-    if sampled_only and isinstance(root_summary, Mapping):
+    root_summary = single_root_row.get("root_summary") if single_root_row else None
+    if sampled_only_single and isinstance(root_summary, Mapping):
         raw_sampled_prefix_len = root_summary.get("sampled_prefix_len")
         if (
             isinstance(raw_sampled_prefix_len, int)
@@ -502,33 +707,46 @@ async def handle_artifact_select(
         ):
             sampled_prefix_len = raw_sampled_prefix_len
     determinism: dict[str, str] | None = None
-    if sampled_only and map_budget_fingerprint:
+    if sampled_only_single and single_map_budget_fingerprint:
         from sift_mcp.constants import TRAVERSAL_CONTRACT_VERSION
 
         all_sample_indices = sorted(
             int(si)
-            for sample in sample_rows
+            for sample in single_sample_rows
             if isinstance((si := sample.get("sample_index")), int)
         )
         ssh = compute_sample_set_hash(
             root_path=root_path,
             sample_indices=all_sample_indices,
-            map_budget_fingerprint=map_budget_fingerprint,
+            map_budget_fingerprint=single_map_budget_fingerprint,
         )
         determinism = {
             "traversal_contract_version": TRAVERSAL_CONTRACT_VERSION,
-            "map_budget_fingerprint": map_budget_fingerprint,
+            "map_budget_fingerprint": single_map_budget_fingerprint,
             "sample_set_hash": ssh,
         }
-    return build_select_result(
+    response = build_select_result(
         items=selected,
         truncated=truncated,
         cursor=next_cursor,
         total_matched=total_matched,
-        sampled_only=sampled_only,
-        sample_indices_used=sample_indices_used if sampled_only else None,
+        sampled_only=sampled_only_single,
+        sample_indices_used=sample_indices_used if sampled_only_single else None,
         sampled_prefix_len=sampled_prefix_len,
         omitted={"count": omitted, "reason": "budget"} if truncated else None,
         stats={"bytes_out": used_bytes},
         determinism=determinism,
     )
+    lineage: dict[str, Any] = {
+        "scope": scope,
+        "anchor_artifact_id": anchor_artifact_id,
+        "artifact_count": len(related_ids),
+        "artifact_ids": related_ids,
+    }
+    if scope == "all_related":
+        lineage["related_set_hash"] = related_set_hash
+    response["scope"] = scope
+    response["lineage"] = lineage
+    if warnings:
+        response["warnings"] = warnings
+    return response

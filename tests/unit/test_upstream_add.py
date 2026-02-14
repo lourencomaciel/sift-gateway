@@ -477,7 +477,6 @@ class TestRunUpstreamAdd:
         # Other config keys preserved
         assert gw["db_backend"] == "sqlite"
 
-
     def test_legacy_upstreams_key_removed(self, tmp_path: Path) -> None:
         """Adding to a config with legacy 'upstreams' strips it."""
         state_dir = tmp_path / "state"

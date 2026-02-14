@@ -508,9 +508,7 @@ def test_resolve_external_user_id_non_string_stored_value(
     state = tmp_path / "state"
     state.mkdir()
     path = state / "upstream_user_ids.json"
-    path.write_text(
-        json.dumps({"github": 123}), encoding="utf-8"
-    )
+    path.write_text(json.dumps({"github": 123}), encoding="utf-8")
 
     cfg = _stdio_config(external_user_id="auto")
     uid = resolve_external_user_id(cfg, data_dir)
@@ -527,12 +525,8 @@ def test_instance_id_varies_with_external_user_id() -> None:
     cfg = _stdio_config()
 
     id_none = compute_upstream_instance_id(cfg, resolved_user_id=None)
-    id_a = compute_upstream_instance_id(
-        cfg, resolved_user_id="user-a"
-    )
-    id_b = compute_upstream_instance_id(
-        cfg, resolved_user_id="user-b"
-    )
+    id_a = compute_upstream_instance_id(cfg, resolved_user_id="user-a")
+    id_b = compute_upstream_instance_id(cfg, resolved_user_id="user-b")
 
     # None keeps baseline; explicit values diverge from each other
     assert id_none != id_a
@@ -565,9 +559,7 @@ def test_stdio_transport_uses_pre_resolved_user_id(
 
     from sift_mcp.mcp.upstream import _client_transport
 
-    transport = _client_transport(
-        cfg, data_dir, resolved_user_id="pinned-id"
-    )
+    transport = _client_transport(cfg, data_dir, resolved_user_id="pinned-id")
     idx = transport.args.index("--external-user-id")
     assert transport.args[idx + 1] == "pinned-id"
 

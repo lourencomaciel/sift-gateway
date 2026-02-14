@@ -81,7 +81,11 @@ from sift_mcp.mcp.upstream import (
 from sift_mcp.mcp.upstream_errors import classify_upstream_exception
 from sift_mcp.obs.logging import LogEvents, get_logger
 from sift_mcp.obs.metrics import GatewayMetrics, get_metrics
-from sift_mcp.sessions import touch_for_retrieval, touch_for_search
+from sift_mcp.sessions import (
+    touch_for_retrieval,
+    touch_for_retrieval_many,
+    touch_for_search,
+)
 from sift_mcp.tools.usage_hint import PAGINATION_COMPLETENESS_RULE
 
 _GENERIC_ARGS_SCHEMA: dict[str, Any] = {
@@ -100,18 +104,19 @@ _BUILTIN_TOOL_DESCRIPTIONS: dict[str, str] = {
     "gateway.status": "Gateway health and configuration snapshot.",
     "artifact": (
         "Interact with stored artifacts. "
-        "Actions: query (search, describe, get, or select "
-        "based on parameters) and next_page. "
-        "Workflow: start with query + artifact_id to inspect "
-        "roots, then query with root_path/select_paths and "
-        "a where filter. Use count_only=true for counts, "
-        "distinct=true for unique values. "
+        "Actions: query and next_page. "
+        "For query, pass query_kind: describe|get|select|search. "
+        "For describe/get/select, pass artifact_id. "
+        "Scope defaults to all_related (anchor lineage component); "
+        "set scope=single to query only the anchor artifact. "
+        "Use query_kind=select with root_path/select_paths and where. "
+        "Use count_only=true for counts, distinct=true for unique values. "
         "Continue partial results with "
         "query + cursor (not next_page). "
         "next_page is only for fetching additional "
         "upstream pages. "
         "Filtering (where) and multi-field projection "
-        "(select_paths) are query select-mode only. "
+        "(select_paths) are query_kind=select only. "
         f"{PAGINATION_COMPLETENESS_RULE}"
     ),
 }
@@ -140,50 +145,71 @@ _BUILTIN_TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
                     "next_page",
                 ],
                 "description": (
-                    "query: consolidated retrieval/search "
-                    "(describe/get/select/search inferred from args). "
+                    "query: explicit retrieval/search "
+                    "(use query_kind to choose behavior). "
                     "next_page: fetch next upstream page."
+                ),
+            },
+            "query_kind": {
+                "type": "string",
+                "enum": ["describe", "get", "select", "search"],
+                "description": (
+                    "Required for action=query. "
+                    "describe: mapping roots summary; "
+                    "get: retrieve envelope/mapped values; "
+                    "select: projection/filter over records; "
+                    "search: session artifact listing."
+                ),
+            },
+            "scope": {
+                "type": "string",
+                "enum": ["all_related", "single"],
+                "description": (
+                    "For query_kind describe/get/select: "
+                    "all_related (default) queries the full lineage "
+                    "component of artifact_id; single queries only "
+                    "artifact_id. Not valid for query_kind=search."
                 ),
             },
             "artifact_id": {
                 "type": "string",
                 "description": (
-                    "Target artifact. Required for query describe/get/select "
-                    "and next_page. Omit for query session search."
+                    "Anchor artifact. Required for query_kind "
+                    "describe|get|select and next_page. "
+                    "Omit for query_kind=search."
                 ),
             },
             "target": {
                 "type": "string",
                 "enum": ["envelope", "mapped"],
                 "description": (
-                    "[query get-mode] Retrieval target "
-                    "(default: envelope)."
+                    "[query_kind=get] Retrieval target (default: envelope)."
                 ),
             },
             "jsonpath": {
                 "type": "string",
                 "description": (
-                    "[query get-mode] JSONPath filter on envelope."
+                    "[query_kind=get] JSONPath filter on envelope."
                 ),
             },
             "root_path": {
                 "type": "string",
                 "description": (
-                    "[query select-mode] JSONPath to root array, "
-                    "from query describe-mode output."
+                    "[query_kind=select] JSONPath to root array, "
+                    "from query_kind=describe output."
                 ),
             },
             "select_paths": {
                 "type": "array",
                 "items": {"type": "string"},
                 "description": (
-                    "[query select-mode] Field names to project, "
+                    "[query_kind=select] Field names to project, "
                     "e.g. ['name', 'spend']. No $ prefix."
                 ),
             },
             "where": {
                 "description": (
-                    "[query select-mode] WHERE-DSL filter. "
+                    "[query_kind=select] WHERE-DSL filter. "
                     "Operators: =, !=, >, <, >=, <=, "
                     "IN, CONTAINS, EXISTS, AND, OR, NOT. "
                     "Casts: to_number(path), to_string(path). "
@@ -198,27 +224,26 @@ _BUILTIN_TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
             "filters": {
                 "type": "object",
                 "description": (
-                    "[query session-search mode] source_tool, status, "
+                    "[query_kind=search] source_tool, status, "
                     "parent_artifact_id, etc."
                 ),
                 "additionalProperties": True,
             },
             "order_by": {
                 "type": "string",
-                "enum": [
-                    "created_seq_desc",
-                    "last_seen_desc",
-                    "chain_seq_asc",
-                ],
                 "description": (
-                    "[query session-search mode] Sort order. "
-                    "Default: created_seq_desc."
+                    "Sort order. "
+                    "query_kind=search: created_seq_desc (default), "
+                    "last_seen_desc, chain_seq_asc. "
+                    "query_kind=select: 'field [ASC|DESC]', e.g. "
+                    "'spend DESC', 'to_number(spend) DESC', "
+                    "'name ASC'."
                 ),
             },
             "count_only": {
                 "type": "boolean",
                 "description": (
-                    "[query select-mode] Return only the count of matching "
+                    "[query_kind=select] Return only the count of matching "
                     "records, no items. Skips projection and "
                     "pagination."
                 ),
@@ -226,7 +251,7 @@ _BUILTIN_TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
             "distinct": {
                 "type": "boolean",
                 "description": (
-                    "[query select-mode] Deduplicate projected records. "
+                    "[query_kind=select] Deduplicate projected records. "
                     "Returns only unique projections."
                 ),
             },
@@ -827,6 +852,8 @@ class GatewayServer:
         reason: str | None = None
         if "sample_set_hash mismatch" in message:
             reason = "sample_set_mismatch"
+        elif "related_set_hash mismatch" in message:
+            reason = "related_set_mismatch"
         elif "map_budget_fingerprint mismatch" in message:
             reason = "map_budget_mismatch"
         elif "where_canonicalization_mode mismatch" in message:
@@ -855,6 +882,8 @@ class GatewayServer:
             reason = "root_path_filter_mismatch"
         elif "root_path mismatch" in message:
             reason = "root_path_mismatch"
+        elif "scope mismatch" in message:
+            reason = "scope_mismatch"
         else:
             reason = "unknown"
         log = get_logger(component="mcp.server")
@@ -1086,6 +1115,23 @@ class GatewayServer:
         """
         if callable(getattr(connection, "cursor", None)):
             touch_for_retrieval(connection, session_id, artifact_id)
+
+    def _safe_touch_for_retrieval_many(
+        self,
+        connection: Any,
+        *,
+        session_id: str,
+        artifact_ids: list[str],
+    ) -> None:
+        """Record retrieval touches for many artifacts.
+
+        Args:
+            connection: Active database connection.
+            session_id: Session performing the retrieval.
+            artifact_ids: Retrieved artifact identifiers.
+        """
+        if callable(getattr(connection, "cursor", None)):
+            touch_for_retrieval_many(connection, session_id, artifact_ids)
 
     def _safe_touch_for_search(
         self,
