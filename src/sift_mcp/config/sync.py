@@ -15,16 +15,6 @@ from pathlib import Path
 import shutil
 from typing import Any
 
-
-@contextlib.contextmanager
-def _suppress_os_error():
-    """Suppress OSError during cleanup (e.g. unlinking a tmp)."""
-    try:
-        yield
-    except OSError:
-        pass
-
-
 from sift_mcp.config.mcp_servers import (
     extract_mcp_servers,
 )
@@ -33,6 +23,15 @@ from sift_mcp.constants import (
     CONFIG_FILENAME,
     STATE_SUBDIR,
 )
+
+
+@contextlib.contextmanager
+def _suppress_os_error():
+    """Suppress OSError during cleanup (e.g. unlinking a tmp)."""
+    try:
+        yield
+    except OSError:
+        pass
 
 logger = logging.getLogger(__name__)
 
