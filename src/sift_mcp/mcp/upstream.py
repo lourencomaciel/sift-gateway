@@ -85,9 +85,7 @@ def _user_ids_path(data_dir: str | None) -> Path:
     return Path(resolved) / "state" / _USER_IDS_FILENAME
 
 
-def _atomic_json_write(
-    path: Path, data: dict[str, str]
-) -> None:
+def _atomic_json_write(path: Path, data: dict[str, str]) -> None:
     """Write *data* as JSON to *path* atomically.
 
     Uses a temporary file in the same directory followed by an
@@ -100,9 +98,7 @@ def _atomic_json_write(
     fd = -1
     tmp_path: Path | None = None
     try:
-        fd, tmp = tempfile.mkstemp(
-            dir=str(path.parent), suffix=".tmp"
-        )
+        fd, tmp = tempfile.mkstemp(dir=str(path.parent), suffix=".tmp")
         tmp_path = Path(tmp)
         os.write(
             fd,
@@ -137,9 +133,7 @@ def _read_user_ids(path: Path) -> dict[str, str]:
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError, UnicodeDecodeError):
-        logging.getLogger(__name__).warning(
-            "Corrupt %s — rebuilding", path
-        )
+        logging.getLogger(__name__).warning("Corrupt %s — rebuilding", path)
         return {}
     if isinstance(data, dict):
         return data
@@ -295,10 +289,7 @@ def _build_stdio_env(
         secret_env_raw = secret.get("env")
         if isinstance(secret_env_raw, dict):
             base.update(
-                {
-                    str(key): str(value)
-                    for key, value in secret_env_raw.items()
-                }
+                {str(key): str(value) for key, value in secret_env_raw.items()}
             )
 
     base.update(config.env)
@@ -399,8 +390,7 @@ def _effective_external_user_id(
 def _args_have_external_user_id(args: list[str]) -> bool:
     """Check if args already contain --external-user-id."""
     return any(
-        a == "--external-user-id"
-        or a.startswith("--external-user-id=")
+        a == "--external-user-id" or a.startswith("--external-user-id=")
         for a in args
     )
 
@@ -662,9 +652,7 @@ async def connect_upstream(
         if config.transport == "stdio"
         else None
     )
-    tools = await discover_tools(
-        config, data_dir, resolved_user_id=user_id
-    )
+    tools = await discover_tools(config, data_dir, resolved_user_id=user_id)
     return UpstreamInstance(
         config=config,
         instance_id=compute_upstream_instance_id(

@@ -12,8 +12,9 @@ Sift is a local, single-tenant MCP proxy that:
 4. Returns the result to the caller: small payloads are returned raw (**passthrough mode**); large payloads return a **handle** with artifact ID, inline describe (mapping metadata + discovered roots), and a usage hint.
 5. Generates a **deterministic inventory** (full or partial schema mapping) for each artifact's JSON payload.
 6. Provides a consolidated **`artifact`** retrieval tool with
-   actions (`get`, `select`, `describe`, `search`, `next_page`)
-   using signed cursor pagination.
+   actions (`query`, `next_page`) using signed cursor pagination.
+   Query behavior is explicit via `query_kind=describe|get|select|search`.
+   For non-search kinds, `scope` defaults to `all_related`.
 
 ### Design invariants
 
@@ -122,9 +123,9 @@ Conditional update: `deleted_at IS NULL AND map_status IN (pending, stale) AND g
 
 - **Format**: `cur.<version>.<payload_b64u>.<signature_b64u>`
 - **Signing**: HMAC-SHA256 over RFC 8785 canonical payload bytes
-- **Payload fields**: cursor_version, traversal_contract_version, workspace_id, artifact_id, tool, where_canonicalization_mode, mapper_version, position_state, issued_at, expires_at, optional sample_set_hash
+- **Payload fields**: cursor_version, traversal_contract_version, workspace_id, artifact_id, tool, where_canonicalization_mode, mapper_version, position_state, issued_at, expires_at; retrieval bindings (for example target/jsonpath/select hashes); optional sample_set_hash; and for lineage-scoped queries `scope`, `anchor_artifact_id`, `related_set_hash`
 - **Binding checks on resume**: tool, artifact_id, workspace_id, traversal_contract_version, mapper_version, where_canonicalization_mode (if enabled)
-- **Staleness triggers**: any binding mismatch, sample_set_hash mismatch, version increments
+- **Staleness triggers**: any binding mismatch, sample_set_hash mismatch, `related_set_hash` mismatch, version increments
 - **TTL**: configurable `cursor_ttl_minutes` (default 60); expired cursors raise `CursorExpiredError`
 - **Secret rotation**: multiple active versions; newest signs, all active verify
 
@@ -141,11 +142,31 @@ Conditional update: `deleted_at IS NULL AND map_status IN (pending, stale) AND g
 
 | Action | Purpose |
 |--------|---------|
-| `describe` | Mapping metadata with partial mapping disclosures |
-| `get` | Retrieve envelope or mapped data with JSONPath; touches `last_referenced_at` |
-| `select` | Project fields from mapped roots; partial mode returns sampled-only subset |
-| `search` | List artifacts via `artifact_refs`; supports `chain_seq_asc` ordering for page chains |
+| `query` | Retrieval/search entrypoint; requires explicit `query_kind` |
 | `next_page` | Fetch next upstream page using stored pagination state |
+
+#### `query_kind` (required when `action="query"`)
+
+| `query_kind` | Purpose |
+|--------------|---------|
+| `describe` | Lineage-aware root catalog and compatibility summary |
+| `get` | Retrieve envelope/jsonpath values or mapped root catalog |
+| `select` | Project/filter records from mapped roots |
+| `search` | Session-scoped artifact listing (`artifact_refs`) |
+
+#### Scope model
+
+- `scope` applies to `query_kind=describe|get|select` and defaults to `all_related`.
+- `all_related` resolves the full visible lineage component (anchor + ancestors + descendants).
+- `single` restricts execution to the anchor artifact only.
+- `query_kind=search` does not accept `artifact_id` or `scope`.
+
+#### Strict merge contract (why queries do not silently break)
+
+- `select` computes a root signature per included artifact from: `root_path`, `root_shape`, canonicalized `fields_top` (keys/types), and `map_kind`.
+- If multiple distinct signatures are present for the requested `root_path`, query fails fast with `INVALID_ARGUMENT` and details code `INCOMPATIBLE_LINEAGE_SCHEMA`.
+- Artifacts missing the requested `root_path` are skipped (with warnings/counts), not treated as incompatible.
+- Merged rows include provenance via `_locator.artifact_id`.
 
 ### Response shape
 
@@ -245,10 +266,10 @@ Payloads at or above the passthrough threshold follow the handle-only path: the 
 - **`artifact_id`** and **cache metadata** (reuse status, request key).
 - cache metadata includes `reused`, `request_key`, `reason`,
   `artifact_id_origin` (`cache|fresh`), and `allow_reuse` (boolean).
-- **`describe`**: inline mapping metadata and discovered roots (same data as `artifact(action="describe")`), fetched on the same DB connection with no extra round-trip.
-- **`usage_hint`**: a heuristic natural language hint (no LLM) describing what the artifact contains, which fields are available, and which retrieval action to call next (`select` for arrays, `get` for dicts).
+- **`describe`**: inline mapping metadata and discovered roots (same base data as `artifact(action="query", query_kind="describe")`), fetched on the same DB connection with no extra round-trip.
+- **`usage_hint`**: a heuristic natural language hint (no LLM) describing what the artifact contains, which fields are available, and which retrieval action to call next (`query_kind="select"` for arrays, `query_kind="get"` for dicts).
 
-This eliminates the need for a separate `describe` call — the LLM can go directly from the tool response to `artifact(action="select")`. The `describe` action remains available for inspecting artifacts after the initial response.
+This eliminates the need for a separate describe call — the LLM can go directly from the tool response to `artifact(action="query", query_kind="select")`. `query_kind="describe"` remains available for inspecting artifacts after the initial response.
 
 ## 15. Artifact query references
 
@@ -302,7 +323,7 @@ Resolution is skipped entirely when no database is configured
 
 1. Call mirrored tool and receive `artifact_id`.
 2. Use inline `describe` to pick `root_path`.
-3. Call `artifact(action="select")` with cursor paging.
+3. Call `artifact(action="query", query_kind="select")` with cursor paging.
 4. Continue until `pagination.retrieval_status == "COMPLETE"`.
 
 ### 16.2 Upstream page chaining

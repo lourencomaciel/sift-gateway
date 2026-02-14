@@ -436,9 +436,7 @@ def test_artifact_handlers_return_validation_or_not_implemented(
 ) -> None:
     server = _server(tmp_path)
 
-    invalid_legacy = asyncio.run(
-        server.handle_artifact({"action": "get"})
-    )
+    invalid_legacy = asyncio.run(server.handle_artifact({"action": "get"}))
     assert invalid_legacy["code"] == "INVALID_ARGUMENT"
     assert "query" in invalid_legacy["message"]
 
@@ -449,6 +447,8 @@ def test_artifact_handlers_return_validation_or_not_implemented(
         server.handle_artifact(
             {
                 "action": "query",
+                "query_kind": "get",
+                "scope": "single",
                 "_gateway_context": {"session_id": "sess_1"},
                 "artifact_id": "art_1",
             }
@@ -460,6 +460,7 @@ def test_artifact_handlers_return_validation_or_not_implemented(
         server.handle_artifact(
             {
                 "action": "query",
+                "query_kind": "search",
                 "_gateway_context": {"session_id": "sess_1"},
                 "filters": {},
             }
@@ -1368,6 +1369,7 @@ def test_artifact_search_db_runtime_returns_items(
         server.handle_artifact(
             {
                 "action": "query",
+                "query_kind": "search",
                 "_gateway_context": {"session_id": "sess_1"},
                 "filters": {},
             }
@@ -1427,6 +1429,8 @@ def test_artifact_get_db_runtime_returns_envelope_items(
         server.handle_artifact(
             {
                 "action": "query",
+                "query_kind": "get",
+                "scope": "single",
                 "_gateway_context": {"session_id": "sess_1"},
                 "artifact_id": "art_1",
                 "target": "envelope",
@@ -1436,7 +1440,8 @@ def test_artifact_get_db_runtime_returns_envelope_items(
     assert response["target"] == "envelope"
     assert response["pagination"]["layer"] == "artifact_retrieval"
     assert response["pagination"]["retrieval_status"] == "COMPLETE"
-    assert response["items"][0]["type"] == "mcp_envelope"
+    assert response["items"][0]["_locator"]["artifact_id"] == "art_1"
+    assert response["items"][0]["value"]["type"] == "mcp_envelope"
     assert conn.committed is True
 
 
@@ -1485,6 +1490,8 @@ def test_artifact_get_cursor_includes_target_and_jsonpath_binding(
         server.handle_artifact(
             {
                 "action": "query",
+                "query_kind": "get",
+                "scope": "single",
                 "_gateway_context": {"session_id": "sess_1"},
                 "artifact_id": "art_1",
                 "target": "envelope",
@@ -1552,6 +1559,8 @@ def test_artifact_get_jsonpath_evaluates_against_json_target(
         server.handle_artifact(
             {
                 "action": "query",
+                "query_kind": "get",
+                "scope": "single",
                 "_gateway_context": {"session_id": "sess_1"},
                 "artifact_id": "art_1",
                 "target": "envelope",
@@ -1561,8 +1570,8 @@ def test_artifact_get_jsonpath_evaluates_against_json_target(
     )
     # $.users[*] resolves through the JSON content part, not the envelope.
     assert len(response["items"]) == 2
-    assert response["items"][0] == {"id": 1}
-    assert response["items"][1] == {"id": 2}
+    assert response["items"][0]["value"] == {"id": 1}
+    assert response["items"][1]["value"] == {"id": 2}
     assert response["pagination"]["retrieval_status"] == "COMPLETE"
 
 
@@ -1614,6 +1623,8 @@ def test_artifact_get_cursor_target_mismatch_returns_stale(
         server.handle_artifact(
             {
                 "action": "query",
+                "query_kind": "get",
+                "scope": "single",
                 "_gateway_context": {"session_id": "sess_1"},
                 "artifact_id": "art_1",
                 "target": "envelope",
@@ -1624,6 +1635,63 @@ def test_artifact_get_cursor_target_mismatch_returns_stale(
     )
     assert response["code"] == "CURSOR_STALE"
     assert "target mismatch" in response["message"]
+
+
+def test_artifact_get_cursor_restores_scope_when_omitted(
+    tmp_path: Path, monkeypatch
+) -> None:
+    conn = _SeqConnection(
+        [
+            _SeqCursor(one=(1,)),
+            _SeqCursor(
+                one=(
+                    "art_1",
+                    "payload_hash",
+                    None,
+                    "full",
+                    "ready",
+                    1,
+                    0,
+                    "mbf",
+                    {"content": [], "items": [{"id": 1}]},
+                    "zstd",
+                    b"",
+                    0,
+                    False,
+                )
+            ),
+        ]
+    )
+    server = GatewayServer(
+        config=GatewayConfig(data_dir=tmp_path),
+        db_pool=_SeqPool(conn),  # type: ignore[arg-type]
+    )
+    monkeypatch.setattr(
+        server,
+        "_verify_cursor_payload",
+        lambda **_kwargs: {
+            "position_state": {"offset": 0},
+            "target": "envelope",
+            "normalized_jsonpath": "$",
+            "scope": "single",
+            "artifact_generation": 1,
+        },
+    )
+
+    response = asyncio.run(
+        server.handle_artifact(
+            {
+                "action": "query",
+                "query_kind": "get",
+                "_gateway_context": {"session_id": "sess_1"},
+                "artifact_id": "art_1",
+                "target": "envelope",
+                "cursor": "cursor_1",
+            }
+        )
+    )
+    assert response["scope"] == "single"
+    assert response["items"][0]["_locator"]["artifact_id"] == "art_1"
 
 
 def test_artifact_describe_db_runtime_returns_roots(
@@ -1681,6 +1749,8 @@ def test_artifact_describe_db_runtime_returns_roots(
         server.handle_artifact(
             {
                 "action": "query",
+                "query_kind": "describe",
+                "scope": "single",
                 "_gateway_context": {"session_id": "sess_1"},
                 "artifact_id": "art_1",
             }
@@ -1688,9 +1758,8 @@ def test_artifact_describe_db_runtime_returns_roots(
     )
     assert response["artifact_id"] == "art_1"
     assert response["roots"][0]["root_path"] == "$.items"
-    assert response["roots"][0]["sampled_prefix_len"] == 7
-    assert response["roots"][0]["prefix_coverage"] is True
-    assert response["roots"][0]["stop_reason"] == "max_compute"
+    assert response["roots"][0]["compatible_for_select"] is True
+    assert response["roots"][0]["signature_groups"][0]["map_kind"] == "partial"
 
 
 def test_artifact_select_db_runtime_partial_projects_records(
@@ -1728,6 +1797,8 @@ def test_artifact_select_db_runtime_partial_projects_records(
         server.handle_artifact(
             {
                 "action": "query",
+                "query_kind": "select",
+                "scope": "single",
                 "_gateway_context": {"session_id": "sess_1"},
                 "artifact_id": "art_1",
                 "root_path": "$.items",
@@ -1784,13 +1855,14 @@ def test_artifact_select_cursor_sample_set_mismatch_returns_stale(
     monkeypatch.setattr(
         server,
         "_verify_cursor_payload",
-        lambda **_kwargs: {
-            "position_state": {"offset": 0},
-            "root_path": "$.items",
-            "select_paths_hash": select_paths_hash(["$.id"]),
-            "where_hash": where_hash(
-                where_expr,
-                mode=server.config.where_canonicalization_mode.value,
+            lambda **_kwargs: {
+                "position_state": {"offset": 0},
+                "scope": "single",
+                "root_path": "$.items",
+                "select_paths_hash": select_paths_hash(["$.id"]),
+                "where_hash": where_hash(
+                    where_expr,
+                    mode=server.config.where_canonicalization_mode.value,
             ),
             "artifact_generation": 1,
             "map_budget_fingerprint": "mbf",
@@ -1802,6 +1874,8 @@ def test_artifact_select_cursor_sample_set_mismatch_returns_stale(
         server.handle_artifact(
             {
                 "action": "query",
+                "query_kind": "select",
+                "scope": "single",
                 "_gateway_context": {"session_id": "sess_1"},
                 "artifact_id": "art_1",
                 "root_path": "$.items",
@@ -1864,6 +1938,8 @@ def test_artifact_select_cursor_includes_partial_binding_fields(
         server.handle_artifact(
             {
                 "action": "query",
+                "query_kind": "select",
+                "scope": "single",
                 "_gateway_context": {"session_id": "sess_1"},
                 "artifact_id": "art_1",
                 "root_path": "$.items",
@@ -1891,6 +1967,136 @@ def test_artifact_select_cursor_includes_partial_binding_fields(
         sample_indices=[0, 1],
         map_budget_fingerprint="mbf",
     )
+
+
+def test_artifact_select_cursor_restores_scope_when_omitted(
+    tmp_path: Path, monkeypatch
+) -> None:
+    conn = _SeqConnection(
+        [
+            _SeqCursor(one=(1,)),
+            _SeqCursor(one=("art_1", "full", "ready", "off", None, 1, "mbf")),
+            _SeqCursor(
+                one=(
+                    "rk_1",
+                    "$.items",
+                    2,
+                    "array",
+                    {"id": {"number": 2}},
+                    None,
+                    {},
+                )
+            ),
+            _SeqCursor(
+                one=(
+                    "art_1",
+                    "payload_hash",
+                    None,
+                    "full",
+                    "ready",
+                    1,
+                    0,
+                    "mbf",
+                    {"content": [], "items": [{"id": 1}, {"id": 2}]},
+                    "zstd",
+                    b"",
+                    0,
+                    False,
+                )
+            ),
+        ]
+    )
+    server = GatewayServer(
+        config=GatewayConfig(data_dir=tmp_path),
+        db_pool=_SeqPool(conn),  # type: ignore[arg-type]
+    )
+    monkeypatch.setattr(
+        server,
+        "_verify_cursor_payload",
+        lambda **_kwargs: {
+            "position_state": {"offset": 0},
+            "scope": "single",
+            "root_path": "$.items",
+            "select_paths_hash": select_paths_hash(["$.id"]),
+            "where_hash": "__none__",
+            "artifact_generation": 1,
+        },
+    )
+
+    response = asyncio.run(
+        server.handle_artifact(
+            {
+                "action": "query",
+                "query_kind": "select",
+                "_gateway_context": {"session_id": "sess_1"},
+                "artifact_id": "art_1",
+                "root_path": "$.items",
+                "select_paths": ["id"],
+                "cursor": "cursor_1",
+            }
+        )
+    )
+    assert response["scope"] == "single"
+    assert response["total_matched"] == 2
+
+
+def test_artifact_select_cursor_always_binds_order_by(
+    tmp_path: Path, monkeypatch
+) -> None:
+    conn = _SeqConnection(
+        [
+            _SeqCursor(one=(1,)),
+            _SeqCursor(one=("art_1", "partial", "ready", "off", None, 1, "mbf")),
+            _SeqCursor(
+                one=(
+                    "rk_1",
+                    "$.items",
+                    100,
+                    "array",
+                    {"id": {"number": 1}},
+                    [0, 1],
+                    {"sampled_prefix_len": 9},
+                )
+            ),
+            _SeqCursor(
+                all_rows=[
+                    (0, {"id": 1}, 10, "h1"),
+                    (1, {"id": 2}, 10, "h2"),
+                ]
+            ),
+        ]
+    )
+    server = GatewayServer(
+        config=GatewayConfig(data_dir=tmp_path),
+        db_pool=_SeqPool(conn),  # type: ignore[arg-type]
+    )
+    issued: dict[str, object] = {}
+
+    def _issue_cursor(**kwargs):
+        issued.update(kwargs)
+        return "cur_next"
+
+    monkeypatch.setattr(server, "_issue_cursor", _issue_cursor)
+
+    response = asyncio.run(
+        server.handle_artifact(
+            {
+                "action": "query",
+                "query_kind": "select",
+                "scope": "single",
+                "_gateway_context": {"session_id": "sess_1"},
+                "artifact_id": "art_1",
+                "root_path": "$.items",
+                "select_paths": ["id"],
+                "order_by": "created_seq_desc",
+                "limit": 1,
+            }
+        )
+    )
+    assert response["truncated"] is True
+    extra = issued["extra"]
+    assert isinstance(extra, dict)
+    assert extra["order_by"] == "created_seq_desc"
 
 
 def test_artifact_next_page_returns_gone_for_deleted_artifact(
@@ -2082,6 +2288,8 @@ def test_artifact_select_returns_internal_on_sample_corruption(
         server.handle_artifact(
             {
                 "action": "query",
+                "query_kind": "select",
+                "scope": "single",
                 "_gateway_context": {"session_id": "sess_1"},
                 "artifact_id": "art_1",
                 "root_path": "$.items",
@@ -3317,6 +3525,8 @@ def test_artifact_select_includes_total_matched(
         server.handle_artifact(
             {
                 "action": "query",
+                "query_kind": "select",
+                "scope": "single",
                 "_gateway_context": {"session_id": "sess_1"},
                 "artifact_id": "art_1",
                 "root_path": "$.items",
@@ -3366,6 +3576,8 @@ def test_artifact_select_count_only(tmp_path: Path, monkeypatch) -> None:
         server.handle_artifact(
             {
                 "action": "query",
+                "query_kind": "select",
+                "scope": "single",
                 "_gateway_context": {"session_id": "sess_1"},
                 "artifact_id": "art_1",
                 "root_path": "$.items",
@@ -3419,6 +3631,8 @@ def test_artifact_select_count_only_with_where_filter(
         server.handle_artifact(
             {
                 "action": "query",
+                "query_kind": "select",
+                "scope": "single",
                 "_gateway_context": {"session_id": "sess_1"},
                 "artifact_id": "art_1",
                 "root_path": "$.items",
@@ -3472,6 +3686,8 @@ def test_artifact_select_distinct_deduplicates(
         server.handle_artifact(
             {
                 "action": "query",
+                "query_kind": "select",
+                "scope": "single",
                 "_gateway_context": {"session_id": "sess_1"},
                 "artifact_id": "art_1",
                 "root_path": "$.items",
@@ -3534,6 +3750,8 @@ def test_artifact_select_distinct_embeds_in_cursor(
         server.handle_artifact(
             {
                 "action": "query",
+                "query_kind": "select",
+                "scope": "single",
                 "_gateway_context": {"session_id": "sess_1"},
                 "artifact_id": "art_1",
                 "root_path": "$.items",
@@ -3580,6 +3798,8 @@ def test_artifact_get_rejects_where_param(
         server.handle_artifact(
             {
                 "action": "query",
+                "query_kind": "get",
+                "scope": "single",
                 "_gateway_context": {"session_id": "s"},
                 "artifact_id": "art_1",
                 "target": "envelope",
@@ -3588,7 +3808,7 @@ def test_artifact_get_rejects_where_param(
         )
     )
     assert response.get("code") == "INVALID_ARGUMENT"
-    assert "combine get and select" in response["message"].lower()
+    assert "only supported with query_kind=select" in response["message"]
 
 
 def test_jsonpath_rejects_union_syntax() -> None:

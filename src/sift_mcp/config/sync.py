@@ -33,6 +33,7 @@ def _suppress_os_error() -> Iterator[None]:
     except OSError:
         pass
 
+
 logger = logging.getLogger(__name__)
 
 

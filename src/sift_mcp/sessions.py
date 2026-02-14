@@ -76,6 +76,14 @@ WHERE workspace_id = %s
   AND deleted_at IS NULL;
 """
 
+_BATCH_TOUCH_ARTIFACTS_SQL = """
+UPDATE artifacts
+SET last_referenced_at = NOW()
+WHERE workspace_id = %s
+  AND artifact_id = ANY(%s::text[])
+  AND deleted_at IS NULL;
+"""
+
 
 # ---------------------------------------------------------------------------
 # Helper functions
@@ -225,6 +233,41 @@ def batch_upsert_artifact_refs(
     return True
 
 
+def batch_touch_artifacts(conn: Any, artifact_ids: list[str]) -> int:
+    """Touch many artifacts and return the number of rows updated.
+
+    Uses a single UPDATE for Postgres and a per-row fallback for SQLite.
+
+    Args:
+        conn: Database connection with cursor support.
+        artifact_ids: Artifact IDs to touch.
+
+    Returns:
+        Number of updated artifact rows.
+    """
+    if not artifact_ids:
+        return 0
+
+    from sift_mcp.db.backend import _SqliteConnectionProxy
+
+    if isinstance(conn, _SqliteConnectionProxy):
+        touched = 0
+        with conn.cursor() as cur:
+            for artifact_id in artifact_ids:
+                cur.execute(_TOUCH_ARTIFACT_SQL, (WORKSPACE_ID, artifact_id))
+                rowcount = getattr(cur, "rowcount", 0)
+                if isinstance(rowcount, int) and rowcount > 0:
+                    touched += int(rowcount)
+        return touched
+
+    with conn.cursor() as cur:
+        cur.execute(_BATCH_TOUCH_ARTIFACTS_SQL, (WORKSPACE_ID, artifact_ids))
+        rowcount = getattr(cur, "rowcount", 0)
+        if isinstance(rowcount, int) and rowcount > 0:
+            return int(rowcount)
+    return 0
+
+
 def touch_for_search(
     conn: Any, session_id: str, artifact_ids: list[str]
 ) -> TouchResult:
@@ -246,4 +289,27 @@ def touch_for_search(
         session_updated=session_ok,
         artifact_ref_updated=ref_ok,
         artifact_touched=False,
+    )
+
+
+def touch_for_retrieval_many(
+    conn: Any, session_id: str, artifact_ids: list[str]
+) -> TouchResult:
+    """Touch retrieval metadata for many artifacts in one operation.
+
+    Args:
+        conn: Database connection with cursor support.
+        session_id: Unique session identifier.
+        artifact_ids: Artifacts being retrieved.
+
+    Returns:
+        A TouchResult reflecting batched session/ref/artifact updates.
+    """
+    session_ok = upsert_session(conn, session_id)
+    ref_ok = batch_upsert_artifact_refs(conn, session_id, artifact_ids)
+    touched_rows = batch_touch_artifacts(conn, artifact_ids)
+    return TouchResult(
+        session_updated=session_ok,
+        artifact_ref_updated=ref_ok,
+        artifact_touched=touched_rows > 0,
     )

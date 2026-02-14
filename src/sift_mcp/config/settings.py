@@ -150,9 +150,7 @@ class PaginationConfig(BaseModel):
     # Param-map strategy
     next_params_response_paths: dict[str, str] | None = Field(
         None,
-        description=(
-            "Map of next-call argument name -> JSONPath in response"
-        ),
+        description=("Map of next-call argument name -> JSONPath in response"),
     )
 
     # Common
@@ -187,7 +185,9 @@ class PaginationConfig(BaseModel):
             raise ValueError(msg)
         for key, path in value.items():
             if not isinstance(key, str) or not key.strip():
-                msg = "next_params_response_paths keys must be non-empty strings"
+                msg = (
+                    "next_params_response_paths keys must be non-empty strings"
+                )
                 raise ValueError(msg)
             if not isinstance(path, str) or not path.strip():
                 msg = (
@@ -233,10 +233,7 @@ class PaginationConfig(BaseModel):
                 raise ValueError(msg)
         elif self.strategy == "param_map":
             if not self.next_params_response_paths:
-                msg = (
-                    "param_map strategy requires "
-                    "next_params_response_paths"
-                )
+                msg = "param_map strategy requires next_params_response_paths"
                 raise ValueError(msg)
         return self
 
@@ -322,6 +319,33 @@ class UpstreamConfig(BaseSettings):
     pagination: PaginationConfig | None = Field(
         None,
         description="Pagination detection and follow-up config",
+    )
+
+    # Auto-pagination (per-upstream overrides; None inherits gateway)
+    auto_paginate_max_pages: int | None = Field(
+        None,
+        ge=0,
+        description=(
+            "Max pages to auto-fetch (overrides gateway "
+            "default). 0 or 1 disables."
+        ),
+    )
+    auto_paginate_max_records: int | None = Field(
+        None,
+        ge=0,
+        description=(
+            "Approximate record budget for auto-pagination; "
+            "stop fetching more pages once reached "
+            "(overrides gateway default)."
+        ),
+    )
+    auto_paginate_timeout_seconds: float | None = Field(
+        None,
+        gt=0,
+        description=(
+            "Timeout in seconds for auto-pagination "
+            "loop (overrides gateway default)."
+        ),
     )
 
     # Secret and environment inheritance
@@ -533,6 +557,14 @@ class GatewayConfig(BaseSettings):
 
     # --------------- Search (Addendum B) ---------------
     artifact_search_max_limit: int = Field(200, ge=1)
+    related_query_max_artifacts: int = Field(
+        256,
+        ge=1,
+        description=(
+            "Maximum related artifacts allowed in a "
+            "lineage-scoped query."
+        ),
+    )
 
     # --------------- Passthrough (small result bypass) ---------------
     passthrough_max_bytes: int = Field(8192, ge=0)
@@ -549,6 +581,29 @@ class GatewayConfig(BaseSettings):
 
     # --------------- Select behavior (Addendum F.1) ---------------
     select_missing_as_null: bool = Field(False)
+
+    # --------------- Auto-pagination ---------------
+    auto_paginate_max_pages: int = Field(
+        10,
+        ge=0,
+        description=(
+            "Max pages to auto-fetch before returning a merged "
+            "artifact. 0 disables auto-pagination."
+        ),
+    )
+    auto_paginate_max_records: int = Field(
+        1000,
+        ge=0,
+        description=(
+            "Approximate record budget for auto-pagination; "
+            "stop fetching more pages once reached."
+        ),
+    )
+    auto_paginate_timeout_seconds: float = Field(
+        30.0,
+        gt=0,
+        description="Timeout in seconds for auto-pagination loop.",
+    )
 
     # --------------- Advisory lock (§9.1) ---------------
     advisory_lock_timeout_ms: int = Field(5000, ge=100)

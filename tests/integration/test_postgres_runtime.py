@@ -38,7 +38,7 @@ def _integration_config(tmp_path: Path) -> GatewayConfig:
         data_dir=tmp_path,
         postgres_dsn=dsn,
         mapping_mode="sync",
-        passthrough_max_bytes=0,
+        passthrough_max_bytes=8192,
     )
 
 
@@ -147,6 +147,7 @@ def test_mirrored_tool_flow_persists_artifact_with_real_postgres(
                 prefix="demo",
                 transport="stdio",
                 command="/usr/bin/printf",
+                passthrough_allowed=False,
             ),
             instance_id="upstream_int_2",
             tools=[

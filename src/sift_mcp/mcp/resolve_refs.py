@@ -183,9 +183,7 @@ def _fetch_and_extract(
         try:
             envelope = reconstruct_envelope(
                 compressed_bytes=bytes(canonical_bytes_raw),
-                encoding=str(
-                    row.get("envelope_canonical_encoding", "none")
-                ),
+                encoding=str(row.get("envelope_canonical_encoding", "none")),
                 expected_hash=str(row.get("payload_hash_full", "")),
             )
         except ValueError:
@@ -239,8 +237,7 @@ def _fetch_and_extract(
             return ResolveError(
                 code="INVALID_ARGUMENT",
                 message=(
-                    f"artifact ref {artifact_id}: invalid"
-                    f" JSONPath query: {exc}"
+                    f"artifact ref {artifact_id}: invalid JSONPath query: {exc}"
                 ),
             )
         if not matches:
