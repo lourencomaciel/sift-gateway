@@ -30,6 +30,7 @@ local/
 # Planning files (local only)
 findings.md
 progress.md
+task_plan.md
 quota_plan.md
 security_best_practices_report.md
 
