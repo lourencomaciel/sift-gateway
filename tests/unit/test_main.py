@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from sift_mcp import __version__
 from sift_mcp.config.settings import GatewayConfig
 from sift_mcp.lifecycle import CheckResult
 from sift_mcp.main import _parse_args, serve
@@ -337,6 +338,18 @@ def test_parse_args_transport_default_is_stdio(
     monkeypatch.setattr("sys.argv", ["sift-mcp"])
     args = _parse_args()
     assert args.transport == "stdio"
+
+
+def test_parse_args_version_prints_package_version(
+    monkeypatch,
+    capsys,
+) -> None:
+    monkeypatch.setattr("sys.argv", ["sift-mcp", "--version"])
+    with pytest.raises(SystemExit) as exc_info:
+        _parse_args()
+    captured = capsys.readouterr()
+    assert exc_info.value.code == 0
+    assert captured.out.strip() == f"sift-mcp {__version__}"
 
 
 def test_parse_args_transport_accepts_sse(
