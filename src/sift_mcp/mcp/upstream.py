@@ -32,6 +32,7 @@ from sift_mcp.config.settings import UpstreamConfig
 from sift_mcp.util.hashing import sha256_trunc
 
 _USER_IDS_FILENAME = "upstream_user_ids.json"
+SecretData = dict[str, Any]
 
 try:
     import fcntl as _fcntl
@@ -233,7 +234,7 @@ class UpstreamInstance:
     instance_id: str  # upstream_instance_id
     tools: list[UpstreamToolSchema]
     auth_fingerprint: str | None = None
-    secret_data: dict | None = None
+    secret_data: SecretData | None = None
     resolved_external_user_id: str | None = None
 
     @property
@@ -242,7 +243,7 @@ class UpstreamInstance:
         return self.config.prefix
 
 
-_UNSET: dict = {}  # Sentinel for "not provided" secret_data
+_UNSET = object()  # Sentinel for "not provided" secret_data
 
 _ENV_ALLOWLIST: frozenset[str] = frozenset(
     {
@@ -264,7 +265,7 @@ def _build_stdio_env(
     config: UpstreamConfig,
     data_dir: str | None = None,
     *,
-    secret: dict | None = _UNSET,
+    secret: SecretData | None | object = _UNSET,
 ) -> dict[str, str]:
     """Build isolated environment for a stdio upstream.
 
@@ -290,9 +291,15 @@ def _build_stdio_env(
 
     if secret is _UNSET:
         secret = _resolve_secret_data(config, data_dir)
-    if secret:
-        secret_env: dict[str, str] = secret.get("env") or {}
-        base.update(secret_env)
+    if isinstance(secret, dict):
+        secret_env_raw = secret.get("env")
+        if isinstance(secret_env_raw, dict):
+            base.update(
+                {
+                    str(key): str(value)
+                    for key, value in secret_env_raw.items()
+                }
+            )
 
     base.update(config.env)
     return base
@@ -301,7 +308,7 @@ def _build_stdio_env(
 def _resolve_secret_data(
     config: UpstreamConfig,
     data_dir: str | None = None,
-) -> dict | None:
+) -> SecretData | None:
     """Load secret file contents for an upstream, if configured.
 
     Args:
@@ -327,7 +334,7 @@ def _build_http_headers(
     config: UpstreamConfig,
     data_dir: str | None = None,
     *,
-    secret: dict | None = _UNSET,
+    secret: SecretData | None | object = _UNSET,
 ) -> dict[str, str]:
     """Build merged HTTP headers for an HTTP upstream.
 
@@ -346,9 +353,15 @@ def _build_http_headers(
     base: dict[str, str] = {}
     if secret is _UNSET:
         secret = _resolve_secret_data(config, data_dir)
-    if secret:
-        secret_headers: dict[str, str] = secret.get("headers") or {}
-        base.update(secret_headers)
+    if isinstance(secret, dict):
+        secret_headers_raw = secret.get("headers")
+        if isinstance(secret_headers_raw, dict):
+            base.update(
+                {
+                    str(key): str(value)
+                    for key, value in secret_headers_raw.items()
+                }
+            )
     base.update(config.headers)
     return base
 
@@ -396,7 +409,7 @@ def _client_transport(
     config: UpstreamConfig,
     data_dir: str | None = None,
     *,
-    secret: dict | None = _UNSET,
+    secret: SecretData | None | object = _UNSET,
     resolved_user_id: str | None = None,
 ) -> Any:
     """Build a fastmcp client transport for ``Client``.

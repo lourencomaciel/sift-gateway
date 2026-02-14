@@ -21,17 +21,7 @@ import json
 import os
 from pathlib import Path
 import shutil
-from typing import Any, Literal
-
-
-@contextlib.contextmanager
-def _suppress_os_error():
-    """Suppress OSError during cleanup (e.g. unlinking a tmp)."""
-    try:
-        yield
-    except OSError:
-        pass
-
+from typing import Any, Iterator, Literal
 
 from sift_mcp.config.mcp_servers import (
     extract_mcp_servers,
@@ -43,6 +33,15 @@ from sift_mcp.constants import (
     DEFAULT_DATA_DIR,
     STATE_SUBDIR,
 )
+
+
+@contextlib.contextmanager
+def _suppress_os_error() -> Iterator[None]:
+    """Suppress OSError during cleanup (e.g. unlinking a tmp)."""
+    try:
+        yield
+    except OSError:
+        pass
 
 
 def _gateway_server_entry(

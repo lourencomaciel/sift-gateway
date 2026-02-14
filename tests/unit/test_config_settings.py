@@ -317,3 +317,24 @@ def test_pagination_config_cursor_allows_missing_has_more_path() -> None:
         cursor_param_name="after",
     )
     assert config.has_more_response_path is None
+
+
+def test_pagination_config_param_map_requires_paths() -> None:
+    with pytest.raises(ValidationError):
+        PaginationConfig(
+            strategy="param_map",
+        )
+
+
+def test_pagination_config_param_map_accepts_map() -> None:
+    config = PaginationConfig(
+        strategy="param_map",
+        next_params_response_paths={
+            "cursor": "$.paging.cursors.after",
+            "checkpoint": "$.paging.checkpoint",
+        },
+    )
+    assert config.next_params_response_paths == {
+        "cursor": "$.paging.cursors.after",
+        "checkpoint": "$.paging.checkpoint",
+    }

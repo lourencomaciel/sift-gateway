@@ -128,7 +128,8 @@ def touch_artifact(conn: Any, artifact_id: str) -> bool:
     """
     with conn.cursor() as cur:
         cur.execute(_TOUCH_ARTIFACT_SQL, (WORKSPACE_ID, artifact_id))
-        return cur.rowcount > 0
+        rowcount = getattr(cur, "rowcount", 0)
+        return bool(rowcount) and int(rowcount) > 0
 
 
 # ---------------------------------------------------------------------------

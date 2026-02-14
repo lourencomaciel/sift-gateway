@@ -8,9 +8,14 @@ token checks on every incoming HTTP request.
 from __future__ import annotations
 
 import hmac
-from typing import Any, Callable
+from typing import Any, Awaitable, Callable
 
 _LOCAL_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
+
+Scope = dict[str, Any]
+Receive = Callable[[], Awaitable[dict[str, Any]]]
+Send = Callable[[dict[str, Any]], Awaitable[None]]
+AsgiApp = Callable[[Scope, Receive, Send], Awaitable[None]]
 
 
 def is_local_host(host: str) -> bool:
@@ -58,9 +63,9 @@ def validate_http_bind(
 
 
 def bearer_auth_middleware(
-    app: Any,
+    app: AsgiApp,
     auth_token: str,
-) -> Callable:
+) -> AsgiApp:
     """Wrap an ASGI app with bearer token authentication.
 
     Every incoming HTTP request must include an
@@ -79,9 +84,9 @@ def bearer_auth_middleware(
     expected = f"Bearer {auth_token}"
 
     async def _middleware(
-        scope: dict,
-        receive: Callable,
-        send: Callable,
+        scope: Scope,
+        receive: Receive,
+        send: Send,
     ) -> None:
         if scope["type"] in ("http", "websocket"):
             headers = dict(scope.get("headers", []))

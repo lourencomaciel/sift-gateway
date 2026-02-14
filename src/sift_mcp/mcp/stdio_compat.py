@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from functools import partial
 import os
 import sys
-from typing import Any
+from typing import Any, AsyncIterator
 
 import anyio
 from anyio.streams.memory import (
@@ -194,7 +194,12 @@ def _write_stdout_chunk(payload: bytes) -> None:
 
 
 @asynccontextmanager
-async def stdio_server_compat():
+async def stdio_server_compat() -> AsyncIterator[
+    tuple[
+        MemoryObjectReceiveStream[SessionMessage | Exception],
+        MemoryObjectSendStream[SessionMessage],
+    ]
+]:
     """Yield MCP stdio streams supporting framed and line JSON protocols."""
     read_stream: MemoryObjectReceiveStream[SessionMessage | Exception]
     read_stream_writer: MemoryObjectSendStream[SessionMessage | Exception]

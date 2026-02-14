@@ -1,4 +1,4 @@
-"""Resolve JSON-encoded strings embedded within JSON values.
+r"""Resolve JSON-encoded strings embedded within JSON values.
 
 Upstream MCP tools commonly return ``structuredContent`` with
 double-encoded JSON (e.g. ``{"result": "{\\\"data\\\": [...]}"``).

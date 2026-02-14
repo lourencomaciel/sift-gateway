@@ -1,35 +1,208 @@
 """Consolidated ``artifact`` tool handler.
 
-Routes ``action`` parameter to the appropriate existing handler.
-Replaces the 7 separate artifact tools with a single ``artifact``
-tool that accepts ``action`` as a required parameter.
+Public contract:
 
-Actions:
-    - ``describe``: Inspect artifact structure and mapping roots.
-    - ``get``: Retrieve raw envelope or mapped metadata.
-    - ``select``: Project fields from a mapped root array.
-    - ``search``: Find artifacts visible to the current session.
-    - ``next_page``: Fetch next upstream page for paginated results.
+- ``action="query"`` for artifact retrieval/search operations.
+- ``action="next_page"`` for upstream pagination continuation.
+
+The query action dispatches to legacy describe/get/select/search
+handlers based on query parameters and cursor context.
 """
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from sift_mcp.cursor.hmac import (
+    CursorExpiredError,
+    CursorTokenError,
+    verify_cursor_token,
+)
+from sift_mcp.cursor.payload import CursorStaleError
 from sift_mcp.envelope.responses import gateway_error
 
 if TYPE_CHECKING:
     from sift_mcp.mcp.server import GatewayServer
 
-_VALID_ACTIONS = frozenset(
-    {
-        "describe",
-        "get",
-        "select",
-        "search",
-        "next_page",
-    }
-)
+_PUBLIC_ACTIONS = frozenset({"query", "next_page"})
+_VALID_ACTIONS = _PUBLIC_ACTIONS
+_GET_SIGNAL_FIELDS = frozenset({"target", "jsonpath"})
+_SEARCH_SIGNAL_FIELDS = frozenset({"filters", "order_by"})
+
+
+def _has_search_signals(arguments: dict[str, Any]) -> bool:
+    """Return True when query args explicitly indicate a search query."""
+    return any(
+        key in arguments and arguments.get(key) is not None
+        for key in _SEARCH_SIGNAL_FIELDS
+    )
+
+
+def _has_get_signals(arguments: dict[str, Any]) -> bool:
+    """Return True when query args explicitly indicate an artifact.get."""
+    return any(
+        key in arguments and arguments.get(key) is not None
+        for key in _GET_SIGNAL_FIELDS
+    )
+
+
+def _has_select_signals(arguments: dict[str, Any]) -> bool:
+    """Return True when query args explicitly indicate artifact.select."""
+    if arguments.get("count_only") is True or arguments.get("distinct") is True:
+        return True
+    return any(
+        key in arguments and arguments.get(key) is not None
+        for key in ("root_path", "select_paths", "where")
+    )
+
+
+def _infer_cursor_query_mode(
+    ctx: GatewayServer,
+    token: str,
+) -> tuple[str, dict[str, Any]] | dict[str, Any]:
+    """Infer query mode from a signed cursor token.
+
+    Args:
+        ctx: Gateway server instance.
+        token: Cursor token string.
+
+    Returns:
+        ``(mode, payload)`` where mode is ``search|get|select`` when
+        inference succeeds; otherwise a gateway error dict.
+    """
+    try:
+        payload = verify_cursor_token(token, ctx._get_cursor_secrets())
+    except (CursorTokenError, CursorExpiredError) as exc:
+        return ctx._cursor_error(exc)
+
+    if payload.get("tool") != "artifact":
+        return ctx._cursor_error(CursorStaleError("cursor tool mismatch"))
+
+    if any(
+        key in payload
+        for key in (
+            "root_path",
+            "select_paths",
+            "select_paths_hash",
+            "where_hash",
+        )
+    ):
+        return "select", payload
+
+    if any(key in payload for key in ("target", "normalized_jsonpath")):
+        return "get", payload
+
+    cursor_artifact = payload.get("artifact_id")
+    if isinstance(cursor_artifact, str) and cursor_artifact.startswith(
+        "session:"
+    ):
+        return "search", payload
+
+    return gateway_error("INVALID_ARGUMENT", "invalid cursor")
+
+
+async def _dispatch_query_mode(
+    ctx: GatewayServer,
+    *,
+    mode: str,
+    arguments: dict[str, Any],
+) -> dict[str, Any]:
+    """Dispatch a resolved query mode to the legacy handler."""
+    if mode == "describe":
+        return await _handle_describe(ctx, arguments)
+    if mode == "get":
+        return await _handle_get(ctx, arguments)
+    if mode == "select":
+        return await _handle_select(ctx, arguments)
+    # mode == "search"
+    return await _handle_search(ctx, arguments)
+
+
+async def _handle_query(
+    ctx: GatewayServer,
+    arguments: dict[str, Any],
+) -> dict[str, Any]:
+    """Route ``action=query`` to describe/get/select/search handlers.
+
+    Args:
+        ctx: Gateway server instance.
+        arguments: Raw query arguments.
+
+    Returns:
+        Handler result dict, or a gateway error.
+    """
+    query_args = dict(arguments)
+    has_artifact_id = bool(query_args.get("artifact_id"))
+    has_cursor = isinstance(query_args.get("cursor"), str) and bool(
+        query_args.get("cursor")
+    )
+    has_search_signals = _has_search_signals(query_args)
+    has_get_signals = _has_get_signals(query_args)
+    has_select_signals = _has_select_signals(query_args)
+
+    if has_get_signals and has_select_signals:
+        return gateway_error(
+            "INVALID_ARGUMENT",
+            "query cannot combine get and select parameters",
+        )
+
+    mode_from_args: str | None
+    if has_artifact_id:
+        if has_search_signals:
+            return gateway_error(
+                "INVALID_ARGUMENT",
+                "filters/order_by are only valid for session search "
+                "queries (query without artifact_id)",
+            )
+        if has_select_signals:
+            mode_from_args = "select"
+        elif has_get_signals:
+            mode_from_args = "get"
+        elif has_cursor:
+            mode_from_args = None
+        else:
+            mode_from_args = "describe"
+    else:
+        if has_get_signals or has_select_signals:
+            return gateway_error(
+                "INVALID_ARGUMENT",
+                "artifact_id is required for get/select query parameters",
+            )
+        if has_cursor and not has_search_signals:
+            mode_from_args = None
+        else:
+            mode_from_args = "search"
+
+    cursor_payload: dict[str, Any] | None = None
+    mode: str
+    if mode_from_args is None:
+        cursor_token = query_args.get("cursor")
+        if isinstance(cursor_token, str) and cursor_token:
+            inferred = _infer_cursor_query_mode(ctx, cursor_token)
+            if isinstance(inferred, dict):
+                return inferred
+            mode, cursor_payload = inferred
+        else:
+            mode = "describe" if has_artifact_id else "search"
+    else:
+        mode = mode_from_args
+
+    if (
+        mode in {"get", "select"}
+        and not query_args.get("artifact_id")
+        and isinstance(cursor_payload, dict)
+    ):
+        bound_artifact = cursor_payload.get("artifact_id")
+        if isinstance(bound_artifact, str) and bound_artifact:
+            query_args["artifact_id"] = bound_artifact
+
+    if mode == "search" and query_args.get("artifact_id"):
+        return gateway_error(
+            "INVALID_ARGUMENT",
+            "search query does not accept artifact_id",
+        )
+
+    return await _dispatch_query_mode(ctx, mode=mode, arguments=query_args)
 
 
 async def handle_artifact(
@@ -51,19 +224,12 @@ async def handle_artifact(
     if not isinstance(action, str) or action not in _VALID_ACTIONS:
         return gateway_error(
             "INVALID_ARGUMENT",
-            f"action must be one of: {', '.join(sorted(_VALID_ACTIONS))}",
+            f"action must be one of: {', '.join(sorted(_PUBLIC_ACTIONS))}",
         )
 
-    if action == "describe":
-        return await _handle_describe(ctx, arguments)
-    if action == "get":
-        return await _handle_get(ctx, arguments)
-    if action == "select":
-        return await _handle_select(ctx, arguments)
-    if action == "search":
-        return await _handle_search(ctx, arguments)
-    # action == "next_page"
-    return await _handle_next_page(ctx, arguments)
+    if action == "next_page":
+        return await _handle_next_page(ctx, arguments)
+    return await _handle_query(ctx, arguments)
 
 
 async def _handle_describe(
@@ -82,7 +248,7 @@ async def _handle_describe(
     if not arguments.get("artifact_id"):
         return gateway_error(
             "INVALID_ARGUMENT",
-            "artifact_id is required for action=describe",
+            "artifact_id is required for query describe-mode",
         )
     from sift_mcp.mcp.handlers.artifact_describe import (
         handle_artifact_describe,
@@ -108,14 +274,14 @@ async def _handle_get(
     if not arguments.get("artifact_id"):
         return gateway_error(
             "INVALID_ARGUMENT",
-            "artifact_id is required for action=get",
+            "artifact_id is required for query get-mode",
         )
     if arguments.get("where") is not None:
         return gateway_error(
             "INVALID_ARGUMENT",
             "The 'where' parameter is only supported with "
-            "action='select'. Use "
-            "artifact(action='select', where=..., "
+            "query select-mode. Use "
+            "artifact(action='query', where=..., "
             "select_paths=[...]) for filtered queries.",
         )
     from sift_mcp.mcp.handlers.artifact_get import (
@@ -147,7 +313,7 @@ async def _handle_select(
     if not arguments.get("artifact_id"):
         return gateway_error(
             "INVALID_ARGUMENT",
-            "artifact_id is required for action=select",
+            "artifact_id is required for query select-mode",
         )
     # Defer root_path / select_paths validation to the handler
     # when a cursor is present — embedded values will be extracted.

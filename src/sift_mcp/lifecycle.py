@@ -19,6 +19,7 @@ from dataclasses import dataclass
 import logging
 from pathlib import Path
 import tempfile
+from typing import Any, cast
 
 from sift_mcp.config.settings import GatewayConfig
 
@@ -159,7 +160,8 @@ def _check_migrations(connection: object, details: list[str]) -> None:
 
         available_names = {p.name for p in list_migrations(migrations_dir)}
 
-        with connection.cursor() as cur:  # type: ignore[union-attr]
+        db_conn = cast(Any, connection)
+        with db_conn.cursor() as cur:
             cur.execute(
                 "SELECT EXISTS ("
                 "SELECT FROM information_schema.tables "
