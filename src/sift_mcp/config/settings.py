@@ -103,7 +103,7 @@ class PaginationConfig(BaseModel):
 
     Attributes:
         strategy: Pagination scheme: ``"cursor"``, ``"offset"``,
-            or ``"page_number"``.
+            ``"page_number"``, or ``"param_map"``.
         cursor_response_path: JSONPath to the cursor value in
             the upstream response (cursor strategy).
         cursor_param_name: Argument name to inject the cursor
@@ -114,13 +114,16 @@ class PaginationConfig(BaseModel):
             size from original args (offset strategy).
         page_param_name: Argument name for the page number
             (page_number strategy).
+        next_params_response_paths: Mapping of next-call argument
+            names to JSONPath expressions that read values from
+            the upstream response (param_map strategy).
         has_more_response_path: JSONPath that, when non-null
             and non-empty, signals more pages exist.
     """
 
     model_config = ConfigDict(extra="forbid")
 
-    strategy: Literal["cursor", "offset", "page_number"]
+    strategy: Literal["cursor", "offset", "page_number", "param_map"]
 
     # Cursor strategy
     cursor_response_path: str | None = Field(
@@ -143,10 +146,55 @@ class PaginationConfig(BaseModel):
         None, description="Arg name for page number"
     )
 
+    # Param-map strategy
+    next_params_response_paths: dict[str, str] | None = Field(
+        None,
+        description=(
+            "Map of next-call argument name -> JSONPath in response"
+        ),
+    )
+
     # Common
     has_more_response_path: str | None = Field(
         None, description="JSONPath for has-more signal"
     )
+
+    @field_validator("next_params_response_paths")
+    @classmethod
+    def _validate_next_params_response_paths(
+        cls,
+        value: dict[str, str] | None,
+    ) -> dict[str, str] | None:
+        """Validate ``next_params_response_paths`` map entries.
+
+        Args:
+            value: Optional map of argument names to JSONPath strings.
+
+        Returns:
+            The original map when valid, else ``None``.
+
+        Raises:
+            ValueError: If any key/path is empty or non-string.
+        """
+        if value is None:
+            return None
+        if not value:
+            msg = (
+                "param_map strategy requires non-empty "
+                "next_params_response_paths"
+            )
+            raise ValueError(msg)
+        for key, path in value.items():
+            if not isinstance(key, str) or not key.strip():
+                msg = "next_params_response_paths keys must be non-empty strings"
+                raise ValueError(msg)
+            if not isinstance(path, str) or not path.strip():
+                msg = (
+                    "next_params_response_paths values must be "
+                    "non-empty JSONPath strings"
+                )
+                raise ValueError(msg)
+        return value
 
     @model_validator(mode="after")
     def _check_strategy_fields(self) -> PaginationConfig:
@@ -181,6 +229,13 @@ class PaginationConfig(BaseModel):
                 raise ValueError(msg)
             if not self.has_more_response_path:
                 msg = "page_number strategy requires has_more_response_path"
+                raise ValueError(msg)
+        elif self.strategy == "param_map":
+            if not self.next_params_response_paths:
+                msg = (
+                    "param_map strategy requires "
+                    "next_params_response_paths"
+                )
                 raise ValueError(msg)
         return self
 

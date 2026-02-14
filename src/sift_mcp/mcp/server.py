@@ -100,22 +100,18 @@ _BUILTIN_TOOL_DESCRIPTIONS: dict[str, str] = {
     "gateway.status": "Gateway health and configuration snapshot.",
     "artifact": (
         "Interact with stored artifacts. "
-        "Actions: describe (inspect structure), "
-        "get (retrieve raw envelope or mapped metadata), "
-        "select (project/filter fields from array root), "
-        "search (find artifacts in session), "
-        "next_page (fetch next upstream page). "
-        "Workflow: call describe first to see roots and "
-        "fields, then select with explicit field names and "
+        "Actions: query (search, describe, get, or select "
+        "based on parameters) and next_page. "
+        "Workflow: start with query + artifact_id to inspect "
+        "roots, then query with root_path/select_paths and "
         "a where filter. Use count_only=true for counts, "
         "distinct=true for unique values. "
         "Continue partial results with "
-        "select + cursor (not next_page). "
+        "query + cursor (not next_page). "
         "next_page is only for fetching additional "
         "upstream pages. "
         "Filtering (where) and multi-field projection "
-        "(select_paths) are select-only — "
-        "do not combine them with get. "
+        "(select_paths) are query select-mode only. "
         f"{PAGINATION_COMPLETENESS_RULE}"
     ),
 }
@@ -140,52 +136,54 @@ _BUILTIN_TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
             "action": {
                 "type": "string",
                 "enum": [
-                    "describe",
-                    "get",
-                    "select",
-                    "search",
+                    "query",
                     "next_page",
                 ],
                 "description": (
-                    "describe: inspect structure and roots. "
-                    "get: retrieve raw envelope or mapped data. "
-                    "select: project fields from array root. "
-                    "search: find artifacts in this session. "
+                    "query: consolidated retrieval/search "
+                    "(describe/get/select/search inferred from args). "
                     "next_page: fetch next upstream page."
                 ),
             },
             "artifact_id": {
                 "type": "string",
                 "description": (
-                    "Target artifact. Required for all actions except search."
+                    "Target artifact. Required for query describe/get/select "
+                    "and next_page. Omit for query session search."
                 ),
             },
             "target": {
                 "type": "string",
                 "enum": ["envelope", "mapped"],
-                "description": ("[get] Retrieval target (default: envelope)."),
+                "description": (
+                    "[query get-mode] Retrieval target "
+                    "(default: envelope)."
+                ),
             },
             "jsonpath": {
                 "type": "string",
-                "description": ("[get] JSONPath filter on envelope."),
+                "description": (
+                    "[query get-mode] JSONPath filter on envelope."
+                ),
             },
             "root_path": {
                 "type": "string",
                 "description": (
-                    "[select] JSONPath to root array, from describe output."
+                    "[query select-mode] JSONPath to root array, "
+                    "from query describe-mode output."
                 ),
             },
             "select_paths": {
                 "type": "array",
                 "items": {"type": "string"},
                 "description": (
-                    "[select] Field names to project, "
+                    "[query select-mode] Field names to project, "
                     "e.g. ['name', 'spend']. No $ prefix."
                 ),
             },
             "where": {
                 "description": (
-                    "[select] WHERE-DSL filter. "
+                    "[query select-mode] WHERE-DSL filter. "
                     "Operators: =, !=, >, <, >=, <=, "
                     "IN, CONTAINS, EXISTS, AND, OR, NOT. "
                     "Casts: to_number(path), to_string(path). "
@@ -200,7 +198,8 @@ _BUILTIN_TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
             "filters": {
                 "type": "object",
                 "description": (
-                    "[search] source_tool, status, parent_artifact_id, etc."
+                    "[query session-search mode] source_tool, status, "
+                    "parent_artifact_id, etc."
                 ),
                 "additionalProperties": True,
             },
@@ -212,13 +211,14 @@ _BUILTIN_TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
                     "chain_seq_asc",
                 ],
                 "description": (
-                    "[search] Sort order. Default: created_seq_desc."
+                    "[query session-search mode] Sort order. "
+                    "Default: created_seq_desc."
                 ),
             },
             "count_only": {
                 "type": "boolean",
                 "description": (
-                    "[select] Return only the count of matching "
+                    "[query select-mode] Return only the count of matching "
                     "records, no items. Skips projection and "
                     "pagination."
                 ),
@@ -226,7 +226,7 @@ _BUILTIN_TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
             "distinct": {
                 "type": "boolean",
                 "description": (
-                    "[select] Deduplicate projected records. "
+                    "[query select-mode] Deduplicate projected records. "
                     "Returns only unique projections."
                 ),
             },
@@ -1676,42 +1676,63 @@ class GatewayServer:
     async def handle_artifact_search(
         self, arguments: dict[str, Any]
     ) -> dict[str, Any]:
-        """Delegate to ``handle_artifact`` with action=search."""
-        return await self.handle_artifact({**arguments, "action": "search"})
+        """Delegate directly to the legacy search handler."""
+        from sift_mcp.mcp.handlers.artifact_search import (
+            handle_artifact_search as _search,
+        )
+
+        return await _search(self, arguments)
 
     async def handle_artifact_get(
         self, arguments: dict[str, Any]
     ) -> dict[str, Any]:
-        """Delegate to ``handle_artifact`` with action=get."""
-        return await self.handle_artifact({**arguments, "action": "get"})
+        """Delegate directly to the legacy get handler."""
+        from sift_mcp.mcp.handlers.artifact_get import (
+            handle_artifact_get as _get,
+        )
+
+        return await _get(self, arguments)
 
     async def handle_artifact_select(
         self, arguments: dict[str, Any]
     ) -> dict[str, Any]:
-        """Delegate to ``handle_artifact`` with action=select."""
-        return await self.handle_artifact({**arguments, "action": "select"})
+        """Delegate directly to the legacy select handler."""
+        from sift_mcp.mcp.handlers.artifact_select import (
+            handle_artifact_select as _select,
+        )
+
+        return await _select(self, arguments)
 
     async def handle_artifact_describe(
         self, arguments: dict[str, Any]
     ) -> dict[str, Any]:
-        """Delegate to ``handle_artifact`` with action=describe."""
-        return await self.handle_artifact({**arguments, "action": "describe"})
+        """Delegate directly to the legacy describe handler."""
+        from sift_mcp.mcp.handlers.artifact_describe import (
+            handle_artifact_describe as _describe,
+        )
+
+        return await _describe(self, arguments)
 
     async def handle_artifact_next_page(
         self, arguments: dict[str, Any]
     ) -> dict[str, Any]:
-        """Delegate to ``handle_artifact`` with action=next_page."""
-        return await self.handle_artifact({**arguments, "action": "next_page"})
+        """Delegate directly to the next_page handler."""
+        from sift_mcp.mcp.handlers.artifact_next_page import (
+            handle_artifact_next_page as _next_page,
+        )
+
+        return await _next_page(self, arguments)
 
     async def handle_artifact_find(
         self, arguments: dict[str, Any]
     ) -> dict[str, Any]:
         """Legacy wrapper — delegates to the original find handler.
 
-        ``find`` is superseded by ``select`` with ``where``, but
+        ``find`` is superseded by query select-mode with ``where``, but
         the original handler accepts different required params
         (no ``root_path`` / ``select_paths``), so we call it
-        directly rather than routing through ``action=select``.
+        directly rather than routing through consolidated query
+        dispatch.
         """
         from sift_mcp.mcp.handlers.artifact_find import (
             handle_artifact_find as _find,

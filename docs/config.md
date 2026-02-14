@@ -222,12 +222,57 @@ Supported strategies:
 - `cursor`
 - `offset`
 - `page_number`
+- `param_map` (map arbitrary next-call args from response JSONPaths)
 
 Important validation behavior:
 
 - `offset` and `page_number` require `has_more_response_path`.
+- `param_map` requires `next_params_response_paths`.
 - missing completion signals are treated fail-closed (`PARTIAL`),
   never as `COMPLETE`.
+
+How this works in practice:
+
+- Pagination strategy is configured by the gateway operator, not
+  inferred from arbitrary response keys at runtime.
+- The model does not choose the strategy. The model only calls
+  `artifact(action="next_page", artifact_id=...)`, and Sift reuses
+  the stored next-page state generated from this config.
+- Use `param_map` for non-standard/custom APIs where next-page
+  arguments are not a simple single cursor, offset, or page number.
+
+Strategy selection quick guide:
+
+- `cursor`: one token from response -> one next-call arg
+- `offset`: `offset + limit` style
+- `page_number`: `page = page + 1` style
+- `param_map`: one or more custom next-call args from JSONPath(s)
+
+Example: custom pagination fields (`proxima_pagina` + `assinatura`):
+
+```json
+{
+  "mcpServers": {
+    "custom-api": {
+      "url": "https://api.example.com/mcp",
+      "_gateway": {
+        "pagination": {
+          "strategy": "param_map",
+          "next_params_response_paths": {
+            "proxima_pagina": "$.continuacao.proxima_pagina",
+            "assinatura": "$.continuacao.assinatura"
+          },
+          "has_more_response_path": "$.tem_mais"
+        }
+      }
+    }
+  }
+}
+```
+
+In this setup, Sift reads both values from the response, stores
+them in pagination state, and replays the next upstream call with
+those arguments when `artifact(action="next_page", ...)` is called.
 
 ### `_gateway.secret_ref`
 

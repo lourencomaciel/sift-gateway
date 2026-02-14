@@ -78,7 +78,8 @@ def validate_select_args(arguments: dict[str, Any]) -> dict[str, Any] | None:
                         "Wildcard '*' is not supported in "
                         "select_paths. Use explicit field names "
                         "(e.g. ['ad_name', 'spend']). Run "
-                        "artifact(action='describe') to see "
+                        "artifact(action='query', "
+                        "artifact_id='...') to see "
                         "available fields."
                     ),
                 }
