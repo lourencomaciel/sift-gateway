@@ -1,20 +1,19 @@
 # Configuration Reference
 
-> All configuration keys, their types, defaults, and environment variable mappings.
+All configuration keys, defaults, and environment variable mappings for Sift.
 
 ## Precedence
 
-Environment variables (`SIFT_MCP_*`) > `DATA_DIR/state/config.json` > compiled defaults.
-
----
+Environment variables (`SIFT_MCP_*`) override `DATA_DIR/state/config.json`,
+which overrides compiled defaults.
 
 ## Filesystem
 
 | Key | Type | Default | Env var | Description |
 |-----|------|---------|---------|-------------|
-| `data_dir` | Path | `.sift` | `SIFT_MCP_DATA_DIR` | Root data directory |
+| `data_dir` | Path | `.sift-mcp` | `SIFT_MCP_DATA_DIR` | Root data directory |
 
-**Derived paths** (not directly configurable):
+Derived paths (not directly configurable):
 
 | Path | Derivation |
 |------|-----------|
@@ -31,172 +30,214 @@ Environment variables (`SIFT_MCP_*`) > `DATA_DIR/state/config.json` > compiled d
 
 | Key | Type | Default | Env var | Description |
 |-----|------|---------|---------|-------------|
-| `db_backend` | enum | `sqlite` | `SIFT_MCP_DB_BACKEND` | Database backend: `sqlite` (default, zero-config) or `postgres` |
+| `db_backend` | enum | `sqlite` | `SIFT_MCP_DB_BACKEND` | `sqlite` or `postgres` |
 
-The gateway supports two database backends:
+Sift supports:
 
-- **SQLite** (default) — zero-dependency, stores data at `{state_dir}/gateway.db`. Suitable for local development and single-user deployments.
-- **PostgreSQL** — production-grade, requires a running Postgres instance. Set `db_backend=postgres` and configure the DSN below.
+- SQLite (default): zero-dependency local backend.
+- PostgreSQL: production/multi-process backend.
 
 ## SQLite
 
 | Key | Type | Default | Env var | Description |
 |-----|------|---------|---------|-------------|
-| `sqlite_busy_timeout_ms` | int | 5000 | `SIFT_MCP_SQLITE_BUSY_TIMEOUT_MS` | SQLite BUSY retry timeout (ms) |
+| `sqlite_busy_timeout_ms` | int | `5000` | `SIFT_MCP_SQLITE_BUSY_TIMEOUT_MS` | SQLite busy retry timeout (ms) |
 
-**Derived paths:**
+Derived path:
 
 | Path | Derivation |
 |------|-----------|
 | `sqlite_path` | `{state_dir}/gateway.db` |
 
-SQLite uses WAL mode for concurrent read access. Advisory locks are no-op (always acquired). `SKIP LOCKED` clauses are stripped automatically.
+Runtime behavior:
+
+- SQLite runs in WAL mode.
+- Advisory lock behavior is emulated with a process-local per-`request_key` lock.
+- SQL dialect adaptation strips `FOR UPDATE SKIP LOCKED` for SQLite.
 
 ## Postgres
 
 | Key | Type | Default | Env var | Description |
 |-----|------|---------|---------|-------------|
 | `postgres_dsn` | str | `postgresql://localhost:5432/sift` | `SIFT_MCP_POSTGRES_DSN` | Connection string |
-| `postgres_pool_min` | int | 2 | `SIFT_MCP_POSTGRES_POOL_MIN` | Min pool connections |
-| `postgres_pool_max` | int | 10 | `SIFT_MCP_POSTGRES_POOL_MAX` | Max pool connections |
-| `postgres_statement_timeout_ms` | int | 30000 | `SIFT_MCP_POSTGRES_STATEMENT_TIMEOUT_MS` | Statement timeout (ms) |
+| `postgres_pool_min` | int | `2` | `SIFT_MCP_POSTGRES_POOL_MIN` | Minimum pool size |
+| `postgres_pool_max` | int | `10` | `SIFT_MCP_POSTGRES_POOL_MAX` | Maximum pool size |
+| `postgres_statement_timeout_ms` | int | `30000` | `SIFT_MCP_POSTGRES_STATEMENT_TIMEOUT_MS` | Statement timeout (ms) |
 
 ## Envelope storage
 
 | Key | Type | Default | Env var | Description |
 |-----|------|---------|---------|-------------|
-| `envelope_jsonb_mode` | enum | `full` | `SIFT_MCP_ENVELOPE_JSONB_MODE` | JSONB strategy: `full`, `minimal_for_large`, `none` |
-| `envelope_jsonb_minimize_threshold_bytes` | int | 1000000 | `SIFT_MCP_ENVELOPE_JSONB_MINIMIZE_THRESHOLD_BYTES` | Byte threshold for minimal JSONB |
-| `envelope_canonical_encoding` | enum | `zstd` | `SIFT_MCP_ENVELOPE_CANONICAL_ENCODING` | Compression: `zstd`, `gzip`, `none` |
+| `envelope_jsonb_mode` | enum | `full` | `SIFT_MCP_ENVELOPE_JSONB_MODE` | `full`, `minimal_for_large`, `none` |
+| `envelope_jsonb_minimize_threshold_bytes` | int | `1000000` | `SIFT_MCP_ENVELOPE_JSONB_MINIMIZE_THRESHOLD_BYTES` | Threshold for minimal JSONB mode |
+| `envelope_canonical_encoding` | enum | `zstd` | `SIFT_MCP_ENVELOPE_CANONICAL_ENCODING` | `zstd`, `gzip`, `none` |
 
 ## Ingest caps
 
 | Key | Type | Default | Env var | Description |
 |-----|------|---------|---------|-------------|
-| `max_inbound_request_bytes` | int | 10000000 | `SIFT_MCP_MAX_INBOUND_REQUEST_BYTES` | Max request body (10 MB) |
-| `max_upstream_error_capture_bytes` | int | 100000 | `SIFT_MCP_MAX_UPSTREAM_ERROR_CAPTURE_BYTES` | Max error capture |
-| `max_json_part_parse_bytes` | int | 50000000 | `SIFT_MCP_MAX_JSON_PART_PARSE_BYTES` | Oversized JSON threshold (50 MB) |
+| `max_inbound_request_bytes` | int | `10000000` | `SIFT_MCP_MAX_INBOUND_REQUEST_BYTES` | Max inbound request size |
+| `max_upstream_error_capture_bytes` | int | `100000` | `SIFT_MCP_MAX_UPSTREAM_ERROR_CAPTURE_BYTES` | Max upstream error text captured |
+| `max_json_part_parse_bytes` | int | `50000000` | `SIFT_MCP_MAX_JSON_PART_PARSE_BYTES` | Max JSON part parse budget |
 
 ## Storage caps
 
 | Key | Type | Default | Env var | Description |
 |-----|------|---------|---------|-------------|
-| `max_binary_blob_bytes` | int | 500000000 | `SIFT_MCP_MAX_BINARY_BLOB_BYTES` | Max single binary blob (500 MB) |
-| `max_payload_total_bytes` | int | 1000000000 | `SIFT_MCP_MAX_PAYLOAD_TOTAL_BYTES` | Max total payload (1 GB) |
-| `max_total_storage_bytes` | int | 10000000000 | `SIFT_MCP_MAX_TOTAL_STORAGE_BYTES` | Max total storage (10 GB) |
+| `max_binary_blob_bytes` | int | `500000000` | `SIFT_MCP_MAX_BINARY_BLOB_BYTES` | Max single binary blob size |
+| `max_payload_total_bytes` | int | `1000000000` | `SIFT_MCP_MAX_PAYLOAD_TOTAL_BYTES` | Max payload size |
+| `max_total_storage_bytes` | int | `10000000000` | `SIFT_MCP_MAX_TOTAL_STORAGE_BYTES` | Max total storage quota |
+
+## Quota enforcement
+
+| Key | Type | Default | Env var | Description |
+|-----|------|---------|---------|-------------|
+| `quota_enforcement_enabled` | bool | `true` | `SIFT_MCP_QUOTA_ENFORCEMENT_ENABLED` | Enable storage quota enforcement |
+| `quota_prune_batch_size` | int | `100` | `SIFT_MCP_QUOTA_PRUNE_BATCH_SIZE` | Soft-delete batch size per prune pass |
+| `quota_max_prune_rounds` | int | `5` | `SIFT_MCP_QUOTA_MAX_PRUNE_ROUNDS` | Max prune passes before failing request |
+| `quota_hard_delete_grace_seconds` | int | `0` | `SIFT_MCP_QUOTA_HARD_DELETE_GRACE_SECONDS` | Grace period before hard delete |
 
 ## Full mapping
 
 | Key | Type | Default | Env var | Description |
 |-----|------|---------|---------|-------------|
-| `max_full_map_bytes` | int | 10000000 | `SIFT_MCP_MAX_FULL_MAP_BYTES` | Full mapping size limit (10 MB) |
-| `max_root_discovery_k` | int | 3 | `SIFT_MCP_MAX_ROOT_DISCOVERY_K` | Max roots to discover |
+| `max_full_map_bytes` | int | `10000000` | `SIFT_MCP_MAX_FULL_MAP_BYTES` | Max envelope bytes for full mapping |
+| `max_root_discovery_k` | int | `3` | `SIFT_MCP_MAX_ROOT_DISCOVERY_K` | Max discovered root arrays |
 
 ## Partial mapping budgets
 
 | Key | Type | Default | Env var | Description |
 |-----|------|---------|---------|-------------|
-| `max_bytes_read_partial_map` | int | 50000000 | `SIFT_MCP_MAX_BYTES_READ_PARTIAL_MAP` | Max bytes read (50 MB) |
-| `max_compute_steps_partial_map` | int | 5000000 | `SIFT_MCP_MAX_COMPUTE_STEPS_PARTIAL_MAP` | Max compute steps |
-| `max_depth_partial_map` | int | 64 | `SIFT_MCP_MAX_DEPTH_PARTIAL_MAP` | Max traversal depth |
-| `max_records_sampled_partial` | int | 100 | `SIFT_MCP_MAX_RECORDS_SAMPLED_PARTIAL` | Max sampled records |
-| `max_record_bytes_partial` | int | 100000 | `SIFT_MCP_MAX_RECORD_BYTES_PARTIAL` | Max bytes per record |
-| `max_leaf_paths_partial` | int | 500 | `SIFT_MCP_MAX_LEAF_PATHS_PARTIAL` | Max leaf paths |
-| `max_root_discovery_depth` | int | 5 | `SIFT_MCP_MAX_ROOT_DISCOVERY_DEPTH` | Max root discovery depth |
+| `max_bytes_read_partial_map` | int | `50000000` | `SIFT_MCP_MAX_BYTES_READ_PARTIAL_MAP` | Max bytes read during sampling |
+| `max_compute_steps_partial_map` | int | `5000000` | `SIFT_MCP_MAX_COMPUTE_STEPS_PARTIAL_MAP` | Max compute steps during sampling |
+| `max_depth_partial_map` | int | `64` | `SIFT_MCP_MAX_DEPTH_PARTIAL_MAP` | Max traversal depth |
+| `max_records_sampled_partial` | int | `100` | `SIFT_MCP_MAX_RECORDS_SAMPLED_PARTIAL` | Max sampled records per root |
+| `max_record_bytes_partial` | int | `100000` | `SIFT_MCP_MAX_RECORD_BYTES_PARTIAL` | Max bytes per sampled record |
+| `max_leaf_paths_partial` | int | `500` | `SIFT_MCP_MAX_LEAF_PATHS_PARTIAL` | Max discovered leaf paths |
+| `max_root_discovery_depth` | int | `5` | `SIFT_MCP_MAX_ROOT_DISCOVERY_DEPTH` | Max discovery depth for roots |
 
 ## Mapping mode
 
 | Key | Type | Default | Env var | Description |
 |-----|------|---------|---------|-------------|
-| `mapping_mode` | enum | `hybrid` | `SIFT_MCP_MAPPING_MODE` | Execution: `async`, `hybrid`, `sync` |
+| `mapping_mode` | enum | `hybrid` | `SIFT_MCP_MAPPING_MODE` | `async`, `hybrid`, `sync` |
 
 ## Retrieval budgets
 
 | Key | Type | Default | Env var | Description |
 |-----|------|---------|---------|-------------|
-| `max_items` | int | 1000 | `SIFT_MCP_MAX_ITEMS` | Max items per response |
-| `max_bytes_out` | int | 5000000 | `SIFT_MCP_MAX_BYTES_OUT` | Max response bytes (5 MB) |
-| `max_wildcards` | int | 10000 | `SIFT_MCP_MAX_WILDCARDS` | Max wildcard expansions |
-| `max_compute_steps` | int | 1000000 | `SIFT_MCP_MAX_COMPUTE_STEPS` | Max retrieval compute steps |
+| `max_items` | int | `1000` | `SIFT_MCP_MAX_ITEMS` | Max response items |
+| `max_bytes_out` | int | `5000000` | `SIFT_MCP_MAX_BYTES_OUT` | Max response bytes |
+| `max_wildcards` | int | `10000` | `SIFT_MCP_MAX_WILDCARDS` | Max wildcard expansions |
+| `max_compute_steps` | int | `1000000` | `SIFT_MCP_MAX_COMPUTE_STEPS` | Max retrieval compute steps |
 
 ## JSONPath
 
 | Key | Type | Default | Env var | Description |
 |-----|------|---------|---------|-------------|
-| `max_jsonpath_length` | int | 4096 | `SIFT_MCP_MAX_JSONPATH_LENGTH` | Max JSONPath string length |
-| `max_path_segments` | int | 64 | `SIFT_MCP_MAX_PATH_SEGMENTS` | Max path segments (depth) |
-| `max_wildcard_expansion_total` | int | 10000 | `SIFT_MCP_MAX_WILDCARD_EXPANSION_TOTAL` | Max total wildcard results |
+| `max_jsonpath_length` | int | `4096` | `SIFT_MCP_MAX_JSONPATH_LENGTH` | Max JSONPath string length |
+| `max_path_segments` | int | `64` | `SIFT_MCP_MAX_PATH_SEGMENTS` | Max JSONPath segments |
+| `max_wildcard_expansion_total` | int | `10000` | `SIFT_MCP_MAX_WILDCARD_EXPANSION_TOTAL` | Max wildcard expansion results |
 
-## Search
+## Search and lineage-query limits
 
 | Key | Type | Default | Env var | Description |
 |-----|------|---------|---------|-------------|
-| `artifact_search_max_limit` | int | 200 | `SIFT_MCP_ARTIFACT_SEARCH_MAX_LIMIT` | Max search limit parameter |
-| `related_query_max_artifacts` | int | 256 | `SIFT_MCP_RELATED_QUERY_MAX_ARTIFACTS` | Max artifacts in one `scope=all_related` query before `RESOURCE_EXHAUSTED` |
+| `artifact_search_max_limit` | int | `200` | `SIFT_MCP_ARTIFACT_SEARCH_MAX_LIMIT` | Max search `limit` |
+| `related_query_max_artifacts` | int | `256` | `SIFT_MCP_RELATED_QUERY_MAX_ARTIFACTS` | Max artifacts in `scope=all_related` query |
 
-## Lineage query behavior
+Lineage query rules for `artifact(action="query")`:
 
-`artifact(action="query", ...)` uses explicit `query_kind` (`describe|get|select|search`).
-
+- `query_kind` is required and must be one of `describe|get|select|search`.
 - `query_kind=describe|get|select` requires `artifact_id`.
-- `scope` applies only to non-search kinds and defaults to `all_related`.
-- `scope=all_related` queries the full visible lineage component.
+- `scope` applies only to `describe|get|select` and defaults to `all_related`.
 - `scope=single` restricts execution to the anchor artifact.
-- `query_kind=search` does not accept `artifact_id` or `scope`.
+- `query_kind=search` rejects `artifact_id` and `scope`.
 
-For `query_kind=select`, lineage merge is strict by root signature. If incompatible artifacts share the same requested `root_path`, query fails fast with `INVALID_ARGUMENT` and details code `INCOMPATIBLE_LINEAGE_SCHEMA`.
+For `query_kind=select`, lineage merge is strict by root signature. If related
+artifacts expose incompatible schemas at the requested `root_path`, query fails
+with `INVALID_ARGUMENT` (`details.code = INCOMPATIBLE_LINEAGE_SCHEMA`).
 
 ## Passthrough mode
 
 | Key | Type | Default | Env var | Description |
 |-----|------|---------|---------|-------------|
-| `passthrough_max_bytes` | int | 8192 | `SIFT_MCP_PASSTHROUGH_MAX_BYTES` | Max payload bytes for passthrough (8 KB); `0` = disabled |
+| `passthrough_max_bytes` | int | `8192` | `SIFT_MCP_PASSTHROUGH_MAX_BYTES` | Payload size threshold for raw passthrough (`0` disables) |
 
-Results below this threshold are returned as raw upstream responses (gateway is transparent). Results at or above this threshold return a handle with inline describe data and a usage hint. Binary responses never passthrough regardless of size. Passthrough results are persisted asynchronously for audit/durability. See also `passthrough_allowed` per-upstream.
+Passthrough returns the raw upstream response for small non-binary payloads.
+Those responses are still persisted asynchronously.
 
 ## Cursor
 
 | Key | Type | Default | Env var | Description |
 |-----|------|---------|---------|-------------|
-| `cursor_ttl_minutes` | int | 60 | `SIFT_MCP_CURSOR_TTL_MINUTES` | Cursor TTL in minutes |
-| `where_canonicalization_mode` | enum | `raw_string` | `SIFT_MCP_WHERE_CANONICALIZATION_MODE` | Where clause mode: `raw_string`, `canonical_ast` |
+| `cursor_ttl_minutes` | int | `60` | `SIFT_MCP_CURSOR_TTL_MINUTES` | Cursor TTL |
+| `cursor_secret_max_active_keys` | int | `5` | `SIFT_MCP_CURSOR_SECRET_MAX_ACTIVE_KEYS` | Max active cursor signing keys |
+| `where_canonicalization_mode` | enum | `raw_string` | `SIFT_MCP_WHERE_CANONICALIZATION_MODE` | `raw_string` or `canonical_ast` |
+
+## Auto-pagination
+
+| Key | Type | Default | Env var | Description |
+|-----|------|---------|---------|-------------|
+| `auto_paginate_max_pages` | int | `10` | `SIFT_MCP_AUTO_PAGINATE_MAX_PAGES` | Max pages to merge (`0` disables) |
+| `auto_paginate_max_records` | int | `1000` | `SIFT_MCP_AUTO_PAGINATE_MAX_RECORDS` | Approximate record budget before stopping |
+| `auto_paginate_timeout_seconds` | float | `30.0` | `SIFT_MCP_AUTO_PAGINATE_TIMEOUT_SECONDS` | Loop timeout |
+
+Auto-pagination applies to mirrored tool calls with upstream pagination state.
+When enabled, Sift fetches additional upstream pages and merges them into one
+artifact before returning.
 
 ## Miscellaneous
 
 | Key | Type | Default | Env var | Description |
 |-----|------|---------|---------|-------------|
-| `binary_probe_bytes` | int | 65536 | `SIFT_MCP_BINARY_PROBE_BYTES` | Bytes to probe for binary detection (64 KB) |
-| `select_missing_as_null` | bool | false | `SIFT_MCP_SELECT_MISSING_AS_NULL` | Treat missing fields as null |
-| `advisory_lock_timeout_ms` | int | 5000 | `SIFT_MCP_ADVISORY_LOCK_TIMEOUT_MS` | Advisory lock timeout (ms) |
+| `binary_probe_bytes` | int | `65536` | `SIFT_MCP_BINARY_PROBE_BYTES` | Bytes used for binary detection |
+| `select_missing_as_null` | bool | `false` | `SIFT_MCP_SELECT_MISSING_AS_NULL` | Missing select fields become `null` |
+| `advisory_lock_timeout_ms` | int | `5000` | `SIFT_MCP_ADVISORY_LOCK_TIMEOUT_MS` | Advisory lock wait timeout |
 
 ## Upstream configuration
 
-Upstreams are configured via the `mcpServers` dict format (see
-below). Env var pattern:
-`SIFT_MCP_UPSTREAMS__<INDEX>__<FIELD>`.
+In config files, upstreams must be declared via `mcpServers`
+(or VS Code `mcp.servers`).
+Environment variables may override the resolved `upstreams` structure.
+
+Nested env-var pattern:
+
+- `SIFT_MCP_UPSTREAMS__<INDEX>__<FIELD>`
+
+Examples:
+
+- `SIFT_MCP_UPSTREAMS__0__PREFIX=github`
+- `SIFT_MCP_UPSTREAMS__0__ARGS=["-y","@modelcontextprotocol/server-github"]`
+
+Upstream fields:
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `prefix` | str | (required) | Tool namespace prefix |
-| `transport` | str | (required) | `stdio` or `http` |
-| `command` | str | null | Command for stdio transport |
-| `args` | list[str] | `[]` | CLI args for stdio |
-| `env` | dict | `{}` | Env vars for stdio |
-| `url` | str | null | URL for http transport |
-| `headers` | dict | `{}` | HTTP headers |
-| `semantic_salt_headers` | list[str] | `[]` | Non-secret headers for upstream identity |
-| `semantic_salt_env_keys` | list[str] | `[]` | Env keys affecting upstream identity |
-| `strict_schema_reuse` | bool | true | Require schema hash match for reuse |
-| `passthrough_allowed` | bool | true | Allow passthrough mode for this upstream |
-| `dedupe_exclusions` | list[str] | `[]` | JSONPath exclusions for dedupe hash |
-| `pagination` | object | null | Upstream pagination detection contract (see below) |
-| `secret_ref` | str | null | Name of an external secret file (see below) |
-| `inherit_parent_env` | bool | false | Pass full parent env to this upstream |
+| `prefix` | str | required | Tool namespace prefix |
+| `transport` | enum | required | `stdio` or `http` |
+| `command` | str | null | stdio command |
+| `args` | list[str] | `[]` | stdio args |
+| `env` | dict[str,str] | `{}` | stdio env |
+| `url` | str | null | http URL |
+| `headers` | dict[str,str] | `{}` | http headers |
+| `semantic_salt_headers` | list[str] | `[]` | Non-secret header keys used in identity |
+| `semantic_salt_env_keys` | list[str] | `[]` | Non-secret env keys used in identity |
+| `strict_schema_reuse` | bool | `true` | Require schema hash match for reuse |
+| `passthrough_allowed` | bool | `true` | Allow passthrough for this upstream |
+| `dedupe_exclusions` | list[str] | `[]` | JSONPath exclusions in dedupe hash |
+| `pagination` | object | null | Upstream pagination config |
+| `auto_paginate_max_pages` | int | null | Per-upstream override for gateway auto-pagination page cap |
+| `auto_paginate_max_records` | int | null | Per-upstream override for gateway auto-pagination record cap |
+| `auto_paginate_timeout_seconds` | float | null | Per-upstream override for gateway auto-pagination timeout |
+| `secret_ref` | str | null | Reference to upstream secret file |
+| `inherit_parent_env` | bool | `false` | Inherit full parent env for stdio |
+| `external_user_id` | str | null | Stable user identity for upstream auth persistence (`auto` generates UUID) |
 
-### mcpServers format
+### `mcpServers` format
 
-The gateway accepts the standard `mcpServers` dict format (Claude
-Desktop, Cursor, Claude Code):
+Sift accepts the standard `mcpServers` format used by Claude Desktop,
+Cursor, Claude Code, and VS Code (`mcp.servers`).
 
 ```json
 {
@@ -207,6 +248,10 @@ Desktop, Cursor, Claude Code):
       "_gateway": {
         "secret_ref": "github",
         "inherit_parent_env": false,
+        "external_user_id": "auto",
+        "auto_paginate_max_pages": 5,
+        "auto_paginate_max_records": 500,
+        "auto_paginate_timeout_seconds": 15.0,
         "pagination": {
           "strategy": "cursor",
           "cursor_response_path": "$.paging.cursors.after",
@@ -219,12 +264,12 @@ Desktop, Cursor, Claude Code):
 }
 ```
 
-Transport is inferred: `command` present -> stdio, `url` present
--> http. Gateway-specific extensions go in a `_gateway` namespace
-within each server entry.
+Transport inference:
 
-The legacy `upstreams` array format is no longer supported. Run
-`sift-mcp init --from <config>` to migrate.
+- `command` present -> `stdio`
+- `url` present -> `http`
+
+Legacy `upstreams` array format is not supported.
 
 ### `_gateway.pagination`
 
@@ -235,158 +280,78 @@ Supported strategies:
 - `cursor`
 - `offset`
 - `page_number`
-- `param_map` (map arbitrary next-call args from response JSONPaths)
+- `param_map`
 
-Important validation behavior:
+Validation behavior:
 
-- `offset` and `page_number` require `has_more_response_path`.
-- `param_map` requires `next_params_response_paths`.
-- missing completion signals are treated fail-closed (`PARTIAL`),
-  never as `COMPLETE`.
+- `cursor` requires `cursor_response_path` and `cursor_param_name`.
+- `offset` requires `offset_param_name`, `page_size_param_name`, and
+  `has_more_response_path`.
+- `page_number` requires `page_param_name` and `has_more_response_path`.
+- `param_map` requires non-empty `next_params_response_paths`.
 
-How this works in practice:
+Pagination layers are explicit:
 
-- Pagination strategy is configured by the gateway operator, not
-  inferred from arbitrary response keys at runtime.
-- The model does not choose the strategy. The model only calls
-  `artifact(action="next_page", artifact_id=...)`, and Sift reuses
-  the stored next-page state generated from this config.
-- Use `param_map` for non-standard/custom APIs where next-page
-  arguments are not a simple single cursor, offset, or page number.
-
-Query pagination and upstream pagination are separate:
-
-- Use `artifact(action="query", query_kind=..., cursor=...)` to continue retrieval-layer pagination over already stored artifacts.
-- Use `artifact(action="next_page", artifact_id=...)` only to fetch another upstream page (which creates a new child artifact in lineage).
-
-Strategy selection quick guide:
-
-- `cursor`: one token from response -> one next-call arg
-- `offset`: `offset + limit` style
-- `page_number`: `page = page + 1` style
-- `param_map`: one or more custom next-call args from JSONPath(s)
-
-Example: custom pagination fields (`proxima_pagina` + `assinatura`):
-
-```json
-{
-  "mcpServers": {
-    "custom-api": {
-      "url": "https://api.example.com/mcp",
-      "_gateway": {
-        "pagination": {
-          "strategy": "param_map",
-          "next_params_response_paths": {
-            "proxima_pagina": "$.continuacao.proxima_pagina",
-            "assinatura": "$.continuacao.assinatura"
-          },
-          "has_more_response_path": "$.tem_mais"
-        }
-      }
-    }
-  }
-}
-```
-
-In this setup, Sift reads both values from the response, stores
-them in pagination state, and replays the next upstream call with
-those arguments when `artifact(action="next_page", ...)` is called.
+- Retrieval-layer continuation: `artifact(action="query", query_kind=..., cursor=...)`
+- Upstream-page continuation: `artifact(action="next_page", artifact_id=...)`
 
 ### `_gateway.secret_ref`
 
-Points to a per-upstream secret file at
-`{data_dir}/state/upstream_secrets/{ref}.json`. The file is
-created automatically by `sift-mcp init` and has 0600
-permissions. Schema:
-
-```json
-{
-  "version": 1,
-  "transport": "stdio",
-  "env": { "GITHUB_TOKEN": "ghp_..." },
-  "headers": null,
-  "updated_at": "2025-01-15T12:00:00+00:00"
-}
-```
-
-- `env` values are merged into the subprocess environment for
-  stdio upstreams.
-- `headers` values are merged into HTTP request headers for
-  http upstreams.
-- A config entry **cannot** specify both inline `env`/`headers`
-  and `secret_ref`. Use one or the other.
+References `{data_dir}/state/upstream_secrets/{ref}.json` (created by
+`sift-mcp init`, mode 0600). Inline `env`/`headers` and `secret_ref` cannot
+be used together for the same upstream.
 
 ### `_gateway.inherit_parent_env`
 
-Controls whether a stdio upstream receives the gateway process's
-full environment or only a safe allowlist:
+Controls stdio env inheritance:
 
-| Value | Behavior |
-|-------|----------|
-| `false` (default) | Subprocess gets only: `PATH`, `HOME`, `LANG`, `LC_ALL`, `TMPDIR`, `TMP`, `TEMP`, `USER`, `LOGNAME`, `SHELL` |
-| `true` | Subprocess inherits the entire parent environment |
+- `false` (default): allowlisted env only
+- `true`: full parent env
 
-In both cases, values from the secret file (via `secret_ref`)
-are merged next, then explicit `env` overrides from the config
-are applied last. The merge order is:
+Merge order:
 
 1. Base env (allowlist or full parent)
-2. Secret file `env` (if `secret_ref` is set)
-3. Inline config `env`
+2. Secret file `env` (if `secret_ref` set)
+3. Inline `env`
+
+### `_gateway.external_user_id`
+
+Persistent identity value used for upstream auth persistence:
+
+- `null`/unset: disabled
+- `"auto"`: generate and persist UUID
+- any other string: use value as-is
+
+For stdio upstreams, Sift appends `--external-user-id <value>` at launch time
+unless args already provide it.
 
 ## Sync metadata (`_gateway_sync`)
 
-After `sift-mcp init --from <file>`, the gateway config
-(`state/config.json`) contains a `_gateway_sync` block:
-
-```json
-{
-  "_gateway_sync": {
-    "enabled": true,
-    "source_path": "/path/to/claude_desktop_config.json",
-    "gateway_name": "artifact-gateway"
-  }
-}
-```
-
-On every non-`--check` startup, Sift reads this metadata and
-checks the source file for newly added MCP server entries. New
-entries are imported into the gateway config, their secrets are
-externalized, and the source file is rewritten to contain only the
-gateway entry. This makes adding new MCPs a two-step process:
-
-1. Edit the source config and add the new server entry.
-2. Restart Sift.
-
-The sync is idempotent. If the source file is missing or
-unreadable, sync is skipped with a warning.
+After `sift-mcp init --from <file>`, Sift stores sync metadata in
+`state/config.json`. On startup (except `--check`), it imports newly added
+upstreams from the source config, externalizes secrets, then rewrites source
+config back to gateway-only.
 
 ## Server runtime flags
 
-These CLI flags control how the gateway process runs:
-
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--transport` | `stdio` | Transport mode: `stdio`, `sse`, or `streamable-http` |
-| `--host` | `127.0.0.1` | Bind address for HTTP transports |
-| `--port` | `8080` | Bind port for HTTP transports |
-| `--path` | `/mcp` | URL path for HTTP transports |
-| `--auth-token` | (none) | Bearer token for non-local HTTP access |
-| `--data-dir` | `.sift-mcp` | Override the data directory |
-| `--check` | (flag) | Validate config/DB/FS/upstreams and exit |
+| `--transport` | `stdio` | `stdio`, `sse`, `streamable-http` |
+| `--host` | `127.0.0.1` | HTTP bind address |
+| `--port` | `8080` | HTTP bind port |
+| `--path` | `/mcp` | HTTP route path |
+| `--auth-token` | none | Bearer token for non-local HTTP binds |
+| `--data-dir` | `.sift-mcp` | Data directory override |
+| `--check` | flag | Validate config/DB/FS/upstreams and exit |
 
-The `--auth-token` flag also reads from the
-`SIFT_MCP_AUTH_TOKEN` environment variable.
+`--auth-token` also reads `SIFT_MCP_AUTH_TOKEN`.
 
-### URL mode security
+## URL mode security
 
-| Bind address | Auth required? |
-|--------------|----------------|
+| Bind address | Auth required |
+|--------------|---------------|
 | `127.0.0.1`, `localhost`, `::1` | No |
-| Any other (e.g. `0.0.0.0`) | Yes -- `--auth-token` or `SIFT_MCP_AUTH_TOKEN` must be set |
-
-Binding to a non-local address without a token exits immediately
-with a security error.
+| Any other (for example `0.0.0.0`) | Yes (`--auth-token` or `SIFT_MCP_AUTH_TOKEN`) |
 
 ## Constants
 

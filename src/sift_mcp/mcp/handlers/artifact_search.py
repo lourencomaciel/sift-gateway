@@ -1,4 +1,4 @@
-"""artifact.search handler."""
+"""Legacy search handler for ``artifact(action="query", query_kind="search")``."""
 
 from __future__ import annotations
 
@@ -38,7 +38,7 @@ async def handle_artifact_search(
     ctx: GatewayServer,
     arguments: dict[str, Any],
 ) -> dict[str, Any]:
-    """Handle the ``artifact.search`` tool call.
+    """Handle search-mode artifact queries.
 
     Args:
         ctx: Gateway server instance providing DB and cursor helpers.
