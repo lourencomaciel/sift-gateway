@@ -17,12 +17,13 @@ from enum import Enum
 import json
 import os
 from pathlib import Path
-from typing import Literal, Mapping
+from typing import Literal, Mapping, cast
 
 from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    ValidationInfo,
     field_validator,
     model_validator,
 )
@@ -381,7 +382,9 @@ class UpstreamConfig(BaseSettings):
 
     @field_validator("command")
     @classmethod
-    def _validate_stdio_command(cls, value: str | None, info) -> str | None:
+    def _validate_stdio_command(
+        cls, value: str | None, info: ValidationInfo
+    ) -> str | None:
         """Require command for stdio transport.
 
         Args:
@@ -403,7 +406,9 @@ class UpstreamConfig(BaseSettings):
 
     @field_validator("url")
     @classmethod
-    def _validate_http_url(cls, value: str | None, info) -> str | None:
+    def _validate_http_url(
+        cls, value: str | None, info: ValidationInfo
+    ) -> str | None:
         """Require url for http transport.
 
         Args:
@@ -752,7 +757,7 @@ def _normalize_env_parts(parts: tuple[str, ...]) -> tuple[str, ...] | None:
     return tuple(normalized)
 
 
-class _SparseList(list):
+class _SparseList(list[object | None]):
     """List subclass for sparse index-based env override merging.
 
     Used internally during config loading to distinguish indexed
@@ -783,25 +788,33 @@ def _set_nested_env_value(
     if is_index:
         idx = int(head)
         if isinstance(container, _SparseList):
-            out: list[object | None] = _SparseList(container)
+            out_list: list[object | None] = _SparseList(container)
         elif isinstance(container, list):
-            out = list(container)
+            out_list = list(container)
         else:
-            out = _SparseList()
-        while len(out) <= idx:
-            out.append(None)
+            out_list = _SparseList()
+        while len(out_list) <= idx:
+            out_list.append(None)
         if tail:
-            out[idx] = _set_nested_env_value(out[idx], tuple(tail), value)
+            out_list[idx] = _set_nested_env_value(
+                out_list[idx], tuple(tail), value
+            )
         else:
-            out[idx] = value
-        return out
+            out_list[idx] = value
+        return out_list
 
-    out = {} if not isinstance(container, dict) else dict(container)
-    if tail:
-        out[head] = _set_nested_env_value(out.get(head), tuple(tail), value)
+    out_dict: dict[str, object]
+    if isinstance(container, dict):
+        out_dict = cast(dict[str, object], dict(container))
     else:
-        out[head] = value
-    return out
+        out_dict = {}
+    if tail:
+        out_dict[head] = _set_nested_env_value(
+            out_dict.get(head), tuple(tail), value
+        )
+    else:
+        out_dict[head] = value
+    return out_dict
 
 
 def _deep_merge(base: object, override: object) -> object:
@@ -819,27 +832,27 @@ def _deep_merge(base: object, override: object) -> object:
         Merged result.
     """
     if isinstance(base, dict) and isinstance(override, dict):
-        merged = dict(base)
+        merged_dict = dict(base)
         for key, value in override.items():
-            if key in merged:
-                merged[key] = _deep_merge(merged[key], value)
+            if key in merged_dict:
+                merged_dict[key] = _deep_merge(merged_dict[key], value)
             else:
-                merged[key] = _deep_merge(None, value)
-        return merged
+                merged_dict[key] = _deep_merge(None, value)
+        return merged_dict
 
     if isinstance(base, list) and isinstance(override, list):
         if not isinstance(override, _SparseList):
             return list(override)
 
-        merged = list(base)
+        merged_list = list(base)
         for index, value in enumerate(override):
             if value is None:
                 continue
-            if index >= len(merged):
-                while len(merged) <= index:
-                    merged.append(None)
-            merged[index] = _deep_merge(merged[index], value)
-        return merged
+            if index >= len(merged_list):
+                while len(merged_list) <= index:
+                    merged_list.append(None)
+            merged_list[index] = _deep_merge(merged_list[index], value)
+        return merged_list
 
     if isinstance(override, _SparseList):
         return list(override)
@@ -1039,7 +1052,7 @@ def load_gateway_config(
     # Convert mcpServers format to legacy upstreams if needed
     merged = _resolve_mcp_servers_format(merged, env_overrides)
 
-    config = GatewayConfig(**merged)
+    config = GatewayConfig.model_validate(merged)
 
     prefixes = [upstream.prefix for upstream in config.upstreams]
     if len(prefixes) != len(set(prefixes)):

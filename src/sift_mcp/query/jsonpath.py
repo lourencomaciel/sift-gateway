@@ -273,7 +273,10 @@ def evaluate_jsonpath(
                 if isinstance(node, dict) and field in node:
                     next_nodes.append(node[field])
         elif seg.kind == "index":
-            idx = int(seg.value)
+            if not isinstance(seg.value, int):
+                msg = "invalid index segment in parsed JSONPath"
+                raise JsonPathError(msg)
+            idx = seg.value
             for node in nodes:
                 if isinstance(node, list) and 0 <= idx < len(node):
                     next_nodes.append(node[idx])

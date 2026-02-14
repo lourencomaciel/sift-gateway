@@ -93,8 +93,8 @@ try:
     _PG_OPERATIONAL_ERROR: type[BaseException] = psycopg.OperationalError
     _PG_INTERFACE_ERROR: type[BaseException] = psycopg.InterfaceError
 except ImportError:
-    _PG_OPERATIONAL_ERROR = _NeverRaised  # type: ignore[assignment,misc]
-    _PG_INTERFACE_ERROR = _NeverRaised  # type: ignore[assignment,misc]
+    _PG_OPERATIONAL_ERROR = _NeverRaised
+    _PG_INTERFACE_ERROR = _NeverRaised
 
 
 def _extract_session_id(context: dict[str, Any] | None) -> str | None:

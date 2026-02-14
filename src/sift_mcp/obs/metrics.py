@@ -20,14 +20,14 @@ from prometheus_client import Counter as _PromCounter
 # Type alias for counter reader functions
 # ---------------------------------------------------------------------------
 
-_CounterFn = Callable[[_PromCounter], int]  # type: ignore[type-arg]
+_CounterFn = Callable[[_PromCounter], int]
 
 # ---------------------------------------------------------------------------
 # Helpers for reading / resetting prometheus counters
 # ---------------------------------------------------------------------------
 
 
-def counter_value(counter: _PromCounter) -> int:  # type: ignore[type-arg]
+def counter_value(counter: _PromCounter) -> int:
     """Read the current value of a label-less Prometheus counter.
 
     Args:
@@ -36,10 +36,10 @@ def counter_value(counter: _PromCounter) -> int:  # type: ignore[type-arg]
     Returns:
         Current integer value of the counter.
     """
-    return int(counter._value.get())  # type: ignore[attr-defined]
+    return int(counter._value.get())
 
 
-def counter_reset(counter: _PromCounter) -> int:  # type: ignore[type-arg]
+def counter_reset(counter: _PromCounter) -> int:
     """Reset a Prometheus counter to zero for testing.
 
     Only intended for use in tests; production counters are
@@ -51,8 +51,8 @@ def counter_reset(counter: _PromCounter) -> int:  # type: ignore[type-arg]
     Returns:
         The counter value immediately before the reset.
     """
-    val = int(counter._value.get())  # type: ignore[attr-defined]
-    counter._value.set(0)  # type: ignore[attr-defined]
+    val = int(counter._value.get())
+    counter._value.set(0)
     return val
 
 
@@ -97,11 +97,11 @@ class Histogram:
         with self._lock:
             if self._count == 0:
                 return {
-                    "min": 0,
-                    "max": 0,
-                    "sum": 0,
-                    "count": 0,
-                    "avg": 0,
+                    "min": 0.0,
+                    "max": 0.0,
+                    "sum": 0.0,
+                    "count": 0.0,
+                    "avg": 0.0,
                 }
             return {
                 "min": self._min,
@@ -120,12 +120,12 @@ class Histogram:
         """
         with self._lock:
             if self._count == 0:
-                snap = {
-                    "min": 0,
-                    "max": 0,
-                    "sum": 0,
-                    "count": 0,
-                    "avg": 0,
+                snap: dict[str, float] = {
+                    "min": 0.0,
+                    "max": 0.0,
+                    "sum": 0.0,
+                    "count": 0.0,
+                    "avg": 0.0,
                 }
             else:
                 snap = {
@@ -151,7 +151,7 @@ def _make(
     name: str,
     doc: str,
     registry: CollectorRegistry,
-) -> _PromCounter:  # type: ignore[type-arg]
+) -> _PromCounter:
     """Create and register a Prometheus counter.
 
     Args:
@@ -597,6 +597,48 @@ class GatewayMetrics:
     plus helpers to increment stop-reason and cursor-stale
     counters by reason string.
     """
+
+    cache_hits: _PromCounter
+    cache_misses: _PromCounter
+    alias_hits: _PromCounter
+    upstream_calls: _PromCounter
+    upstream_errors: _PromCounter
+    upstream_latency: Histogram
+
+    oversize_json_count: _PromCounter
+    binary_blob_writes: _PromCounter
+    binary_blob_dedupes: _PromCounter
+
+    mapping_full_count: _PromCounter
+    mapping_partial_count: _PromCounter
+    mapping_failed_count: _PromCounter
+    mapping_latency: Histogram
+
+    mapping_stop_none: _PromCounter
+    mapping_stop_max_bytes: _PromCounter
+    mapping_stop_max_compute: _PromCounter
+    mapping_stop_max_depth: _PromCounter
+    mapping_stop_parse_error: _PromCounter
+
+    cursor_stale_sample_set: _PromCounter
+    cursor_stale_map_budget: _PromCounter
+    cursor_stale_where_mode: _PromCounter
+    cursor_stale_traversal: _PromCounter
+    cursor_stale_generation: _PromCounter
+    cursor_invalid: _PromCounter
+    cursor_expired: _PromCounter
+
+    advisory_lock_timeouts: _PromCounter
+    advisory_lock_acquired: _PromCounter
+
+    prune_soft_deletes: _PromCounter
+    prune_hard_deletes: _PromCounter
+    prune_bytes_reclaimed: _PromCounter
+    prune_fs_orphans_removed: _PromCounter
+
+    quota_checks: _PromCounter
+    quota_breaches: _PromCounter
+    quota_prune_triggered: _PromCounter
 
     def __init__(self, registry: CollectorRegistry | None = None) -> None:
         """Initialize and register all gateway metric counters.

@@ -9,7 +9,7 @@ are ``normalize_envelope`` and ``strip_reserved_args``.
 
 from __future__ import annotations
 
-from typing import Any, Mapping
+from typing import Any, Literal, Mapping, cast
 
 from sift_mcp.constants import RESERVED_EXACT_KEYS, RESERVED_PREFIX
 from sift_mcp.envelope.model import (
@@ -217,10 +217,12 @@ def normalize_envelope(
         raise ValueError(msg)
 
     normalized_error = _normalize_error(error) if error is not None else None
-    if inferred_status == "ok" and normalized_error is not None:
+    normalized_status = cast(Literal["ok", "error"], inferred_status)
+
+    if normalized_status == "ok" and normalized_error is not None:
         msg = "status=ok cannot include error block"
         raise ValueError(msg)
-    if inferred_status == "error" and normalized_error is None:
+    if normalized_status == "error" and normalized_error is None:
         msg = "status=error requires error block"
         raise ValueError(msg)
 
@@ -237,7 +239,7 @@ def normalize_envelope(
         upstream_instance_id=upstream_instance_id,
         upstream_prefix=upstream_prefix,
         tool=tool,
-        status=inferred_status,
+        status=normalized_status,
         content=normalized_content,
         error=normalized_error,
         meta=normalized_meta,

@@ -12,6 +12,7 @@ import json
 import os
 from pathlib import Path
 import tempfile
+from typing import Any
 
 from sift_mcp.constants import STATE_SUBDIR
 
@@ -122,7 +123,7 @@ def write_secret(
     return file_path
 
 
-def read_secret(data_dir: str | Path, prefix: str) -> dict:
+def read_secret(data_dir: str | Path, prefix: str) -> dict[str, Any]:
     """Read a secret file for an upstream.
 
     Args:
@@ -169,7 +170,7 @@ def read_secret(data_dir: str | Path, prefix: str) -> dict:
     return data
 
 
-def resolve_secret_ref(data_dir: str | Path, ref: str) -> dict:
+def resolve_secret_ref(data_dir: str | Path, ref: str) -> dict[str, Any]:
     """Resolve a secret reference to its parsed content.
 
     Enforces path confinement: the *ref* must not contain
@@ -201,8 +202,8 @@ def resolve_secret_ref(data_dir: str | Path, ref: str) -> dict:
 
 
 def validate_no_secret_conflict(
-    config_env: dict | None,
-    config_headers: dict | None,
+    config_env: dict[str, str] | None,
+    config_headers: dict[str, str] | None,
     secret_ref: str | None,
 ) -> None:
     """Reject configs that specify both inline secrets and a ref.

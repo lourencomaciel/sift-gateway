@@ -72,9 +72,12 @@ def _validate_context(
         context is missing or invalid.
     """
     ctx = arguments.get("_gateway_context")
-    if not isinstance(ctx, dict) or not ctx.get("session_id"):
+    if not isinstance(ctx, dict):
         return _invalid_arg("missing _gateway_context.session_id")
-    return ctx["session_id"]
+    session_id = ctx.get("session_id")
+    if not isinstance(session_id, str) or not session_id:
+        return _invalid_arg("missing _gateway_context.session_id")
+    return session_id
 
 
 def _validate_filters(
