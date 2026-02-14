@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import json
+import time
 from typing import TYPE_CHECKING, Any
 
 from sift_mcp.artifacts.create import (
@@ -49,6 +50,14 @@ from sift_mcp.mcp.upstream_errors import (
     classify_upstream_exception,
 )
 from sift_mcp.obs.logging import get_logger
+from sift_mcp.pagination.auto import (
+    AutoPaginationResult,
+    _count_json_records,
+    _count_json_value_records,
+    _extract_json_content,
+    merge_envelopes,
+    resolve_auto_paginate_limits,
+)
 from sift_mcp.pagination.contract import (
     PAGINATION_WARNING_INCOMPLETE_RESULT_SET,
     RETRIEVAL_STATUS_PARTIAL,
@@ -572,6 +581,289 @@ async def _persist_async(
         )
 
 
+async def _auto_paginate_loop(
+    ctx: GatewayServer,
+    mirrored: MirroredTool,
+    *,
+    first_envelope: Envelope,
+    first_assessment: PaginationAssessment,
+    forwarded_args: dict[str, Any],
+    max_pages: int,
+    max_records: int,
+    timeout: float,
+) -> AutoPaginationResult:
+    """Fetch additional upstream pages and merge into one envelope.
+
+    Loops while pagination indicates more pages, respecting
+    configured limits for page count, record count, and timeout.
+    On upstream error or timeout, returns what was successfully
+    fetched so far.
+
+    Args:
+        ctx: Gateway server instance.
+        mirrored: Mirrored tool descriptor.
+        first_envelope: Envelope from the initial upstream call.
+        first_assessment: Pagination assessment for the first page.
+        forwarded_args: Original forwarded arguments.
+        max_pages: Maximum total pages to fetch.
+        max_records: Maximum total records across all pages.
+        timeout: Timeout in seconds for the entire loop.
+
+    Returns:
+        ``AutoPaginationResult`` with merged data.
+    """
+    log = get_logger(component="mcp.handlers.auto_paginate")
+    started = time.monotonic()
+    pages_fetched = 1
+    total_records = _count_json_records(first_envelope)
+    additional_json_values: list[Any] = []
+    accumulated_binary_refs: list[Any] = []
+    current_assessment = first_assessment
+
+    while (
+        pages_fetched < max_pages
+        and total_records < max_records
+        and current_assessment.has_more
+        and current_assessment.state is not None
+    ):
+        elapsed = time.monotonic() - started
+        if elapsed >= timeout:
+            log.info(
+                "auto-pagination timeout",
+                extra={
+                    "pages_fetched": pages_fetched,
+                    "total_records": total_records,
+                    "elapsed": elapsed,
+                },
+            )
+            return AutoPaginationResult(
+                envelope=merge_envelopes(
+                    first_envelope,
+                    additional_json_values,
+                    current_assessment,
+                ),
+                assessment=current_assessment,
+                pages_fetched=pages_fetched,
+                total_records=total_records,
+                stopped_reason="timeout",
+                binary_refs=accumulated_binary_refs,
+            )
+
+        state = current_assessment.state
+        next_args = {
+            **state.original_args,
+            **state.next_params,
+        }
+
+        # Resolve artifact refs before sending upstream, matching
+        # the main handler path (Phase 1.75).
+        upstream_next_args = next_args
+        if ctx.db_pool is not None:
+            from sift_mcp.mcp.resolve_refs import (
+                ResolveError,
+                resolve_artifact_refs,
+            )
+
+            try:
+                with ctx.db_pool.connection() as resolve_conn:
+                    resolved = resolve_artifact_refs(resolve_conn, next_args)
+                    if isinstance(resolved, ResolveError):
+                        log.warning(
+                            "auto-pagination ref resolution error: %s",
+                            resolved.message,
+                        )
+                        return AutoPaginationResult(
+                            envelope=merge_envelopes(
+                                first_envelope,
+                                additional_json_values,
+                                current_assessment,
+                            ),
+                            assessment=current_assessment,
+                            pages_fetched=pages_fetched,
+                            total_records=total_records,
+                            stopped_reason="error",
+                            binary_refs=accumulated_binary_refs,
+                        )
+                    upstream_next_args = resolved
+            except Exception:
+                log.warning(
+                    "auto-pagination artifact ref resolution failed",
+                    exc_info=True,
+                )
+                return AutoPaginationResult(
+                    envelope=merge_envelopes(
+                        first_envelope,
+                        additional_json_values,
+                        current_assessment,
+                    ),
+                    assessment=current_assessment,
+                    pages_fetched=pages_fetched,
+                    total_records=total_records,
+                    stopped_reason="error",
+                    binary_refs=accumulated_binary_refs,
+                )
+
+        remaining = timeout - (time.monotonic() - started)
+        if remaining <= 0:
+            remaining = 0.1  # Near-zero floor to avoid negative.
+        try:
+            upstream_result = await asyncio.wait_for(
+                ctx._call_upstream_with_metrics(
+                    mirrored=mirrored,
+                    forwarded_args=upstream_next_args,
+                ),
+                timeout=remaining,
+            )
+        except asyncio.TimeoutError:
+            log.info(
+                "auto-pagination upstream call timed out",
+                extra={
+                    "pages_fetched": pages_fetched,
+                    "remaining": remaining,
+                },
+            )
+            return AutoPaginationResult(
+                envelope=merge_envelopes(
+                    first_envelope,
+                    additional_json_values,
+                    current_assessment,
+                ),
+                assessment=current_assessment,
+                pages_fetched=pages_fetched,
+                total_records=total_records,
+                stopped_reason="timeout",
+                binary_refs=accumulated_binary_refs,
+            )
+        except Exception:
+            log.warning(
+                "auto-pagination upstream call failed",
+                exc_info=True,
+            )
+            return AutoPaginationResult(
+                envelope=merge_envelopes(
+                    first_envelope,
+                    additional_json_values,
+                    current_assessment,
+                ),
+                assessment=current_assessment,
+                pages_fetched=pages_fetched,
+                total_records=total_records,
+                stopped_reason="error",
+                binary_refs=accumulated_binary_refs,
+            )
+
+        if bool(upstream_result.get("isError", False)):
+            log.info(
+                "auto-pagination upstream returned error",
+                extra={"pages_fetched": pages_fetched},
+            )
+            return AutoPaginationResult(
+                envelope=merge_envelopes(
+                    first_envelope,
+                    additional_json_values,
+                    current_assessment,
+                ),
+                assessment=current_assessment,
+                pages_fetched=pages_fetched,
+                total_records=total_records,
+                stopped_reason="error",
+                binary_refs=accumulated_binary_refs,
+            )
+
+        try:
+            page_envelope, page_binary_refs = (
+                ctx._envelope_from_upstream_result(
+                    mirrored=mirrored,
+                    upstream_result=upstream_result,
+                )
+            )
+        except ValueError:
+            log.warning(
+                "auto-pagination envelope normalization failed",
+                exc_info=True,
+            )
+            return AutoPaginationResult(
+                envelope=merge_envelopes(
+                    first_envelope,
+                    additional_json_values,
+                    current_assessment,
+                ),
+                assessment=current_assessment,
+                pages_fetched=pages_fetched,
+                total_records=total_records,
+                stopped_reason="error",
+                binary_refs=accumulated_binary_refs,
+            )
+        accumulated_binary_refs.extend(page_binary_refs)
+
+        page_number = state.page_number + 1
+        page_envelope, page_assessment = _inject_pagination_state(
+            page_envelope,
+            mirrored.upstream.config,
+            next_args,
+            mirrored.prefix,
+            page_number=page_number,
+        )
+
+        page_json = _extract_json_content(page_envelope)
+        if page_json is None:
+            log.info(
+                "auto-pagination stopped: binary/non-JSON content",
+                extra={"pages_fetched": pages_fetched},
+            )
+            return AutoPaginationResult(
+                envelope=merge_envelopes(
+                    first_envelope,
+                    additional_json_values,
+                    current_assessment,
+                ),
+                assessment=current_assessment,
+                pages_fetched=pages_fetched,
+                total_records=total_records,
+                stopped_reason="binary_content",
+                binary_refs=accumulated_binary_refs,
+            )
+
+        # Count full page records; max_records is a stop condition
+        # for additional fetches, not a per-page trim budget.
+        page_records = _count_json_value_records(page_json)
+
+        additional_json_values.append(page_json)
+        pages_fetched += 1
+        total_records += page_records
+
+        if total_records >= max_records:
+            if page_assessment is not None:
+                current_assessment = page_assessment
+            break
+
+        if page_assessment is not None:
+            current_assessment = page_assessment
+        else:
+            break
+
+    stopped_reason = "complete"
+    if current_assessment.has_more and current_assessment.state is not None:
+        if pages_fetched >= max_pages:
+            stopped_reason = "max_pages"
+        elif total_records >= max_records:
+            stopped_reason = "max_records"
+
+    merged = merge_envelopes(
+        first_envelope,
+        additional_json_values,
+        current_assessment,
+    )
+    return AutoPaginationResult(
+        envelope=merged,
+        assessment=current_assessment,
+        pages_fetched=pages_fetched,
+        total_records=total_records,
+        stopped_reason=stopped_reason,
+        binary_refs=accumulated_binary_refs,
+    )
+
+
 async def handle_mirrored_tool(
     ctx: GatewayServer,
     mirrored: MirroredTool,
@@ -979,20 +1271,15 @@ async def handle_mirrored_tool(
         upstream_args = forwarded_args
         try:
             with ctx.db_pool.connection() as resolve_conn:
-                resolved = resolve_artifact_refs(
-                    resolve_conn, forwarded_args
-                )
+                resolved = resolve_artifact_refs(resolve_conn, forwarded_args)
                 if isinstance(resolved, ResolveError):
-                    return gateway_error(
-                        resolved.code, resolved.message
-                    )
+                    return gateway_error(resolved.code, resolved.message)
                 upstream_args = resolved
         except (_PG_OPERATIONAL_ERROR, _PG_INTERFACE_ERROR):
             ctx.db_ok = False
             return gateway_error(
                 "INTERNAL",
-                "artifact ref resolution failed;"
-                " gateway marked unhealthy",
+                "artifact ref resolution failed; gateway marked unhealthy",
             )
         except Exception:
             get_logger(component="mcp.handlers").warning(
@@ -1041,6 +1328,50 @@ async def handle_mirrored_tool(
             mirrored.prefix,
             page_number=page_number,
         )
+
+        # Phase 2.25: Auto-pagination — fetch additional upstream
+        # pages and merge into a single artifact when enabled.
+        if (
+            pagination_assessment is not None
+            and pagination_assessment.has_more
+            and pagination_assessment.state is not None
+        ):
+            ap_limits = resolve_auto_paginate_limits(
+                ctx.config, mirrored.upstream.config
+            )
+            if ap_limits.max_pages > 1:
+                ap_result = await _auto_paginate_loop(
+                    ctx,
+                    mirrored,
+                    first_envelope=envelope,
+                    first_assessment=pagination_assessment,
+                    forwarded_args=forwarded_args,
+                    max_pages=ap_limits.max_pages,
+                    max_records=ap_limits.max_records,
+                    timeout=ap_limits.timeout,
+                )
+                envelope = ap_result.envelope
+                pagination_assessment = ap_result.assessment
+                binary_refs.extend(ap_result.binary_refs)
+
+                # Reapply oversize guard: individual pages may
+                # fit under the threshold, but the merged JSON
+                # can exceed it.
+                if ctx.blob_store is not None:
+                    from sift_mcp.envelope.oversize import (
+                        replace_oversized_json_parts,
+                    )
+
+                    merged_refs: list[Any] = []
+                    envelope = replace_oversized_json_parts(
+                        envelope,
+                        max_json_part_parse_bytes=(
+                            ctx.config.max_json_part_parse_bytes
+                        ),
+                        blob_store=ctx.blob_store,
+                        binary_refs_out=merged_refs,
+                    )
+                    binary_refs.extend(merged_refs)
 
         # Phase 2.5: Passthrough check — if the result is small enough,
         # return the raw upstream result immediately and persist async.

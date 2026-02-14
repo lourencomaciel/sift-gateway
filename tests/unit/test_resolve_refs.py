@@ -167,13 +167,35 @@ def test_resolve_multiple_refs() -> None:
         art_id = params[1]
         if art_id == art_id_a:
             cursor.fetchone.return_value = (
-                art_id_a, "h1", None, "full", "ready", 1,
-                0, None, envelope_a, "none", None, None, False,
+                art_id_a,
+                "h1",
+                None,
+                "full",
+                "ready",
+                1,
+                0,
+                None,
+                envelope_a,
+                "none",
+                None,
+                None,
+                False,
             )
         else:
             cursor.fetchone.return_value = (
-                art_id_b, "h2", None, "full", "ready", 1,
-                0, None, envelope_b, "none", None, None, False,
+                art_id_b,
+                "h2",
+                None,
+                "full",
+                "ready",
+                1,
+                0,
+                None,
+                envelope_b,
+                "none",
+                None,
+                None,
+                False,
             )
         call_count += 1
         return cursor
@@ -331,9 +353,7 @@ def test_is_artifact_ref_trailing_garbage() -> None:
 
 def test_parse_bare_ref() -> None:
     parsed = parse_artifact_ref(_VALID_ART_ID)
-    assert parsed == ParsedRef(
-        artifact_id=_VALID_ART_ID, jsonpath=None
-    )
+    assert parsed == ParsedRef(artifact_id=_VALID_ART_ID, jsonpath=None)
 
 
 def test_parse_query_ref() -> None:

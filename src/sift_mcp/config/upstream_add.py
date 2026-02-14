@@ -180,18 +180,12 @@ def _validate_transport_values(
     if "command" in entry:
         cmd = entry["command"]
         if not isinstance(cmd, str) or not cmd:
-            msg = (
-                f"server '{name}' command must be a "
-                f"non-empty string"
-            )
+            msg = f"server '{name}' command must be a non-empty string"
             raise ValueError(msg)
     if "url" in entry:
         url = entry["url"]
         if not isinstance(url, str) or not url:
-            msg = (
-                f"server '{name}' url must be a "
-                f"non-empty string"
-            )
+            msg = f"server '{name}' url must be a non-empty string"
             raise ValueError(msg)
 
 

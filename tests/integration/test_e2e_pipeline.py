@@ -12,12 +12,17 @@ from __future__ import annotations
 import asyncio
 import os
 from pathlib import Path
+import time
 from typing import Any
 import uuid
 
 import pytest
 
-from sift_mcp.config.settings import GatewayConfig, UpstreamConfig
+from sift_mcp.config.settings import (
+    GatewayConfig,
+    PaginationConfig,
+    UpstreamConfig,
+)
 from sift_mcp.constants import WORKSPACE_ID
 from sift_mcp.db.conn import create_pool
 from sift_mcp.db.migrate import apply_migrations
@@ -58,6 +63,49 @@ _LARGE_JSON = {
 
 _BINARY_HASH = "binhash_e2e_" + "a" * 52
 _BINARY_BLOB_ID = "bin_" + _BINARY_HASH[:32]
+
+
+def _cursor_page_payload(
+    *,
+    start_id: int,
+    count: int,
+    next_cursor: str | None,
+) -> dict[str, Any]:
+    paging: dict[str, Any] = {
+        "cursors": {"after": next_cursor},
+        "next": (
+            f"https://example.test/users?after={next_cursor}"
+            if next_cursor is not None
+            else None
+        ),
+    }
+    return {
+        "data": [
+            {"id": i, "name": f"cursor_user_{i}"}
+            for i in range(start_id, start_id + count)
+        ],
+        "paging": paging,
+    }
+
+
+_CURSOR_PAGES: dict[str | None, dict[str, Any]] = {
+    None: _cursor_page_payload(start_id=1, count=4, next_cursor="CUR2"),
+    "CUR2": _cursor_page_payload(start_id=5, count=4, next_cursor="CUR3"),
+    "CUR3": _cursor_page_payload(start_id=9, count=4, next_cursor=None),
+}
+
+_CURSOR_TIMEOUT_PAGES: dict[str | None, dict[str, Any]] = {
+    None: _cursor_page_payload(start_id=1, count=4, next_cursor="TMO2"),
+    "TMO2": _cursor_page_payload(start_id=5, count=4, next_cursor="TMO3"),
+}
+
+_CURSOR_ERROR_PAGES: dict[str | None, dict[str, Any]] = {
+    None: _cursor_page_payload(start_id=1, count=4, next_cursor="ERR2"),
+}
+
+_CURSOR_NON_JSON_PAGES: dict[str | None, dict[str, Any]] = {
+    None: _cursor_page_payload(start_id=1, count=4, next_cursor="TXT2"),
+}
 
 
 # Upstream stub dispatch table — single source of truth for tool names,
@@ -149,6 +197,51 @@ _UPSTREAM_DISPATCH: dict[str, tuple[str, dict[str, Any]]] = {
             "meta": {},
         },
     ),
+    "get_cursor_users": (
+        "Return cursor-paginated users",
+        {
+            "content": [],
+            "structuredContent": _CURSOR_PAGES[None],
+            "isError": False,
+            "meta": {},
+        },
+    ),
+    "get_cursor_users_timeout": (
+        "Return cursor users but timeout on continuation",
+        {
+            "content": [],
+            "structuredContent": _CURSOR_TIMEOUT_PAGES[None],
+            "isError": False,
+            "meta": {},
+        },
+    ),
+    "get_cursor_users_error": (
+        "Return cursor users but error on continuation",
+        {
+            "content": [],
+            "structuredContent": _CURSOR_ERROR_PAGES[None],
+            "isError": False,
+            "meta": {},
+        },
+    ),
+    "get_cursor_users_non_json": (
+        "Return cursor users but non-json continuation",
+        {
+            "content": [],
+            "structuredContent": _CURSOR_NON_JSON_PAGES[None],
+            "isError": False,
+            "meta": {},
+        },
+    ),
+    "echo_input": (
+        "Echo input arguments",
+        {
+            "content": [],
+            "structuredContent": {},
+            "isError": False,
+            "meta": {},
+        },
+    ),
 }
 
 
@@ -159,6 +252,74 @@ async def _stub_upstream(
     data_dir: str | None = None,  # noqa: ARG001
 ) -> dict[str, Any]:
     """Fake upstream that returns controlled payloads by tool name."""
+    if tool_name == "get_cursor_users":
+        after = arguments.get("after")
+        normalized_after = after if isinstance(after, str) else None
+        return {
+            "content": [],
+            "structuredContent": _CURSOR_PAGES.get(
+                normalized_after, _CURSOR_PAGES[None]
+            ),
+            "isError": False,
+            "meta": {},
+        }
+    if tool_name == "get_cursor_users_timeout":
+        after = arguments.get("after")
+        normalized_after = after if isinstance(after, str) else None
+        if normalized_after == "TMO2":
+            await asyncio.sleep(0.2)
+        return {
+            "content": [],
+            "structuredContent": _CURSOR_TIMEOUT_PAGES.get(
+                normalized_after, _CURSOR_TIMEOUT_PAGES[None]
+            ),
+            "isError": False,
+            "meta": {},
+        }
+    if tool_name == "get_cursor_users_error":
+        after = arguments.get("after")
+        normalized_after = after if isinstance(after, str) else None
+        if normalized_after == "ERR2":
+            return {
+                "content": [{"type": "text", "text": "upstream page failed"}],
+                "structuredContent": None,
+                "isError": True,
+                "meta": {"exception_type": "RuntimeError"},
+            }
+        return {
+            "content": [],
+            "structuredContent": _CURSOR_ERROR_PAGES[None],
+            "isError": False,
+            "meta": {},
+        }
+    if tool_name == "get_cursor_users_non_json":
+        after = arguments.get("after")
+        normalized_after = after if isinstance(after, str) else None
+        if normalized_after == "TXT2":
+            return {
+                "content": [
+                    {
+                        "type": "text",
+                        "text": "second page came back as text",
+                    }
+                ],
+                "structuredContent": None,
+                "isError": False,
+                "meta": {},
+            }
+        return {
+            "content": [],
+            "structuredContent": _CURSOR_NON_JSON_PAGES[None],
+            "isError": False,
+            "meta": {},
+        }
+    if tool_name == "echo_input":
+        return {
+            "content": [],
+            "structuredContent": {"received": arguments},
+            "isError": False,
+            "meta": {},
+        }
     entry = _UPSTREAM_DISPATCH.get(tool_name)
     if entry is not None:
         return entry[1]
@@ -194,11 +355,18 @@ def _e2e_config(tmp_path: Path) -> GatewayConfig:
         postgres_dsn=dsn,
         mapping_mode="sync",
         max_full_map_bytes=2000,
-        passthrough_max_bytes=0,
+        passthrough_max_bytes=8192,
     )
 
 
-def _build_upstream() -> UpstreamInstance:
+def _build_upstream(
+    *,
+    pagination: PaginationConfig | None = None,
+    auto_paginate_max_pages: int | None = None,
+    auto_paginate_max_records: int | None = None,
+    auto_paginate_timeout_seconds: float | None = None,
+    passthrough_allowed: bool = False,
+) -> UpstreamInstance:
     tools = [
         UpstreamToolSchema(
             name=name,
@@ -214,10 +382,26 @@ def _build_upstream() -> UpstreamInstance:
     ]
     return UpstreamInstance(
         config=UpstreamConfig(
-            prefix="test", transport="stdio", command="/bin/echo"
+            prefix="test",
+            transport="stdio",
+            command="/bin/echo",
+            pagination=pagination,
+            auto_paginate_max_pages=auto_paginate_max_pages,
+            auto_paginate_max_records=auto_paginate_max_records,
+            auto_paginate_timeout_seconds=auto_paginate_timeout_seconds,
+            passthrough_allowed=passthrough_allowed,
         ),
         instance_id="upstream_e2e_test",
         tools=tools,
+    )
+
+
+def _cursor_pagination_config() -> PaginationConfig:
+    return PaginationConfig(
+        strategy="cursor",
+        cursor_response_path="$.paging.cursors.after",
+        cursor_param_name="after",
+        has_more_response_path="$.paging.next",
     )
 
 
@@ -239,6 +423,38 @@ def _call_mirrored(
     if extra_args:
         args.update(extra_args)
     return asyncio.run(server.handle_mirrored_tool(mirrored, args))
+
+
+def _artifact_query(
+    server: GatewayServer,
+    session_id: str,
+    *,
+    query_kind: str,
+    **query_args: Any,
+) -> dict[str, Any]:
+    args: dict[str, Any] = {
+        "action": "query",
+        "query_kind": query_kind,
+        "_gateway_context": {"session_id": session_id},
+    }
+    args.update(query_args)
+    return asyncio.run(server.handle_artifact(args))
+
+
+def _artifact_next_page(
+    server: GatewayServer,
+    session_id: str,
+    artifact_id: str,
+) -> dict[str, Any]:
+    return asyncio.run(
+        server.handle_artifact(
+            {
+                "action": "next_page",
+                "_gateway_context": {"session_id": session_id},
+                "artifact_id": artifact_id,
+            }
+        )
+    )
 
 
 def _search(
@@ -293,6 +509,18 @@ def _describe(
     )
 
 
+def _describe_artifact(
+    desc: dict[str, Any], artifact_id: str
+) -> dict[str, Any]:
+    for artifact in desc.get("artifacts", []):
+        if (
+            isinstance(artifact, dict)
+            and artifact.get("artifact_id") == artifact_id
+        ):
+            return artifact
+    raise AssertionError(f"missing artifact summary for {artifact_id}")
+
+
 def _select(
     server: GatewayServer,
     session_id: str,
@@ -303,6 +531,7 @@ def _select(
     where: Any = None,
     limit: int | None = None,
     cursor: str | None = None,
+    scope: str | None = None,
 ) -> dict[str, Any]:
     args: dict[str, Any] = {
         "_gateway_context": {"session_id": session_id},
@@ -317,6 +546,8 @@ def _select(
         args["limit"] = limit
     if cursor is not None:
         args["cursor"] = cursor
+    if scope is not None:
+        args["scope"] = scope
     return asyncio.run(server.handle_artifact_select(args))
 
 
@@ -355,7 +586,66 @@ def e2e_env(tmp_path, monkeypatch):
         with pool.connection() as conn:
             apply_migrations(conn, _migrations_dir())
 
-        upstream = _build_upstream()
+        upstream = _build_upstream(passthrough_allowed=False)
+        server = GatewayServer(
+            config=config, db_pool=pool, upstreams=[upstream]
+        )
+        monkeypatch.setattr(
+            "sift_mcp.mcp.server.call_upstream_tool",
+            _stub_upstream,
+        )
+        yield server, config, pool
+    finally:
+        pool.close()
+
+
+@pytest.fixture()
+def e2e_env_paginated(tmp_path, monkeypatch):
+    """Provision a paginated upstream with default auto-pagination limits."""
+    config = _e2e_config(tmp_path)
+
+    for d in [config.state_dir, config.blobs_bin_dir, config.tmp_dir]:
+        d.mkdir(parents=True, exist_ok=True)
+
+    pool = create_pool(config)
+    try:
+        with pool.connection() as conn:
+            apply_migrations(conn, _migrations_dir())
+
+        upstream = _build_upstream(
+            pagination=_cursor_pagination_config(),
+            passthrough_allowed=False,
+        )
+        server = GatewayServer(
+            config=config, db_pool=pool, upstreams=[upstream]
+        )
+        monkeypatch.setattr(
+            "sift_mcp.mcp.server.call_upstream_tool",
+            _stub_upstream,
+        )
+        yield server, config, pool
+    finally:
+        pool.close()
+
+
+@pytest.fixture()
+def e2e_env_paginated_manual(tmp_path, monkeypatch):
+    """Provision a paginated upstream with manual next_page flow."""
+    config = _e2e_config(tmp_path)
+
+    for d in [config.state_dir, config.blobs_bin_dir, config.tmp_dir]:
+        d.mkdir(parents=True, exist_ok=True)
+
+    pool = create_pool(config)
+    try:
+        with pool.connection() as conn:
+            apply_migrations(conn, _migrations_dir())
+
+        upstream = _build_upstream(
+            pagination=_cursor_pagination_config(),
+            auto_paginate_max_pages=1,
+            passthrough_allowed=False,
+        )
         server = GatewayServer(
             config=config, db_pool=pool, upstreams=[upstream]
         )
@@ -395,9 +685,9 @@ def test_e2e_small_json_full_pipeline(e2e_env):
 
     # 4. Describe — full mapping should have run (sync mode)
     desc = _describe(server, session_id, artifact_id)
-    mapping = desc["mapping"]
-    assert mapping["map_kind"] == "full"
-    assert mapping["map_status"] == "ready"
+    artifact = _describe_artifact(desc, artifact_id)
+    assert artifact["map_kind"] == "full"
+    assert artifact["map_status"] == "ready"
     roots = desc.get("roots", [])
     assert len(roots) >= 1
     root_paths = [r["root_path"] for r in roots]
@@ -436,9 +726,9 @@ def test_e2e_large_json_partial_mapping(e2e_env):
     artifact_id = response["artifact_id"]
 
     desc = _describe(server, session_id, artifact_id)
-    mapping = desc["mapping"]
-    assert mapping["map_kind"] == "partial"
-    assert mapping["map_status"] == "ready"
+    artifact = _describe_artifact(desc, artifact_id)
+    assert artifact["map_kind"] == "partial"
+    assert artifact["map_status"] == "ready"
     roots = desc.get("roots", [])
     assert len(roots) >= 1
 
@@ -466,7 +756,8 @@ def test_e2e_text_content_artifact(e2e_env):
 
     # Describe — mapping should fail (no JSON part)
     desc = _describe(server, session_id, artifact_id)
-    assert desc["mapping"]["map_status"] == "failed"
+    artifact = _describe_artifact(desc, artifact_id)
+    assert artifact["map_status"] == "failed"
 
 
 # ---------------------------------------------------------------------------
@@ -594,7 +885,8 @@ def test_e2e_select_cursor_pagination(e2e_env):
 
     # Verify mapping ran
     desc = _describe(server, session_id, artifact_id)
-    assert desc["mapping"]["map_status"] == "ready"
+    artifact = _describe_artifact(desc, artifact_id)
+    assert artifact["map_status"] == "ready"
 
     # Find the users root
     roots = desc.get("roots", [])
@@ -779,7 +1071,7 @@ def e2e_env_oversize(tmp_path, monkeypatch):
         postgres_dsn=dsn,
         mapping_mode="sync",
         max_full_map_bytes=2000,
-        passthrough_max_bytes=0,
+        passthrough_max_bytes=8192,
         envelope_jsonb_mode="minimal_for_large",
         envelope_jsonb_minimize_threshold_bytes=100,
     )
@@ -789,7 +1081,63 @@ def e2e_env_oversize(tmp_path, monkeypatch):
     try:
         with pool.connection() as conn:
             apply_migrations(conn, _migrations_dir())
-        upstream = _build_upstream()
+        upstream = _build_upstream(passthrough_allowed=False)
+        server = GatewayServer(
+            config=config, db_pool=pool, upstreams=[upstream]
+        )
+        monkeypatch.setattr(
+            "sift_mcp.mcp.server.call_upstream_tool",
+            _stub_upstream,
+        )
+        yield server, config, pool
+    finally:
+        pool.close()
+
+
+@pytest.fixture()
+def e2e_env_passthrough(tmp_path, monkeypatch):
+    """Provision config where passthrough is enabled for upstream calls."""
+    config = _e2e_config(tmp_path)
+
+    for d in [config.state_dir, config.blobs_bin_dir, config.tmp_dir]:
+        d.mkdir(parents=True, exist_ok=True)
+
+    pool = create_pool(config)
+    try:
+        with pool.connection() as conn:
+            apply_migrations(conn, _migrations_dir())
+
+        upstream = _build_upstream(passthrough_allowed=True)
+        server = GatewayServer(
+            config=config, db_pool=pool, upstreams=[upstream]
+        )
+        monkeypatch.setattr(
+            "sift_mcp.mcp.server.call_upstream_tool",
+            _stub_upstream,
+        )
+        yield server, config, pool
+    finally:
+        pool.close()
+
+
+@pytest.fixture()
+def e2e_env_paginated_failures(tmp_path, monkeypatch):
+    """Provision paginated upstream with tight timeout for failure scenarios."""
+    config = _e2e_config(tmp_path)
+
+    for d in [config.state_dir, config.blobs_bin_dir, config.tmp_dir]:
+        d.mkdir(parents=True, exist_ok=True)
+
+    pool = create_pool(config)
+    try:
+        with pool.connection() as conn:
+            apply_migrations(conn, _migrations_dir())
+
+        upstream = _build_upstream(
+            pagination=_cursor_pagination_config(),
+            auto_paginate_timeout_seconds=0.05,
+            passthrough_allowed=False,
+        )
         server = GatewayServer(
             config=config, db_pool=pool, upstreams=[upstream]
         )
@@ -843,9 +1191,9 @@ def test_e2e_soft_delete_hard_delete_lifecycle(e2e_env):
         )
         assert artifact_id in result.artifact_ids
 
-    # Verify GONE on get
+    # all_related scope excludes deleted artifacts, so lookup becomes not found
     get_resp = _get(server, session_id, artifact_id)
-    assert get_resp.get("code") == "GONE"
+    assert get_resp.get("code") == "NOT_FOUND"
 
     # Hard delete with a tight grace period: soft-deleted artifacts whose
     # deleted_at is before "now" (we use a timestamp far enough in the
@@ -923,7 +1271,8 @@ def test_e2e_artifact_find(e2e_env):
     artifact_id = resp["artifact_id"]
 
     desc = _describe(server, session_id, artifact_id)
-    assert desc["mapping"]["map_kind"] == "partial"
+    artifact = _describe_artifact(desc, artifact_id)
+    assert artifact["map_kind"] == "partial"
 
     # Find samples
     find_resp = _find(server, session_id, artifact_id)
@@ -935,7 +1284,7 @@ def test_e2e_artifact_find(e2e_env):
     for item in items:
         assert "root_path" in item
         assert "sample_index" in item
-        assert "record" in item
+        assert "record_hash" in item
 
 
 # ---------------------------------------------------------------------------
@@ -951,17 +1300,16 @@ def test_e2e_get_with_jsonpath(e2e_env):
     artifact_id = resp["artifact_id"]
 
     # Get envelope status via jsonpath
-    result = _get(server, session_id, artifact_id, jsonpath="$.status")
+    result = _get(server, session_id, artifact_id, jsonpath="$.total")
     items = result.get("items", [])
     assert len(items) == 1
-    assert items[0] == "ok"
+    assert items[0]["value"] == 3
 
-    # Get content array length
-    result2 = _get(server, session_id, artifact_id, jsonpath="$.content")
+    # Get user names from structured content
+    result2 = _get(server, session_id, artifact_id, jsonpath="$.users[*].name")
     items2 = result2.get("items", [])
-    assert len(items2) == 1
-    assert isinstance(items2[0], list)
-    assert len(items2[0]) >= 1  # at least one content part
+    assert len(items2) == 3
+    assert {item["value"] for item in items2} == {"Alice", "Bob", "Charlie"}
 
 
 # ---------------------------------------------------------------------------
@@ -978,7 +1326,8 @@ def test_e2e_select_partial_mapping_samples(e2e_env):
     artifact_id = resp["artifact_id"]
 
     desc = _describe(server, session_id, artifact_id)
-    assert desc["mapping"]["map_kind"] == "partial"
+    artifact = _describe_artifact(desc, artifact_id)
+    assert artifact["map_kind"] == "partial"
     roots = desc.get("roots", [])
     assert len(roots) >= 1
     root_path = roots[0]["root_path"]
@@ -990,6 +1339,7 @@ def test_e2e_select_partial_mapping_samples(e2e_env):
         artifact_id,
         root_path,
         select_paths=["id", "type"],
+        scope="single",
     )
     assert sel.get("sampled_only") is True
     items = sel.get("items", [])
@@ -1209,3 +1559,593 @@ def test_e2e_multi_session_cache_sharing(e2e_env):
 
     search_b = _search(server, session_b)
     assert any(item["artifact_id"] == artifact_id for item in search_b["items"])
+
+
+# ---------------------------------------------------------------------------
+# Test 21: Consolidated query flow (action=query)
+# ---------------------------------------------------------------------------
+
+
+def test_e2e_consolidated_query_flow(e2e_env):
+    server, _config, _pool = e2e_env
+    session_id = f"sess_{uuid.uuid4().hex}"
+
+    response = _call_mirrored(server, "test.get_users", session_id)
+    artifact_id = response["artifact_id"]
+
+    search = _artifact_query(
+        server,
+        session_id,
+        query_kind="search",
+        filters={},
+    )
+    assert any(item["artifact_id"] == artifact_id for item in search["items"])
+
+    envelope = _artifact_query(
+        server,
+        session_id,
+        query_kind="get",
+        artifact_id=artifact_id,
+        target="envelope",
+        scope="single",
+    )
+    assert envelope["artifact_id"] == artifact_id
+    assert envelope["pagination"]["layer"] == "artifact_retrieval"
+    assert envelope["pagination"]["retrieval_status"] == "COMPLETE"
+
+    desc = _artifact_query(
+        server,
+        session_id,
+        query_kind="describe",
+        artifact_id=artifact_id,
+        scope="single",
+    )
+    roots = desc.get("roots", [])
+    root_paths = [r["root_path"] for r in roots]
+    assert "$.users" in root_paths
+
+    sel = _artifact_query(
+        server,
+        session_id,
+        query_kind="select",
+        artifact_id=artifact_id,
+        root_path="$.users",
+        select_paths=["name", "role"],
+        scope="single",
+    )
+    names = {item["projection"]["$.name"] for item in sel["items"]}
+    assert names == {"Alice", "Bob", "Charlie"}
+
+
+# ---------------------------------------------------------------------------
+# Test 22: Manual upstream pagination (action=next_page)
+# ---------------------------------------------------------------------------
+
+
+def test_e2e_next_page_multi_step_flow(e2e_env_paginated_manual):
+    server, _config, _pool = e2e_env_paginated_manual
+    session_id = f"sess_{uuid.uuid4().hex}"
+
+    first_page = _call_mirrored(server, "test.get_cursor_users", session_id)
+    first_id = first_page["artifact_id"]
+
+    first_pagination = first_page.get("pagination", {})
+    assert first_pagination.get("retrieval_status") == "PARTIAL"
+    assert first_pagination.get("partial_reason") == "MORE_PAGES_AVAILABLE"
+    assert first_pagination.get("has_next_page") is True
+    assert first_pagination.get("next_action", {}).get("arguments") == {
+        "action": "next_page",
+        "artifact_id": first_id,
+    }
+
+    first_get = _artifact_query(
+        server,
+        session_id,
+        query_kind="get",
+        artifact_id=first_id,
+        target="envelope",
+        jsonpath="$.data[*].id",
+        scope="single",
+    )
+    first_ids = [item["value"] for item in first_get["items"]]
+    assert first_ids == [1, 2, 3, 4]
+
+    second_page = _artifact_next_page(server, session_id, first_id)
+    second_id = second_page["artifact_id"]
+    assert second_id != first_id
+    assert second_page["pagination"]["retrieval_status"] == "PARTIAL"
+    assert second_page["pagination"]["page_number"] == 1
+
+    second_get = _artifact_query(
+        server,
+        session_id,
+        query_kind="get",
+        artifact_id=second_id,
+        target="envelope",
+        jsonpath="$.data[*].id",
+        scope="single",
+    )
+    second_ids = [item["value"] for item in second_get["items"]]
+    assert second_ids == [5, 6, 7, 8]
+
+    children = _artifact_query(
+        server,
+        session_id,
+        query_kind="search",
+        filters={"parent_artifact_id": first_id},
+    )
+    child = next(
+        item for item in children["items"] if item["artifact_id"] == second_id
+    )
+    assert child["chain_seq"] == 1
+
+
+# ---------------------------------------------------------------------------
+# Test 23: Auto-pagination default merges upstream pages
+# ---------------------------------------------------------------------------
+
+
+def test_e2e_auto_pagination_default_merges_pages(e2e_env_paginated):
+    server, _config, _pool = e2e_env_paginated
+    session_id = f"sess_{uuid.uuid4().hex}"
+
+    response = _call_mirrored(server, "test.get_cursor_users", session_id)
+    artifact_id = response["artifact_id"]
+
+    pagination = response.get("pagination", {})
+    assert pagination.get("retrieval_status") == "COMPLETE"
+    assert pagination.get("has_next_page") is False
+    assert pagination.get("next_action") is None
+    assert pagination.get("page_number") == 2
+
+    merged = _artifact_query(
+        server,
+        session_id,
+        query_kind="get",
+        artifact_id=artifact_id,
+        target="envelope",
+        jsonpath="$.data[*].id",
+        scope="single",
+    )
+    merged_ids = [item["value"] for item in merged["items"]]
+    assert len(merged_ids) == 12
+    assert set(merged_ids) == set(range(1, 13))
+
+    desc = _artifact_query(
+        server,
+        session_id,
+        query_kind="describe",
+        artifact_id=artifact_id,
+        scope="single",
+    )
+    data_root = next(root for root in desc["roots"] if root["root_path"] == "$.data")
+    assert data_root["count_estimate"] == 12
+
+
+# ---------------------------------------------------------------------------
+# Test 24: Artifact-ref argument resolution on real mirrored calls
+# ---------------------------------------------------------------------------
+
+
+def test_e2e_artifact_ref_resolution_via_mirrored_call(e2e_env):
+    server, _config, _pool = e2e_env
+    session_id = f"sess_{uuid.uuid4().hex}"
+
+    source = _call_mirrored(server, "test.get_users", session_id)
+    source_artifact_id = source["artifact_id"]
+
+    echoed = _call_mirrored(
+        server,
+        "test.echo_input",
+        session_id,
+        extra_args={
+            "payload_ref": source_artifact_id,
+            "name_ref": f"{source_artifact_id}:$.users[0].name",
+            "keep": "verbatim",
+        },
+    )
+    echoed_artifact_id = echoed["artifact_id"]
+
+    name = _artifact_query(
+        server,
+        session_id,
+        query_kind="get",
+        artifact_id=echoed_artifact_id,
+        target="envelope",
+        jsonpath="$.received.name_ref",
+        scope="single",
+    )
+    assert [item["value"] for item in name["items"]] == ["Alice"]
+
+    total = _artifact_query(
+        server,
+        session_id,
+        query_kind="get",
+        artifact_id=echoed_artifact_id,
+        target="envelope",
+        jsonpath="$.received.payload_ref.total",
+        scope="single",
+    )
+    assert [item["value"] for item in total["items"]] == [3]
+
+    keep = _artifact_query(
+        server,
+        session_id,
+        query_kind="get",
+        artifact_id=echoed_artifact_id,
+        target="envelope",
+        jsonpath="$.received.keep",
+        scope="single",
+    )
+    assert [item["value"] for item in keep["items"]] == ["verbatim"]
+
+
+# ---------------------------------------------------------------------------
+# Test 25: Passthrough response + eventual async persistence
+# ---------------------------------------------------------------------------
+
+
+def test_e2e_passthrough_eventually_persists_artifact(e2e_env_passthrough):
+    server, _config, _pool = e2e_env_passthrough
+    session_id = f"sess_{uuid.uuid4().hex}"
+    nonce = f"pt_{uuid.uuid4().hex}"
+
+    first = _call_mirrored(
+        server,
+        "test.echo_input",
+        session_id,
+        extra_args={"nonce": nonce},
+        allow_reuse=False,
+    )
+    assert first.get("type") != "gateway_tool_result"
+    assert first.get("structuredContent", {}).get("received", {}).get("nonce") == nonce
+
+    handle: dict[str, Any] | None = None
+    deadline = time.monotonic() + 5.0
+    while time.monotonic() < deadline:
+        probe = _call_mirrored(
+            server,
+            "test.echo_input",
+            session_id,
+            extra_args={"nonce": nonce},
+            allow_reuse=True,
+        )
+        if probe.get("type") == "gateway_tool_result":
+            handle = probe
+            break
+        time.sleep(0.05)
+
+    assert handle is not None, "timed out waiting for async passthrough persistence"
+    assert handle["meta"]["cache"]["reused"] is True
+    artifact_id = handle["artifact_id"]
+
+    search = _artifact_query(
+        server,
+        session_id,
+        query_kind="search",
+        filters={},
+    )
+    assert any(item["artifact_id"] == artifact_id for item in search["items"])
+
+    echoed_nonce = _artifact_query(
+        server,
+        session_id,
+        query_kind="get",
+        artifact_id=artifact_id,
+        target="envelope",
+        jsonpath="$.received.nonce",
+        scope="single",
+    )
+    assert [item["value"] for item in echoed_nonce["items"]] == [nonce]
+
+
+# ---------------------------------------------------------------------------
+# Test 26: Auto-pagination failure modes (timeout/error/non-JSON)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "tool_name",
+    [
+        "test.get_cursor_users_timeout",
+        "test.get_cursor_users_error",
+        "test.get_cursor_users_non_json",
+    ],
+)
+def test_e2e_auto_pagination_failure_modes(
+    e2e_env_paginated_failures,
+    tool_name: str,
+):
+    server, _config, _pool = e2e_env_paginated_failures
+    session_id = f"sess_{uuid.uuid4().hex}"
+
+    response = _call_mirrored(server, tool_name, session_id)
+    assert response["type"] == "gateway_tool_result"
+    artifact_id = response["artifact_id"]
+
+    pagination = response.get("pagination", {})
+    assert pagination.get("retrieval_status") == "PARTIAL"
+    assert pagination.get("partial_reason") == "MORE_PAGES_AVAILABLE"
+    assert pagination.get("has_next_page") is True
+    assert pagination.get("page_number") == 0
+
+    merged = _artifact_query(
+        server,
+        session_id,
+        query_kind="get",
+        artifact_id=artifact_id,
+        target="envelope",
+        jsonpath="$.data[*].id",
+        scope="single",
+    )
+    merged_ids = [item["value"] for item in merged["items"]]
+    assert merged_ids == [1, 2, 3, 4]
+
+
+# ---------------------------------------------------------------------------
+# Test 27: Artifact-ref negative-path integration
+# ---------------------------------------------------------------------------
+
+
+def test_e2e_artifact_ref_missing_returns_not_found(e2e_env):
+    server, _config, _pool = e2e_env
+    session_id = f"sess_{uuid.uuid4().hex}"
+    missing_id = "art_" + "f" * 32
+
+    result = _call_mirrored(
+        server,
+        "test.echo_input",
+        session_id,
+        extra_args={"payload_ref": missing_id},
+    )
+    assert result["code"] == "NOT_FOUND"
+    assert "could not be resolved" in result["message"]
+
+
+def test_e2e_artifact_ref_deleted_returns_gone(e2e_env):
+    server, _config, pool = e2e_env
+    session_id = f"sess_{uuid.uuid4().hex}"
+
+    source = _call_mirrored(server, "test.get_users", session_id)
+    source_artifact_id = source["artifact_id"]
+
+    with pool.connection() as conn:
+        conn.execute(
+            "UPDATE artifacts SET deleted_at = NOW() "
+            "WHERE workspace_id = %s AND artifact_id = %s",
+            (WORKSPACE_ID, source_artifact_id),
+        )
+        conn.commit()
+
+    result = _call_mirrored(
+        server,
+        "test.echo_input",
+        session_id,
+        extra_args={"payload_ref": source_artifact_id},
+    )
+    assert result["code"] == "GONE"
+    assert "has been deleted" in result["message"]
+
+
+def test_e2e_artifact_ref_binary_only_returns_invalid_argument(e2e_env):
+    server, _config, pool = e2e_env
+    session_id = f"sess_{uuid.uuid4().hex}"
+
+    with pool.connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO binary_blobs (workspace_id, binary_hash, blob_id, byte_count, mime, fs_path)
+            VALUES (%s, %s, %s, %s, %s, %s)
+            ON CONFLICT DO NOTHING
+            """,
+            (
+                WORKSPACE_ID,
+                _BINARY_HASH,
+                _BINARY_BLOB_ID,
+                4096,
+                "application/octet-stream",
+                "/tmp/fake",
+            ),
+        )
+        conn.commit()
+
+    source = _call_mirrored(server, "test.get_binary", session_id)
+    source_artifact_id = source["artifact_id"]
+
+    result = _call_mirrored(
+        server,
+        "test.echo_input",
+        session_id,
+        extra_args={"payload_ref": source_artifact_id},
+    )
+    assert result["code"] == "INVALID_ARGUMENT"
+    assert "binary" in result["message"]
+
+
+def test_e2e_artifact_ref_invalid_jsonpath_returns_invalid_argument(e2e_env):
+    server, _config, _pool = e2e_env
+    session_id = f"sess_{uuid.uuid4().hex}"
+
+    source = _call_mirrored(server, "test.get_users", session_id)
+    source_artifact_id = source["artifact_id"]
+
+    result = _call_mirrored(
+        server,
+        "test.echo_input",
+        session_id,
+        extra_args={
+            "payload_ref": f"{source_artifact_id}:$.users[?(@.active)]",
+        },
+    )
+    assert result["code"] == "INVALID_ARGUMENT"
+    assert "JSONPath" in result["message"]
+
+
+# ---------------------------------------------------------------------------
+# Test 28: Passthrough failure path (async persistence failure)
+# ---------------------------------------------------------------------------
+
+
+def test_e2e_passthrough_async_persist_failure_is_non_fatal(
+    e2e_env_passthrough,
+    monkeypatch,
+):
+    server, _config, _pool = e2e_env_passthrough
+    session_id = f"sess_{uuid.uuid4().hex}"
+    nonce = f"pt_fail_{uuid.uuid4().hex}"
+
+    def _raise_persist(*args, **kwargs):  # noqa: ARG001
+        raise RuntimeError("simulated persist failure")
+
+    monkeypatch.setattr(
+        "sift_mcp.mcp.handlers.mirrored_tool.persist_artifact",
+        _raise_persist,
+    )
+
+    result = _call_mirrored(
+        server,
+        "test.echo_input",
+        session_id,
+        extra_args={"nonce": nonce},
+        allow_reuse=False,
+    )
+    assert result.get("type") != "gateway_tool_result"
+    assert result.get("structuredContent", {}).get("received", {}).get("nonce") == nonce
+
+    time.sleep(0.15)
+
+    search = _artifact_query(
+        server,
+        session_id,
+        query_kind="search",
+        filters={},
+    )
+    assert search["items"] == []
+
+    probe = _call_mirrored(
+        server,
+        "test.echo_input",
+        session_id,
+        extra_args={"nonce": nonce},
+        allow_reuse=True,
+    )
+    assert probe.get("type") != "gateway_tool_result"
+
+
+# ---------------------------------------------------------------------------
+# Test 29: Auto-pagination boundary integration (max_pages/max_records)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture()
+def e2e_env_paginated_max_pages(tmp_path, monkeypatch):
+    """Paginated upstream capped to 2 total pages via auto-pagination."""
+    config = _e2e_config(tmp_path)
+
+    for d in [config.state_dir, config.blobs_bin_dir, config.tmp_dir]:
+        d.mkdir(parents=True, exist_ok=True)
+
+    pool = create_pool(config)
+    try:
+        with pool.connection() as conn:
+            apply_migrations(conn, _migrations_dir())
+
+        upstream = _build_upstream(
+            pagination=_cursor_pagination_config(),
+            auto_paginate_max_pages=2,
+            auto_paginate_max_records=1000,
+            passthrough_allowed=False,
+        )
+        server = GatewayServer(
+            config=config, db_pool=pool, upstreams=[upstream]
+        )
+        monkeypatch.setattr(
+            "sift_mcp.mcp.server.call_upstream_tool",
+            _stub_upstream,
+        )
+        yield server, config, pool
+    finally:
+        pool.close()
+
+
+@pytest.fixture()
+def e2e_env_paginated_max_records(tmp_path, monkeypatch):
+    """Paginated upstream capped to first page by record budget."""
+    config = _e2e_config(tmp_path)
+
+    for d in [config.state_dir, config.blobs_bin_dir, config.tmp_dir]:
+        d.mkdir(parents=True, exist_ok=True)
+
+    pool = create_pool(config)
+    try:
+        with pool.connection() as conn:
+            apply_migrations(conn, _migrations_dir())
+
+        upstream = _build_upstream(
+            pagination=_cursor_pagination_config(),
+            auto_paginate_max_pages=10,
+            auto_paginate_max_records=3,
+            passthrough_allowed=False,
+        )
+        server = GatewayServer(
+            config=config, db_pool=pool, upstreams=[upstream]
+        )
+        monkeypatch.setattr(
+            "sift_mcp.mcp.server.call_upstream_tool",
+            _stub_upstream,
+        )
+        yield server, config, pool
+    finally:
+        pool.close()
+
+
+def test_e2e_auto_pagination_max_pages_boundary(e2e_env_paginated_max_pages):
+    server, _config, _pool = e2e_env_paginated_max_pages
+    session_id = f"sess_{uuid.uuid4().hex}"
+
+    response = _call_mirrored(server, "test.get_cursor_users", session_id)
+    artifact_id = response["artifact_id"]
+
+    pagination = response.get("pagination", {})
+    assert pagination.get("retrieval_status") == "PARTIAL"
+    assert pagination.get("partial_reason") == "MORE_PAGES_AVAILABLE"
+    assert pagination.get("has_next_page") is True
+    assert pagination.get("page_number") == 1
+
+    data = _artifact_query(
+        server,
+        session_id,
+        query_kind="get",
+        artifact_id=artifact_id,
+        target="envelope",
+        jsonpath="$.data[*].id",
+        scope="single",
+    )
+    assert [item["value"] for item in data["items"]] == list(range(1, 9))
+
+
+def test_e2e_auto_pagination_max_records_boundary(
+    e2e_env_paginated_max_records,
+):
+    server, _config, _pool = e2e_env_paginated_max_records
+    session_id = f"sess_{uuid.uuid4().hex}"
+
+    response = _call_mirrored(server, "test.get_cursor_users", session_id)
+    artifact_id = response["artifact_id"]
+
+    pagination = response.get("pagination", {})
+    assert pagination.get("retrieval_status") == "PARTIAL"
+    assert pagination.get("partial_reason") == "MORE_PAGES_AVAILABLE"
+    assert pagination.get("has_next_page") is True
+    assert pagination.get("page_number") == 0
+
+    data = _artifact_query(
+        server,
+        session_id,
+        query_kind="get",
+        artifact_id=artifact_id,
+        target="envelope",
+        jsonpath="$.data[*].id",
+        scope="single",
+    )
+    assert [item["value"] for item in data["items"]] == [1, 2, 3, 4]

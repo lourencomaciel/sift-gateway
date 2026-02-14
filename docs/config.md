@@ -132,6 +132,19 @@ SQLite uses WAL mode for concurrent read access. Advisory locks are no-op (alway
 | Key | Type | Default | Env var | Description |
 |-----|------|---------|---------|-------------|
 | `artifact_search_max_limit` | int | 200 | `SIFT_MCP_ARTIFACT_SEARCH_MAX_LIMIT` | Max search limit parameter |
+| `related_query_max_artifacts` | int | 256 | `SIFT_MCP_RELATED_QUERY_MAX_ARTIFACTS` | Max artifacts in one `scope=all_related` query before `RESOURCE_EXHAUSTED` |
+
+## Lineage query behavior
+
+`artifact(action="query", ...)` uses explicit `query_kind` (`describe|get|select|search`).
+
+- `query_kind=describe|get|select` requires `artifact_id`.
+- `scope` applies only to non-search kinds and defaults to `all_related`.
+- `scope=all_related` queries the full visible lineage component.
+- `scope=single` restricts execution to the anchor artifact.
+- `query_kind=search` does not accept `artifact_id` or `scope`.
+
+For `query_kind=select`, lineage merge is strict by root signature. If incompatible artifacts share the same requested `root_path`, query fails fast with `INVALID_ARGUMENT` and details code `INCOMPATIBLE_LINEAGE_SCHEMA`.
 
 ## Passthrough mode
 
@@ -240,6 +253,11 @@ How this works in practice:
   the stored next-page state generated from this config.
 - Use `param_map` for non-standard/custom APIs where next-page
   arguments are not a simple single cursor, offset, or page number.
+
+Query pagination and upstream pagination are separate:
+
+- Use `artifact(action="query", query_kind=..., cursor=...)` to continue retrieval-layer pagination over already stored artifacts.
+- Use `artifact(action="next_page", artifact_id=...)` only to fetch another upstream page (which creates a new child artifact in lineage).
 
 Strategy selection quick guide:
 
