@@ -21,7 +21,7 @@ import json
 import os
 from pathlib import Path
 import shutil
-from typing import Any, Literal
+from typing import Any, Iterator, Literal
 
 from sift_mcp.config.mcp_servers import (
     extract_mcp_servers,
@@ -36,7 +36,7 @@ from sift_mcp.constants import (
 
 
 @contextlib.contextmanager
-def _suppress_os_error():
+def _suppress_os_error() -> Iterator[None]:
     """Suppress OSError during cleanup (e.g. unlinking a tmp)."""
     try:
         yield

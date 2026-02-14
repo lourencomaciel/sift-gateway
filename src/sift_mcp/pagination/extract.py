@@ -320,7 +320,9 @@ def assess_pagination(
             page_number=page_number,
         )
 
-    partial_reason = UPSTREAM_PARTIAL_REASON_SIGNAL_INCONCLUSIVE
+    partial_reason: UpstreamPartialReason = (
+        UPSTREAM_PARTIAL_REASON_SIGNAL_INCONCLUSIVE
+    )
     if has_more_signal is True:
         partial_reason = UPSTREAM_PARTIAL_REASON_NEXT_TOKEN_MISSING
 
