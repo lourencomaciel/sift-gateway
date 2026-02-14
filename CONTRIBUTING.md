@@ -6,25 +6,25 @@
 # Clone and install with dev dependencies
 git clone https://github.com/zmaciel/sift-mcp.git
 cd sift-mcp
-uv sync --all-extras --group dev
+uv sync --extra dev --extra postgres
 ```
 
 ## Running Tests
 
 ```bash
 # Unit tests (~1000+ tests)
-python -m pytest tests/unit/ -q
+uv run python -m pytest tests/unit/ -q
 
 # Integration tests (requires live Postgres)
-SIFT_MCP_TEST_POSTGRES_DSN="postgresql://..." python -m pytest tests/integration/ -q
+SIFT_MCP_TEST_POSTGRES_DSN="postgresql://..." uv run python -m pytest tests/integration/ -q
 ```
 
 ## Linting & Formatting
 
 ```bash
-python -m ruff check src tests     # lint
-python -m ruff format src tests    # auto-format
-python -m mypy src                 # strict type checking
+uv run python -m ruff check src tests     # lint
+uv run python -m ruff format src tests    # auto-format
+uv run python -m mypy src                 # strict type checking
 ```
 
 ## Coding Conventions

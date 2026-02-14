@@ -1,4 +1,4 @@
-"""artifact.describe handler."""
+"""Legacy describe handler for ``artifact(action="query", query_kind="describe")``."""
 
 from __future__ import annotations
 
@@ -38,7 +38,7 @@ async def handle_artifact_describe(
     ctx: GatewayServer,
     arguments: dict[str, Any],
 ) -> dict[str, Any]:
-    """Handle the ``artifact.describe`` tool call."""
+    """Handle describe-mode artifact queries."""
     from sift_mcp.tools.artifact_describe import (
         FETCH_DESCRIBE_SQL,
         FETCH_ROOTS_SQL,

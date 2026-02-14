@@ -1,4 +1,4 @@
-"""Handle ``artifact.next_page`` for LLM-driven pagination.
+"""Handle ``artifact(action="next_page")`` for LLM-driven pagination.
 
 Fetch the next page of a paginated upstream response by reading
 the pagination state stored in a previous artifact's envelope
@@ -118,7 +118,7 @@ async def handle_artifact_next_page(
     ctx: GatewayServer,
     arguments: dict[str, Any],
 ) -> dict[str, Any]:
-    """Handle the ``artifact.next_page`` tool call.
+    """Handle the ``artifact(action="next_page")`` tool call.
 
     Reads the pagination state from the referenced artifact's
     envelope, locates the correct mirrored upstream tool, and

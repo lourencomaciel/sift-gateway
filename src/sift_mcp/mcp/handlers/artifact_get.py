@@ -1,4 +1,4 @@
-"""artifact.get handler."""
+"""Legacy get handler for ``artifact(action="query", query_kind="get")``."""
 
 from __future__ import annotations
 
@@ -42,7 +42,7 @@ async def handle_artifact_get(
     ctx: GatewayServer,
     arguments: dict[str, Any],
 ) -> dict[str, Any]:
-    """Handle the ``artifact.get`` tool call."""
+    """Handle get-mode artifact queries."""
     from sift_mcp.tools.artifact_describe import FETCH_ROOTS_SQL
     from sift_mcp.tools.artifact_get import (
         FETCH_ARTIFACT_SQL,
@@ -317,7 +317,7 @@ async def handle_artifact_get(
             envelope = envelope_value
         elif canonical_bytes_raw is None:
             return gateway_error(
-                "INTERNAL_ERROR",
+                "INTERNAL",
                 "missing canonical bytes for artifact",
             )
         else:
@@ -333,7 +333,7 @@ async def handle_artifact_get(
                 )
             except ValueError as exc:
                 return gateway_error(
-                    "INTERNAL_ERROR",
+                    "INTERNAL",
                     f"envelope reconstruction failed: {exc}",
                 )
 

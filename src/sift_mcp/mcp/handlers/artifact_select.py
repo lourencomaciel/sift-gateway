@@ -1,4 +1,4 @@
-"""artifact.select handler."""
+"""Legacy select handler for ``artifact(action="query", query_kind="select")``."""
 
 from __future__ import annotations
 
@@ -61,7 +61,7 @@ async def handle_artifact_select(
     ctx: GatewayServer,
     arguments: dict[str, Any],
 ) -> dict[str, Any]:
-    """Handle the ``artifact.select`` tool call.
+    """Handle select-mode artifact queries.
 
     Args:
         ctx: Gateway server instance providing DB and cursor helpers.
@@ -516,7 +516,7 @@ async def handle_artifact_select(
                 envelope = envelope_value
             elif canonical_bytes_raw is None:
                 return gateway_error(
-                    "INTERNAL_ERROR",
+                    "INTERNAL",
                     "missing canonical bytes for artifact",
                 )
             else:
@@ -532,7 +532,7 @@ async def handle_artifact_select(
                     )
                 except ValueError as exc:
                     return gateway_error(
-                        "INTERNAL_ERROR",
+                        "INTERNAL",
                         f"envelope reconstruction failed: {exc}",
                     )
 
