@@ -137,49 +137,23 @@ def compute_related_set_hash(artifacts: list[dict[str, Any]]) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
-def _canonicalize_fields_top(fields_top: Any) -> Any:
-    """Canonicalize fields_top metadata for stable signature hashing."""
-    if isinstance(fields_top, dict):
-        out: dict[str, Any] = {}
-        for key in sorted(fields_top.keys(), key=str):
-            value = fields_top[key]
-            if isinstance(value, dict):
-                # fields_top shape is typically field -> {type: count}.
-                # Keep only sorted type keys for compatibility checks.
-                out[str(key)] = sorted(str(type_key) for type_key in value.keys())
-            else:
-                out[str(key)] = _canonicalize_fields_top(value)
-        return out
-    if isinstance(fields_top, list):
-        canonical_items = [_canonicalize_fields_top(value) for value in fields_top]
-        return sorted(
-            canonical_items,
-            key=lambda item: json.dumps(
-                item,
-                sort_keys=True,
-                separators=(",", ":"),
-            ),
-        )
-    return fields_top
-
-
 def compute_root_signature(
     *,
     root_path: str,
-    root_shape: Any,
-    fields_top: Any,
-    map_kind: Any,
+    schema_hash: Any,
+    schema_mode: Any,
+    schema_completeness: Any,
 ) -> str:
     """Compute a deterministic compatibility signature for a root."""
     payload = {
         "root_path": root_path,
-        "root_shape": root_shape if isinstance(root_shape, str) else None,
-        "fields_top": (
-            _canonicalize_fields_top(fields_top)
-            if isinstance(fields_top, (dict, list))
+        "schema_hash": schema_hash if isinstance(schema_hash, str) else None,
+        "schema_mode": schema_mode if isinstance(schema_mode, str) else None,
+        "schema_completeness": (
+            schema_completeness
+            if isinstance(schema_completeness, str)
             else None
         ),
-        "map_kind": map_kind if isinstance(map_kind, str) else None,
     }
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
@@ -192,8 +166,9 @@ def build_lineage_root_catalog(
 
     Args:
         entries: Rows containing ``artifact_id``, ``root_path``,
-            ``root_shape``, ``fields_top``, ``count_estimate``,
-            and ``map_kind``.
+            ``root_shape``, ``count_estimate``, and schema
+            metadata (``schema_hash``, ``schema_mode``,
+            ``schema_completeness``, and optional ``schema``).
 
     Returns:
         Root catalog grouped by root path with compatibility metadata.
@@ -204,11 +179,14 @@ def build_lineage_root_catalog(
         artifact_id = entry.get("artifact_id")
         if not isinstance(root_path, str) or not isinstance(artifact_id, str):
             continue
+        schema_hash = entry.get("schema_hash")
+        if not isinstance(schema_hash, str) or not schema_hash:
+            schema_hash = f"__missing__:{artifact_id}"
         signature = compute_root_signature(
             root_path=root_path,
-            root_shape=entry.get("root_shape"),
-            fields_top=entry.get("fields_top"),
-            map_kind=entry.get("map_kind"),
+            schema_hash=schema_hash,
+            schema_mode=entry.get("schema_mode"),
+            schema_completeness=entry.get("schema_completeness"),
         )
         row = grouped.setdefault(
             root_path,
@@ -228,8 +206,10 @@ def build_lineage_root_catalog(
                 "signature": signature,
                 "artifact_ids": [],
                 "root_shape": entry.get("root_shape"),
-                "fields_top": entry.get("fields_top"),
-                "map_kind": entry.get("map_kind"),
+                "schema_hash": schema_hash,
+                "schema_mode": entry.get("schema_mode"),
+                "schema_completeness": entry.get("schema_completeness"),
+                "schema": entry.get("schema"),
             },
         )
         group["artifact_ids"].append(artifact_id)
@@ -253,8 +233,10 @@ def build_lineage_root_catalog(
                     "signature": group["signature"],
                     "artifact_ids": artifact_ids,
                     "root_shape": group["root_shape"],
-                    "fields_top": group["fields_top"],
-                    "map_kind": group["map_kind"],
+                    "schema_hash": group["schema_hash"],
+                    "schema_mode": group["schema_mode"],
+                    "schema_completeness": group["schema_completeness"],
+                    "schema": group.get("schema"),
                 }
             )
 
@@ -271,12 +253,9 @@ def build_lineage_root_catalog(
                 "root_shape": representative.get("root_shape")
                 if compatible
                 else "mixed",
-                "fields_top": representative.get("fields_top")
+                "schema": representative.get("schema")
                 if compatible
                 else None,
-                "map_kind": representative.get("map_kind")
-                if compatible
-                else "mixed",
                 "count_estimate": row["count_estimate_total"]
                 if row["has_count"]
                 else None,

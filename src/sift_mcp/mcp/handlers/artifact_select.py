@@ -56,6 +56,19 @@ _SELECT_ROOT_COLUMNS = [
     "root_summary",
 ]
 
+_SCHEMA_ROOT_COLUMNS = [
+    "root_key",
+    "root_path",
+    "schema_version",
+    "schema_hash",
+    "mode",
+    "completeness",
+    "observed_records",
+    "dataset_hash",
+    "traversal_contract_version",
+    "map_budget_fingerprint",
+]
+
 
 async def handle_artifact_select(
     ctx: GatewayServer,
@@ -74,6 +87,7 @@ async def handle_artifact_select(
         gateway error.
     """
     from sift_mcp.tools.artifact_get import FETCH_ARTIFACT_SQL
+    from sift_mcp.tools.artifact_schema import FETCH_SCHEMA_ROOT_BY_PATH_SQL
     from sift_mcp.tools.artifact_select import (
         FETCH_ROOT_SQL,
         FETCH_SAMPLES_SQL,
@@ -254,7 +268,7 @@ async def handle_artifact_select(
             return gateway_error("NOT_FOUND", "artifact not found")
 
         candidate_rows: list[
-            tuple[str, dict[str, Any], dict[str, Any]]
+            tuple[str, dict[str, Any], dict[str, Any], dict[str, Any]]
         ] = []
         signature_groups: dict[str, list[str]] = {}
         for artifact_id in related_ids:
@@ -299,14 +313,26 @@ async def handle_artifact_select(
             if root_row is None:
                 missing_root_artifacts.append(artifact_id)
                 continue
+            schema_root = row_to_dict(
+                connection.execute(
+                    FETCH_SCHEMA_ROOT_BY_PATH_SQL,
+                    (WORKSPACE_ID, artifact_id, root_path),
+                ).fetchone(),
+                _SCHEMA_ROOT_COLUMNS,
+            )
+            if schema_root is None:
+                missing_root_artifacts.append(artifact_id)
+                continue
             signature = compute_root_signature(
                 root_path=root_path,
-                root_shape=root_row.get("root_shape"),
-                fields_top=root_row.get("fields_top"),
-                map_kind=artifact_meta.get("map_kind"),
+                schema_hash=schema_root.get("schema_hash"),
+                schema_mode=schema_root.get("mode"),
+                schema_completeness=schema_root.get("completeness"),
             )
             signature_groups.setdefault(signature, []).append(artifact_id)
-            candidate_rows.append((artifact_id, artifact_meta, root_row))
+            candidate_rows.append(
+                (artifact_id, artifact_meta, root_row, schema_root)
+            )
 
         if not candidate_rows:
             details: dict[str, Any] = {}
@@ -407,7 +433,7 @@ async def handle_artifact_select(
             except CursorStaleError as exc:
                 return ctx._cursor_error(exc)
 
-        for artifact_id, artifact_meta, root_row in candidate_rows:
+        for artifact_id, artifact_meta, root_row, _schema_root in candidate_rows:
             map_kind = str(artifact_meta.get("map_kind", "none"))
             sampled_only = map_kind == "partial"
 

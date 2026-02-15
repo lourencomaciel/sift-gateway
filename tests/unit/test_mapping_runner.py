@@ -96,8 +96,8 @@ def test_run_mapping_fails_for_json_binary_ref_without_stream_support(
     assert "binary stream" in result.map_error
 
 
-def test_mapped_part_index_none_when_no_json_part(tmp_path: Path) -> None:
-    """mapped_part_index is None when no JSON content part exists."""
+def test_text_part_falls_back_to_scalar_mapping(tmp_path: Path) -> None:
+    """Text-only payload still maps deterministically as scalar JSON string."""
     envelope = {"content": [{"type": "text", "text": "hello"}]}
     result = run_mapping(
         MappingInput(
@@ -107,8 +107,34 @@ def test_mapped_part_index_none_when_no_json_part(tmp_path: Path) -> None:
             config=_config(tmp_path),
         )
     )
-    assert result.map_status == "failed"
-    assert result.mapped_part_index is None
+    assert result.map_status == "ready"
+    assert result.map_kind == "full"
+    assert result.mapped_part_index == 0
+    assert result.schemas is not None
+    assert len(result.schemas) == 1
+    assert result.schemas[0].root_path == "$"
+    assert result.schemas[0].fields == []
+
+
+def test_text_part_json_string_is_parsed_for_mapping(tmp_path: Path) -> None:
+    """JSON encoded as text is parsed and mapped as structured JSON."""
+    envelope = {"content": [{"type": "text", "text": "{\"users\":[{\"id\":1}]}"}]}
+    selected = select_json_part(envelope)
+    assert selected is not None
+    assert selected.part_index == 0
+    assert isinstance(selected.value, dict)
+
+    result = run_mapping(
+        MappingInput(
+            artifact_id="a_txt_json",
+            payload_hash_full="p_txt_json",
+            envelope=envelope,
+            config=_config(tmp_path),
+        )
+    )
+    assert result.map_status == "ready"
+    assert result.schemas is not None
+    assert any(schema.root_path == "$.users" for schema in result.schemas)
 
 
 def test_small_json_triggers_full_mapping(tmp_path: Path) -> None:
@@ -130,6 +156,10 @@ def test_small_json_triggers_full_mapping(tmp_path: Path) -> None:
     assert result.roots[0].count_estimate == 2
     assert result.map_budget_fingerprint is None
     assert result.samples is None
+    assert result.schemas is not None
+    assert len(result.schemas) == 1
+    assert result.schemas[0].mode == "exact"
+    assert result.schemas[0].version == "schema_v1"
 
 
 def test_large_json_triggers_partial_mapping(tmp_path: Path) -> None:
@@ -149,6 +179,9 @@ def test_large_json_triggers_partial_mapping(tmp_path: Path) -> None:
     assert result.map_budget_fingerprint is not None
     assert result.map_backend_id is not None
     assert result.samples is not None
+    assert result.schemas is not None
+    assert len(result.schemas) == 1
+    assert result.schemas[0].mode == "sampled"
 
 
 def test_select_json_part_binary_ref_json_mime() -> None:
@@ -262,3 +295,91 @@ def test_full_mapping_object_discovers_roots(tmp_path: Path) -> None:
     assert len(result.roots) == 2
     assert result.roots[0].root_key == "orders"
     assert result.roots[1].root_key == "users"
+
+
+def test_full_schema_resolves_json_encoded_strings(tmp_path: Path) -> None:
+    """Exact schema extraction resolves JSON-encoded strings like full mapping."""
+    data = {
+        "result": json.dumps(
+            {"data": [{"id": 1}, {"id": 2}], "paging": {"next": "token"}},
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+    }
+    envelope = {"content": [{"type": "json", "value": data}]}
+    result = run_mapping(
+        MappingInput(
+            artifact_id="a_json_str",
+            payload_hash_full="p_json_str",
+            envelope=envelope,
+            config=_config(tmp_path, max_full_map_bytes=10_000_000),
+        )
+    )
+    assert result.map_kind == "full"
+    assert result.map_status == "ready"
+    assert result.schemas is not None
+    by_path = {schema.root_path: schema for schema in result.schemas}
+    assert "$.result.data" in by_path
+    data_schema = by_path["$.result.data"]
+    assert data_schema.observed_records == 2
+    field_paths = {field.path for field in data_schema.fields}
+    assert "$.id" in field_paths
+    id_field = next(field for field in data_schema.fields if field.path == "$.id")
+    assert id_field.example_value == "1"
+
+
+def test_schema_field_example_value_truncates_long_values(tmp_path: Path) -> None:
+    data = {
+        "items": [
+            {"description": "abcdefghijklmnopqrstuvwxyz1234567890"},
+        ]
+    }
+    envelope = {"content": [{"type": "json", "value": data}]}
+    result = run_mapping(
+        MappingInput(
+            artifact_id="a_example",
+            payload_hash_full="p_example",
+            envelope=envelope,
+            config=_config(tmp_path, max_full_map_bytes=10_000_000),
+        )
+    )
+    assert result.map_kind == "full"
+    assert result.schemas is not None
+    by_path = {schema.root_path: schema for schema in result.schemas}
+    item_schema = by_path["$.items"]
+    desc_field = next(
+        field for field in item_schema.fields if field.path == "$.description"
+    )
+    assert (
+        desc_field.example_value
+        == "[abcdefghijklmnopqrstuvwxyz1234](6 more chars truncated)"
+    )
+
+
+def test_partial_mapping_resolves_json_encoded_strings_for_schema(
+    tmp_path: Path,
+) -> None:
+    data = {
+        "result": json.dumps(
+            {"data": [{"id": i} for i in range(40)]},
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+    }
+    envelope = {"content": [{"type": "json", "value": data}]}
+    result = run_mapping(
+        MappingInput(
+            artifact_id="a_partial_json_str",
+            payload_hash_full="p_partial_json_str",
+            envelope=envelope,
+            config=_config(tmp_path, max_full_map_bytes=100),
+        )
+    )
+    assert result.map_kind == "partial"
+    assert result.map_status == "ready"
+    assert result.schemas is not None
+    by_path = {schema.root_path: schema for schema in result.schemas}
+    assert "$.result.data" in by_path
+    data_schema = by_path["$.result.data"]
+    field_paths = {field.path for field in data_schema.fields}
+    assert "$.id" in field_paths

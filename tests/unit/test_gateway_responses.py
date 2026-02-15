@@ -15,7 +15,8 @@ def test_gateway_tool_result_handle_only() -> None:
     assert response["type"] == "gateway_tool_result"
     assert response["artifact_id"] == "art_1"
     assert response["meta"] == {"cache": {"hit": True}}
-    assert "describe" not in response
+    assert "mapping" not in response
+    assert "schemas" not in response
     assert "usage_hint" not in response
 
 
@@ -24,21 +25,25 @@ def test_gateway_tool_result_no_cache_meta() -> None:
     assert response["type"] == "gateway_tool_result"
     assert response["artifact_id"] == "art_2"
     assert response["meta"] == {"cache": {}}
-    assert "describe" not in response
+    assert "mapping" not in response
+    assert "schemas" not in response
     assert "usage_hint" not in response
 
 
-def test_gateway_tool_result_with_describe_and_hint() -> None:
-    desc = {"artifact_id": "art_3", "mapping": {}, "roots": []}
+def test_gateway_tool_result_with_schema_payload_and_hint() -> None:
+    mapping = {"map_kind": "full", "map_status": "ready"}
+    schemas = [{"root_path": "$.data", "fields": []}]
     response = gateway_tool_result(
         artifact_id="art_3",
         cache_meta={"reused": False},
-        describe=desc,
+        mapping=mapping,
+        schemas=schemas,
         usage_hint="Use artifact.get to retrieve.",
     )
     assert response["type"] == "gateway_tool_result"
     assert response["artifact_id"] == "art_3"
-    assert response["describe"] is desc
+    assert response["mapping"] is mapping
+    assert response["schemas"] is schemas
     assert response["usage_hint"] == "Use artifact.get to retrieve."
     assert response["meta"] == {"cache": {"reused": False}}
 

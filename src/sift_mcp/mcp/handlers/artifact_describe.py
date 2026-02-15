@@ -33,6 +33,28 @@ _DESCRIBE_COLUMNS = [
     "generation",
 ]
 
+_SCHEMA_ROOT_COLUMNS = [
+    "root_key",
+    "root_path",
+    "schema_version",
+    "schema_hash",
+    "mode",
+    "completeness",
+    "observed_records",
+    "dataset_hash",
+    "traversal_contract_version",
+    "map_budget_fingerprint",
+]
+
+_SCHEMA_FIELD_COLUMNS = [
+    "field_path",
+    "types",
+    "nullable",
+    "required",
+    "observed_count",
+    "example_value",
+]
+
 
 async def handle_artifact_describe(
     ctx: GatewayServer,
@@ -42,6 +64,8 @@ async def handle_artifact_describe(
     from sift_mcp.tools.artifact_describe import (
         FETCH_DESCRIBE_SQL,
         FETCH_ROOTS_SQL,
+        FETCH_SCHEMA_FIELDS_SQL,
+        FETCH_SCHEMA_ROOTS_SQL,
         validate_describe_args,
     )
 
@@ -63,6 +87,86 @@ async def handle_artifact_describe(
         )
 
     with ctx.db_pool.connection() as connection:
+        def _load_schemas_for_artifact(
+            artifact_id: str,
+        ) -> list[dict[str, Any]]:
+            schema_roots = rows_to_dicts(
+                connection.execute(
+                    FETCH_SCHEMA_ROOTS_SQL,
+                    (WORKSPACE_ID, artifact_id),
+                ).fetchall(),
+                _SCHEMA_ROOT_COLUMNS,
+            )
+            schemas_for_artifact: list[dict[str, Any]] = []
+            for schema_root in schema_roots:
+                root_key = schema_root.get("root_key")
+                if not isinstance(root_key, str):
+                    continue
+                field_rows = rows_to_dicts(
+                    connection.execute(
+                        FETCH_SCHEMA_FIELDS_SQL,
+                        (WORKSPACE_ID, artifact_id, root_key),
+                    ).fetchall(),
+                    _SCHEMA_FIELD_COLUMNS,
+                )
+                fields: list[dict[str, Any]] = []
+                for field in field_rows:
+                    raw_types = field.get("types")
+                    types = (
+                        [str(item) for item in raw_types]
+                        if isinstance(raw_types, list)
+                        else []
+                    )
+                    observed_count_raw = field.get("observed_count")
+                    observed_count = (
+                        int(observed_count_raw)
+                        if isinstance(observed_count_raw, int)
+                        else 0
+                    )
+                    fields.append(
+                        {
+                            "path": field.get("field_path"),
+                            "types": types,
+                            "nullable": bool(field.get("nullable")),
+                            "required": bool(field.get("required")),
+                            "observed_count": observed_count,
+                            "example_value": (
+                                str(field.get("example_value"))
+                                if isinstance(field.get("example_value"), str)
+                                else None
+                            ),
+                        }
+                    )
+                observed_records_raw = schema_root.get("observed_records")
+                observed_records = (
+                    int(observed_records_raw)
+                    if isinstance(observed_records_raw, int)
+                    else 0
+                )
+                schemas_for_artifact.append(
+                    {
+                        "version": schema_root.get("schema_version"),
+                        "schema_hash": schema_root.get("schema_hash"),
+                        "root_path": schema_root.get("root_path"),
+                        "mode": schema_root.get("mode"),
+                        "coverage": {
+                            "completeness": schema_root.get("completeness"),
+                            "observed_records": observed_records,
+                        },
+                        "fields": fields,
+                        "determinism": {
+                            "dataset_hash": schema_root.get("dataset_hash"),
+                            "traversal_contract_version": schema_root.get(
+                                "traversal_contract_version"
+                            ),
+                            "map_budget_fingerprint": schema_root.get(
+                                "map_budget_fingerprint"
+                            ),
+                        },
+                    }
+                )
+            return schemas_for_artifact
+
         related_rows: list[dict[str, Any]]
         if scope == "single":
             if not ctx._artifact_visible(
@@ -133,6 +237,7 @@ async def handle_artifact_describe(
         root_entries: list[dict[str, Any]] = []
         artifact_summaries: list[dict[str, Any]] = []
         map_status_counts: dict[str, int] = {}
+        anchor_schemas: list[dict[str, Any]] = []
         for artifact_id in related_ids:
             artifact_row = artifact_rows.get(artifact_id)
             if artifact_row is None:
@@ -155,15 +260,33 @@ async def handle_artifact_describe(
                 ).fetchall(),
                 ROOT_COLUMNS,
             )
+            roots_by_path: dict[str, dict[str, Any]] = {}
             for root in roots:
+                rp = root.get("root_path")
+                if isinstance(rp, str):
+                    roots_by_path[rp] = root
+            schemas_for_artifact = _load_schemas_for_artifact(artifact_id)
+            if artifact_id == anchor_artifact_id:
+                anchor_schemas = list(schemas_for_artifact)
+            for schema in schemas_for_artifact:
+                schema_root_path = schema.get("root_path")
+                if not isinstance(schema_root_path, str):
+                    continue
+                root = roots_by_path.get(schema_root_path, {})
                 root_entries.append(
                     {
                         "artifact_id": artifact_id,
-                        "root_path": root.get("root_path"),
+                        "root_path": schema_root_path,
                         "root_shape": root.get("root_shape"),
-                        "fields_top": root.get("fields_top"),
                         "count_estimate": root.get("count_estimate"),
-                        "map_kind": artifact_row.get("map_kind"),
+                        "schema_hash": schema.get("schema_hash"),
+                        "schema_mode": schema.get("mode"),
+                        "schema_completeness": (
+                            schema.get("coverage", {}).get("completeness")
+                            if isinstance(schema.get("coverage"), dict)
+                            else None
+                        ),
+                        "schema": schema,
                     }
                 )
 
@@ -186,10 +309,13 @@ async def handle_artifact_describe(
     }
     if scope == "all_related":
         lineage["related_set_hash"] = compute_related_set_hash(related_rows)
-    return {
+    response: dict[str, Any] = {
         "artifact_id": anchor_artifact_id,
         "scope": scope,
         "lineage": lineage,
         "artifacts": artifact_summaries,
         "roots": roots,
     }
+    if scope == "single" and anchor_schemas:
+        response["schemas"] = anchor_schemas
+    return response

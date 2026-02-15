@@ -11,11 +11,18 @@ from sift_mcp.mapping.runner import (
     RootInventory,
     SampleRecord,
 )
+from sift_mcp.mapping.schema import (
+    SchemaFieldInventory,
+    SchemaInventory,
+)
 from sift_mcp.mapping.worker import (
     CONDITIONAL_MAP_UPDATE_SQL,
     DELETE_ROOTS_SQL,
+    DELETE_SCHEMA_ROOTS_SQL,
     INSERT_ROOT_SQL,
     INSERT_SAMPLE_SQL,
+    INSERT_SCHEMA_FIELD_SQL,
+    INSERT_SCHEMA_ROOT_SQL,
     WorkerContext,
     check_worker_safety,
     persist_mapping_result,
@@ -80,6 +87,27 @@ def _partial_ready_result() -> MappingResult:
         record_bytes=8,
         record_hash="a" * 64,
     )
+    schema = SchemaInventory(
+        root_key="items",
+        version="schema_v1",
+        schema_hash="sha256:" + ("b" * 64),
+        root_path="$.items",
+        mode="sampled",
+        completeness="partial",
+        observed_records=1,
+        fields=[
+            SchemaFieldInventory(
+                path="$.id",
+                types=["number"],
+                nullable=False,
+                required=True,
+                observed_count=1,
+            )
+        ],
+        dataset_hash="sha256:" + ("c" * 64),
+        traversal_contract_version="traversal_v1",
+        map_budget_fingerprint="mbf_1",
+    )
     return MappingResult(
         map_kind="partial",
         map_status="ready",
@@ -90,6 +118,7 @@ def _partial_ready_result() -> MappingResult:
         prng_version="prng_xoshiro256ss_v1",
         map_error=None,
         samples=[sample],
+        schemas=[schema],
     )
 
 
@@ -194,6 +223,9 @@ def test_persist_mapping_result_writes_roots_and_samples_transactionally() -> (
     assert DELETE_ROOTS_SQL.strip() in connection.queries
     assert INSERT_ROOT_SQL.strip() in connection.queries
     assert INSERT_SAMPLE_SQL.strip() in connection.queries
+    assert DELETE_SCHEMA_ROOTS_SQL.strip() in connection.queries
+    assert INSERT_SCHEMA_ROOT_SQL.strip() in connection.queries
+    assert INSERT_SCHEMA_FIELD_SQL.strip() in connection.queries
 
 
 def test_persist_mapping_result_discards_when_conditional_update_skips() -> (
@@ -280,6 +312,27 @@ def _full_ready_result() -> MappingResult:
         inventory_coverage=1.0,
         root_score=3.0,
     )
+    schema = SchemaInventory(
+        root_key="$",
+        version="schema_v1",
+        schema_hash="sha256:" + ("d" * 64),
+        root_path="$",
+        mode="exact",
+        completeness="complete",
+        observed_records=3,
+        fields=[
+            SchemaFieldInventory(
+                path="$.id",
+                types=["number"],
+                nullable=False,
+                required=True,
+                observed_count=3,
+            )
+        ],
+        dataset_hash="sha256:" + ("e" * 64),
+        traversal_contract_version="traversal_v1",
+        map_budget_fingerprint=None,
+    )
     return MappingResult(
         map_kind="full",
         map_status="ready",
@@ -289,6 +342,7 @@ def _full_ready_result() -> MappingResult:
         map_backend_id=None,
         prng_version=None,
         map_error=None,
+        schemas=[schema],
     )
 
 
@@ -309,6 +363,9 @@ def test_persist_full_mapping_writes_roots_no_samples() -> None:
     assert connection.committed is True
     assert DELETE_ROOTS_SQL.strip() in connection.queries
     assert INSERT_ROOT_SQL.strip() in connection.queries
+    assert DELETE_SCHEMA_ROOTS_SQL.strip() in connection.queries
+    assert INSERT_SCHEMA_ROOT_SQL.strip() in connection.queries
+    assert INSERT_SCHEMA_FIELD_SQL.strip() in connection.queries
     # Full mapping should NOT write samples
     assert INSERT_SAMPLE_SQL.strip() not in connection.queries
     assert DELETE_SAMPLES_SQL.strip() not in connection.queries

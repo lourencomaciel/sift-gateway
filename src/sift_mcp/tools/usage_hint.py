@@ -7,6 +7,7 @@ next.  Purely rule-based — no LLM involved.
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 PAGINATION_COMPLETENESS_RULE = (
@@ -33,20 +34,69 @@ def with_pagination_completeness_rule(text: str) -> str:
     return f"{trimmed} {PAGINATION_COMPLETENESS_RULE}"
 
 
-def _field_names(fields_top: Any, *, limit: int = 8) -> list[str]:
-    """Extract up to *limit* field names from a fields_top dict.
+_TOP_LEVEL_FIELD_PATH_RE = re.compile(r"^\$\.([A-Za-z_][A-Za-z0-9_]*)$")
 
-    Args:
-        fields_top: A ``fields_top`` dict mapping field names to
-            type distributions, or any non-dict value.
-        limit: Maximum number of field names to return.
 
-    Returns:
-        List of field name strings (may be empty).
-    """
+def _field_names(root: dict[str, Any], *, limit: int = 8) -> list[str]:
+    """Extract up to *limit* top-level fields from root-local schema data."""
+    schema = root.get("schema")
+    if isinstance(schema, dict):
+        raw_fields = schema.get("fields")
+        if isinstance(raw_fields, list):
+            names: list[str] = []
+            seen: set[str] = set()
+            for item in raw_fields:
+                if not isinstance(item, dict):
+                    continue
+                path = item.get("path")
+                if not isinstance(path, str):
+                    continue
+                match = _TOP_LEVEL_FIELD_PATH_RE.match(path)
+                if match is None:
+                    continue
+                name = match.group(1)
+                if name in seen:
+                    continue
+                seen.add(name)
+                names.append(name)
+                if len(names) >= limit:
+                    return names
+            if names:
+                return names
+    fields_top = root.get("fields_top")
     if not isinstance(fields_top, dict):
         return []
     return list(fields_top.keys())[:limit]
+
+
+def _schema_fields_for_root(
+    root_path: str,
+    schemas_by_path: dict[str, dict[str, Any]],
+) -> list[str]:
+    """Extract top-level field names from the canonical schema list."""
+    schema = schemas_by_path.get(root_path)
+    if not isinstance(schema, dict):
+        return []
+    raw_fields = schema.get("fields")
+    if not isinstance(raw_fields, list):
+        return []
+    names: list[str] = []
+    seen: set[str] = set()
+    for item in raw_fields:
+        if not isinstance(item, dict):
+            continue
+        path = item.get("path")
+        if not isinstance(path, str):
+            continue
+        match = _TOP_LEVEL_FIELD_PATH_RE.match(path)
+        if match is None:
+            continue
+        name = match.group(1)
+        if name in seen:
+            continue
+        seen.add(name)
+        names.append(name)
+    return names
 
 
 def _root_summary(root: dict[str, Any]) -> str:
@@ -92,6 +142,17 @@ def build_usage_hint(
     mapping = describe.get("mapping", {})
     map_status = mapping.get("map_status", "pending")
     roots: list[dict[str, Any]] = describe.get("roots", [])
+    schemas_raw = describe.get("schemas", [])
+    schemas_by_path: dict[str, dict[str, Any]] = (
+        {
+            str(schema["root_path"]): schema
+            for schema in schemas_raw
+            if isinstance(schema, dict)
+            and isinstance(schema.get("root_path"), str)
+        }
+        if isinstance(schemas_raw, list)
+        else {}
+    )
 
     # Mapping failed -- advise raw retrieval
     if map_status == "failed":
@@ -110,7 +171,97 @@ def build_usage_hint(
             "to check status later."
         )
 
-    # No roots discovered
+    # Schema-first fallback when roots are omitted.
+    if not roots and schemas_by_path:
+        schema_entries = [
+            schema
+            for schema in schemas_raw
+            if isinstance(schema, dict)
+            and isinstance(schema.get("root_path"), str)
+        ]
+        if schema_entries:
+            def _schema_sort_key(schema: dict[str, Any]) -> tuple[int, str]:
+                coverage = schema.get("coverage")
+                observed_records = 0
+                if isinstance(coverage, dict):
+                    raw_count = coverage.get("observed_records")
+                    if isinstance(raw_count, int):
+                        observed_records = raw_count
+                root_path = schema.get("root_path")
+                path_value = root_path if isinstance(root_path, str) else "$"
+                return (-observed_records, path_value)
+
+            ordered = sorted(schema_entries, key=_schema_sort_key)
+            primary_schema = ordered[0]
+            primary_path = str(primary_schema.get("root_path", "$"))
+            coverage = primary_schema.get("coverage")
+            observed_records = 0
+            if isinstance(coverage, dict):
+                raw_count = coverage.get("observed_records")
+                if isinstance(raw_count, int):
+                    observed_records = raw_count
+
+            schema_parts: list[str] = []
+            if observed_records > 0:
+                schema_parts.append(
+                    f"Contains {observed_records} records at {primary_path}"
+                )
+            else:
+                schema_parts.append(f"Schema available at {primary_path}")
+
+            fields = _schema_fields_for_root(primary_path, schemas_by_path)[:8]
+            if fields:
+                schema_parts.append(f"Fields: {', '.join(fields)}")
+
+            if fields:
+                select_fields = fields[:4]
+                select_list = ", ".join(f'"{f}"' for f in select_fields)
+            else:
+                select_list = '"field1", "field2"'
+            schema_parts.append(
+                'Use artifact(action="query", '
+                'query_kind="select", '
+                f'artifact_id="{artifact_id}", '
+                f'root_path="{primary_path}", '
+                f"select_paths=[{select_list}]"
+                ") to project specific fields"
+            )
+            schema_parts.append(
+                "If projection fails for this root shape, use get + jsonpath instead"
+            )
+            schema_parts.append(
+                "Add where to filter (e.g. where='to_number(spend) > 0')"
+            )
+            schema_parts.append(
+                "Use count_only=true for counts, distinct=true for unique values"
+            )
+            schema_parts.append(
+                "Continue partial results with query + cursor (not next_page)"
+            )
+            schema_parts.append(
+                "Minimize context: request only needed "
+                "fields and rows, then expand if needed"
+            )
+            schema_parts.append(
+                f'Tip: pass "{artifact_id}" directly as an argument'
+                " to another tool. Use"
+                f' "{artifact_id}:$.path" to pass a specific field'
+                f' (e.g. "{artifact_id}:$.items[0].name")'
+            )
+            if len(ordered) > 1:
+                alternates = [
+                    str(item["root_path"])
+                    for item in ordered[1:4]
+                    if isinstance(item.get("root_path"), str)
+                ]
+                if alternates:
+                    schema_parts.append(
+                        f"Also available: {', '.join(alternates)}"
+                    )
+
+            return ". ".join(schema_parts) + "."
+
+    # No roots or schemas discovered
     if not roots:
         return (
             "No structured mapping available. Use "
@@ -128,13 +279,15 @@ def build_usage_hint(
     # Describe structure
     if shape == "array" and isinstance(count, int) and count > 0:
         parts.append(f"Contains {count} records at {path}")
-    elif shape == "dict":
+    elif shape in {"dict", "object"}:
         parts.append(f"Contains a dict at {path}")
     else:
         parts.append(f"Root at {path} ({shape})")
 
     # Fields
-    fields = _field_names(primary.get("fields_top"))
+    fields = _schema_fields_for_root(path, schemas_by_path)[:8]
+    if not fields:
+        fields = _field_names(primary)
     if fields:
         parts.append(f"Fields: {', '.join(fields)}")
 

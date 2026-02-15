@@ -30,17 +30,18 @@ def gateway_tool_result(
     *,
     artifact_id: str,
     cache_meta: dict[str, Any] | None = None,
-    describe: dict[str, Any] | None = None,
+    mapping: dict[str, Any] | None = None,
+    schemas: list[dict[str, Any]] | None = None,
     usage_hint: str | None = None,
     pagination: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Create a gateway tool response with inline describe data.
+    """Create a gateway tool response with inline schema-first data.
 
     Args:
         artifact_id: Unique artifact identifier.
         cache_meta: Cache metadata dict (reused, reason, etc.).
-        describe: Inline describe response with mapping metadata
-            and discovered roots.
+        mapping: Mapping metadata for this artifact.
+        schemas: Canonical schema list (one entry per root path).
         usage_hint: Natural language hint for the calling model
             describing what the artifact contains and which
             tools to call next.
@@ -52,15 +53,17 @@ def gateway_tool_result(
 
     Returns:
         Structured result dict with artifact handle, cache info,
-        describe data, and usage hint.
+        schema-first mapping data, and usage hint.
     """
     result: dict[str, Any] = {
         "type": RESPONSE_TYPE_RESULT,
         "artifact_id": artifact_id,
         "meta": {"cache": cache_meta or {}},
     }
-    if describe is not None:
-        result["describe"] = describe
+    if mapping is not None:
+        result["mapping"] = mapping
+    if schemas is not None:
+        result["schemas"] = schemas
     if usage_hint is not None:
         result["usage_hint"] = usage_hint
     if pagination is not None:

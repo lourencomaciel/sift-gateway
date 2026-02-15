@@ -105,3 +105,19 @@ def test_query_select_rejects_target_and_jsonpath(tmp_path: Path) -> None:
     assert response["code"] == "INVALID_ARGUMENT"
     assert "only supported with query_kind=get" in response["message"]
 
+
+def test_query_rejects_unsupported_query_kind(tmp_path: Path) -> None:
+    server = _server(tmp_path)
+    response = asyncio.run(
+        server.handle_artifact(
+            {
+                "action": "query",
+                "query_kind": "schema",
+                "_gateway_context": {"session_id": "sess_1"},
+                "artifact_id": "art_1",
+                "where": 'to_number(spend) > 0',
+            }
+        )
+    )
+    assert response["code"] == "INVALID_ARGUMENT"
+    assert "query_kind is required" in response["message"]
