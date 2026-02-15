@@ -59,10 +59,27 @@ WHERE workspace_id = %s AND artifact_id = %s
 ORDER BY root_score DESC
 """
 
+FETCH_SCHEMA_ROOTS_SQL = """
+SELECT root_key, root_path, schema_version, schema_hash,
+       mode, completeness, observed_records, dataset_hash,
+       traversal_contract_version, map_budget_fingerprint
+FROM artifact_schema_roots
+WHERE workspace_id = %s AND artifact_id = %s
+ORDER BY observed_records DESC, root_path ASC
+"""
+
+FETCH_SCHEMA_FIELDS_SQL = """
+SELECT field_path, types, nullable, required, observed_count, example_value
+FROM artifact_schema_fields
+WHERE workspace_id = %s AND artifact_id = %s AND root_key = %s
+ORDER BY field_path ASC
+"""
+
 
 def build_describe_response(
     artifact_row: dict[str, Any],
     roots: list[dict[str, Any]],
+    schemas: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Build the ``artifact.describe`` response dict.
 
@@ -75,6 +92,7 @@ def build_describe_response(
             metadata columns.
         roots: List of root row dicts ordered by
             ``root_score`` descending.
+        schemas: Optional schema entries for this artifact.
 
     Returns:
         Structured response dict with ``artifact_id``,
@@ -96,6 +114,7 @@ def build_describe_response(
             "traversal_contract_version": TRAVERSAL_CONTRACT_VERSION,
         },
         "roots": [],
+        "schemas": list(schemas or []),
     }
 
     for root in roots:

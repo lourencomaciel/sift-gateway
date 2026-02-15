@@ -95,19 +95,53 @@ def _server(tmp_path: Path, connection: _SeqConnection) -> GatewayServer:
     )
 
 
+def _root_row(
+    root_key: str,
+    root_path: str = "$.items",
+    fields_top: dict[str, Any] | None = None,
+) -> tuple[object, ...]:
+    return (
+        root_key,
+        root_path,
+        1,
+        "array",
+        fields_top if fields_top is not None else {"id": {"number": 1}},
+        None,
+        {},
+    )
+
+
+def _schema_root_row(
+    root_key: str,
+    root_path: str = "$.items",
+    *,
+    schema_hash: str = "sha256:schema_items",
+) -> tuple[object, ...]:
+    return (
+        root_key,
+        root_path,
+        "schema_v1",
+        schema_hash,
+        "exact",
+        "complete",
+        1,
+        "sha256:dataset_items",
+        "traversal_v1",
+        "mbf",
+    )
+
+
 def test_select_all_related_merges_records_with_artifact_locator(
     tmp_path: Path, monkeypatch
 ) -> None:
     conn = _SeqConnection(
         [
             _SeqCursor(one=("art_1", "full", "ready", "off", None, 1, "mbf")),
-            _SeqCursor(
-                one=("rk_1", "$.items", 1, "array", {"id": {"number": 1}}, None, {})
-            ),
+            _SeqCursor(one=_root_row("rk_1")),
+            _SeqCursor(one=_schema_root_row("rk_1")),
             _SeqCursor(one=("art_2", "full", "ready", "off", None, 1, "mbf")),
-            _SeqCursor(
-                one=("rk_2", "$.items", 1, "array", {"id": {"number": 1}}, None, {})
-            ),
+            _SeqCursor(one=_root_row("rk_2")),
+            _SeqCursor(one=_schema_root_row("rk_2")),
             _SeqCursor(
                 one=_artifact_row(
                     "art_1",
@@ -176,21 +210,13 @@ def test_select_all_related_fails_fast_on_incompatible_signatures(
     conn = _SeqConnection(
         [
             _SeqCursor(one=("art_1", "full", "ready", "off", None, 1, "mbf")),
-            _SeqCursor(
-                one=("rk_1", "$.items", 1, "array", {"id": {"number": 1}}, None, {})
-            ),
+            _SeqCursor(one=_root_row("rk_1")),
+            _SeqCursor(one=_schema_root_row("rk_1", schema_hash="sha256:one")),
             _SeqCursor(one=("art_2", "full", "ready", "off", None, 1, "mbf")),
             _SeqCursor(
-                one=(
-                    "rk_2",
-                    "$.items",
-                    1,
-                    "array",
-                    {"name": {"string": 1}},
-                    None,
-                    {},
-                )
+                one=_root_row("rk_2", fields_top={"name": {"string": 1}})
             ),
+            _SeqCursor(one=_schema_root_row("rk_2", schema_hash="sha256:two")),
         ]
     )
     server = _server(tmp_path, conn)
@@ -225,13 +251,11 @@ def test_select_all_related_cursor_stale_on_related_set_change(
     conn = _SeqConnection(
         [
             _SeqCursor(one=("art_1", "full", "ready", "off", None, 1, "mbf")),
-            _SeqCursor(
-                one=("rk_1", "$.items", 1, "array", {"id": {"number": 1}}, None, {})
-            ),
+            _SeqCursor(one=_root_row("rk_1")),
+            _SeqCursor(one=_schema_root_row("rk_1")),
             _SeqCursor(one=("art_2", "full", "ready", "off", None, 1, "mbf")),
-            _SeqCursor(
-                one=("rk_2", "$.items", 1, "array", {"id": {"number": 1}}, None, {})
-            ),
+            _SeqCursor(one=_root_row("rk_2")),
+            _SeqCursor(one=_schema_root_row("rk_2")),
         ]
     )
     server = _server(tmp_path, conn)

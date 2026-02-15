@@ -51,7 +51,8 @@ def test_minimal_describe_hint_mentions_artifact_id() -> None:
 
 def _mock_connection(
     artifact_row: tuple | None = None,
-    root_rows: list | None = None,
+    schema_root_rows: list | None = None,
+    schema_field_rows_by_root_key: dict[str, list[tuple]] | None = None,
 ) -> MagicMock:
     """Build a mock connection returning canned query results."""
     conn = MagicMock()
@@ -60,8 +61,12 @@ def _mock_connection(
         cursor = MagicMock()
         if "FROM artifacts" in sql:
             cursor.fetchone.return_value = artifact_row
-        elif "FROM artifact_roots" in sql:
-            cursor.fetchall.return_value = root_rows or []
+        elif "FROM artifact_schema_roots" in sql:
+            cursor.fetchall.return_value = schema_root_rows or []
+        elif "FROM artifact_schema_fields" in sql:
+            root_key = params[2] if params and len(params) >= 3 else ""
+            rows_by_key = schema_field_rows_by_root_key or {}
+            cursor.fetchall.return_value = rows_by_key.get(str(root_key), [])
         else:
             cursor.fetchone.return_value = None
             cursor.fetchall.return_value = []
@@ -84,33 +89,43 @@ def test_fetch_inline_describe_happy_path() -> None:
         None,  # deleted_at
         1,  # generation
     )
-    root_row = (
-        "rk1",  # root_key
-        "$.data",  # root_path
-        10,  # count_estimate
-        1.0,  # inventory_coverage
-        None,  # root_summary
-        100,  # root_score
-        "array",  # root_shape
-        {"name": {"string": 10}},  # fields_top
-        None,  # sample_indices
-    )
+    schema_root_rows = [
+        (
+            "rk1",
+            "$.data",
+            "schema_v1",
+            "sha256:abc",
+            "exact",
+            "complete",
+            10,
+            "sha256:def",
+            "traversal_v1",
+            None,
+        )
+    ]
+    schema_fields = {
+        "rk1": [
+            ("$.name", ["string"], False, True, 10, "alice"),
+        ]
+    }
     conn = _mock_connection(
         artifact_row=artifact_row,
-        root_rows=[root_row],
+        schema_root_rows=schema_root_rows,
+        schema_field_rows_by_root_key=schema_fields,
     )
     desc, hint = _fetch_inline_describe(conn, "art_1")
     assert desc["artifact_id"] == "art_1"
     assert desc["mapping"]["map_kind"] == "full"
     assert desc["mapping"]["map_status"] == "complete"
-    assert len(desc["roots"]) == 1
-    assert desc["roots"][0]["root_path"] == "$.data"
+    assert desc["roots"] == []
+    assert len(desc["schemas"]) == 1
+    assert desc["schemas"][0]["root_path"] == "$.data"
     assert "10 records" in hint
     assert 'artifact(action="query"' in hint
 
 
 def test_fetch_inline_describe_no_artifact_row() -> None:
-    conn = _mock_connection(artifact_row=None, root_rows=[])
+    conn = _mock_connection(artifact_row=None)
     desc, hint = _fetch_inline_describe(conn, "art_missing")
     assert desc["artifact_id"] == "art_missing"
     assert desc["mapping"]["map_kind"] == "none"
@@ -127,7 +142,7 @@ def test_fetch_inline_describe_db_error_falls_back() -> None:
     assert "Mapping in progress" in hint
 
 
-def test_fetch_inline_describe_cache_hit_with_roots() -> None:
+def test_fetch_inline_describe_cache_hit_with_schema_paths() -> None:
     artifact_row = (
         "art_cached",
         "full",
@@ -140,41 +155,142 @@ def test_fetch_inline_describe_cache_hit_with_roots() -> None:
         None,
         2,
     )
-    root_rows = [
+    schema_root_rows = [
         (
             "rk1",
             "$.result.data",
+            "schema_v1",
+            "sha256:one",
+            "exact",
+            "complete",
             100,
-            1.0,
-            None,
-            200,
-            "array",
-            {
-                "name": {"string": 50},
-                "status": {"string": 50},
-                "id": {"string": 50},
-            },
+            "sha256:dataset_one",
+            "traversal_v1",
             None,
         ),
         (
             "rk2",
             "$.result.paging",
+            "schema_v1",
+            "sha256:two",
+            "exact",
+            "complete",
             1,
-            1.0,
-            None,
-            50,
-            "dict",
-            None,
+            "sha256:dataset_two",
+            "traversal_v1",
             None,
         ),
     ]
+    schema_fields = {
+        "rk1": [("$.id", ["string"], False, True, 100, "1")],
+        "rk2": [("$.next", ["string"], False, False, 1, "https://...")],
+    }
     conn = _mock_connection(
         artifact_row=artifact_row,
-        root_rows=root_rows,
+        schema_root_rows=schema_root_rows,
+        schema_field_rows_by_root_key=schema_fields,
     )
     desc, hint = _fetch_inline_describe(conn, "art_cached")
-    assert len(desc["roots"]) == 2
-    assert desc["roots"][0]["root_path"] == "$.result.data"
+    assert desc["roots"] == []
+    assert len(desc["schemas"]) == 1
+    assert desc["schemas"][0]["root_path"] == "$.result.data"
     assert "100 records" in hint
+    assert "Also available" not in hint
+
+
+def test_fetch_inline_describe_keeps_all_schemas_when_primary_not_unique() -> None:
+    artifact_row = (
+        "art_tie",
+        "full",
+        "complete",
+        "v1",
+        None,
+        None,
+        None,
+        0,
+        None,
+        2,
+    )
+    schema_root_rows = [
+        (
+            "rk1",
+            "$.result.a",
+            "schema_v1",
+            "sha256:one",
+            "exact",
+            "complete",
+            100,
+            "sha256:dataset_one",
+            "traversal_v1",
+            None,
+        ),
+        (
+            "rk2",
+            "$.result.b",
+            "schema_v1",
+            "sha256:two",
+            "exact",
+            "complete",
+            100,
+            "sha256:dataset_two",
+            "traversal_v1",
+            None,
+        ),
+    ]
+    schema_fields = {
+        "rk1": [("$.id", ["string"], False, True, 100, "1")],
+        "rk2": [("$.name", ["string"], False, True, 100, "n")],
+    }
+    conn = _mock_connection(
+        artifact_row=artifact_row,
+        schema_root_rows=schema_root_rows,
+        schema_field_rows_by_root_key=schema_fields,
+    )
+    desc, hint = _fetch_inline_describe(conn, "art_tie")
+    assert len(desc["schemas"]) == 2
+    root_paths = {schema["root_path"] for schema in desc["schemas"]}
+    assert root_paths == {"$.result.a", "$.result.b"}
     assert "Also available" in hint
-    assert "$.result.paging" in hint
+
+
+def test_fetch_inline_describe_includes_schemas() -> None:
+    artifact_row = (
+        "art_schema",
+        "full",
+        "complete",
+        "v1",
+        None,
+        None,
+        None,
+        0,
+        None,
+        2,
+    )
+    schema_root_rows = [
+        (
+            "rk1",
+            "$.result.data",
+            "schema_v1",
+            "sha256:abc",
+            "exact",
+            "complete",
+            2,
+            "sha256:def",
+            "traversal_v1",
+            None,
+        )
+    ]
+    schema_fields = {
+        "rk1": [
+            ("$.id", ["number"], False, True, 2, "1"),
+        ]
+    }
+    conn = _mock_connection(
+        artifact_row=artifact_row,
+        schema_root_rows=schema_root_rows,
+        schema_field_rows_by_root_key=schema_fields,
+    )
+    desc, _ = _fetch_inline_describe(conn, "art_schema")
+    assert len(desc["schemas"]) == 1
+    assert desc["schemas"][0]["root_path"] == "$.result.data"
+    assert desc["roots"] == []

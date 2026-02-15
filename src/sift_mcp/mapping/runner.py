@@ -16,6 +16,11 @@ import json
 from typing import Any, BinaryIO, Callable
 
 from sift_mcp.config.settings import GatewayConfig
+from sift_mcp.mapping.schema import (
+    SchemaInventory,
+    build_exact_schema,
+    build_sampled_schema,
+)
 
 
 @dataclass(frozen=True)
@@ -39,6 +44,8 @@ class RootInventory:
         prefix_coverage: True if stopped before full scan.
         stop_reason: Why scanning stopped, or None.
         sampled_prefix_len: Elements seen before stopping.
+        path_stats: Optional per-path stats discovered during
+            mapping, keyed by canonical JSONPath.
     """
 
     root_key: str
@@ -53,6 +60,7 @@ class RootInventory:
     prefix_coverage: bool = False
     stop_reason: str | None = None
     sampled_prefix_len: int | None = None
+    path_stats: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -128,6 +136,7 @@ class MappingResult:
         prng_version: Deterministic PRNG version string.
         map_error: Error message if failed, else None.
         samples: Sampled records (partial mapping only).
+        schemas: Extracted schema inventories per root.
     """
 
     map_kind: str
@@ -139,6 +148,7 @@ class MappingResult:
     prng_version: str | None
     map_error: str | None
     samples: list[SampleRecord] | None = None
+    schemas: list[SchemaInventory] | None = None
 
 
 def _is_json_binary_mime(raw_mime: object) -> bool:
@@ -217,13 +227,64 @@ def _score_binary_ref_part(
     )
 
 
+def _score_text_part(
+    i: int,
+    part: dict[str, Any],
+) -> SelectedJsonPart | None:
+    """Score a text part by parsing JSON when possible.
+
+    Fallback behavior for schema-first reliability:
+    - If text parses to JSON, map that parsed value.
+    - If text is plain/non-JSON, map the string scalar so mapping
+      still completes deterministically.
+    """
+    text = part.get("text")
+    if not isinstance(text, str):
+        return None
+
+    parsed: Any = text
+    trimmed = text.strip()
+    if trimmed:
+        try:
+            parsed = json.loads(trimmed)
+            # Handle double-encoded JSON strings, e.g. "\"{...}\"".
+            if isinstance(parsed, str):
+                nested = parsed.strip()
+                if nested:
+                    try:
+                        parsed = json.loads(nested)
+                    except Exception:
+                        parsed = parsed
+        except Exception:
+            parsed = text
+
+    if isinstance(parsed, str):
+        # Plain text scalar: force full mapping path.
+        return SelectedJsonPart(
+            part_index=i,
+            byte_size=0,
+            value=parsed,
+        )
+
+    serialized = json.dumps(parsed, separators=(",", ":"), sort_keys=True)
+    byte_size = len(serialized.encode("utf-8"))
+    return SelectedJsonPart(
+        part_index=i,
+        byte_size=byte_size,
+        value=parsed,
+    )
+
+
 def select_json_part(
     envelope: dict[str, Any],
 ) -> SelectedJsonPart | None:
     """Select the best JSON-compatible content part for mapping.
 
-    Score all JSON and JSON-mime binary_ref parts by byte size,
+    Score explicit JSON and JSON-mime binary_ref parts by byte size,
     preferring larger parts.  Break ties by ascending index.
+    If none exist, fall back to text parts by attempting JSON parse;
+    plain text is treated as a scalar JSON string for deterministic
+    schema generation.
 
     Args:
         envelope: Raw envelope dict with a ``content`` list.
@@ -249,6 +310,21 @@ def select_json_part(
         if candidate is None:
             continue
         # Prefer larger; tie-break by ascending index
+        if best is None or candidate.byte_size > best.byte_size:
+            best = candidate
+
+    if best is not None:
+        return best
+
+    # Fallback: text-only upstream payloads.
+    for i, part in enumerate(content):
+        if not isinstance(part, dict):
+            continue
+        if part.get("type") != "text":
+            continue
+        candidate = _score_text_part(i, part)
+        if candidate is None:
+            continue
         if best is None or candidate.byte_size > best.byte_size:
             best = candidate
 
@@ -286,18 +362,21 @@ def _failed_result(
         map_backend_id=map_backend_id,
         prng_version=prng_version,
         map_error=map_error,
+        schemas=[],
     )
 
 
 def _run_full_mapping(
     selected: SelectedJsonPart,
     config: GatewayConfig,
+    payload_hash_full: str,
 ) -> MappingResult:
     """Execute full in-memory mapping on the selected part.
 
     Args:
         selected: The JSON part chosen for mapping.
         config: Gateway configuration with root discovery limit.
+        payload_hash_full: Canonical payload SHA-256 hex.
 
     Returns:
         A MappingResult with kind "full" and status "ready"
@@ -321,6 +400,11 @@ def _run_full_mapping(
             selected.value,
             max_roots=config.max_root_discovery_k,
         )
+        schemas = build_exact_schema(
+            json_target=selected.value,
+            roots=roots,
+            payload_hash_full=payload_hash_full,
+        )
     except Exception as exc:
         return _failed_result(
             map_kind="full",
@@ -336,6 +420,7 @@ def _run_full_mapping(
         map_backend_id=None,
         prng_version=None,
         map_error=None,
+        schemas=schemas,
     )
 
 
@@ -399,6 +484,7 @@ def _open_partial_stream(
     import io
 
     from sift_mcp.constants import PRNG_VERSION
+    from sift_mcp.mapping.json_strings import resolve_json_strings
 
     _, _, backend_id, fingerprint = _build_partial_config(
         mapping_input,
@@ -435,8 +521,9 @@ def _open_partial_stream(
                 " value for partial mapping"
             ),
         )
+    normalized_value = resolve_json_strings(value)
     serialized_bytes = json.dumps(
-        value, separators=(",", ":"), sort_keys=True
+        normalized_value, separators=(",", ":"), sort_keys=True
     ).encode("utf-8")
     return io.BytesIO(serialized_bytes), False
 
@@ -498,6 +585,12 @@ def _run_partial_mapping(
         prng_version=PRNG_VERSION,
         map_error=None,
         samples=samples,
+        schemas=build_sampled_schema(
+            roots=roots,
+            samples=samples,
+            payload_hash_full=mapping_input.payload_hash_full,
+            map_budget_fingerprint=fingerprint,
+        ),
     )
 
 
@@ -535,5 +628,9 @@ def run_mapping(
     )
 
     if not use_partial:
-        return _run_full_mapping(selected, config)
+        return _run_full_mapping(
+            selected,
+            config,
+            mapping_input.payload_hash_full,
+        )
     return _run_partial_mapping(mapping_input, selected)
