@@ -321,6 +321,7 @@ class _RootState:
     elements_seen: int = 0
     array_closed: bool = False
     field_types: dict[str, dict[str, int]] = field(default_factory=dict)
+    path_stats: dict[str, _PathStats] = field(default_factory=dict)
     leaf_paths_seen: int = 0
     skipped_oversize_records: int = 0
 
@@ -371,6 +372,74 @@ def _update_field_types(
         if key not in field_types:
             field_types[key] = {}
         field_types[key][type_name] = field_types[key].get(type_name, 0) + 1
+
+
+@dataclass
+class _PathStats:
+    """Aggregated per-path observations across streamed records."""
+
+    types: set[str]
+    observed_count: int
+    example_value: Any | None
+
+
+def _normalize_path_segment(key: str) -> str:
+    """Encode an object key as a canonical JSONPath segment."""
+    import re
+
+    if re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", key):
+        return f".{key}"
+    escaped = (
+        key.replace("\\", "\\\\")
+        .replace("'", "\\'")
+        .replace("\n", "\\n")
+        .replace("\r", "\\r")
+        .replace("\t", "\\t")
+    )
+    return f"['{escaped}']"
+
+
+def _walk_value(
+    value: Any,
+    *,
+    path: str,
+    stats: dict[str, _PathStats],
+    seen_paths: set[str],
+) -> None:
+    """Collect path/type observations for one record value."""
+    existing = stats.get(path)
+    if existing is None:
+        existing = _PathStats(
+            types=set(),
+            observed_count=0,
+            example_value=value,
+        )
+        stats[path] = existing
+    elif existing.example_value is None:
+        existing.example_value = value
+    existing.types.add(_json_type_name(value))
+    seen_paths.add(path)
+
+    if isinstance(value, dict):
+        for key in sorted(value.keys()):
+            child_path = f"{path}{_normalize_path_segment(str(key))}"
+            _walk_value(
+                value[key],
+                path=child_path,
+                stats=stats,
+                seen_paths=seen_paths,
+            )
+        return
+
+    if isinstance(value, list):
+        child_path = f"{path}[*]"
+        for item in value:
+            _walk_value(
+                item,
+                path=child_path,
+                stats=stats,
+                seen_paths=seen_paths,
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -691,6 +760,14 @@ def run_partial_mapping(
             prefix_coverage=prefix_coverage,
             stop_reason=(root_stop_reason if prefix_coverage else None),
             sampled_prefix_len=root_state.elements_seen,
+            path_stats={
+                path: {
+                    "types": sorted(stats.types),
+                    "observed_count": stats.observed_count,
+                    "example_value": stats.example_value,
+                }
+                for path, stats in sorted(root_state.path_stats.items())
+            },
         )
         result_roots.append(root_inv)
 
@@ -770,16 +847,33 @@ def _finalize_element(
         state: Shared streaming state for counters.
         budgets: Budget limits (max_record_bytes checked here).
     """
+    from sift_mcp.mapping.json_strings import resolve_json_strings
+
+    normalized_record = resolve_json_strings(record)
     state.elements_recognized += 1
     root_state.elements_seen += 1
     element_index = root_state.elements_seen - 1
 
+    seen_paths: set[str] = set()
+    _walk_value(
+        normalized_record,
+        path="$",
+        stats=root_state.path_stats,
+        seen_paths=seen_paths,
+    )
+    for path in seen_paths:
+        stats = root_state.path_stats.get(path)
+        if stats is not None:
+            stats.observed_count += 1
+
     # Serialize and check size
     try:
-        record_canonical = canonical_bytes(record)
+        record_canonical = canonical_bytes(normalized_record)
     except (TypeError, ValueError):
         # Cannot canonicalize -- use JSON fallback for size check
-        record_json = json.dumps(record, separators=(",", ":"), sort_keys=True)
+        record_json = json.dumps(
+            normalized_record, separators=(",", ":"), sort_keys=True
+        )
         record_bytes_data = record_json.encode("utf-8")
         record_canonical = record_bytes_data
 
@@ -793,14 +887,14 @@ def _finalize_element(
     record_hash = sha256_hex(record_canonical)
 
     # Update field type distribution
-    _update_field_types(root_state.field_types, record)
+    _update_field_types(root_state.field_types, normalized_record)
 
     # Reservoir sampling: keep the N items with smallest random keys
     random_key = root_state.prng.next_float()
     entry = _ReservoirEntry(
         random_key=random_key,
         index=element_index,
-        record=record,
+        record=normalized_record,
         record_bytes=record_byte_count,
         record_hash=record_hash,
     )

@@ -63,31 +63,34 @@ def test_compute_related_set_hash_is_order_independent() -> None:
     assert compute_related_set_hash(rows_a) == compute_related_set_hash(rows_b)
 
 
-def test_build_lineage_root_catalog_marks_compatibility_by_field_types() -> None:
+def test_build_lineage_root_catalog_marks_compatibility_by_schema() -> None:
     entries = [
         {
             "artifact_id": "art_1",
             "root_path": "$.items",
             "root_shape": "array",
-            "fields_top": {"id": {"number": 2}},
             "count_estimate": 2,
-            "map_kind": "full",
+            "schema_hash": "sha256:" + ("a" * 64),
+            "schema_mode": "exact",
+            "schema_completeness": "complete",
         },
         {
             "artifact_id": "art_2",
             "root_path": "$.items",
             "root_shape": "array",
-            "fields_top": {"id": {"number": 100}},
             "count_estimate": 100,
-            "map_kind": "full",
+            "schema_hash": "sha256:" + ("a" * 64),
+            "schema_mode": "exact",
+            "schema_completeness": "complete",
         },
         {
             "artifact_id": "art_3",
             "root_path": "$.items",
             "root_shape": "array",
-            "fields_top": {"name": {"string": 1}},
             "count_estimate": 1,
-            "map_kind": "full",
+            "schema_hash": "sha256:" + ("b" * 64),
+            "schema_mode": "exact",
+            "schema_completeness": "complete",
         },
     ]
     roots = build_lineage_root_catalog(entries)

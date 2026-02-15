@@ -28,6 +28,10 @@ from sift_mcp.mapping.runner import (
     SampleRecord,
     run_mapping,
 )
+from sift_mcp.mapping.schema import (
+    SchemaFieldInventory,
+    SchemaInventory,
+)
 from sift_mcp.obs.logging import LogEvents, get_logger
 
 
@@ -130,6 +134,48 @@ WHERE workspace_id = %s AND artifact_id = %s AND root_key = %s
 """
 
 
+DELETE_SCHEMA_ROOTS_SQL = """
+DELETE FROM artifact_schema_roots
+WHERE workspace_id = %s AND artifact_id = %s
+"""
+
+
+INSERT_SCHEMA_ROOT_SQL = """
+INSERT INTO artifact_schema_roots (
+    workspace_id, artifact_id, root_key, root_path,
+    schema_version, schema_hash, mode, completeness,
+    observed_records, dataset_hash, traversal_contract_version,
+    map_budget_fingerprint
+) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+ON CONFLICT (workspace_id, artifact_id, root_key)
+DO UPDATE SET
+    root_path = EXCLUDED.root_path,
+    schema_version = EXCLUDED.schema_version,
+    schema_hash = EXCLUDED.schema_hash,
+    mode = EXCLUDED.mode,
+    completeness = EXCLUDED.completeness,
+    observed_records = EXCLUDED.observed_records,
+    dataset_hash = EXCLUDED.dataset_hash,
+    traversal_contract_version = EXCLUDED.traversal_contract_version,
+    map_budget_fingerprint = EXCLUDED.map_budget_fingerprint
+"""
+
+
+INSERT_SCHEMA_FIELD_SQL = """
+INSERT INTO artifact_schema_fields (
+    workspace_id, artifact_id, root_key, field_path,
+    types, nullable, required, observed_count, example_value
+) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+ON CONFLICT (workspace_id, artifact_id, root_key, field_path)
+DO UPDATE SET
+    types = EXCLUDED.types,
+    nullable = EXCLUDED.nullable,
+    required = EXCLUDED.required,
+    observed_count = EXCLUDED.observed_count,
+    example_value = EXCLUDED.example_value
+"""
+
+
 def should_run_mapping(map_status: str) -> bool:
     """Check if mapping should run for the given status.
 
@@ -220,6 +266,46 @@ def _sample_insert_params(
         _jsonb(sample.record),
         sample.record_bytes,
         sample.record_hash,
+    )
+
+
+def _schema_root_insert_params(
+    *, artifact_id: str, schema: SchemaInventory
+) -> tuple[object, ...]:
+    """Build positional SQL parameters for schema-root insertion."""
+    return (
+        WORKSPACE_ID,
+        artifact_id,
+        schema.root_key,
+        schema.root_path,
+        schema.version,
+        schema.schema_hash,
+        schema.mode,
+        schema.completeness,
+        schema.observed_records,
+        schema.dataset_hash,
+        schema.traversal_contract_version,
+        schema.map_budget_fingerprint,
+    )
+
+
+def _schema_field_insert_params(
+    *,
+    artifact_id: str,
+    root_key: str,
+    field: SchemaFieldInventory,
+) -> tuple[object, ...]:
+    """Build positional SQL parameters for schema-field insertion."""
+    return (
+        WORKSPACE_ID,
+        artifact_id,
+        root_key,
+        field.path,
+        _jsonb(field.types),
+        field.nullable,
+        field.required,
+        field.observed_count,
+        field.example_value,
     )
 
 
@@ -352,6 +438,29 @@ def persist_mapping_result(
                         artifact_id=worker_ctx.artifact_id, sample=sample
                     ),
                 )
+
+    connection.execute(
+        DELETE_SCHEMA_ROOTS_SQL,
+        (WORKSPACE_ID, worker_ctx.artifact_id),
+    )
+
+    for schema in result.schemas or []:
+        connection.execute(
+            INSERT_SCHEMA_ROOT_SQL,
+            _schema_root_insert_params(
+                artifact_id=worker_ctx.artifact_id,
+                schema=schema,
+            ),
+        )
+        for field in sorted(schema.fields, key=lambda item: item.path):
+            connection.execute(
+                INSERT_SCHEMA_FIELD_SQL,
+                _schema_field_insert_params(
+                    artifact_id=worker_ctx.artifact_id,
+                    root_key=schema.root_key,
+                    field=field,
+                ),
+            )
 
     connection.commit()
     return True

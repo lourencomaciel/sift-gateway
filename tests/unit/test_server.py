@@ -120,12 +120,62 @@ def _persisted_handle() -> ArtifactHandle:
     )
 
 
+def _schema_ready_inline_describe(
+    _connection: object,
+    artifact_id: str,
+) -> tuple[dict[str, object], str]:
+    return (
+        {
+            "artifact_id": artifact_id,
+            "mapping": {
+                "map_kind": "full",
+                "map_status": "ready",
+                "mapper_version": "mapper_v1",
+                "map_budget_fingerprint": None,
+                "map_backend_id": None,
+                "prng_version": None,
+                "traversal_contract_version": "traversal_v1",
+            },
+            "roots": [],
+            "schemas": [
+                {
+                    "version": "schema_v1",
+                    "schema_hash": "sha256:test_schema",
+                    "root_path": "$",
+                    "mode": "sampled",
+                    "coverage": {
+                        "completeness": "partial",
+                        "observed_records": 1,
+                    },
+                    "fields": [],
+                    "determinism": {
+                        "dataset_hash": "sha256:test_dataset",
+                        "traversal_contract_version": "traversal_v1",
+                        "map_budget_fingerprint": None,
+                    },
+                }
+            ],
+        },
+        "hint",
+    )
+
+
+def _patch_schema_ready_describe(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "sift_mcp.mcp.handlers.mirrored_tool._fetch_inline_describe",
+        _schema_ready_inline_describe,
+    )
+
+
 class _FakeCursor:
     def __init__(self, row: tuple[object, ...] | None) -> None:
         self._row = row
 
     def fetchone(self) -> tuple[object, ...] | None:
         return self._row
+
+    def fetchall(self) -> list[tuple[object, ...]]:
+        return []
 
 
 class _FakeDbCursor:
@@ -468,6 +518,18 @@ def test_artifact_handlers_return_validation_or_not_implemented(
     )
     assert valid_search["code"] == "NOT_IMPLEMENTED"
 
+    invalid_schema = asyncio.run(
+        server.handle_artifact(
+            {
+                "action": "query",
+                "query_kind": "schema",
+                "_gateway_context": {"session_id": "sess_1"},
+                "artifact_id": "art_1",
+            }
+        )
+    )
+    assert invalid_schema["code"] == "INVALID_ARGUMENT"
+
 
 def test_build_fastmcp_app_includes_mirrored_tools(tmp_path: Path) -> None:
     server = _server_with_upstream(tmp_path)
@@ -631,7 +693,7 @@ def test_handle_mirrored_tool_rejects_non_utf8_json_arguments(
     assert response["message"] == "arguments must be valid UTF-8 JSON"
 
 
-def test_handle_mirrored_tool_success_path_without_db(
+def test_handle_mirrored_tool_requires_db_for_schema_first_response(
     tmp_path: Path, monkeypatch
 ) -> None:
     config = GatewayConfig(data_dir=tmp_path, passthrough_max_bytes=0)
@@ -657,12 +719,11 @@ def test_handle_mirrored_tool_success_path_without_db(
             },
         )
     )
-    assert response["type"] == "gateway_tool_result"
-    assert response["artifact_id"].startswith("art_")
-    assert response["meta"]["cache"]["reused"] is False
+    assert response["type"] == "gateway_error"
+    assert response["code"] == "NOT_IMPLEMENTED"
 
 
-def test_handle_mirrored_tool_without_db_never_advertises_next_page(
+def test_handle_mirrored_tool_without_db_returns_not_implemented(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -698,12 +759,8 @@ def test_handle_mirrored_tool_without_db_never_advertises_next_page(
             },
         )
     )
-    assert response["type"] == "gateway_tool_result"
-    pagination = response.get("pagination")
-    assert isinstance(pagination, dict)
-    assert pagination["retrieval_status"] == "PARTIAL"
-    assert pagination["has_next_page"] is False
-    assert pagination["next_action"] is None
+    assert response["type"] == "gateway_error"
+    assert response["code"] == "NOT_IMPLEMENTED"
 
 
 def test_handle_mirrored_tool_returns_cached_artifact_when_reused(
@@ -727,6 +784,7 @@ def test_handle_mirrored_tool_returns_cached_artifact_when_reused(
     monkeypatch.setattr(
         "sift_mcp.mcp.server.call_upstream_tool", _must_not_call
     )
+    _patch_schema_ready_describe(monkeypatch)
 
     response = asyncio.run(
         server.handle_mirrored_tool(
@@ -812,10 +870,7 @@ def test_handle_mirrored_tool_cache_hit_includes_pagination_meta(
     )
     monkeypatch.setattr(
         "sift_mcp.mcp.handlers.mirrored_tool._fetch_inline_describe",
-        lambda *_args, **_kwargs: (
-            {"artifact_id": "art_cached", "roots": []},
-            "hint",
-        ),
+        _schema_ready_inline_describe,
     )
 
     response = asyncio.run(
@@ -907,10 +962,7 @@ def test_handle_mirrored_tool_cache_hit_uses_stored_pagination_state(
     )
     monkeypatch.setattr(
         "sift_mcp.mcp.handlers.mirrored_tool._fetch_inline_describe",
-        lambda *_args, **_kwargs: (
-            {"artifact_id": "art_cached", "roots": []},
-            "hint",
-        ),
+        _schema_ready_inline_describe,
     )
 
     response = asyncio.run(
@@ -1016,10 +1068,7 @@ def test_handle_mirrored_tool_cache_hit_rebuilds_pagination_from_canonical(
     )
     monkeypatch.setattr(
         "sift_mcp.mcp.handlers.mirrored_tool._fetch_inline_describe",
-        lambda *_args, **_kwargs: (
-            {"artifact_id": "art_cached", "roots": []},
-            "hint",
-        ),
+        _schema_ready_inline_describe,
     )
 
     response = asyncio.run(
@@ -1078,6 +1127,12 @@ def test_handle_mirrored_tool_falls_back_to_fresh_when_ref_attach_fails(
         "sift_mcp.mcp.handlers.mirrored_tool.persist_artifact",
         lambda **_kwargs: _persisted_handle(),
     )
+    monkeypatch.setattr(
+        server,
+        "_run_mapping_inline",
+        lambda *_args, **_kwargs: True,
+    )
+    _patch_schema_ready_describe(monkeypatch)
 
     response = asyncio.run(
         server.handle_mirrored_tool(
@@ -1126,6 +1181,12 @@ def test_handle_mirrored_tool_default_skips_reuse(
         "sift_mcp.mcp.handlers.mirrored_tool.persist_artifact",
         lambda **_kwargs: _persisted_handle(),
     )
+    monkeypatch.setattr(
+        server,
+        "_run_mapping_inline",
+        lambda *_args, **_kwargs: True,
+    )
+    _patch_schema_ready_describe(monkeypatch)
 
     response = asyncio.run(
         server.handle_mirrored_tool(
@@ -1150,8 +1211,13 @@ def test_handle_mirrored_tool_sets_stable_upstream_error_code(
     monkeypatch,
 ) -> None:
     server = GatewayServer(
-        config=GatewayConfig(data_dir=tmp_path),
+        config=GatewayConfig(
+            data_dir=tmp_path,
+            quota_enforcement_enabled=False,
+            passthrough_max_bytes=0,
+        ),
         upstreams=[_upstream()],
+        db_pool=_FakePool(None),  # type: ignore[arg-type]
         metrics=GatewayMetrics(),
     )
     mirrored = server.mirrored_tools["demo.echo"]
@@ -1160,6 +1226,16 @@ def test_handle_mirrored_tool_sets_stable_upstream_error_code(
         raise socket.gaierror("nodename nor servname provided")
 
     monkeypatch.setattr("sift_mcp.mcp.server.call_upstream_tool", _dns_failure)
+    monkeypatch.setattr(
+        "sift_mcp.mcp.handlers.mirrored_tool.persist_artifact",
+        lambda **_kwargs: _persisted_handle(),
+    )
+    monkeypatch.setattr(
+        server,
+        "_run_mapping_inline",
+        lambda *_args, **_kwargs: True,
+    )
+    _patch_schema_ready_describe(monkeypatch)
 
     response = asyncio.run(
         server.handle_mirrored_tool(
@@ -1170,8 +1246,8 @@ def test_handle_mirrored_tool_sets_stable_upstream_error_code(
             },
         )
     )
-    assert response["isError"] is True
-    assert response["meta"]["gateway_error_code"] == "UPSTREAM_DNS_FAILURE"
+    assert response["type"] == "gateway_tool_result"
+    assert response["artifact_id"] == "art_new"
     assert (
         server.upstream_runtime["demo"]["last_error_code"]
         == "UPSTREAM_DNS_FAILURE"
@@ -1263,6 +1339,7 @@ def test_handle_mirrored_tool_runs_inline_mapping_in_sync_mode(
         "_schedule_background_mapping",
         lambda **kwargs: scheduled_calls.append(kwargs["handle"].artifact_id),
     )
+    _patch_schema_ready_describe(monkeypatch)
 
     response = asyncio.run(
         server.handle_mirrored_tool(
@@ -1277,7 +1354,7 @@ def test_handle_mirrored_tool_runs_inline_mapping_in_sync_mode(
     assert counter_value(server.metrics.upstream_calls) == 1
 
 
-def test_handle_mirrored_tool_schedules_background_mapping_in_async_mode(
+def test_handle_mirrored_tool_runs_inline_mapping_in_async_mode(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -1319,6 +1396,7 @@ def test_handle_mirrored_tool_schedules_background_mapping_in_async_mode(
         "_schedule_background_mapping",
         lambda **kwargs: scheduled_calls.append(kwargs["handle"].artifact_id),
     )
+    _patch_schema_ready_describe(monkeypatch)
 
     response = asyncio.run(
         server.handle_mirrored_tool(
@@ -1328,8 +1406,8 @@ def test_handle_mirrored_tool_schedules_background_mapping_in_async_mode(
     )
 
     assert response["type"] == "gateway_tool_result"
-    assert inline_calls == []
-    assert scheduled_calls == ["art_new"]
+    assert inline_calls == ["art_new"]
+    assert scheduled_calls == []
     assert counter_value(server.metrics.upstream_calls) == 1
 
 
@@ -1735,6 +1813,23 @@ def test_artifact_describe_db_runtime_returns_roots(
                     )
                 ]
             ),
+            _SeqCursor(
+                all_rows=[
+                    (
+                        "rk_1",
+                        "$.items",
+                        "schema_v1",
+                        "sha256:schema_items",
+                        "sampled",
+                        "partial",
+                        2,
+                        "sha256:dataset_items",
+                        "traversal_v1",
+                        "mbf",
+                    )
+                ]
+            ),
+            _SeqCursor(all_rows=[("$.id", ["number"], False, True, 2)]),
         ]
     )
     server = GatewayServer(
@@ -1759,7 +1854,7 @@ def test_artifact_describe_db_runtime_returns_roots(
     assert response["artifact_id"] == "art_1"
     assert response["roots"][0]["root_path"] == "$.items"
     assert response["roots"][0]["compatible_for_select"] is True
-    assert response["roots"][0]["signature_groups"][0]["map_kind"] == "partial"
+    assert response["roots"][0]["signature_groups"][0]["schema_mode"] == "sampled"
 
 
 def test_artifact_select_db_runtime_partial_projects_records(
@@ -1780,6 +1875,20 @@ def test_artifact_select_db_runtime_partial_projects_records(
                     {"id": {"number": 1}},
                     [0],
                     {"sampled_prefix_len": 9},
+                )
+            ),
+            _SeqCursor(
+                one=(
+                    "rk_1",
+                    "$.items",
+                    "schema_v1",
+                    "sha256:schema_items",
+                    "sampled",
+                    "partial",
+                    1,
+                    "sha256:dataset_items",
+                    "traversal_v1",
+                    "mbf",
                 )
             ),
             _SeqCursor(all_rows=[(0, {"id": 1, "name": "A"}, 16, "h1")]),
@@ -1832,6 +1941,20 @@ def test_artifact_select_cursor_sample_set_mismatch_returns_stale(
                     {"id": {"number": 1}},
                     [0, 1],
                     {"sampled_prefix_len": 9},
+                )
+            ),
+            _SeqCursor(
+                one=(
+                    "rk_1",
+                    "$.items",
+                    "schema_v1",
+                    "sha256:schema_items",
+                    "sampled",
+                    "partial",
+                    2,
+                    "sha256:dataset_items",
+                    "traversal_v1",
+                    "mbf",
                 )
             ),
             _SeqCursor(
@@ -1912,6 +2035,20 @@ def test_artifact_select_cursor_includes_partial_binding_fields(
                 )
             ),
             _SeqCursor(
+                one=(
+                    "rk_1",
+                    "$.items",
+                    "schema_v1",
+                    "sha256:schema_items",
+                    "sampled",
+                    "partial",
+                    2,
+                    "sha256:dataset_items",
+                    "traversal_v1",
+                    "mbf",
+                )
+            ),
+            _SeqCursor(
                 all_rows=[
                     (0, {"id": 1}, 10, "h1"),
                     (1, {"id": 2}, 10, "h2"),
@@ -1989,6 +2126,20 @@ def test_artifact_select_cursor_restores_scope_when_omitted(
             ),
             _SeqCursor(
                 one=(
+                    "rk_1",
+                    "$.items",
+                    "schema_v1",
+                    "sha256:schema_items_full",
+                    "exact",
+                    "complete",
+                    2,
+                    "sha256:dataset_items_full",
+                    "traversal_v1",
+                    None,
+                )
+            ),
+            _SeqCursor(
+                one=(
                     "art_1",
                     "payload_hash",
                     None,
@@ -2056,6 +2207,20 @@ def test_artifact_select_cursor_always_binds_order_by(
                     {"id": {"number": 1}},
                     [0, 1],
                     {"sampled_prefix_len": 9},
+                )
+            ),
+            _SeqCursor(
+                one=(
+                    "rk_1",
+                    "$.items",
+                    "schema_v1",
+                    "sha256:schema_items",
+                    "sampled",
+                    "partial",
+                    2,
+                    "sha256:dataset_items",
+                    "traversal_v1",
+                    "mbf",
                 )
             ),
             _SeqCursor(
@@ -2272,6 +2437,20 @@ def test_artifact_select_returns_internal_on_sample_corruption(
                     {"sampled_prefix_len": 9},
                 )
             ),
+            _SeqCursor(
+                one=(
+                    "rk_1",
+                    "$.items",
+                    "schema_v1",
+                    "sha256:schema_items",
+                    "sampled",
+                    "partial",
+                    1,
+                    "sha256:dataset_items",
+                    "traversal_v1",
+                    "mbf",
+                )
+            ),
             # sample_rows: only index 0 present
             _SeqCursor(all_rows=[(0, {"id": 1}, 8, "h0")]),
         ]
@@ -2388,6 +2567,12 @@ def test_handle_mirrored_tool_recovers_db_ok_on_successful_probe(
         "sift_mcp.mcp.handlers.mirrored_tool.persist_artifact",
         lambda **_kw: _fake_handle,
     )
+    monkeypatch.setattr(
+        server,
+        "_run_mapping_inline",
+        lambda *_args, **_kwargs: True,
+    )
+    _patch_schema_ready_describe(monkeypatch)
 
     response = asyncio.run(
         server.handle_mirrored_tool(
@@ -2520,6 +2705,12 @@ def test_handle_mirrored_tool_skips_cache_on_non_connectivity_error(
         "sift_mcp.mcp.handlers.mirrored_tool.persist_artifact",
         lambda **_kw: _fake_handle,
     )
+    monkeypatch.setattr(
+        server,
+        "_run_mapping_inline",
+        lambda *_args, **_kwargs: True,
+    )
+    _patch_schema_ready_describe(monkeypatch)
 
     response = asyncio.run(
         server.handle_mirrored_tool(
@@ -2696,11 +2887,11 @@ def test_handle_mirrored_tool_returns_internal_on_non_db_persist_failure(
     assert server.db_ok is True
 
 
-def test_handle_mirrored_tool_succeeds_when_mapping_fails(
+def test_handle_mirrored_tool_returns_internal_when_mapping_fails(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
-    """When mapping raises after persist succeeds, return success (non-fatal)."""
+    """When inline mapping does not complete, return INTERNAL."""
     server = GatewayServer(
         config=GatewayConfig(data_dir=tmp_path, passthrough_max_bytes=0),
         upstreams=[_upstream()],
@@ -2743,12 +2934,10 @@ def test_handle_mirrored_tool_succeeds_when_mapping_fails(
         "sift_mcp.mcp.handlers.mirrored_tool.persist_artifact",
         lambda **_kw: _fake_handle,
     )
-
-    def _exploding_mapping(self, connection, *, handle, envelope):
-        raise RuntimeError("mapping exploded")
-
     monkeypatch.setattr(
-        GatewayServer, "_trigger_mapping_for_artifact", _exploding_mapping
+        server,
+        "_run_mapping_inline",
+        lambda *_args, **_kwargs: False,
     )
 
     response = asyncio.run(
@@ -2762,8 +2951,9 @@ def test_handle_mirrored_tool_succeeds_when_mapping_fails(
             },
         )
     )
-    assert response["type"] == "gateway_tool_result"
-    assert response["artifact_id"] == "art_mapping_fail"
+    assert response["type"] == "gateway_error"
+    assert response["code"] == "INTERNAL"
+    assert "mapping did not complete" in response["message"]
     assert server.db_ok is True
 
 
@@ -2833,13 +3023,17 @@ def test_handle_mirrored_tool_triggers_mapping_on_single_connection(
         lambda **_kw: _fake_handle,
     )
 
-    def _track_mapping(self, connection, *, handle, envelope):
+    def _track_mapping(*_args, **_kwargs):
         nonlocal mapping_called
         mapping_called = True
+        return True
 
     monkeypatch.setattr(
-        GatewayServer, "_trigger_mapping_for_artifact", _track_mapping
+        server,
+        "_run_mapping_inline",
+        _track_mapping,
     )
+    _patch_schema_ready_describe(monkeypatch)
 
     response = asyncio.run(
         server.handle_mirrored_tool(
@@ -3169,6 +3363,12 @@ def test_handle_mirrored_tool_quota_ok_proceeds_to_persist(
         "sift_mcp.mcp.handlers.mirrored_tool.persist_artifact",
         lambda **_kw: _fake_handle,
     )
+    monkeypatch.setattr(
+        server,
+        "_run_mapping_inline",
+        lambda *_args, **_kwargs: True,
+    )
+    _patch_schema_ready_describe(monkeypatch)
 
     response = asyncio.run(
         server.handle_mirrored_tool(
@@ -3267,6 +3467,12 @@ def test_handle_mirrored_tool_quota_passes_blob_store_root(
         "sift_mcp.mcp.handlers.mirrored_tool.persist_artifact",
         lambda **_kw: _fake_handle,
     )
+    monkeypatch.setattr(
+        server,
+        "_run_mapping_inline",
+        lambda *_args, **_kwargs: True,
+    )
+    _patch_schema_ready_describe(monkeypatch)
 
     response = asyncio.run(
         server.handle_mirrored_tool(
@@ -3468,6 +3674,12 @@ def test_handle_mirrored_tool_skips_quota_when_disabled(
         "sift_mcp.mcp.handlers.mirrored_tool.persist_artifact",
         lambda **_kw: _fake_handle,
     )
+    monkeypatch.setattr(
+        server,
+        "_run_mapping_inline",
+        lambda *_args, **_kwargs: True,
+    )
+    _patch_schema_ready_describe(monkeypatch)
 
     response = asyncio.run(
         server.handle_mirrored_tool(
@@ -3503,6 +3715,20 @@ def test_artifact_select_includes_total_matched(
                     {"id": {"number": 1}},
                     [0, 1],
                     {"sampled_prefix_len": 9},
+                )
+            ),
+            _SeqCursor(
+                one=(
+                    "rk_1",
+                    "$.items",
+                    "schema_v1",
+                    "sha256:schema_items",
+                    "sampled",
+                    "partial",
+                    2,
+                    "sha256:dataset_items",
+                    "traversal_v1",
+                    "mbf",
                 )
             ),
             _SeqCursor(
@@ -3554,6 +3780,20 @@ def test_artifact_select_count_only(tmp_path: Path, monkeypatch) -> None:
                     {"id": {"number": 1}},
                     [0, 1],
                     {"sampled_prefix_len": 9},
+                )
+            ),
+            _SeqCursor(
+                one=(
+                    "rk_1",
+                    "$.items",
+                    "schema_v1",
+                    "sha256:schema_items",
+                    "sampled",
+                    "partial",
+                    2,
+                    "sha256:dataset_items",
+                    "traversal_v1",
+                    "mbf",
                 )
             ),
             _SeqCursor(
@@ -3612,6 +3852,20 @@ def test_artifact_select_count_only_with_where_filter(
                 )
             ),
             _SeqCursor(
+                one=(
+                    "rk_1",
+                    "$.items",
+                    "schema_v1",
+                    "sha256:schema_items",
+                    "sampled",
+                    "partial",
+                    2,
+                    "sha256:dataset_items",
+                    "traversal_v1",
+                    "mbf",
+                )
+            ),
+            _SeqCursor(
                 all_rows=[
                     (0, {"id": 1, "name": "A"}, 16, "h1"),
                     (1, {"id": 2, "name": "B"}, 16, "h2"),
@@ -3663,6 +3917,20 @@ def test_artifact_select_distinct_deduplicates(
                     {"name": {"string": 1}},
                     [0, 1, 2],
                     {"sampled_prefix_len": 9},
+                )
+            ),
+            _SeqCursor(
+                one=(
+                    "rk_1",
+                    "$.items",
+                    "schema_v1",
+                    "sha256:schema_items",
+                    "sampled",
+                    "partial",
+                    3,
+                    "sha256:dataset_items",
+                    "traversal_v1",
+                    "mbf",
                 )
             ),
             _SeqCursor(
@@ -3721,6 +3989,20 @@ def test_artifact_select_distinct_embeds_in_cursor(
                     {"name": {"string": 1}},
                     [0, 1],
                     {"sampled_prefix_len": 9},
+                )
+            ),
+            _SeqCursor(
+                one=(
+                    "rk_1",
+                    "$.items",
+                    "schema_v1",
+                    "sha256:schema_items",
+                    "sampled",
+                    "partial",
+                    2,
+                    "sha256:dataset_items",
+                    "traversal_v1",
+                    "mbf",
                 )
             ),
             _SeqCursor(

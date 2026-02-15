@@ -16,7 +16,6 @@ from typing import TYPE_CHECKING, Any
 
 from sift_mcp.artifacts.create import (
     CreateArtifactInput,
-    compute_payload_sizes,
     persist_artifact,
 )
 from sift_mcp.cache.reuse import (
@@ -30,13 +29,11 @@ from sift_mcp.envelope.model import (
     JsonContentPart,
 )
 from sift_mcp.envelope.responses import (
-    can_passthrough,
     gateway_error,
     gateway_tool_result,
 )
 from sift_mcp.jobs.quota import QuotaBreaches, enforce_quota
 from sift_mcp.mcp.handlers.common import (
-    ROOT_COLUMNS,
     row_to_dict,
     rows_to_dicts,
 )
@@ -74,7 +71,8 @@ from sift_mcp.request_identity import compute_request_identity
 from sift_mcp.sessions import upsert_artifact_ref, upsert_session
 from sift_mcp.tools.artifact_describe import (
     FETCH_DESCRIBE_SQL,
-    FETCH_ROOTS_SQL,
+    FETCH_SCHEMA_FIELDS_SQL,
+    FETCH_SCHEMA_ROOTS_SQL,
     build_describe_response,
 )
 from sift_mcp.tools.usage_hint import (
@@ -201,6 +199,28 @@ _DESCRIBE_COLUMNS = [
     "generation",
 ]
 
+_SCHEMA_ROOT_COLUMNS = [
+    "root_key",
+    "root_path",
+    "schema_version",
+    "schema_hash",
+    "mode",
+    "completeness",
+    "observed_records",
+    "dataset_hash",
+    "traversal_contract_version",
+    "map_budget_fingerprint",
+]
+
+_SCHEMA_FIELD_COLUMNS = [
+    "field_path",
+    "types",
+    "nullable",
+    "required",
+    "observed_count",
+    "example_value",
+]
+
 _CACHED_PAGINATION_COLUMNS = [
     "chain_seq",
     "envelope",
@@ -220,13 +240,40 @@ WHERE a.workspace_id = %s AND a.artifact_id = %s
 """
 
 
+def _retain_primary_schema_if_unique(
+    schemas: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Keep only the primary schema when coverage leader is unique.
+
+    Primary is selected by ``coverage.observed_records``. If multiple
+    schemas tie for highest observed count, returns all schemas.
+    """
+    if len(schemas) <= 1:
+        return schemas
+
+    def _observed(schema: dict[str, Any]) -> int:
+        coverage = schema.get("coverage")
+        if isinstance(coverage, dict):
+            raw = coverage.get("observed_records")
+            if isinstance(raw, int):
+                return raw
+        return 0
+
+    scores = [_observed(schema) for schema in schemas]
+    max_score = max(scores)
+    leaders = [idx for idx, score in enumerate(scores) if score == max_score]
+    if len(leaders) != 1:
+        return schemas
+    return [schemas[leaders[0]]]
+
+
 def _fetch_inline_describe(
     connection: Any,
     artifact_id: str,
 ) -> tuple[dict[str, Any], str]:
-    """Fetch describe data and build a usage hint on a connection.
+    """Fetch schema-first describe data and build a usage hint.
 
-    Queries the artifact and roots tables on the already-open
+    Queries artifact and schema tables on the already-open
     *connection* and returns the full describe dict plus a
     heuristic usage hint string.  Falls back to a minimal
     describe on any error so callers always get a result.
@@ -252,14 +299,86 @@ def _fetch_inline_describe(
                 "map_kind": "none",
                 "map_status": "pending",
             }
-        roots = rows_to_dicts(
+        schema_roots = rows_to_dicts(
             connection.execute(
-                FETCH_ROOTS_SQL,
+                FETCH_SCHEMA_ROOTS_SQL,
                 (WORKSPACE_ID, artifact_id),
             ).fetchall(),
-            ROOT_COLUMNS,
+            _SCHEMA_ROOT_COLUMNS,
         )
-        describe = build_describe_response(artifact_row, roots)
+        schemas: list[dict[str, Any]] = []
+        for schema_root in schema_roots:
+            root_key = schema_root.get("root_key")
+            if not isinstance(root_key, str):
+                continue
+            field_rows = rows_to_dicts(
+                connection.execute(
+                    FETCH_SCHEMA_FIELDS_SQL,
+                    (WORKSPACE_ID, artifact_id, root_key),
+                ).fetchall(),
+                _SCHEMA_FIELD_COLUMNS,
+            )
+            fields: list[dict[str, Any]] = []
+            for field in field_rows:
+                raw_types = field.get("types")
+                types = (
+                    [str(item) for item in raw_types]
+                    if isinstance(raw_types, list)
+                    else []
+                )
+                observed_count_raw = field.get("observed_count")
+                observed_count = (
+                    int(observed_count_raw)
+                    if isinstance(observed_count_raw, int)
+                    else 0
+                )
+                fields.append(
+                    {
+                        "path": field.get("field_path"),
+                        "types": types,
+                        "nullable": bool(field.get("nullable")),
+                        "required": bool(field.get("required")),
+                        "observed_count": observed_count,
+                        "example_value": (
+                            str(field.get("example_value"))
+                            if isinstance(field.get("example_value"), str)
+                            else None
+                        ),
+                    }
+                )
+            observed_records_raw = schema_root.get("observed_records")
+            observed_records = (
+                int(observed_records_raw)
+                if isinstance(observed_records_raw, int)
+                else 0
+            )
+            schemas.append(
+                {
+                    "version": schema_root.get("schema_version"),
+                    "schema_hash": schema_root.get("schema_hash"),
+                    "root_path": schema_root.get("root_path"),
+                    "mode": schema_root.get("mode"),
+                    "coverage": {
+                        "completeness": schema_root.get("completeness"),
+                        "observed_records": observed_records,
+                    },
+                    "fields": fields,
+                    "determinism": {
+                        "dataset_hash": schema_root.get("dataset_hash"),
+                        "traversal_contract_version": schema_root.get(
+                            "traversal_contract_version"
+                        ),
+                        "map_budget_fingerprint": schema_root.get(
+                            "map_budget_fingerprint"
+                        ),
+                    },
+                }
+            )
+        describe = build_describe_response(
+            artifact_row,
+            [],
+            schemas=_retain_primary_schema_if_unique(schemas),
+        )
     except Exception:
         get_logger(component="mcp.handlers").warning(
             "inline describe fetch failed (best-effort)",
@@ -296,6 +415,34 @@ def _minimal_describe(
         [],
     )
     return describe, build_usage_hint(artifact_id, describe)
+
+
+def _describe_has_ready_schema(describe: dict[str, Any]) -> bool:
+    """Return True when describe payload includes ready schema data."""
+    mapping = describe.get("mapping")
+    if not isinstance(mapping, dict):
+        return False
+    if mapping.get("map_status") != "ready":
+        return False
+    schemas = describe.get("schemas")
+    return isinstance(schemas, list) and bool(schemas)
+
+
+def _schema_payload_from_describe(
+    describe: dict[str, Any],
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    """Extract canonical schema-first payload fields from describe data."""
+    mapping = describe.get("mapping")
+    schemas = describe.get("schemas")
+    mapping_payload: dict[str, Any] = (
+        dict(mapping) if isinstance(mapping, dict) else {}
+    )
+    schema_payload: list[dict[str, Any]] = (
+        [item for item in schemas if isinstance(item, dict)]
+        if isinstance(schemas, list)
+        else []
+    )
+    return mapping_payload, schema_payload
 
 
 def _inject_pagination_state(
@@ -982,69 +1129,10 @@ async def handle_mirrored_tool(
     cache_reason = "reuse_disabled" if not allow_reuse else "cache_miss"
     pagination_assessment: PaginationAssessment | None = None
     if ctx.db_pool is None:
-        try:
-            upstream_result = await ctx._call_upstream_with_metrics(
-                mirrored=mirrored,
-                forwarded_args=forwarded_args,
-            )
-        except Exception as exc:
-            error_code = classify_upstream_exception(exc)
-            error_text = _truncate_error_text(
-                str(exc), ctx.config.max_upstream_error_capture_bytes
-            )
-            upstream_result = {
-                "content": [{"type": "text", "text": error_text}],
-                "structuredContent": None,
-                "isError": True,
-                "meta": {
-                    "exception_type": type(exc).__name__,
-                    "gateway_error_code": error_code,
-                    "gateway_error_detail": error_text,
-                },
-            }
-
-        try:
-            envelope, _binary_refs = ctx._envelope_from_upstream_result(
-                mirrored=mirrored,
-                upstream_result=upstream_result,
-            )
-        except ValueError as exc:
-            return gateway_error(
-                "UPSTREAM_RESPONSE_INVALID",
-                str(exc),
-            )
-
-        page_number = chain_seq or 0
-        envelope, pagination_assessment = _inject_pagination_state(
-            envelope,
-            mirrored.upstream.config,
-            forwarded_args,
-            mirrored.prefix,
-            page_number=page_number,
+        return gateway_error(
+            "NOT_IMPLEMENTED",
+            "schema-first responses require database persistence",
         )
-
-        # Check passthrough eligibility (DB-less path).
-        # Only force a handle when next-page chaining is actually
-        # available; without DB backing, artifact.next_page is not
-        # implemented.
-        _, _, payload_total = compute_payload_sizes(envelope)
-        passthrough_eligible = can_passthrough(
-            payload_total_bytes=payload_total,
-            contains_binary_refs=envelope.contains_binary_refs,
-            passthrough_allowed=mirrored.upstream.config.passthrough_allowed,
-            max_bytes=ctx.config.passthrough_max_bytes,
-        )
-        pagination_requires_handle = (
-            pagination_assessment is not None
-            and pagination_assessment.state is not None
-            and ctx.db_pool is not None
-        )
-        if passthrough_eligible and not pagination_requires_handle:
-            return upstream_result
-        handle = ctx._build_non_persisted_handle(
-            input_data=_create_input(envelope)
-        )
-        desc, hint = _minimal_describe(handle.artifact_id)
     else:
         # Phase 1: Cache check in a short-lived connection.
         # The advisory lock is transaction-scoped and released when this
@@ -1102,45 +1190,52 @@ async def handle_mirrored_tool(
                                 )
                                 cache_reason = "artifact_ref_attach_failed"
                             if ref_attached:
-                                ctx._increment_metric("cache_hits")
-                                cache_reason = (
-                                    reuse.reason or "request_key_match"
-                                )
                                 desc, hint = _fetch_inline_describe(
                                     connection,
                                     reuse.artifact_id,
                                 )
-                                pagination_meta = None
-                                try:
-                                    pagination_meta = (
-                                        _cached_pagination_meta_for_reuse(
-                                            connection,
-                                            artifact_id=reuse.artifact_id,
-                                            mirrored=mirrored,
-                                            forwarded_args=forwarded_args,
+                                if _describe_has_ready_schema(desc):
+                                    ctx._increment_metric("cache_hits")
+                                    cache_reason = (
+                                        reuse.reason
+                                        or "request_key_match"
+                                    )
+                                    mapping_payload, schema_payload = (
+                                        _schema_payload_from_describe(desc)
+                                    )
+                                    pagination_meta = None
+                                    try:
+                                        pagination_meta = (
+                                            _cached_pagination_meta_for_reuse(
+                                                connection,
+                                                artifact_id=reuse.artifact_id,
+                                                mirrored=mirrored,
+                                                forwarded_args=forwarded_args,
+                                            )
                                         )
+                                    except Exception:
+                                        get_logger(
+                                            component="mcp.handlers"
+                                        ).warning(
+                                            "cached pagination rebuild failed "
+                                            "(best-effort)",
+                                            exc_info=True,
+                                        )
+                                    return gateway_tool_result(
+                                        artifact_id=reuse.artifact_id,
+                                        cache_meta={
+                                            "reused": True,
+                                            "reason": cache_reason,
+                                            "request_key": identity.request_key,
+                                            "artifact_id_origin": "cache",
+                                            "allow_reuse": True,
+                                        },
+                                        mapping=mapping_payload,
+                                        schemas=schema_payload,
+                                        usage_hint=hint,
+                                        pagination=pagination_meta,
                                     )
-                                except Exception:
-                                    get_logger(
-                                        component="mcp.handlers"
-                                    ).warning(
-                                        "cached pagination rebuild failed "
-                                        "(best-effort)",
-                                        exc_info=True,
-                                    )
-                                return gateway_tool_result(
-                                    artifact_id=reuse.artifact_id,
-                                    cache_meta={
-                                        "reused": True,
-                                        "reason": cache_reason,
-                                        "request_key": identity.request_key,
-                                        "artifact_id_origin": "cache",
-                                        "allow_reuse": True,
-                                    },
-                                    describe=desc,
-                                    usage_hint=hint,
-                                    pagination=pagination_meta,
-                                )
+                                cache_reason = "cache_schema_unavailable"
                             ctx._increment_metric("cache_misses")
                             reuse = ReuseResult(
                                 reused=False,
@@ -1369,32 +1464,9 @@ async def handle_mirrored_tool(
                     )
                     binary_refs.extend(merged_refs)
 
-        # Phase 2.5: Passthrough check — if the result is small enough,
-        # return the raw upstream result immediately and persist async.
-        # Skip passthrough when pagination is detected — the LLM
-        # needs the artifact_id to call artifact.next_page.
-        _, _, payload_total = compute_payload_sizes(envelope)
-        passthrough_eligible = can_passthrough(
-            payload_total_bytes=payload_total,
-            contains_binary_refs=envelope.contains_binary_refs,
-            passthrough_allowed=mirrored.upstream.config.passthrough_allowed,
-            max_bytes=ctx.config.passthrough_max_bytes,
-        )
-        if passthrough_eligible and pagination_assessment is None:
-            asyncio.create_task(
-                _persist_async(
-                    ctx,
-                    _create_input(envelope),
-                    envelope,
-                    binary_refs=binary_refs or None,
-                )
-            )
-            return upstream_result
-
-        # Phase 3: Persist + Phase 4: Mapping in a single connection.
+        # Phase 3: Persist + Phase 4: inline mapping in a single connection.
         # Reusing the same connection avoids a second pool checkout that
-        # could silently fail (e.g. PoolTimeout under load), leaving the
-        # artifact stuck at map_status='pending' indefinitely.
+        # could silently fail (e.g. PoolTimeout under load).
         try:
             with ctx.db_pool.connection() as connection:
                 binary_hashes = ctx._binary_hashes_from_envelope(envelope)
@@ -1405,25 +1477,38 @@ async def handle_mirrored_tool(
                     binary_hashes=binary_hashes,
                     binary_refs=binary_refs or None,
                 )
-                # Mapping runs after the artifact is committed.
-                # Failures here are non-fatal — the artifact exists and
-                # is retrievable.
-                try:
-                    ctx._trigger_mapping_for_artifact(
-                        connection,
-                        handle=handle,
-                        envelope=envelope,
-                    )
-                except Exception:
-                    get_logger(component="mcp.handlers").warning(
-                        "mapping failed (best-effort)",
-                        exc_info=True,
+                mapped = ctx._run_mapping_inline(
+                    connection,
+                    handle=handle,
+                    envelope=envelope,
+                )
+                if not mapped:
+                    return gateway_error(
+                        "INTERNAL",
+                        "mapping did not complete for artifact",
                     )
                 # Phase 5: Inline describe — fetch roots on
                 # the same connection (2 indexed lookups).
                 desc, hint = _fetch_inline_describe(
                     connection, handle.artifact_id
                 )
+                if not _describe_has_ready_schema(desc):
+                    map_status = desc.get("mapping", {}).get("map_status")
+                    schemas = desc.get("schemas")
+                    if map_status != "ready":
+                        return gateway_error(
+                            "INTERNAL",
+                            "mapping is not ready for schema-first response",
+                        )
+                    if not isinstance(schemas, list) or not schemas:
+                        return gateway_error(
+                            "INTERNAL",
+                            "schema mapping did not produce schema rows",
+                        )
+                    return gateway_error(
+                        "INTERNAL",
+                        "schema-first response validation failed",
+                    )
         except (_PG_OPERATIONAL_ERROR, _PG_INTERFACE_ERROR):
             ctx.db_ok = False
             return gateway_error(
@@ -1451,6 +1536,7 @@ async def handle_mirrored_tool(
         pagination_meta = _pagination_response_meta(
             pagination_assessment_for_response, handle.artifact_id
         )
+    mapping_payload, schema_payload = _schema_payload_from_describe(desc)
 
     return gateway_tool_result(
         artifact_id=handle.artifact_id,
@@ -1461,7 +1547,8 @@ async def handle_mirrored_tool(
             "artifact_id_origin": "fresh",
             "allow_reuse": allow_reuse,
         },
-        describe=desc,
+        mapping=mapping_payload,
+        schemas=schema_payload,
         usage_hint=hint,
         pagination=pagination_meta,
     )

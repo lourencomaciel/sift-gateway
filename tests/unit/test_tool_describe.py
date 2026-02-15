@@ -141,3 +141,48 @@ def test_build_describe_response_defaults_for_missing_mapping_fields() -> None:
     assert mapping["map_kind"] == "none"
     assert mapping["map_status"] == "pending"
     assert mapping["mapper_version"] is None
+
+
+def test_build_describe_response_includes_schema_without_root_duplication() -> None:
+    artifact_row = {"artifact_id": "art_schema", "map_kind": "full"}
+    roots = [
+        {
+            "root_key": "rk_1",
+            "root_path": "$.data",
+            "root_shape": "array",
+            "count_estimate": 2,
+            "fields_top": {"id": {"number": 2}},
+        }
+    ]
+    schemas = [
+        {
+            "version": "schema_v1",
+            "schema_hash": "sha256:abc",
+            "root_path": "$.data",
+            "mode": "exact",
+            "coverage": {
+                "completeness": "complete",
+                "observed_records": 2,
+            },
+            "fields": [
+                {
+                    "path": "$.id",
+                    "types": ["number"],
+                    "nullable": False,
+                    "required": True,
+                    "observed_count": 2,
+                    "example_value": "1",
+                }
+            ],
+            "determinism": {
+                "dataset_hash": "sha256:def",
+                "traversal_contract_version": "traversal_v1",
+                "map_budget_fingerprint": None,
+            },
+        }
+    ]
+    result = build_describe_response(artifact_row, roots, schemas=schemas)
+    assert len(result["schemas"]) == 1
+    assert result["schemas"][0]["root_path"] == "$.data"
+    assert "schema" not in result["roots"][0]
+    assert result["schemas"][0]["fields"][0]["example_value"] == "1"

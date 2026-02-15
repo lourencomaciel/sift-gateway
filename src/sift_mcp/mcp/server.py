@@ -110,6 +110,7 @@ _BUILTIN_TOOL_DESCRIPTIONS: dict[str, str] = {
         "Scope defaults to all_related (anchor lineage component); "
         "set scope=single to query only the anchor artifact. "
         "Use query_kind=select with root_path/select_paths and where. "
+        "Schema is returned inline in query_kind=describe and in mirrored tool responses. "
         "Use count_only=true for counts, distinct=true for unique values. "
         "Continue partial results with "
         "query + cursor (not next_page). "
