@@ -21,7 +21,7 @@ Sift moves bulky MCP output out of context, keeps it durable, and makes retrieva
 1. Connects to configured upstream MCP servers (stdio or HTTP).
 2. Mirrors each upstream tool as `{prefix}.{tool}`.
 3. Intercepts each call, forwards arguments upstream, and stores the normalized response envelope.
-4. Returns the result: small payloads (< `passthrough_max_bytes`, default 8 KB) are returned raw (gateway is transparent); larger payloads return an artifact handle for retrieval via query tools.
+4. Returns the result: small payloads (< `passthrough_max_bytes`, default 8 KB) are returned raw (gateway is transparent); larger payloads return an artifact handle with inline schema-first metadata for retrieval via query tools.
 5. Exposes retrieval tools over stored artifacts with bounded response budgets and signed cursors.
 
 Design invariants (from v1.9 spec):
@@ -88,13 +88,29 @@ retrievable by `artifact(action="query", query_kind="get")`,
 `artifact(action="query", query_kind="describe")`, and
 `artifact(action="query", query_kind="select")` in the same session.
 
+## Handle Response Contract (Schema-First)
+
+For mirrored tool calls above the passthrough threshold, Sift returns:
+
+- `artifact_id`
+- `meta.cache`
+- `mapping`
+- `schemas`
+- `usage_hint`
+- optional `pagination`
+
+`schemas` is canonical (no duplicated `roots[].schema` embedding). To save
+space, mirrored responses include only the primary schema when one root has a
+unique highest `coverage.observed_records`; when the top count ties, all tied
+schemas are returned.
+
 ## Artifact-first Recipes
 
 ### Large mirrored result -> retrieve deterministically
 
 1. Call mirrored tool (for example `meta_ads_get_campaigns`).
-2. If response includes `artifact_id`, use inline `describe` data to choose
-   `root_path`.
+2. If response includes `artifact_id`, use inline `schemas` data to choose
+   `root_path` (typically `schemas[0].root_path` when a unique primary exists).
 3. Call `artifact(action="query", query_kind="select")` with pagination.
 4. Continue paging until `pagination.retrieval_status == "COMPLETE"`.
 

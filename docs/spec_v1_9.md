@@ -9,7 +9,7 @@ Sift is a local, single-tenant MCP proxy that:
 1. Discovers tools exposed by upstream MCP servers (stdio or HTTP transport).
 2. Mirrors each tool as `{prefix}.{tool}` with identical schema — no injected fields.
 3. Intercepts every tool call, forwards it upstream, and wraps the result in a **durable artifact envelope** stored to Postgres and the local filesystem.
-4. Returns the result to the caller: small payloads are returned raw (**passthrough mode**); large payloads return a **handle** with artifact ID, inline describe (mapping metadata + discovered roots), and a usage hint.
+4. Returns the result to the caller: small payloads are returned raw (**passthrough mode**); large payloads return a **handle** with artifact ID, inline schema-first metadata (`mapping` + `schemas`), and a usage hint.
 5. Generates a **deterministic inventory** (full or partial schema mapping) for each artifact's JSON payload.
 6. Provides a consolidated **`artifact`** retrieval tool with
    actions (`query`, `next_page`) using signed cursor pagination.
@@ -248,7 +248,7 @@ The gateway uses a two-tier response model based on payload size:
 | Payload size | Mode | LLM sees | Storage | Mapping |
 |---|---|---|---|---|
 | < `passthrough_max_bytes` (default 8192) | **passthrough** | Raw upstream result (transparent) | Async, best-effort | Skipped |
-| >= `passthrough_max_bytes` | **handle-only** | `artifact_id` + cache metadata + inline describe + usage hint | Sync | Yes |
+| >= `passthrough_max_bytes` | **handle-only** | `artifact_id` + cache metadata + `mapping` + `schemas` + usage hint | Sync | Yes |
 
 ### 14.1 Passthrough mode
 
@@ -266,10 +266,13 @@ Payloads at or above the passthrough threshold follow the handle-only path: the 
 - **`artifact_id`** and **cache metadata** (reuse status, request key).
 - cache metadata includes `reused`, `request_key`, `reason`,
   `artifact_id_origin` (`cache|fresh`), and `allow_reuse` (boolean).
-- **`describe`**: inline mapping metadata and discovered roots (same base data as `artifact(action="query", query_kind="describe")`), fetched on the same DB connection with no extra round-trip.
+- **`mapping`**: inline mapping metadata (`map_kind`, `map_status`, mapper/traversal versions, and determinism linkage).
+- **`schemas`**: inline canonical schema list with per-field type/required/nullable counts, example values, and determinism hashes.
+  - Compaction rule: if exactly one schema root has the highest `coverage.observed_records`, only that primary schema is returned.
+  - If highest coverage ties, all tied schemas are returned.
 - **`usage_hint`**: a heuristic natural language hint (no LLM) describing what the artifact contains, which fields are available, and which retrieval action to call next (`query_kind="select"` for arrays, `query_kind="get"` for dicts).
 
-This eliminates the need for a separate describe call — the LLM can go directly from the tool response to `artifact(action="query", query_kind="select")`. `query_kind="describe"` remains available for inspecting artifacts after the initial response.
+This eliminates the need for a separate describe call — the LLM can go directly from the tool response to `artifact(action="query", query_kind="select")`. `query_kind="describe"` remains available for explicit post-hoc lineage/compatibility inspection.
 
 ## 15. Artifact query references
 
@@ -322,7 +325,7 @@ Resolution is skipped entirely when no database is configured
 ### 16.1 Large mirrored result retrieval
 
 1. Call mirrored tool and receive `artifact_id`.
-2. Use inline `describe` to pick `root_path`.
+2. Use inline `schemas` to pick `root_path` (typically the single returned schema, or the highest-coverage schema in ties).
 3. Call `artifact(action="query", query_kind="select")` with cursor paging.
 4. Continue until `pagination.retrieval_status == "COMPLETE"`.
 
