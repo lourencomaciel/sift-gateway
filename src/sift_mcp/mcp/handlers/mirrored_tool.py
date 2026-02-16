@@ -10,7 +10,9 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import importlib.util
 import json
+import sqlite3
 import time
 from typing import TYPE_CHECKING, Any
 
@@ -22,6 +24,10 @@ from sift_mcp.cache.reuse import (
     ReuseResult,
     acquire_advisory_lock_async,
     release_advisory_lock,
+)
+from sift_mcp.codegen.ast_guard import (
+    ALLOWED_STDLIB_IMPORTS,
+    allowed_import_roots,
 )
 from sift_mcp.constants import WORKSPACE_ID
 from sift_mcp.envelope.model import (
@@ -68,6 +74,10 @@ from sift_mcp.pagination.extract import (
     assess_pagination,
 )
 from sift_mcp.request_identity import compute_request_identity
+from sift_mcp.schema_compact import (
+    SCHEMA_LEGEND,
+    compact_schema_payload,
+)
 from sift_mcp.sessions import upsert_artifact_ref, upsert_session
 from sift_mcp.tools.artifact_describe import (
     FETCH_DESCRIBE_SQL,
@@ -102,6 +112,13 @@ try:
 except ImportError:
     _PG_OPERATIONAL_ERROR = _NeverRaised
     _PG_INTERFACE_ERROR = _NeverRaised
+
+_DB_CONNECTIVITY_ERRORS: tuple[type[BaseException], ...] = (
+    _PG_OPERATIONAL_ERROR,
+    _PG_INTERFACE_ERROR,
+    sqlite3.OperationalError,
+    sqlite3.InterfaceError,
+)
 
 
 def _extract_session_id(context: dict[str, Any] | None) -> str | None:
@@ -219,7 +236,11 @@ _SCHEMA_FIELD_COLUMNS = [
     "required",
     "observed_count",
     "example_value",
+    "distinct_values",
+    "cardinality",
 ]
+
+_logger = get_logger(component="mcp.handlers")
 
 _CACHED_PAGINATION_COLUMNS = [
     "chain_seq",
@@ -267,9 +288,38 @@ def _retain_primary_schema_if_unique(
     return [schemas[leaders[0]]]
 
 
+def _available_code_query_packages(
+    ctx: GatewayServer,
+) -> list[str] | None:
+    """Return available third-party package roots for code-query hints."""
+    if not ctx.config.code_query_enabled:
+        return None
+
+    allowed_roots = sorted(
+        allowed_import_roots(
+            allow_analytics_imports=ctx.config.code_query_allow_analytics_imports,
+            configured_roots=ctx.config.code_query_allowed_import_roots,
+        )
+    )
+    package_roots = [
+        root for root in allowed_roots if root not in ALLOWED_STDLIB_IMPORTS
+    ]
+    available_packages: list[str] = []
+    for package_root in package_roots:
+        try:
+            spec = importlib.util.find_spec(package_root)
+        except (ModuleNotFoundError, ImportError, ValueError):
+            spec = None
+        if spec is not None:
+            available_packages.append(package_root)
+    return available_packages
+
+
 def _fetch_inline_describe(
     connection: Any,
     artifact_id: str,
+    *,
+    code_query_packages: list[str] | None = None,
 ) -> tuple[dict[str, Any], str]:
     """Fetch schema-first describe data and build a usage hint.
 
@@ -281,6 +331,8 @@ def _fetch_inline_describe(
     Args:
         connection: Active database connection.
         artifact_id: The artifact to describe.
+        code_query_packages: Available third-party code-query
+            packages to advertise in usage hints.
 
     Returns:
         A ``(describe_dict, usage_hint)`` tuple.
@@ -346,6 +398,12 @@ def _fetch_inline_describe(
                         ),
                     }
                 )
+                distinct_values = field.get("distinct_values")
+                if isinstance(distinct_values, list):
+                    fields[-1]["distinct_values"] = list(distinct_values)
+                cardinality = field.get("cardinality")
+                if isinstance(cardinality, int):
+                    fields[-1]["cardinality"] = cardinality
             observed_records_raw = schema_root.get("observed_records")
             observed_records = (
                 int(observed_records_raw)
@@ -392,16 +450,25 @@ def _fetch_inline_describe(
             },
             [],
         )
-    return describe, build_usage_hint(artifact_id, describe)
+    return describe, build_usage_hint(
+        artifact_id,
+        describe,
+        code_query_enabled=code_query_packages is not None,
+        code_query_packages=code_query_packages,
+    )
 
 
 def _minimal_describe(
     artifact_id: str,
+    *,
+    code_query_packages: list[str] | None = None,
 ) -> tuple[dict[str, Any], str]:
     """Build a minimal describe for DB-less or error paths.
 
     Args:
         artifact_id: The artifact identifier.
+        code_query_packages: Available third-party code-query
+            packages to advertise in usage hints.
 
     Returns:
         A ``(describe_dict, usage_hint)`` tuple with empty roots.
@@ -414,7 +481,12 @@ def _minimal_describe(
         },
         [],
     )
-    return describe, build_usage_hint(artifact_id, describe)
+    return describe, build_usage_hint(
+        artifact_id,
+        describe,
+        code_query_enabled=code_query_packages is not None,
+        code_query_packages=code_query_packages,
+    )
 
 
 def _describe_has_ready_schema(describe: dict[str, Any]) -> bool:
@@ -430,19 +502,21 @@ def _describe_has_ready_schema(describe: dict[str, Any]) -> bool:
 
 def _schema_payload_from_describe(
     describe: dict[str, Any],
-) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+) -> tuple[dict[str, Any], list[dict[str, Any]], dict[str, Any] | None]:
     """Extract canonical schema-first payload fields from describe data."""
     mapping = describe.get("mapping")
     schemas = describe.get("schemas")
     mapping_payload: dict[str, Any] = (
         dict(mapping) if isinstance(mapping, dict) else {}
     )
-    schema_payload: list[dict[str, Any]] = (
+    schema_payload_raw: list[dict[str, Any]] = (
         [item for item in schemas if isinstance(item, dict)]
         if isinstance(schemas, list)
         else []
     )
-    return mapping_payload, schema_payload
+    schema_payload = compact_schema_payload(schema_payload_raw)
+    schema_legend = SCHEMA_LEGEND if schema_payload else None
+    return mapping_payload, schema_payload, schema_legend
 
 
 def _inject_pagination_state(
@@ -1108,6 +1182,7 @@ async def handle_mirrored_tool(
         tool_name=mirrored.original_name,
         forwarded_args=forwarded_args,
     )
+    code_query_packages = _available_code_query_packages(ctx)
 
     def _create_input(envelope: Envelope) -> CreateArtifactInput:
         return CreateArtifactInput(
@@ -1178,10 +1253,7 @@ async def handle_mirrored_tool(
                                 )
                                 connection.commit()
                                 ref_attached = True
-                            except (
-                                _PG_OPERATIONAL_ERROR,
-                                _PG_INTERFACE_ERROR,
-                            ):
+                            except _DB_CONNECTIVITY_ERRORS:
                                 raise
                             except Exception:
                                 get_logger(component="mcp.handlers").warning(
@@ -1193,6 +1265,7 @@ async def handle_mirrored_tool(
                                 desc, hint = _fetch_inline_describe(
                                     connection,
                                     reuse.artifact_id,
+                                    code_query_packages=code_query_packages,
                                 )
                                 if _describe_has_ready_schema(desc):
                                     ctx._increment_metric("cache_hits")
@@ -1200,9 +1273,11 @@ async def handle_mirrored_tool(
                                         reuse.reason
                                         or "request_key_match"
                                     )
-                                    mapping_payload, schema_payload = (
-                                        _schema_payload_from_describe(desc)
-                                    )
+                                    (
+                                        mapping_payload,
+                                        schema_payload,
+                                        schema_legend,
+                                    ) = _schema_payload_from_describe(desc)
                                     pagination_meta = None
                                     try:
                                         pagination_meta = (
@@ -1232,6 +1307,7 @@ async def handle_mirrored_tool(
                                         },
                                         mapping=mapping_payload,
                                         schemas=schema_payload,
+                                        schema_legend=schema_legend,
                                         usage_hint=hint,
                                         pagination=pagination_meta,
                                     )
@@ -1250,7 +1326,7 @@ async def handle_mirrored_tool(
                             connection,
                             request_key=identity.request_key,
                         )
-            except (_PG_OPERATIONAL_ERROR, _PG_INTERFACE_ERROR):
+            except _DB_CONNECTIVITY_ERRORS:
                 ctx.db_ok = False
                 return gateway_error(
                     "INTERNAL",
@@ -1297,7 +1373,7 @@ async def handle_mirrored_tool(
                     )
                     if not quota_result.space_cleared:
                         quota_ok = False
-            except (_PG_OPERATIONAL_ERROR, _PG_INTERFACE_ERROR):
+            except _DB_CONNECTIVITY_ERRORS:
                 ctx.db_ok = False
                 return gateway_error(
                     "INTERNAL",
@@ -1366,7 +1442,7 @@ async def handle_mirrored_tool(
                 if isinstance(resolved, ResolveError):
                     return gateway_error(resolved.code, resolved.message)
                 upstream_args = resolved
-        except (_PG_OPERATIONAL_ERROR, _PG_INTERFACE_ERROR):
+        except _DB_CONNECTIVITY_ERRORS:
             ctx.db_ok = False
             return gateway_error(
                 "INTERNAL",
@@ -1467,6 +1543,7 @@ async def handle_mirrored_tool(
         # Phase 3: Persist + Phase 4: inline mapping in a single connection.
         # Reusing the same connection avoids a second pool checkout that
         # could silently fail (e.g. PoolTimeout under load).
+        stage = "persist_artifact"
         try:
             with ctx.db_pool.connection() as connection:
                 binary_hashes = ctx._binary_hashes_from_envelope(envelope)
@@ -1477,6 +1554,7 @@ async def handle_mirrored_tool(
                     binary_hashes=binary_hashes,
                     binary_refs=binary_refs or None,
                 )
+                stage = "run_mapping_inline"
                 mapped = ctx._run_mapping_inline(
                     connection,
                     handle=handle,
@@ -1489,36 +1567,64 @@ async def handle_mirrored_tool(
                     )
                 # Phase 5: Inline describe — fetch roots on
                 # the same connection (2 indexed lookups).
-                desc, hint = _fetch_inline_describe(
-                    connection, handle.artifact_id
-                )
+                stage = "fetch_inline_describe"
+                try:
+                    desc, hint = _fetch_inline_describe(
+                        connection,
+                        handle.artifact_id,
+                        code_query_packages=code_query_packages,
+                    )
+                except Exception as exc:
+                    _logger.warning(
+                        "inline describe failed; returning minimal describe",
+                        artifact_id=handle.artifact_id,
+                        error_type=type(exc).__name__,
+                        exc_info=True,
+                    )
+                    desc, hint = _minimal_describe(
+                        handle.artifact_id,
+                        code_query_packages=code_query_packages,
+                    )
                 if not _describe_has_ready_schema(desc):
                     map_status = desc.get("mapping", {}).get("map_status")
                     schemas = desc.get("schemas")
-                    if map_status != "ready":
-                        return gateway_error(
-                            "INTERNAL",
-                            "mapping is not ready for schema-first response",
+                    has_schemas = isinstance(schemas, list) and bool(schemas)
+                    if map_status == "ready" and not has_schemas:
+                        # Inconsistent state: ready mapping but no schema rows.
+                        # Fall back to a minimal describe payload rather than
+                        # failing the mirrored call.
+                        desc, hint = _minimal_describe(
+                            handle.artifact_id,
+                            code_query_packages=code_query_packages,
                         )
-                    if not isinstance(schemas, list) or not schemas:
-                        return gateway_error(
-                            "INTERNAL",
-                            "schema mapping did not produce schema rows",
-                        )
-                    return gateway_error(
-                        "INTERNAL",
-                        "schema-first response validation failed",
+                        map_status = desc.get("mapping", {}).get("map_status")
+                        has_schemas = False
+                    _logger.warning(
+                        "schema-first inline describe not ready; returning best-effort payload",
+                        artifact_id=handle.artifact_id,
+                        map_status=map_status,
+                        has_schemas=has_schemas,
                     )
-        except (_PG_OPERATIONAL_ERROR, _PG_INTERFACE_ERROR):
+        except _DB_CONNECTIVITY_ERRORS:
             ctx.db_ok = False
             return gateway_error(
                 "INTERNAL",
                 "artifact persistence failed; gateway marked unhealthy",
             )
-        except Exception:
+        except Exception as exc:
+            _logger.warning(
+                "artifact persistence flow failed",
+                stage=stage,
+                error_type=type(exc).__name__,
+                exc_info=True,
+            )
             return gateway_error(
                 "INTERNAL",
                 "artifact persistence failed",
+                details={
+                    "stage": stage,
+                    "error_type": type(exc).__name__,
+                },
             )
 
     pagination_meta = None
@@ -1536,7 +1642,9 @@ async def handle_mirrored_tool(
         pagination_meta = _pagination_response_meta(
             pagination_assessment_for_response, handle.artifact_id
         )
-    mapping_payload, schema_payload = _schema_payload_from_describe(desc)
+    mapping_payload, schema_payload, schema_legend = (
+        _schema_payload_from_describe(desc)
+    )
 
     return gateway_tool_result(
         artifact_id=handle.artifact_id,
@@ -1549,6 +1657,7 @@ async def handle_mirrored_tool(
         },
         mapping=mapping_payload,
         schemas=schema_payload,
+        schema_legend=schema_legend,
         usage_hint=hint,
         pagination=pagination_meta,
     )

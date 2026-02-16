@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import datetime as dt
+from decimal import Decimal
 import json
 import secrets
 from typing import Any
@@ -188,6 +189,25 @@ def compute_payload_sizes(
 # ---------------------------------------------------------------------------
 # Envelope storage prep
 # ---------------------------------------------------------------------------
+def _coerce_floats_to_decimal(value: Any) -> Any:
+    """Recursively coerce floats to Decimal for canonical JSON.
+
+    RFC8785 canonicalization in this codebase rejects Python floats.
+    Upstream tool payloads can legitimately include finite float values,
+    so coerce them deterministically before canonical serialization.
+    """
+    if isinstance(value, float):
+        return Decimal(str(value))
+    if isinstance(value, dict):
+        return {
+            str(key): _coerce_floats_to_decimal(item)
+            for key, item in value.items()
+        }
+    if isinstance(value, (list, tuple)):
+        return [_coerce_floats_to_decimal(item) for item in value]
+    return value
+
+
 def prepare_envelope_storage(
     envelope: Envelope,
     config: GatewayConfig,
@@ -203,7 +223,7 @@ def prepare_envelope_storage(
         A tuple of (payload_hash_hex, uncompressed_canonical,
         compressed_bytes, jsonb_value_or_none).
     """
-    envelope_dict = envelope.to_dict()
+    envelope_dict = _coerce_floats_to_decimal(envelope.to_dict())
     uncompressed = canonical_bytes(envelope_dict)
     p_hash = sha256_hex(uncompressed)
     compressed = compress_bytes(

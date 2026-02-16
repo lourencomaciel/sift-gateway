@@ -32,6 +32,7 @@ def gateway_tool_result(
     cache_meta: dict[str, Any] | None = None,
     mapping: dict[str, Any] | None = None,
     schemas: list[dict[str, Any]] | None = None,
+    schema_legend: dict[str, Any] | None = None,
     usage_hint: str | None = None,
     pagination: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
@@ -42,6 +43,8 @@ def gateway_tool_result(
         cache_meta: Cache metadata dict (reused, reason, etc.).
         mapping: Mapping metadata for this artifact.
         schemas: Canonical schema list (one entry per root path).
+        schema_legend: Optional compact-schema legend describing
+            abbreviated schema keys.
         usage_hint: Natural language hint for the calling model
             describing what the artifact contains and which
             tools to call next.
@@ -62,6 +65,8 @@ def gateway_tool_result(
     }
     if mapping is not None:
         result["mapping"] = mapping
+    if schema_legend is not None:
+        result["schema_legend"] = schema_legend
     if schemas is not None:
         result["schemas"] = schemas
     if usage_hint is not None:

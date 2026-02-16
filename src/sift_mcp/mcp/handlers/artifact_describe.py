@@ -16,6 +16,7 @@ from sift_mcp.mcp.lineage import (
     compute_related_set_hash,
     resolve_related_artifacts,
 )
+from sift_mcp.schema_compact import SCHEMA_LEGEND, compact_schema_payload
 
 if TYPE_CHECKING:
     from sift_mcp.mcp.server import GatewayServer
@@ -53,6 +54,8 @@ _SCHEMA_FIELD_COLUMNS = [
     "required",
     "observed_count",
     "example_value",
+    "distinct_values",
+    "cardinality",
 ]
 
 
@@ -137,6 +140,12 @@ async def handle_artifact_describe(
                             ),
                         }
                     )
+                    distinct_values = field.get("distinct_values")
+                    if isinstance(distinct_values, list):
+                        fields[-1]["distinct_values"] = list(distinct_values)
+                    cardinality = field.get("cardinality")
+                    if isinstance(cardinality, int):
+                        fields[-1]["cardinality"] = cardinality
                 observed_records_raw = schema_root.get("observed_records")
                 observed_records = (
                     int(observed_records_raw)
@@ -300,6 +309,20 @@ async def handle_artifact_describe(
             commit()
 
     roots = build_lineage_root_catalog(root_entries)
+    roots_with_schema = [
+        root
+        for root in roots
+        if isinstance(root.get("schema"), dict)
+    ]
+    if roots_with_schema:
+        compact_root_schemas = compact_schema_payload(
+            [root["schema"] for root in roots_with_schema]
+        )
+        for root, compact_schema in zip(roots_with_schema, compact_root_schemas):
+            root["schema"] = compact_schema
+
+    compact_anchor_schemas = compact_schema_payload(anchor_schemas)
+
     lineage: dict[str, Any] = {
         "scope": scope,
         "anchor_artifact_id": anchor_artifact_id,
@@ -316,6 +339,8 @@ async def handle_artifact_describe(
         "artifacts": artifact_summaries,
         "roots": roots,
     }
-    if scope == "single" and anchor_schemas:
-        response["schemas"] = anchor_schemas
+    if roots_with_schema or compact_anchor_schemas:
+        response["schema_legend"] = SCHEMA_LEGEND
+    if scope == "single" and compact_anchor_schemas:
+        response["schemas"] = compact_anchor_schemas
     return response

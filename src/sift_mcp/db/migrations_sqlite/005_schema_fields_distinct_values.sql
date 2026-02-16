@@ -1,10 +1,9 @@
--- 004_schema_fields_example_value.sql: normalize schema fields table shape.
+-- 005_schema_fields_distinct_values.sql: add sampled enum metadata columns.
 --
--- SQLite does not support ALTER TABLE ... ADD COLUMN IF NOT EXISTS.
--- Recreate artifact_schema_fields in-place with the expected v1 shape,
--- preserving existing rows and initializing example_value to NULL.
+-- Recreate artifact_schema_fields with distinct_values/cardinality so
+-- existing SQLite databases are upgraded consistently.
 
-CREATE TABLE IF NOT EXISTS artifact_schema_fields_v2 (
+CREATE TABLE IF NOT EXISTS artifact_schema_fields_v3 (
     workspace_id TEXT NOT NULL,
     artifact_id TEXT NOT NULL,
     root_key TEXT NOT NULL,
@@ -23,7 +22,7 @@ CREATE TABLE IF NOT EXISTS artifact_schema_fields_v2 (
         ON DELETE CASCADE
 );
 
-INSERT INTO artifact_schema_fields_v2 (
+INSERT INTO artifact_schema_fields_v3 (
     workspace_id,
     artifact_id,
     root_key,
@@ -45,12 +44,12 @@ SELECT
     nullable,
     required,
     observed_count,
-    NULL,
+    example_value,
     NULL,
     NULL
 FROM artifact_schema_fields;
 
 DROP TABLE artifact_schema_fields;
 
-ALTER TABLE artifact_schema_fields_v2
+ALTER TABLE artifact_schema_fields_v3
     RENAME TO artifact_schema_fields;

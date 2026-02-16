@@ -233,6 +233,29 @@ def test_prepare_envelope_storage_hash_integrity(tmp_path: Path) -> None:
     assert uncompressed == canonical_bytes(envelope.to_dict())
 
 
+def test_prepare_envelope_storage_accepts_float_values(
+    tmp_path: Path,
+) -> None:
+    """Float values are normalized before canonical envelope serialization."""
+    config = _config(tmp_path)
+    envelope = _ok_envelope(
+        content=[
+            JsonContentPart(
+                value={
+                    "spend": 12.5,
+                    "nested": [{"cpa": 1.25}],
+                }
+            )
+        ]
+    )
+
+    p_hash, uncompressed, _, _ = prepare_envelope_storage(envelope, config)
+
+    assert p_hash == sha256_hex(uncompressed)
+    assert b'"spend":12.5' in uncompressed
+    assert b'"cpa":1.25' in uncompressed
+
+
 # ---------------------------------------------------------------------------
 # build_artifact_row
 # ---------------------------------------------------------------------------
@@ -391,6 +414,23 @@ def test_persist_artifact_executes_core_writes(tmp_path: Path) -> None:
     assert handle.status == "ok"
     assert conn.committed is True
     assert len(conn.calls) == 4  # payload, session, artifact, artifact_refs
+
+
+def test_persist_artifact_accepts_float_values(tmp_path: Path) -> None:
+    conn = _PersistConnection()
+    config = _config(tmp_path)
+    envelope = _ok_envelope(
+        content=[JsonContentPart(value={"ratio": 0.25, "count": 4})]
+    )
+
+    handle = persist_artifact(
+        connection=conn,
+        config=config,
+        input_data=_sample_input(envelope),
+    )
+
+    assert handle.status == "ok"
+    assert conn.committed is True
 
 
 def test_persist_artifact_rolls_back_on_error(tmp_path: Path) -> None:

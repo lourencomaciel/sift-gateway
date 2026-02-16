@@ -164,15 +164,18 @@ DO UPDATE SET
 INSERT_SCHEMA_FIELD_SQL = """
 INSERT INTO artifact_schema_fields (
     workspace_id, artifact_id, root_key, field_path,
-    types, nullable, required, observed_count, example_value
-) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+    types, nullable, required, observed_count, example_value,
+    distinct_values, cardinality
+) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
 ON CONFLICT (workspace_id, artifact_id, root_key, field_path)
 DO UPDATE SET
     types = EXCLUDED.types,
     nullable = EXCLUDED.nullable,
     required = EXCLUDED.required,
     observed_count = EXCLUDED.observed_count,
-    example_value = EXCLUDED.example_value
+    example_value = EXCLUDED.example_value,
+    distinct_values = EXCLUDED.distinct_values,
+    cardinality = EXCLUDED.cardinality
 """
 
 
@@ -306,6 +309,8 @@ def _schema_field_insert_params(
         field.required,
         field.observed_count,
         field.example_value,
+        _jsonb(field.distinct_values),
+        field.cardinality,
     )
 
 

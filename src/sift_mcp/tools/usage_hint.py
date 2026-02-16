@@ -116,9 +116,45 @@ def _root_summary(root: dict[str, Any]) -> str:
     return f"{path} ({shape})"
 
 
+def _code_query_hint(
+    artifact_id: str,
+    root_path: str,
+    *,
+    code_query_enabled: bool = True,
+    code_query_packages: list[str] | None = None,
+) -> str:
+    """Return a compact hint for root-scoped Python code queries."""
+    if not code_query_enabled:
+        return ""
+    hint = (
+        "For aggregations or derived metrics, run root-scoped Python with "
+        'artifact(action="query", query_kind="code", '
+        f'artifact_id="{artifact_id}", root_path="{root_path}", '
+        'code="def run(data, schema, params): ...", params={})'
+        ". For multi-artifact analysis, pass artifact_ids=[...] and define "
+        "run(artifacts, schemas, params); use root_paths={artifact_id: "
+        "root_path, ...} when each artifact has a different root path"
+        ". Code queries return all results (no pagination), scalar/dict "
+        "returns are auto-wrapped to a list, and runtime failures include "
+        "tracebacks with line numbers. Aggregate inside run() to stay within "
+        "max_bytes_out"
+    )
+    if code_query_packages is None:
+        return hint
+    if code_query_packages:
+        return (
+            f"{hint}. Available code-query packages in this runtime: "
+            + ", ".join(code_query_packages)
+        )
+    return f"{hint}. No third-party code-query packages are currently available"
+
+
 def build_usage_hint(
     artifact_id: str,
     describe: dict[str, Any],
+    *,
+    code_query_enabled: bool = True,
+    code_query_packages: list[str] | None = None,
 ) -> str:
     """Build a natural language usage hint from describe data.
 
@@ -135,6 +171,10 @@ def build_usage_hint(
         artifact_id: The artifact identifier.
         describe: The full describe response dict with
             ``mapping`` and ``roots`` sections.
+        code_query_enabled: Whether ``query_kind=code`` is available
+            in the current runtime.
+        code_query_packages: Optional list of available third-party
+            packages in the code-query runtime.
 
     Returns:
         A non-empty hint string.
@@ -238,6 +278,14 @@ def build_usage_hint(
             schema_parts.append(
                 "Continue partial results with query + cursor (not next_page)"
             )
+            code_hint = _code_query_hint(
+                artifact_id,
+                primary_path,
+                code_query_enabled=code_query_enabled,
+                code_query_packages=code_query_packages,
+            )
+            if code_hint:
+                schema_parts.append(code_hint)
             schema_parts.append(
                 "Minimize context: request only needed "
                 "fields and rows, then expand if needed"
@@ -322,6 +370,14 @@ def build_usage_hint(
         parts.append(
             "Continue partial results with query + cursor (not next_page)"
         )
+        code_hint = _code_query_hint(
+            artifact_id,
+            path,
+            code_query_enabled=code_query_enabled,
+            code_query_packages=code_query_packages,
+        )
+        if code_hint:
+            parts.append(code_hint)
         parts.append(
             "Minimize context: request only needed "
             "fields and rows, then expand if needed"

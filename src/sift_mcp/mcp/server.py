@@ -105,11 +105,12 @@ _BUILTIN_TOOL_DESCRIPTIONS: dict[str, str] = {
     "artifact": (
         "Interact with stored artifacts. "
         "Actions: query and next_page. "
-        "For query, pass query_kind: describe|get|select|search. "
+        "For query, pass query_kind: describe|get|select|search|code. "
         "For describe/get/select, pass artifact_id. "
-        "Scope defaults to all_related (anchor lineage component); "
-        "set scope=single to query only the anchor artifact. "
+        "For code, pass artifact_id (single artifact) or artifact_ids "
+        "(multi-artifact). "
         "Use query_kind=select with root_path/select_paths and where. "
+        "Use query_kind=code with root_path/code and optional params. "
         "Schema is returned inline in query_kind=describe and in mirrored tool responses. "
         "Use count_only=true for counts, distinct=true for unique values. "
         "Continue partial results with "
@@ -118,6 +119,8 @@ _BUILTIN_TOOL_DESCRIPTIONS: dict[str, str] = {
         "upstream pages. "
         "Filtering (where) and multi-field projection "
         "(select_paths) are query_kind=select only. "
+        "Code queries return all results (no pagination), limited by "
+        "max_bytes_out. "
         f"{PAGINATION_COMPLETENESS_RULE}"
     ),
 }
@@ -153,13 +156,14 @@ _BUILTIN_TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
             },
             "query_kind": {
                 "type": "string",
-                "enum": ["describe", "get", "select", "search"],
+                "enum": ["describe", "get", "select", "search", "code"],
                 "description": (
                     "Required for action=query. "
                     "describe: mapping roots summary; "
                     "get: retrieve envelope/mapped values; "
                     "select: projection/filter over records; "
-                    "search: session artifact listing."
+                    "search: session artifact listing; "
+                    "code: execute generated Python against a mapped root."
                 ),
             },
             "scope": {
@@ -169,7 +173,8 @@ _BUILTIN_TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
                     "For query_kind describe/get/select: "
                     "all_related (default) queries the full lineage "
                     "component of artifact_id; single queries only "
-                    "artifact_id. Not valid for query_kind=search."
+                    "artifact_id. Ignored for query_kind=code; "
+                    "not valid for query_kind=search."
                 ),
             },
             "artifact_id": {
@@ -177,7 +182,17 @@ _BUILTIN_TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
                 "description": (
                     "Anchor artifact. Required for query_kind "
                     "describe|get|select and next_page. "
-                    "Omit for query_kind=search."
+                    "For query_kind=code, use artifact_id (single) "
+                    "or artifact_ids (multi). Omit for query_kind=search."
+                ),
+            },
+            "artifact_ids": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": (
+                    "[query_kind=code] Optional list of anchor artifacts for "
+                    "multi-artifact code queries. Mutually exclusive with "
+                    "artifact_id."
                 ),
             },
             "target": {
@@ -196,8 +211,17 @@ _BUILTIN_TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
             "root_path": {
                 "type": "string",
                 "description": (
-                    "[query_kind=select] JSONPath to root array, "
+                    "[query_kind=select|code] JSONPath to root records, "
                     "from query_kind=describe output."
+                ),
+            },
+            "root_paths": {
+                "type": "object",
+                "additionalProperties": {"type": "string"},
+                "description": (
+                    "[query_kind=code] Optional per-artifact root paths for "
+                    "multi-artifact queries. Keys are artifact IDs, values are "
+                    "JSONPath strings. Mutually exclusive with root_path."
                 ),
             },
             "select_paths": {
@@ -221,6 +245,27 @@ _BUILTIN_TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
                     '\'status IN ["active", "paused"]\', '
                     "'EXISTS(email)'."
                 ),
+            },
+            "code": {
+                "type": "string",
+                "description": (
+                    "[query_kind=code] Python source defining "
+                    "run(artifacts, schemas, params) for multi-artifact "
+                    "queries, or run(data, schema, params) for single-artifact "
+                    "queries. "
+                    "Allowed imports: math, statistics, decimal, datetime, re, "
+                    "itertools, collections, functools, operator, heapq, json, "
+                    "jmespath, pandas, numpy by default; allowlist can be "
+                    "overridden by config."
+                ),
+            },
+            "params": {
+                "type": "object",
+                "description": (
+                    "[query_kind=code] JSON object passed as the third argument "
+                    "to run(..., ..., params)."
+                ),
+                "additionalProperties": True,
             },
             "filters": {
                 "type": "object",
@@ -258,11 +303,11 @@ _BUILTIN_TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
             },
             "cursor": {
                 "type": "string",
-                "description": "Opaque pagination cursor.",
+                "description": "[query_kind=select] Opaque pagination cursor.",
             },
             "limit": {
                 "type": "integer",
-                "description": "Max items per page.",
+                "description": "[query_kind=select|search] Max items per page.",
             },
         },
         "required": ["action"],
@@ -1749,6 +1794,16 @@ class GatewayServer:
         )
 
         return await _select(self, arguments)
+
+    async def handle_artifact_code(
+        self, arguments: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Delegate directly to the code-query handler."""
+        from sift_mcp.mcp.handlers.artifact_code import (
+            handle_artifact_code as _code,
+        )
+
+        return await _code(self, arguments)
 
     async def handle_artifact_describe(
         self, arguments: dict[str, Any]

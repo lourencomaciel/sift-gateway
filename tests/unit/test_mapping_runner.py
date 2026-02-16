@@ -356,6 +356,126 @@ def test_schema_field_example_value_truncates_long_values(tmp_path: Path) -> Non
     )
 
 
+def test_schema_field_distinct_values_are_capped_with_cardinality(
+    tmp_path: Path,
+) -> None:
+    data = {
+        "items": [
+            {"action_type": f"type_{idx}"}
+            for idx in range(12)
+        ]
+    }
+    envelope = {"content": [{"type": "json", "value": data}]}
+    result = run_mapping(
+        MappingInput(
+            artifact_id="a_distinct",
+            payload_hash_full="p_distinct",
+            envelope=envelope,
+            config=_config(tmp_path, max_full_map_bytes=10_000_000),
+        )
+    )
+    assert result.map_kind == "full"
+    assert result.schemas is not None
+    by_path = {schema.root_path: schema for schema in result.schemas}
+    item_schema = by_path["$.items"]
+    action_field = next(
+        field for field in item_schema.fields if field.path == "$.action_type"
+    )
+    assert action_field.distinct_values is not None
+    assert len(action_field.distinct_values) == 10
+    assert action_field.cardinality == 10
+
+
+def test_sampled_schema_distinct_values_reflect_sampled_records(
+    tmp_path: Path,
+) -> None:
+    data = {
+        "items": [{"action_type": f"type_{idx % 8}"} for idx in range(80)]
+    }
+    envelope = {"content": [{"type": "json", "value": data}]}
+    result = run_mapping(
+        MappingInput(
+            artifact_id="a_sampled_distinct",
+            payload_hash_full="p_sampled_distinct",
+            envelope=envelope,
+            config=_config(tmp_path, max_full_map_bytes=100),
+        )
+    )
+    assert result.map_kind == "partial"
+    assert result.schemas is not None
+    by_path = {schema.root_path: schema for schema in result.schemas}
+    item_schema = by_path["$.items"]
+    action_field = next(
+        field for field in item_schema.fields if field.path == "$.action_type"
+    )
+    assert action_field.distinct_values is not None
+    assert len(action_field.distinct_values) <= 8
+    assert action_field.cardinality is not None
+
+
+def test_schema_distinct_values_skips_unhashable_scalars() -> None:
+    from sift_mcp.mapping.schema import _build_fields
+
+    fields, observed = _build_fields([{"raw": {1, 2, 3}}])
+    assert observed == 1
+    raw_field = next(field for field in fields if field.path == "$.raw")
+    assert raw_field.distinct_values is None
+    assert raw_field.cardinality is None
+
+
+def test_schema_distinct_values_preserve_boolean_vs_number_identity() -> None:
+    from sift_mcp.mapping.schema import _build_fields
+
+    fields, observed = _build_fields(
+        [
+            {"mixed": True},
+            {"mixed": 1},
+            {"mixed": False},
+            {"mixed": 0},
+        ]
+    )
+    assert observed == 4
+    mixed_field = next(field for field in fields if field.path == "$.mixed")
+    assert mixed_field.distinct_values == [False, True, 0, 1]
+    assert mixed_field.cardinality == 4
+
+
+def test_schema_distinct_values_handle_large_integers() -> None:
+    from sift_mcp.mapping.schema import _build_fields
+
+    huge = 10**309
+    fields, observed = _build_fields([{"id": huge}, {"id": 1}])
+    assert observed == 2
+    id_field = next(field for field in fields if field.path == "$.id")
+    assert id_field.distinct_values == [1, huge]
+    assert id_field.cardinality == 2
+
+
+def test_schema_distinct_values_handle_float_values(tmp_path: Path) -> None:
+    data = {"items": [{"spend": 12.5}, {"spend": 9.25}]}
+    envelope = {"content": [{"type": "json", "value": data}]}
+    result = run_mapping(
+        MappingInput(
+            artifact_id="a_float_distinct",
+            payload_hash_full="p_float_distinct",
+            envelope=envelope,
+            config=_config(tmp_path, max_full_map_bytes=10_000_000),
+        )
+    )
+    assert result.map_kind == "full"
+    assert result.map_status == "ready"
+    assert result.map_error is None
+    assert result.schemas is not None
+    by_path = {schema.root_path: schema for schema in result.schemas}
+    item_schema = by_path["$.items"]
+    spend_field = next(
+        field for field in item_schema.fields if field.path == "$.spend"
+    )
+    assert spend_field.distinct_values is not None
+    assert set(spend_field.distinct_values) == {9.25, 12.5}
+    assert spend_field.cardinality == 2
+
+
 def test_partial_mapping_resolves_json_encoded_strings_for_schema(
     tmp_path: Path,
 ) -> None:

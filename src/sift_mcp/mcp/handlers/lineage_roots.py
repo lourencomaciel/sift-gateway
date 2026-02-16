@@ -1,0 +1,190 @@
+"""Shared lineage root-candidate resolution helpers for query handlers."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any, Callable
+
+from sift_mcp.constants import WORKSPACE_ID
+from sift_mcp.envelope.responses import gateway_error
+from sift_mcp.mcp.handlers.common import (
+    ARTIFACT_META_COLUMNS,
+    FETCH_ARTIFACT_META_SQL,
+    row_to_dict,
+)
+from sift_mcp.mcp.lineage import (
+    compute_related_set_hash,
+    compute_root_signature,
+    resolve_related_artifacts,
+)
+from sift_mcp.tools.artifact_schema import FETCH_SCHEMA_ROOT_BY_PATH_SQL
+from sift_mcp.tools.artifact_select import FETCH_ROOT_SQL
+
+_SELECT_ROOT_COLUMNS = [
+    "root_key",
+    "root_path",
+    "count_estimate",
+    "root_shape",
+    "fields_top",
+    "sample_indices",
+    "root_summary",
+]
+
+_SCHEMA_ROOT_COLUMNS = [
+    "root_key",
+    "root_path",
+    "schema_version",
+    "schema_hash",
+    "mode",
+    "completeness",
+    "observed_records",
+    "dataset_hash",
+    "traversal_contract_version",
+    "map_budget_fingerprint",
+]
+
+CandidateRow = tuple[str, dict[str, Any], dict[str, Any], dict[str, Any]]
+
+
+@dataclass(frozen=True)
+class AllRelatedRootCandidates:
+    """Resolved all-related lineage state for a specific root path."""
+
+    related_rows: list[dict[str, Any]]
+    related_ids: list[str]
+    related_set_hash: str
+    candidate_rows: list[CandidateRow]
+    missing_root_artifacts: list[str]
+
+
+def resolve_all_related_root_candidates(
+    connection: Any,
+    *,
+    session_id: str,
+    anchor_artifact_id: str,
+    root_path: str,
+    max_related_artifacts: int,
+    resolve_related_fn: Callable[..., list[dict[str, Any]]] = (
+        resolve_related_artifacts
+    ),
+    compute_related_set_hash_fn: Callable[[list[dict[str, Any]]], str] = (
+        compute_related_set_hash
+    ),
+) -> AllRelatedRootCandidates | dict[str, Any]:
+    """Resolve all-related candidate roots and enforce schema compatibility."""
+    related_rows = resolve_related_fn(
+        connection,
+        session_id=session_id,
+        anchor_artifact_id=anchor_artifact_id,
+    )
+    if not related_rows:
+        return gateway_error("NOT_FOUND", "artifact not found")
+    if len(related_rows) > max_related_artifacts:
+        return gateway_error(
+            "RESOURCE_EXHAUSTED",
+            "lineage query exceeds related artifact limit",
+            details={
+                "artifact_count": len(related_rows),
+                "max_artifacts": max_related_artifacts,
+            },
+        )
+
+    related_ids = [
+        artifact_id
+        for row in related_rows
+        if isinstance((artifact_id := row.get("artifact_id")), str)
+    ]
+    if not related_ids:
+        return gateway_error("NOT_FOUND", "artifact not found")
+
+    related_set_hash = compute_related_set_hash_fn(related_rows)
+
+    candidate_rows: list[CandidateRow] = []
+    missing_root_artifacts: list[str] = []
+    signature_groups: dict[str, list[str]] = {}
+
+    for artifact_id in related_ids:
+        artifact_meta = row_to_dict(
+            connection.execute(
+                FETCH_ARTIFACT_META_SQL,
+                (WORKSPACE_ID, artifact_id),
+            ).fetchone(),
+            ARTIFACT_META_COLUMNS,
+        )
+        if artifact_meta is None:
+            continue
+        if artifact_meta.get("deleted_at") is not None:
+            continue
+        if artifact_meta.get("map_status") != "ready":
+            missing_root_artifacts.append(artifact_id)
+            continue
+
+        root_row = row_to_dict(
+            connection.execute(
+                FETCH_ROOT_SQL,
+                (WORKSPACE_ID, artifact_id, root_path),
+            ).fetchone(),
+            _SELECT_ROOT_COLUMNS,
+        )
+        if root_row is None:
+            missing_root_artifacts.append(artifact_id)
+            continue
+
+        schema_root = row_to_dict(
+            connection.execute(
+                FETCH_SCHEMA_ROOT_BY_PATH_SQL,
+                (WORKSPACE_ID, artifact_id, root_path),
+            ).fetchone(),
+            _SCHEMA_ROOT_COLUMNS,
+        )
+        if schema_root is None:
+            missing_root_artifacts.append(artifact_id)
+            continue
+
+        signature = compute_root_signature(
+            root_path=root_path,
+            schema_hash=schema_root.get("schema_hash"),
+            schema_mode=schema_root.get("mode"),
+            schema_completeness=schema_root.get("completeness"),
+        )
+        signature_groups.setdefault(signature, []).append(artifact_id)
+        candidate_rows.append((artifact_id, artifact_meta, root_row, schema_root))
+
+    if not candidate_rows:
+        details: dict[str, Any] = {}
+        if missing_root_artifacts:
+            details = {
+                "root_path": root_path,
+                "skipped_artifacts": len(missing_root_artifacts),
+                "artifact_ids": missing_root_artifacts,
+            }
+        return gateway_error(
+            "NOT_FOUND",
+            "root_path not found",
+            details=details,
+        )
+
+    if len(signature_groups) > 1:
+        return gateway_error(
+            "INVALID_ARGUMENT",
+            "incompatible lineage schema for root_path",
+            details={
+                "code": "INCOMPATIBLE_LINEAGE_SCHEMA",
+                "root_path": root_path,
+                "signature_groups": [
+                    {
+                        "signature": signature,
+                        "artifact_ids": sorted(artifact_ids),
+                    }
+                    for signature, artifact_ids in sorted(signature_groups.items())
+                ],
+            },
+        )
+
+    return AllRelatedRootCandidates(
+        related_rows=related_rows,
+        related_ids=related_ids,
+        related_set_hash=related_set_hash,
+        candidate_rows=candidate_rows,
+        missing_root_artifacts=missing_root_artifacts,
+    )

@@ -384,6 +384,41 @@ def _init_quota_counters(m: GatewayMetrics, reg: CollectorRegistry) -> None:
     )
 
 
+def _init_codegen_counters(m: GatewayMetrics, reg: CollectorRegistry) -> None:
+    """Register code-query execution counters and latency."""
+    m.codegen_executions = _make(
+        "gateway_codegen_executions_total",
+        "Code-query executions",
+        reg,
+    )
+    m.codegen_success = _make(
+        "gateway_codegen_success_total",
+        "Code-query successes",
+        reg,
+    )
+    m.codegen_failure = _make(
+        "gateway_codegen_failure_total",
+        "Code-query failures",
+        reg,
+    )
+    m.codegen_timeout = _make(
+        "gateway_codegen_timeout_total",
+        "Code-query timeouts",
+        reg,
+    )
+    m.codegen_input_records = _make(
+        "gateway_codegen_input_records_total",
+        "Code-query input records",
+        reg,
+    )
+    m.codegen_output_records = _make(
+        "gateway_codegen_output_records_total",
+        "Code-query output records",
+        reg,
+    )
+    m.codegen_latency = Histogram()
+
+
 # ---------------------------------------------------------------------------
 # snapshot / reset helpers — parameterized by counter reader fn
 # ---------------------------------------------------------------------------
@@ -555,6 +590,25 @@ def _gather_quota(m: GatewayMetrics, fn: _CounterFn) -> dict[str, Any]:
     }
 
 
+def _gather_codegen(
+    m: GatewayMetrics,
+    fn: _CounterFn,
+    *,
+    reset: bool,
+) -> dict[str, Any]:
+    """Gather code-query section metrics."""
+    lat = m.codegen_latency.reset() if reset else (m.codegen_latency.snapshot())
+    return {
+        "executions": fn(m.codegen_executions),
+        "success": fn(m.codegen_success),
+        "failure": fn(m.codegen_failure),
+        "timeout": fn(m.codegen_timeout),
+        "input_records": fn(m.codegen_input_records),
+        "output_records": fn(m.codegen_output_records),
+        "latency": lat,
+    }
+
+
 def _gather_all(
     m: GatewayMetrics,
     fn: _CounterFn,
@@ -580,6 +634,7 @@ def _gather_all(
         "locks": _gather_locks(m, fn),
         "pruning": _gather_pruning(m, fn),
         "quota": _gather_quota(m, fn),
+        "codegen": _gather_codegen(m, fn, reset=reset),
     }
 
 
@@ -640,6 +695,14 @@ class GatewayMetrics:
     quota_breaches: _PromCounter
     quota_prune_triggered: _PromCounter
 
+    codegen_executions: _PromCounter
+    codegen_success: _PromCounter
+    codegen_failure: _PromCounter
+    codegen_timeout: _PromCounter
+    codegen_input_records: _PromCounter
+    codegen_output_records: _PromCounter
+    codegen_latency: Histogram
+
     def __init__(self, registry: CollectorRegistry | None = None) -> None:
         """Initialize and register all gateway metric counters.
 
@@ -656,6 +719,7 @@ class GatewayMetrics:
         _init_lock_counters(self, reg)
         _init_pruning_counters(self, reg)
         _init_quota_counters(self, reg)
+        _init_codegen_counters(self, reg)
 
     def record_stop_reason(self, reason: str) -> None:
         """Increment the counter for a mapping stop reason.

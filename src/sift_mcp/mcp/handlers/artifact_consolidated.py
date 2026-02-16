@@ -8,7 +8,7 @@ Public contract:
 Query behavior is explicit:
 
 - ``query_kind`` is required and must be one of
-  ``describe|get|select|search``.
+  ``describe|get|select|search|code``.
 - ``scope`` is supported for ``describe|get|select`` and defaults
   to ``all_related``.
 """
@@ -24,7 +24,7 @@ if TYPE_CHECKING:
 
 _PUBLIC_ACTIONS = frozenset({"query", "next_page"})
 _VALID_ACTIONS = _PUBLIC_ACTIONS
-_QUERY_KINDS = frozenset({"describe", "get", "select", "search"})
+_QUERY_KINDS = frozenset({"describe", "get", "select", "search", "code"})
 _QUERY_SCOPES = frozenset({"all_related", "single"})
 
 
@@ -41,6 +41,8 @@ async def _dispatch_query_kind(
         return await _handle_get(ctx, arguments)
     if query_kind == "select":
         return await _handle_select(ctx, arguments)
+    if query_kind == "code":
+        return await _handle_code(ctx, arguments)
     return await _handle_search(ctx, arguments)
 
 
@@ -55,7 +57,7 @@ async def _handle_query(
         return gateway_error(
             "INVALID_ARGUMENT",
             "query_kind is required for action=query and must be one of: "
-            "describe, get, select, search",
+            "describe, get, select, search, code",
         )
     query_kind = raw_kind
 
@@ -74,26 +76,40 @@ async def _handle_query(
             ctx, query_kind=query_kind, arguments=query_args
         )
 
-    if not query_args.get("artifact_id"):
-        return gateway_error(
-            "INVALID_ARGUMENT",
-            f"artifact_id is required for query_kind={query_kind}",
+    if query_kind == "code":
+        has_artifact_id = bool(query_args.get("artifact_id"))
+        raw_artifact_ids = query_args.get("artifact_ids")
+        has_artifact_ids = isinstance(raw_artifact_ids, list) and bool(
+            raw_artifact_ids
         )
-
-    raw_scope = query_args.get("scope")
-    if raw_scope is None:
-        cursor_token = query_args.get("cursor")
-        has_cursor = isinstance(cursor_token, str) and bool(cursor_token)
-        # Let handlers recover scope from signed cursor when omitted.
-        if not has_cursor:
-            query_args["scope"] = "all_related"
-    else:
-        if not isinstance(raw_scope, str) or raw_scope not in _QUERY_SCOPES:
+        if not has_artifact_id and not has_artifact_ids:
             return gateway_error(
                 "INVALID_ARGUMENT",
-                "scope must be one of: all_related, single",
+                "artifact_id or artifact_ids is required for query_kind=code",
             )
-        query_args["scope"] = raw_scope
+        # Preserve backward compatibility: ignore scope for code queries.
+        query_args.pop("scope", None)
+    else:
+        if not query_args.get("artifact_id"):
+            return gateway_error(
+                "INVALID_ARGUMENT",
+                f"artifact_id is required for query_kind={query_kind}",
+            )
+
+        raw_scope = query_args.get("scope")
+        if raw_scope is None:
+            cursor_token = query_args.get("cursor")
+            has_cursor = isinstance(cursor_token, str) and bool(cursor_token)
+            # Let handlers recover scope from signed cursor when omitted.
+            if not has_cursor:
+                query_args["scope"] = "all_related"
+        else:
+            if not isinstance(raw_scope, str) or raw_scope not in _QUERY_SCOPES:
+                return gateway_error(
+                    "INVALID_ARGUMENT",
+                    "scope must be one of: all_related, single",
+                )
+            query_args["scope"] = raw_scope
 
     if query_kind == "describe":
         return await _dispatch_query_kind(
@@ -106,6 +122,30 @@ async def _handle_query(
                 "INVALID_ARGUMENT",
                 "The 'where' parameter is only supported with "
                 "query_kind=select.",
+            )
+        return await _dispatch_query_kind(
+            ctx, query_kind=query_kind, arguments=query_args
+        )
+
+    if query_kind == "code":
+        disallowed = [
+            param
+            for param in (
+                "target",
+                "jsonpath",
+                "select_paths",
+                "where",
+                "order_by",
+                "distinct",
+                "count_only",
+                "filters",
+            )
+            if query_args.get(param) is not None
+        ]
+        if disallowed:
+            return gateway_error(
+                "INVALID_ARGUMENT",
+                "query_kind=code does not accept: " + ", ".join(disallowed),
             )
         return await _dispatch_query_kind(
             ctx, query_kind=query_kind, arguments=query_args
@@ -200,6 +240,23 @@ async def _handle_search(
     )
 
     return await handle_artifact_search(ctx, arguments)
+
+
+async def _handle_code(
+    ctx: GatewayServer,
+    arguments: dict[str, Any],
+) -> dict[str, Any]:
+    """Route to the code-query handler."""
+    if not arguments.get("artifact_id") and not arguments.get("artifact_ids"):
+        return gateway_error(
+            "INVALID_ARGUMENT",
+            "artifact_id or artifact_ids is required for query_kind=code",
+        )
+    from sift_mcp.mcp.handlers.artifact_code import (
+        handle_artifact_code,
+    )
+
+    return await handle_artifact_code(ctx, arguments)
 
 
 async def _handle_next_page(
