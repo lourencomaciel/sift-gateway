@@ -89,12 +89,11 @@ def compact_schema_entry(schema: dict[str, Any]) -> dict[str, Any]:
         for field in fields_raw:
             if not isinstance(field, dict):
                 continue
+            raw_types = field.get("types")
             compact_field: dict[str, Any] = {
                 "p": field.get("path"),
                 "t": (
-                    list(field.get("types"))
-                    if isinstance(field.get("types"), list)
-                    else []
+                    list(raw_types) if isinstance(raw_types, list) else []
                 ),
                 "n": bool(field.get("nullable")),
                 "r": bool(field.get("required")),
@@ -164,4 +163,3 @@ def compact_schema_payload(
             continue
         compacted.append(compact_schema_entry(schema))
     return compacted
-
