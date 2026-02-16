@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import errno
 import json
 import subprocess
 
@@ -14,6 +15,7 @@ from sift_mcp.config.docker_postgres import (
     DockerHealthCheckError,
     DockerNotFoundError,
     PortConflictError,
+    PortProbeError,
     _build_dsn,
     _container_exists,
     _container_is_running,
@@ -180,20 +182,19 @@ class TestGeneratePassword:
 
 
 class TestFindAvailablePort:
-    def test_returns_preferred_when_available(self) -> None:
-        # Use a high port unlikely to be in use
+    def test_returns_preferred_when_available(self, monkeypatch) -> None:
+        monkeypatch.setattr("socket.socket.bind", lambda self, addr: None)
         port = _find_available_port(59000)
         assert port == 59000
 
     def test_skips_to_next_when_preferred_in_use(self, monkeypatch) -> None:
-        original_bind = __import__("socket").socket.bind
         call_count = [0]
 
         def _bind(self, addr):
             call_count[0] += 1
             if call_count[0] == 1:
-                raise OSError("in use")
-            return original_bind(self, addr)
+                raise OSError(errno.EADDRINUSE, "in use")
+            return None
 
         monkeypatch.setattr("socket.socket.bind", _bind)
         port = _find_available_port(59100)
@@ -202,10 +203,24 @@ class TestFindAvailablePort:
     def test_raises_when_all_ports_taken(self, monkeypatch) -> None:
         monkeypatch.setattr(
             "socket.socket.bind",
-            lambda self, addr: (_ for _ in ()).throw(OSError("in use")),
+            lambda self, addr: (_ for _ in ()).throw(
+                OSError(errno.EADDRINUSE, "in use")
+            ),
         )
         with pytest.raises(PortConflictError):
             _find_available_port(59200)
+
+    def test_raises_probe_error_for_non_conflict_socket_error(
+        self, monkeypatch
+    ) -> None:
+        monkeypatch.setattr(
+            "socket.socket.bind",
+            lambda self, addr: (_ for _ in ()).throw(
+                PermissionError(errno.EPERM, "operation not permitted")
+            ),
+        )
+        with pytest.raises(PortProbeError, match="failed to probe local port"):
+            _find_available_port(59300)
 
 
 # ---------------------------------------------------------------------------

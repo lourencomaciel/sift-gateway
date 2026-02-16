@@ -11,6 +11,7 @@ The generated DSN is written to the gateway config so subsequent
 from __future__ import annotations
 
 from dataclasses import dataclass
+import errno
 import json
 import secrets
 import socket
@@ -49,6 +50,10 @@ class DockerHealthCheckError(RuntimeError):
 
 class PortConflictError(RuntimeError):
     """No available port found in the scanned range."""
+
+
+class PortProbeError(RuntimeError):
+    """A non-conflict socket error occurred while probing ports."""
 
 
 # ---------------------------------------------------------------------------
@@ -205,14 +210,24 @@ def _get_container_host_port(container_name: str) -> int:
 # Port scanning
 # ---------------------------------------------------------------------------
 def _find_available_port(preferred: int = DEFAULT_PORT) -> int:
-    """Find an available TCP port starting from *preferred*."""
+    """Find an available TCP port starting from *preferred*.
+
+    Raises:
+        PortProbeError: If probing fails for a reason other than
+            "address already in use" (for example, permission denial).
+        PortConflictError: If every scanned port is already in use.
+    """
     for port in range(preferred, preferred + PORT_SCAN_RANGE):
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
             try:
                 sock.bind(("127.0.0.1", port))
                 return port
-            except OSError:
-                continue
+            except OSError as exc:
+                if exc.errno == errno.EADDRINUSE:
+                    continue
+                reason = exc.strerror or str(exc)
+                msg = f"failed to probe local port {port}: {reason}"
+                raise PortProbeError(msg) from exc
     end = preferred + PORT_SCAN_RANGE - 1
     msg = f"no available port in range {preferred}-{end}"
     raise PortConflictError(msg)
