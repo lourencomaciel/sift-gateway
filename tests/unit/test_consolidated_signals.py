@@ -106,6 +106,60 @@ def test_query_select_rejects_target_and_jsonpath(tmp_path: Path) -> None:
     assert "only supported with query_kind=get" in response["message"]
 
 
+def test_query_code_ignores_scope_single(tmp_path: Path) -> None:
+    server = _server(tmp_path)
+    response = asyncio.run(
+        server.handle_artifact(
+            {
+                "action": "query",
+                "query_kind": "code",
+                "_gateway_context": {"session_id": "sess_1"},
+                "artifact_id": "art_1",
+                "scope": "single",
+                "root_path": "$.items",
+                "code": "def run(data, schema, params): return []",
+            }
+        )
+    )
+    assert response["code"] == "NOT_IMPLEMENTED"
+
+
+def test_query_code_accepts_artifact_ids_argument(tmp_path: Path) -> None:
+    server = _server(tmp_path)
+    response = asyncio.run(
+        server.handle_artifact(
+            {
+                "action": "query",
+                "query_kind": "code",
+                "_gateway_context": {"session_id": "sess_1"},
+                "artifact_ids": ["art_1", "art_2"],
+                "root_path": "$.items",
+                "code": "def run(artifacts, schemas, params): return []",
+            }
+        )
+    )
+    assert response["code"] == "NOT_IMPLEMENTED"
+
+
+def test_query_code_rejects_select_only_args(tmp_path: Path) -> None:
+    server = _server(tmp_path)
+    response = asyncio.run(
+        server.handle_artifact(
+            {
+                "action": "query",
+                "query_kind": "code",
+                "_gateway_context": {"session_id": "sess_1"},
+                "artifact_id": "art_1",
+                "root_path": "$.items",
+                "code": "def run(data, schema, params): return []",
+                "where": 'to_number(spend) > 0',
+            }
+        )
+    )
+    assert response["code"] == "INVALID_ARGUMENT"
+    assert "does not accept" in response["message"]
+
+
 def test_query_rejects_unsupported_query_kind(tmp_path: Path) -> None:
     server = _server(tmp_path)
     response = asyncio.run(

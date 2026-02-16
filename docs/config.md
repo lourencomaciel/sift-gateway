@@ -148,15 +148,40 @@ Runtime behavior:
 
 Lineage query rules for `artifact(action="query")`:
 
-- `query_kind` is required and must be one of `describe|get|select|search`.
+- `query_kind` is required and must be one of `describe|get|select|search|code`.
 - `query_kind=describe|get|select` requires `artifact_id`.
+- `query_kind=code` requires `artifact_id` (single) or `artifact_ids` (multi).
 - `scope` applies only to `describe|get|select` and defaults to `all_related`.
 - `scope=single` restricts execution to the anchor artifact.
 - `query_kind=search` rejects `artifact_id` and `scope`.
+- `query_kind=code` ignores `scope` and always uses all-related semantics.
+- `query_kind=code` returns all results in a single response (no pagination); output is bounded by `max_bytes_out`.
+- `query_kind=code` runtime failures can include `details.traceback` (up to 2000 chars).
 
 For `query_kind=select`, lineage merge is strict by root signature. If related
 artifacts expose incompatible schemas at the requested `root_path`, query fails
 with `INVALID_ARGUMENT` (`details.code = INCOMPATIBLE_LINEAGE_SCHEMA`).
+
+## Code query runtime
+
+| Key | Type | Default | Env var | Description |
+|-----|------|---------|---------|-------------|
+| `code_query_enabled` | bool | `true` | `SIFT_MCP_CODE_QUERY_ENABLED` | Enable `query_kind=code` |
+| `code_query_allow_analytics_imports` | bool | `true` | `SIFT_MCP_CODE_QUERY_ALLOW_ANALYTICS_IMPORTS` | Allow `pandas`/`numpy` imports in code runtime |
+| `code_query_allowed_import_roots` | list[string] \| null | `null` | `SIFT_MCP_CODE_QUERY_ALLOWED_IMPORT_ROOTS` | Explicit import-root allowlist for code runtime; when set, overrides `code_query_allow_analytics_imports` |
+| `code_query_timeout_seconds` | float | `8.0` | `SIFT_MCP_CODE_QUERY_TIMEOUT_SECONDS` | Subprocess wall-clock timeout |
+| `code_query_max_memory_mb` | int | `512` | `SIFT_MCP_CODE_QUERY_MAX_MEMORY_MB` | Best-effort subprocess memory cap |
+| `code_query_max_input_records` | int | `100000` | `SIFT_MCP_CODE_QUERY_MAX_INPUT_RECORDS` | Max root records passed to code runtime |
+| `code_query_max_input_bytes` | int | `50000000` | `SIFT_MCP_CODE_QUERY_MAX_INPUT_BYTES` | Max serialized runtime input size |
+
+Example env override:
+
+```bash
+SIFT_MCP_CODE_QUERY_ALLOWED_IMPORT_ROOTS='["math","json","jmespath","numpy","pandas"]'
+```
+
+`query_kind=code` is intended for trusted environments. Policy checks
+reduce risk but do not provide full OS-level sandboxing.
 
 ## Passthrough mode
 

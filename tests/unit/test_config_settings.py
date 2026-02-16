@@ -23,6 +23,53 @@ def test_gateway_config_derived_paths(tmp_path: Path) -> None:
     assert config.blobs_bin_dir == tmp_path / "blobs" / "bin"
 
 
+def test_code_query_allow_analytics_imports_defaults_true(
+    tmp_path: Path,
+) -> None:
+    config = GatewayConfig(data_dir=tmp_path)
+    assert config.code_query_allow_analytics_imports is True
+
+
+def test_code_query_allow_analytics_imports_env_override(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setenv("SIFT_MCP_CODE_QUERY_ALLOW_ANALYTICS_IMPORTS", "false")
+    config = load_gateway_config(data_dir_override=str(tmp_path))
+    assert config.code_query_allow_analytics_imports is False
+
+
+def test_code_query_allowed_import_roots_defaults_none(
+    tmp_path: Path,
+) -> None:
+    config = GatewayConfig(data_dir=tmp_path)
+    assert config.code_query_allowed_import_roots is None
+
+
+def test_code_query_allowed_import_roots_env_override(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setenv(
+        "SIFT_MCP_CODE_QUERY_ALLOWED_IMPORT_ROOTS",
+        '["math","json","jmespath"]',
+    )
+    config = load_gateway_config(data_dir_override=str(tmp_path))
+    assert config.code_query_allowed_import_roots == [
+        "math",
+        "json",
+        "jmespath",
+    ]
+
+
+def test_code_query_allowed_import_roots_reject_invalid_entries(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(ValidationError):
+        GatewayConfig(
+            data_dir=tmp_path,
+            code_query_allowed_import_roots=["math", "numpy.random"],
+        )
+
+
 def test_load_gateway_config_reads_state_config(tmp_path: Path) -> None:
     state_dir = tmp_path / "state"
     state_dir.mkdir(parents=True, exist_ok=True)

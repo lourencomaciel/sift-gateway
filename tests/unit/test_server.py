@@ -123,7 +123,10 @@ def _persisted_handle() -> ArtifactHandle:
 def _schema_ready_inline_describe(
     _connection: object,
     artifact_id: str,
+    *,
+    code_query_packages: list[str] | None = None,
 ) -> tuple[dict[str, object], str]:
+    del code_query_packages
     return (
         {
             "artifact_id": artifact_id,
@@ -540,6 +543,12 @@ def test_build_fastmcp_app_includes_mirrored_tools(tmp_path: Path) -> None:
     assert "demo_echo" in tool_names
     assert "retrieval_status == COMPLETE" in tools["demo_echo"].description
     assert "retrieval_status == COMPLETE" in tools["artifact"].description
+    artifact_schema = tools["artifact"].parameters
+    assert "scope" in artifact_schema["properties"]
+    assert artifact_schema["properties"]["scope"]["enum"] == [
+        "all_related",
+        "single",
+    ]
 
 
 def test_build_fastmcp_app_rejects_safe_name_collisions(
@@ -803,6 +812,9 @@ def test_handle_mirrored_tool_returns_cached_artifact_when_reused(
     assert response["meta"]["cache"]["reused"] is True
     assert response["meta"]["cache"]["artifact_id_origin"] == "cache"
     assert response["meta"]["cache"]["allow_reuse"] is True
+    assert "schema_legend" in response
+    assert response["schemas"][0]["rp"] == "$"
+    assert response["schemas"][0]["cv"]["or"] == 1
     assert counter_value(server.metrics.cache_hits) == 1
 
 
@@ -2884,7 +2896,67 @@ def test_handle_mirrored_tool_returns_internal_on_non_db_persist_failure(
     assert response["code"] == "INTERNAL"
     assert "persistence failed" in response["message"]
     assert "unhealthy" not in response["message"]
+    assert response["details"]["stage"] == "persist_artifact"
+    assert response["details"]["error_type"] == "ValueError"
     assert server.db_ok is True
+
+
+def test_handle_mirrored_tool_falls_back_when_inline_describe_errors(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    """Inline describe failures should degrade to a minimal describe payload."""
+    server = GatewayServer(
+        config=GatewayConfig(data_dir=tmp_path, passthrough_max_bytes=0),
+        upstreams=[_upstream()],
+        db_pool=_FakePool(None),  # type: ignore[arg-type]
+        metrics=GatewayMetrics(),
+    )
+    mirrored = server.mirrored_tools["demo.echo"]
+
+    async def _fake_call(_instance, _tool_name, _arguments):
+        return {
+            "content": [{"type": "text", "text": "ok"}],
+            "structuredContent": {"ok": True},
+            "isError": False,
+            "meta": {},
+        }
+
+    monkeypatch.setattr("sift_mcp.mcp.server.call_upstream_tool", _fake_call)
+    monkeypatch.setattr(
+        "sift_mcp.mcp.handlers.mirrored_tool.persist_artifact",
+        lambda **_kw: _persisted_handle(),
+    )
+    monkeypatch.setattr(
+        server,
+        "_run_mapping_inline",
+        lambda *_args, **_kwargs: True,
+    )
+
+    def _boom_inline_describe(*_args, **_kwargs):
+        raise RuntimeError("column distinct_values does not exist")
+
+    monkeypatch.setattr(
+        "sift_mcp.mcp.handlers.mirrored_tool._fetch_inline_describe",
+        _boom_inline_describe,
+    )
+
+    response = asyncio.run(
+        server.handle_mirrored_tool(
+            mirrored,
+            {
+                "_gateway_context": {
+                    "session_id": "sess_1",
+                },
+                "message": "hello",
+            },
+        )
+    )
+
+    assert response["type"] == "gateway_tool_result"
+    assert response["artifact_id"] == "art_new"
+    assert response["mapping"]["map_status"] == "pending"
+    assert "Mapping in progress" in response["usage_hint"]
 
 
 def test_handle_mirrored_tool_returns_internal_when_mapping_fails(

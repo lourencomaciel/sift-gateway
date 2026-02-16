@@ -46,6 +46,11 @@ Use `LogEvents` constants from `src/sift_mcp/obs/logging.py`.
 - `gateway.mapping.started`
 - `gateway.mapping.completed`
 - `gateway.mapping.failed`
+- `gateway.codegen.started`
+- `gateway.codegen.completed`
+- `gateway.codegen.failed`
+- `gateway.codegen.timeout`
+- `gateway.codegen.rejected`
 
 ### Cursor
 
@@ -95,3 +100,16 @@ Use `LogEvents` constants from `src/sift_mcp/obs/logging.py`.
 - optional active probes (`probe_upstreams=true`)
 
 Use `gateway_status` for health snapshots and logs for event timelines.
+
+## Metrics additions for code queries
+
+`GatewayMetrics` exports code-query counters/histogram under the `codegen`
+section of `snapshot()` / `reset()`:
+
+- `executions`
+- `success`
+- `failure`
+- `timeout`
+- `input_records`
+- `output_records`
+- `latency` (min/max/sum/count/avg)

@@ -26,6 +26,9 @@ from sift_mcp.mcp.handlers.common import (
     row_to_dict,
     rows_to_dicts,
 )
+from sift_mcp.mcp.handlers.lineage_roots import (
+    resolve_all_related_root_candidates,
+)
 from sift_mcp.mcp.lineage import (
     compute_related_set_hash,
     compute_root_signature,
@@ -219,7 +222,6 @@ async def handle_artifact_select(
                 f"invalid where expression: {exc}",
             )
 
-    related_rows: list[dict[str, Any]] = []
     related_ids: list[str] = []
     related_set_hash: str | None = None
     missing_root_artifacts: list[str] = []
@@ -230,6 +232,9 @@ async def handle_artifact_select(
     single_root_row: dict[str, Any] | None = None
     single_map_budget_fingerprint = ""
     anchor_meta: dict[str, Any] | None = None
+    candidate_rows: list[
+        tuple[str, dict[str, Any], dict[str, Any], dict[str, Any]]
+    ] = []
 
     with ctx.db_pool.connection() as connection:
         if scope == "single":
@@ -240,51 +245,20 @@ async def handle_artifact_select(
             ):
                 return gateway_error("NOT_FOUND", "artifact not found")
             related_ids = [anchor_artifact_id]
-        else:
-            related_rows = resolve_related_artifacts(
-                connection,
-                session_id=session_id,
-                anchor_artifact_id=anchor_artifact_id,
-            )
-            if not related_rows:
-                return gateway_error("NOT_FOUND", "artifact not found")
-            if len(related_rows) > ctx.config.related_query_max_artifacts:
-                return gateway_error(
-                    "RESOURCE_EXHAUSTED",
-                    "lineage query exceeds related artifact limit",
-                    details={
-                        "artifact_count": len(related_rows),
-                        "max_artifacts": ctx.config.related_query_max_artifacts,
-                    },
+            signature_groups: dict[str, list[str]] = {}
+            for artifact_id in related_ids:
+                artifact_meta = row_to_dict(
+                    connection.execute(
+                        FETCH_ARTIFACT_META_SQL,
+                        (WORKSPACE_ID, artifact_id),
+                    ).fetchone(),
+                    ARTIFACT_META_COLUMNS,
                 )
-            related_ids = [
-                artifact_id
-                for row in related_rows
-                if isinstance((artifact_id := row.get("artifact_id")), str)
-            ]
-            related_set_hash = compute_related_set_hash(related_rows)
-
-        if not related_ids:
-            return gateway_error("NOT_FOUND", "artifact not found")
-
-        candidate_rows: list[
-            tuple[str, dict[str, Any], dict[str, Any], dict[str, Any]]
-        ] = []
-        signature_groups: dict[str, list[str]] = {}
-        for artifact_id in related_ids:
-            artifact_meta = row_to_dict(
-                connection.execute(
-                    FETCH_ARTIFACT_META_SQL,
-                    (WORKSPACE_ID, artifact_id),
-                ).fetchone(),
-                ARTIFACT_META_COLUMNS,
-            )
-            if artifact_meta is None:
-                continue
-            if artifact_id == anchor_artifact_id:
-                anchor_meta = artifact_meta
-            if artifact_meta.get("deleted_at") is not None:
-                if scope == "single":
+                if artifact_meta is None:
+                    continue
+                if artifact_id == anchor_artifact_id:
+                    anchor_meta = artifact_meta
+                if artifact_meta.get("deleted_at") is not None:
                     ctx._safe_touch_for_retrieval(
                         connection,
                         session_id=session_id,
@@ -294,77 +268,91 @@ async def handle_artifact_select(
                     if callable(commit):
                         commit()
                     return gateway_error("GONE", "artifact has been deleted")
-                continue
-            if artifact_meta.get("map_status") != "ready":
-                if scope == "single":
+                if artifact_meta.get("map_status") != "ready":
                     return gateway_error(
                         "INVALID_ARGUMENT",
                         "artifact mapping is not ready",
                     )
-                missing_root_artifacts.append(artifact_id)
-                continue
-            root_row = row_to_dict(
-                connection.execute(
-                    FETCH_ROOT_SQL,
-                    (WORKSPACE_ID, artifact_id, root_path),
-                ).fetchone(),
-                _SELECT_ROOT_COLUMNS,
-            )
-            if root_row is None:
-                missing_root_artifacts.append(artifact_id)
-                continue
-            schema_root = row_to_dict(
-                connection.execute(
-                    FETCH_SCHEMA_ROOT_BY_PATH_SQL,
-                    (WORKSPACE_ID, artifact_id, root_path),
-                ).fetchone(),
-                _SCHEMA_ROOT_COLUMNS,
-            )
-            if schema_root is None:
-                missing_root_artifacts.append(artifact_id)
-                continue
-            signature = compute_root_signature(
+                root_row = row_to_dict(
+                    connection.execute(
+                        FETCH_ROOT_SQL,
+                        (WORKSPACE_ID, artifact_id, root_path),
+                    ).fetchone(),
+                    _SELECT_ROOT_COLUMNS,
+                )
+                if root_row is None:
+                    missing_root_artifacts.append(artifact_id)
+                    continue
+                schema_root = row_to_dict(
+                    connection.execute(
+                        FETCH_SCHEMA_ROOT_BY_PATH_SQL,
+                        (WORKSPACE_ID, artifact_id, root_path),
+                    ).fetchone(),
+                    _SCHEMA_ROOT_COLUMNS,
+                )
+                if schema_root is None:
+                    missing_root_artifacts.append(artifact_id)
+                    continue
+                signature = compute_root_signature(
+                    root_path=root_path,
+                    schema_hash=schema_root.get("schema_hash"),
+                    schema_mode=schema_root.get("mode"),
+                    schema_completeness=schema_root.get("completeness"),
+                )
+                signature_groups.setdefault(signature, []).append(artifact_id)
+                candidate_rows.append(
+                    (artifact_id, artifact_meta, root_row, schema_root)
+                )
+
+            if not candidate_rows:
+                details: dict[str, Any] = {}
+                if missing_root_artifacts:
+                    details = {
+                        "root_path": root_path,
+                        "skipped_artifacts": len(missing_root_artifacts),
+                        "artifact_ids": missing_root_artifacts,
+                    }
+                return gateway_error(
+                    "NOT_FOUND",
+                    "root_path not found",
+                    details=details,
+                )
+
+            if len(signature_groups) > 1:
+                return gateway_error(
+                    "INVALID_ARGUMENT",
+                    "incompatible lineage schema for root_path",
+                    details={
+                        "code": "INCOMPATIBLE_LINEAGE_SCHEMA",
+                        "root_path": root_path,
+                        "signature_groups": [
+                            {
+                                "signature": signature,
+                                "artifact_ids": sorted(artifact_ids),
+                            }
+                            for signature, artifact_ids in sorted(
+                                signature_groups.items()
+                            )
+                        ],
+                    },
+                )
+        else:
+            resolved_candidates = resolve_all_related_root_candidates(
+                connection,
+                session_id=session_id,
+                anchor_artifact_id=anchor_artifact_id,
                 root_path=root_path,
-                schema_hash=schema_root.get("schema_hash"),
-                schema_mode=schema_root.get("mode"),
-                schema_completeness=schema_root.get("completeness"),
+                max_related_artifacts=ctx.config.related_query_max_artifacts,
+                resolve_related_fn=resolve_related_artifacts,
+                compute_related_set_hash_fn=compute_related_set_hash,
             )
-            signature_groups.setdefault(signature, []).append(artifact_id)
-            candidate_rows.append(
-                (artifact_id, artifact_meta, root_row, schema_root)
-            )
-
-        if not candidate_rows:
-            details: dict[str, Any] = {}
-            if missing_root_artifacts:
-                details = {
-                    "root_path": root_path,
-                    "skipped_artifacts": len(missing_root_artifacts),
-                    "artifact_ids": missing_root_artifacts,
-                }
-            return gateway_error(
-                "NOT_FOUND",
-                "root_path not found",
-                details=details,
-            )
-
-        if len(signature_groups) > 1:
-            return gateway_error(
-                "INVALID_ARGUMENT",
-                "incompatible lineage schema for root_path",
-                details={
-                    "code": "INCOMPATIBLE_LINEAGE_SCHEMA",
-                    "root_path": root_path,
-                    "signature_groups": [
-                        {
-                            "signature": signature,
-                            "artifact_ids": sorted(artifact_ids),
-                        }
-                        for signature, artifact_ids in sorted(
-                            signature_groups.items()
-                        )
-                    ],
-                },
+            if isinstance(resolved_candidates, dict):
+                return resolved_candidates
+            related_ids = resolved_candidates.related_ids
+            related_set_hash = resolved_candidates.related_set_hash
+            candidate_rows = resolved_candidates.candidate_rows
+            missing_root_artifacts = (
+                resolved_candidates.missing_root_artifacts
             )
 
         if missing_root_artifacts:

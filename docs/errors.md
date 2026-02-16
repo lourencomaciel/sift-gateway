@@ -84,6 +84,14 @@ Some handlers include a secondary machine code in `details.code`.
 | `INCOMPATIBLE_LINEAGE_SCHEMA` | Related artifacts have incompatible schemas for requested root path |
 | `MISSING_ROOT_PATH` | Related artifact does not contain requested root path |
 | `SKIPPED_ARTIFACT` | Artifact was skipped while processing lineage query (for example missing/deleted/non-queryable) |
+| `CODE_SCOPE_UNSUPPORTED` | `query_kind=code` received unsupported scope (only `all_related` is allowed) |
+| `CODE_ENTRYPOINT_MISSING` | Generated code did not define valid `run(data, schema, params)` |
+| `CODE_IMPORT_NOT_ALLOWED` | Generated code imported a module outside the allowlist |
+| `CODE_AST_REJECTED` | Generated code violated AST/runtime safety policy |
+| `CODE_INPUT_TOO_LARGE` | Root-scoped input exceeded configured code-query size limits |
+| `CODE_RUNTIME_EXCEPTION` | Generated code raised during execution or returned non-serializable output |
+| `CODE_RUNTIME_TIMEOUT` | Generated code exceeded runtime timeout |
+| `CODE_RUNTIME_MEMORY_LIMIT` | Generated code exceeded memory limit |
 
 ## Compatibility notes
 

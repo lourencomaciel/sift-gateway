@@ -13,7 +13,9 @@ deterministic ``schema_hash`` and per-field ``required`` /
 from __future__ import annotations
 
 from dataclasses import dataclass
+from decimal import Decimal
 import json
+import math
 from typing import Any, Sequence
 
 from sift_mcp.canon.rfc8785 import canonical_bytes
@@ -34,6 +36,8 @@ class SchemaFieldInventory:
     required: bool
     observed_count: int
     example_value: str | None = None
+    distinct_values: list[Any] | None = None
+    cardinality: int | None = None
 
 
 @dataclass(frozen=True)
@@ -60,6 +64,7 @@ class _PathStats:
     types: set[str]
     observed_count: int
     example_value: str | None
+    distinct_values: dict[tuple[str, Any], Any]
 
 
 def _json_type_name(value: Any) -> str:
@@ -108,6 +113,63 @@ def _type_sort_key(type_name: str) -> tuple[int, str]:
     return preferred_order.get(type_name, 99), type_name
 
 
+def _distinct_sort_key(value: Any) -> tuple[int, int, Any]:
+    """Sort distinct values deterministically across simple scalar types."""
+    type_name = _json_type_name(value)
+    order = {
+        "null": 0,
+        "boolean": 1,
+        "number": 2,
+        "string": 3,
+    }.get(type_name, 99)
+    if type_name == "null":
+        return order, 0, 0
+    if type_name == "boolean":
+        return order, 0, 1 if bool(value) else 0
+    if type_name == "number":
+        # Keep numeric ordering deterministic without lossy float casting.
+        if isinstance(value, int) and not isinstance(value, bool):
+            return order, 0, value
+        if isinstance(value, float):
+            if math.isnan(value):
+                return order, 1, "nan"
+            if math.isinf(value):
+                return order, 1, "+inf" if value > 0 else "-inf"
+            return order, 1, repr(value)
+        return order, 2, repr(value)
+    if type_name == "string":
+        return order, 0, str(value)
+    return order, 0, repr(value)
+
+
+def _distinct_identity_key(value: Any) -> tuple[str, Any] | None:
+    """Build a hashable key that preserves scalar type identity."""
+    type_name = _json_type_name(value)
+    if type_name == "null":
+        return "null", None
+    if type_name == "boolean":
+        return "boolean", bool(value)
+    if type_name == "number":
+        if isinstance(value, bool):
+            return "boolean", bool(value)
+        if isinstance(value, int):
+            return "number:int", value
+        if isinstance(value, float):
+            if math.isnan(value):
+                return "number:float", "nan"
+            if math.isinf(value):
+                return "number:float", "+inf" if value > 0 else "-inf"
+            return "number:float", repr(value)
+        return "number:other", repr(value)
+    if type_name == "string":
+        return "string", str(value)
+    try:
+        hash(value)
+    except TypeError:
+        return None
+    return type_name, value
+
+
 def _truncate_example(text: str, *, max_chars: int = 30) -> str:
     """Return a max-length example preview with truncation metadata."""
     if len(text) <= max_chars:
@@ -147,12 +209,18 @@ def _walk_value(
             types=set(),
             observed_count=0,
             example_value=_format_example_value(value),
+            distinct_values={},
         )
         stats[path] = existing
     elif existing.example_value is None:
         existing.example_value = _format_example_value(value)
     existing.types.add(_json_type_name(value))
     seen_paths.add(path)
+
+    if not isinstance(value, (dict, list)) and len(existing.distinct_values) < 10:
+        distinct_key = _distinct_identity_key(value)
+        if distinct_key is not None:
+            existing.distinct_values.setdefault(distinct_key, value)
 
     if isinstance(value, dict):
         for key in sorted(value.keys()):
@@ -202,6 +270,19 @@ def _build_fields(records: Sequence[Any]) -> tuple[list[SchemaFieldInventory], i
                 ),
                 observed_count=path_stats.observed_count,
                 example_value=path_stats.example_value,
+                distinct_values=(
+                    sorted(
+                        path_stats.distinct_values.values(),
+                        key=_distinct_sort_key,
+                    )[:10]
+                    if path_stats.distinct_values
+                    else None
+                ),
+                cardinality=(
+                    len(path_stats.distinct_values)
+                    if path_stats.distinct_values
+                    else None
+                ),
             )
         )
     return fields, observed_records
@@ -225,6 +306,8 @@ def _schema_hash_payload(schema: SchemaInventory) -> dict[str, Any]:
                 "required": field.required,
                 "observed_count": field.observed_count,
                 "example_value": field.example_value,
+                "distinct_values": field.distinct_values,
+                "cardinality": field.cardinality,
             }
             for field in schema.fields
         ],
@@ -236,9 +319,23 @@ def _schema_hash_payload(schema: SchemaInventory) -> dict[str, Any]:
     }
 
 
+def _coerce_floats_for_canonical_hash(value: Any) -> Any:
+    """Recursively coerce floats to Decimal for canonical hashing."""
+    if isinstance(value, float):
+        return Decimal(str(value))
+    if isinstance(value, dict):
+        return {
+            str(key): _coerce_floats_for_canonical_hash(item)
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [_coerce_floats_for_canonical_hash(item) for item in value]
+    return value
+
+
 def _with_schema_hash(schema: SchemaInventory) -> SchemaInventory:
     """Return a schema inventory with a deterministic hash attached."""
-    payload = _schema_hash_payload(schema)
+    payload = _coerce_floats_for_canonical_hash(_schema_hash_payload(schema))
     schema_hash = f"sha256:{sha256_hex(canonical_bytes(payload))}"
     return SchemaInventory(
         root_key=schema.root_key,
@@ -343,6 +440,23 @@ def build_sampled_schema(
                 if example_raw is not None
                 else None
             )
+            raw_distinct_values = raw.get("distinct_values")
+            distinct_values: list[Any] | None = None
+            if isinstance(raw_distinct_values, list) and raw_distinct_values:
+                distinct_values = sorted(
+                    list(raw_distinct_values),
+                    key=_distinct_sort_key,
+                )[:10]
+            cardinality_raw = raw.get("cardinality")
+            cardinality = (
+                int(cardinality_raw)
+                if isinstance(cardinality_raw, int) and cardinality_raw >= 0
+                else (
+                    len(distinct_values)
+                    if isinstance(distinct_values, list)
+                    else None
+                )
+            )
             type_set = set(types)
             fields_out.append(
                 SchemaFieldInventory(
@@ -355,6 +469,8 @@ def build_sampled_schema(
                     ),
                     observed_count=observed_count,
                     example_value=example_value,
+                    distinct_values=distinct_values,
+                    cardinality=cardinality,
                 )
             )
         return fields_out
@@ -412,6 +528,19 @@ def build_sampled_schema(
                     example_value=field.example_value
                     or (
                         sampled_field.example_value
+                        if sampled_field is not None
+                        else None
+                    ),
+                    distinct_values=field.distinct_values
+                    or (
+                        sampled_field.distinct_values
+                        if sampled_field is not None
+                        else None
+                    ),
+                    cardinality=field.cardinality
+                    if field.cardinality is not None
+                    else (
+                        sampled_field.cardinality
                         if sampled_field is not None
                         else None
                     ),

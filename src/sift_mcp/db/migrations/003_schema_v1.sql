@@ -32,6 +32,8 @@ CREATE TABLE IF NOT EXISTS artifact_schema_fields (
     required BOOLEAN NOT NULL,
     observed_count BIGINT NOT NULL CHECK (observed_count >= 0),
     example_value TEXT NULL,
+    distinct_values JSONB NULL,
+    cardinality BIGINT NULL CHECK (cardinality >= 0),
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     PRIMARY KEY (workspace_id, artifact_id, root_key, field_path),
     FOREIGN KEY (workspace_id, artifact_id, root_key)

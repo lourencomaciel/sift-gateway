@@ -13,7 +13,7 @@ Sift is a local, single-tenant MCP proxy that:
 5. Generates a **deterministic inventory** (full or partial schema mapping) for each artifact's JSON payload.
 6. Provides a consolidated **`artifact`** retrieval tool with
    actions (`query`, `next_page`) using signed cursor pagination.
-   Query behavior is explicit via `query_kind=describe|get|select|search`.
+   Query behavior is explicit via `query_kind=describe|get|select|search|code`.
    For non-search kinds, `scope` defaults to `all_related`.
 
 ### Design invariants
@@ -153,6 +153,7 @@ Conditional update: `deleted_at IS NULL AND map_status IN (pending, stale) AND g
 | `get` | Retrieve envelope/jsonpath values or mapped root catalog |
 | `select` | Project/filter records from mapped roots |
 | `search` | Session-scoped artifact listing (`artifact_refs`) |
+| `code` | Execute generated Python over lineage-merged root records |
 
 #### Scope model
 
@@ -160,6 +161,26 @@ Conditional update: `deleted_at IS NULL AND map_status IN (pending, stale) AND g
 - `all_related` resolves the full visible lineage component (anchor + ancestors + descendants).
 - `single` restricts execution to the anchor artifact only.
 - `query_kind=search` does not accept `artifact_id` or `scope`.
+- `query_kind=code` always executes with all-related lineage semantics; provided `scope` is ignored.
+
+#### `query_kind=code` execution contract
+
+- Required args: `root_path`, `code`, and either `artifact_id` (single artifact) or `artifact_ids` (multi-artifact).
+- Optional args: `params` (object).
+- Disallowed args: `target`, `jsonpath`, `select_paths`, `where`, `order_by`, `distinct`, `count_only`, `filters`.
+- Runtime entrypoint supports:
+  - `run(data, schema, params)` for single-artifact queries.
+  - `run(artifacts, schemas, params)` for multi-artifact queries.
+- Input records are root-scoped and lineage-merged. Dict records include injected `_locator`; scalar/list records are wrapped as `{\"_locator\": ..., \"value\": ...}`.
+- For multi-artifact queries, `artifacts` and `schemas` are dictionaries keyed by requested artifact id.
+- Return contract: any JSON-serializable value; non-list values are normalized to a single-item list.
+- Runtime uses subprocess isolation with deterministic env (`PYTHONHASHSEED=0`, `TZ=UTC`), timeout, memory cap, and input-size guards.
+- Analytics imports (`pandas`, `numpy`) are enabled by default and can be disabled via `code_query_allow_analytics_imports=false`.
+- Import roots can be explicitly overridden via `code_query_allowed_import_roots`.
+- Code query responses are unpaginated: all rows are returned in one response.
+- Output is bounded only by `max_bytes_out`; oversize responses fail with `RESPONSE_TOO_LARGE`.
+- Runtime failures may include `details.traceback` (truncated to 2000 chars) with line numbers.
+- When sampled mapping data is included, responses set `sampled_only=true` and include explicit warnings.
 
 #### Strict merge contract (why queries do not silently break)
 
@@ -208,6 +229,8 @@ Mirrored upstream tool responses include:
 
 Completion semantics are fail-closed: do not claim full completeness
 until `pagination.retrieval_status == "COMPLETE"`.
+
+For `query_kind=code`, pagination fields are omitted (`truncated=false`, no cursor) because results are returned in a single response.
 
 ## 10. Session tracking and touch policy
 
@@ -267,10 +290,14 @@ Payloads at or above the passthrough threshold follow the handle-only path: the 
 - cache metadata includes `reused`, `request_key`, `reason`,
   `artifact_id_origin` (`cache|fresh`), and `allow_reuse` (boolean).
 - **`mapping`**: inline mapping metadata (`map_kind`, `map_status`, mapper/traversal versions, and determinism linkage).
-- **`schemas`**: inline canonical schema list with per-field type/required/nullable counts, example values, and determinism hashes.
+- **`schemas`**: inline compact schema list (legend-driven key aliases) with per-field type/required/nullable counts, observed-count defaults, compact example values, sampled `distinct_values` (max 10), sampled `cardinality`, and determinism hashes.
   - Compaction rule: if exactly one schema root has the highest `coverage.observed_records`, only that primary schema is returned.
   - If highest coverage ties, all tied schemas are returned.
-- **`usage_hint`**: a heuristic natural language hint (no LLM) describing what the artifact contains, which fields are available, and which retrieval action to call next (`query_kind="select"` for arrays, `query_kind="get"` for dicts).
+- **`schema_legend`**: one-time key map describing compact aliases used in `schemas`.
+  - Key examples: `rp`=`root_path`, `f`=`fields`, `oc`=`observed_count`, `e`=`example_value`, `tr`=`example_truncated_chars`.
+  - `field.oc` is omitted when equal to `schema.fd.oc` (field default).
+  - Truncated examples use `e` + numeric `tr` instead of repeated prose (no repeated `"N more chars truncated"` strings).
+- **`usage_hint`**: a heuristic natural language hint (no LLM) describing what the artifact contains, which fields are available, and which retrieval action to call next (`query_kind="select"` / `query_kind="code"` for arrays, `query_kind="get"` for dicts). For code queries, hints include dynamically detected third-party package availability for the current runtime policy/environment.
 
 This eliminates the need for a separate describe call — the LLM can go directly from the tool response to `artifact(action="query", query_kind="select")`. `query_kind="describe"` remains available for explicit post-hoc lineage/compatibility inspection.
 

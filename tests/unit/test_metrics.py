@@ -140,6 +140,7 @@ def test_gateway_metrics_snapshot_returns_complete_dict() -> None:
     assert "cursor" in snap
     assert "locks" in snap
     assert "pruning" in snap
+    assert "codegen" in snap
 
     # Check specific values
     assert snap["cache"]["hits"] == 3
@@ -151,6 +152,7 @@ def test_gateway_metrics_snapshot_returns_complete_dict() -> None:
     assert "stale" in snap["cursor"]
     assert "latency" in snap["upstream"]
     assert "latency" in snap["mapping"]
+    assert "latency" in snap["codegen"]
 
 
 def test_counter_thread_safety() -> None:
