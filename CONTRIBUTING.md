@@ -95,9 +95,10 @@ git push origin v0.1.1
    - `verify_build` runs lint, type checks, unit tests, build, twine check,
      and wheel smoke commands.
    - `publish_testpypi` publishes to TestPyPI (`testpypi` environment).
-5. After validating TestPyPI, manually run
-   `.github/workflows/publish-pypi.yml` from Actions with input
-   `tag=vX.Y.Z` (for example `v0.1.1`).
+   - `publish_pypi` publishes to PyPI (`pypi` environment) after
+     `publish_testpypi` succeeds.
+5. Validate `publish_testpypi` output before approving the `pypi`
+   environment deployment.
 6. Confirm TestPyPI and PyPI install/upgrade paths:
    - `pipx install sift-mcp`
    - `uv tool install sift-mcp`
@@ -109,5 +110,5 @@ Configure Trusted Publishers in both TestPyPI and PyPI with:
 - GitHub repository: `zmaciel/sift-mcp`
 - TestPyPI workflow: `.github/workflows/release.yml`
 - TestPyPI environment: `testpypi`
-- PyPI workflow: `.github/workflows/publish-pypi.yml`
+- PyPI workflow: `.github/workflows/release.yml`
 - PyPI environment: `pypi`
