@@ -2,7 +2,6 @@ r"""Migrate MCP server config from an external tool into the gateway.
 
 Usage::
 
-    sift-mcp init --client openclaw
     sift-mcp init --from ~/Library/Application\ Support\
         /Claude/claude_desktop_config.json
 

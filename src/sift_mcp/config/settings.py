@@ -1111,7 +1111,6 @@ def _check_legacy_upstreams(from_file: dict[str, object]) -> None:
             "Legacy 'upstreams' config format is no longer "
             "supported. Use 'mcpServers' format instead. "
             "Run 'sift-mcp init --from <config>' "
-            "(or 'sift-mcp init --client openclaw') "
             "to migrate."
         )
         raise ValueError(msg)

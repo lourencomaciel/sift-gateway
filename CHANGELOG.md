@@ -11,9 +11,6 @@
 - Code-query runtime tracebacks in error details (`details.traceback`, up to 2000 chars)
 - Multi-artifact code queries via `artifact_ids`
 - Sample-based schema enum metadata: `distinct_values` (max 10) and `cardinality`
-- OpenClaw init shortcut: `sift-mcp init --client openclaw` with
-  `--scope auto|global|project`
-- OpenClaw onboarding guide (`docs/openclaw.md`) with bootstrap skill prompt
 
 ### Changed
 - Rebranded from "MCP Artifact Gateway" to "Sift"
@@ -22,8 +19,6 @@
 - **Breaking:** `query_kind=code` now returns all results without pagination/cursor
 - `query_kind=code` ignores `scope` (always all-related semantics)
 - Documented return normalization for code queries (non-list values auto-wrap to one-item lists)
-- Documentation now treats OpenClaw as a first-class MCP client in quickstart
-  and config references
 
 ## [0.1.0] - 2025
 
