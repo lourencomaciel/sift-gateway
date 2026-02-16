@@ -249,6 +249,7 @@ def test_serve_dispatches_init_command(
 def test_serve_dispatches_init_command_with_source_shortcut(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:
+    monkeypatch.setattr("platform.system", lambda: "Darwin")
     home = tmp_path / "home"
     monkeypatch.setenv("HOME", str(home))
     source = (
