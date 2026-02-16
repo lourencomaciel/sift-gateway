@@ -33,7 +33,7 @@ uv tool upgrade sift-mcp
 If you're contributing to Sift or want to run from source:
 
 ```bash
-git clone https://github.com/zmaciel/sift-mcp.git
+git clone https://github.com/lourencomaciel/sift-mcp.git
 cd sift-mcp
 uv sync
 ```

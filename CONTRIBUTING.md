@@ -4,7 +4,7 @@
 
 ```bash
 # Clone and install with dev dependencies
-git clone https://github.com/zmaciel/sift-mcp.git
+git clone https://github.com/lourencomaciel/sift-mcp.git
 cd sift-mcp
 uv sync --extra dev --extra postgres
 ```
@@ -139,7 +139,7 @@ git push origin v0.1.1
 
 Configure Trusted Publishers in both TestPyPI and PyPI with:
 
-- GitHub repository: `zmaciel/sift-mcp`
+- GitHub repository: `lourencomaciel/sift-mcp`
 - TestPyPI workflow: `.github/workflows/release.yml`
 - TestPyPI environment: `testpypi`
 - PyPI workflow: `.github/workflows/release.yml`
