@@ -8,7 +8,7 @@ Typical usage example::
 
     # From the command line:
     sift-mcp --check
-    sift-mcp init --from claude_desktop_config.json
+    sift-mcp init --from claude
 """
 
 from __future__ import annotations
@@ -22,6 +22,7 @@ from typing import Any
 
 from sift_mcp import __version__
 from sift_mcp.config import load_gateway_config
+from sift_mcp.config.init_source import resolve_init_source
 from sift_mcp.lifecycle import run_startup_check
 
 
@@ -139,7 +140,11 @@ def _add_init_subcommand(
         "--from",
         dest="source",
         required=True,
-        help="Path to source config file (e.g., claude_desktop_config.json)",
+        help=(
+            "Path or shortcut to source config file "
+            "(e.g., claude, claude-code, cursor, vscode, windsurf, zed, auto, "
+            "/path/to/claude_desktop_config.json)"
+        ),
     )
     _add_init_mode_group(init_parser)
 
@@ -260,7 +265,7 @@ def _run_init(args: argparse.Namespace) -> int:
         run_revert,
     )
 
-    source_path = Path(args.source)
+    source_path = resolve_init_source(args.source)
     data_dir = Path(args.data_dir).resolve() if args.data_dir else None
 
     if args.revert:

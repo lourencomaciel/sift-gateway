@@ -43,6 +43,75 @@ class TestExtractMcpServers:
         assert "github" in servers
         assert servers["github"]["command"] == "gh"
 
+    def test_zed_format_command_string(self) -> None:
+        raw = {
+            "context_servers": {
+                "github": {
+                    "source": "custom",
+                    "command": "npx",
+                    "args": ["-y", "@modelcontextprotocol/server-github"],
+                    "env": {"GITHUB_TOKEN": "tok"},
+                }
+            }
+        }
+        servers = extract_mcp_servers(raw)
+        assert "github" in servers
+        assert servers["github"]["command"] == "npx"
+        assert servers["github"]["args"] == [
+            "-y",
+            "@modelcontextprotocol/server-github",
+        ]
+        assert servers["github"]["env"] == {"GITHUB_TOKEN": "tok"}
+
+    def test_zed_format_command_object(self) -> None:
+        raw = {
+            "context_servers": {
+                "tracker": {
+                    "source": "custom",
+                    "command": {
+                        "path": "uvx",
+                        "args": ["yandex-tracker-mcp@latest"],
+                        "env": {"TRACKER_TOKEN": "tok"},
+                    },
+                }
+            }
+        }
+        servers = extract_mcp_servers(raw)
+        assert servers["tracker"]["command"] == "uvx"
+        assert servers["tracker"]["args"] == ["yandex-tracker-mcp@latest"]
+        assert servers["tracker"]["env"] == {"TRACKER_TOKEN": "tok"}
+
+    def test_zed_format_url(self) -> None:
+        raw = {
+            "context_servers": {
+                "remote": {
+                    "url": "https://example.com/mcp",
+                    "headers": {"Authorization": "Bearer token"},
+                }
+            }
+        }
+        servers = extract_mcp_servers(raw)
+        assert servers["remote"]["url"] == "https://example.com/mcp"
+        assert servers["remote"]["headers"] == {
+            "Authorization": "Bearer token"
+        }
+
+    def test_invalid_zed_server_entry_raises(self) -> None:
+        raw = {"context_servers": {"bad": "not-a-dict"}}
+        with pytest.raises(ValueError, match="must be a JSON object"):
+            extract_mcp_servers(raw)
+
+    def test_invalid_zed_command_path_raises(self) -> None:
+        raw = {
+            "context_servers": {
+                "bad": {
+                    "command": {"path": 123},
+                }
+            }
+        }
+        with pytest.raises(ValueError, match="command.path must be a string"):
+            extract_mcp_servers(raw)
+
     def test_mcpservers_takes_precedence_over_vscode(self) -> None:
         raw = {
             "mcpServers": {"a": {"command": "a"}},
@@ -249,6 +318,20 @@ class TestResolveMcpServersConfig:
 
     def test_vscode_format(self) -> None:
         raw = {"mcp": {"servers": {"gh": {"command": "gh"}}}}
+        configs = resolve_mcp_servers_config(raw)
+        assert configs is not None
+        assert len(configs) == 1
+        assert configs[0]["prefix"] == "gh"
+
+    def test_zed_format(self) -> None:
+        raw = {
+            "context_servers": {
+                "gh": {
+                    "source": "custom",
+                    "command": "gh",
+                }
+            }
+        }
         configs = resolve_mcp_servers_config(raw)
         assert configs is not None
         assert len(configs) == 1

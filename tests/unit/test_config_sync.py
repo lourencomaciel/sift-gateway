@@ -198,6 +198,49 @@ class TestRunSync:
         assert secret_data["env"]["GITHUB_TOKEN"] == "ghp_secret"
         assert secret_data["transport"] == "stdio"
 
+    def test_sync_preserves_zed_source_format(self, tmp_path: Path) -> None:
+        data_dir = tmp_path / "data"
+        config_path = data_dir / "state" / "config.json"
+        source_path = tmp_path / "settings.json"
+
+        _write_json(
+            config_path,
+            {
+                "mcpServers": {},
+                "_gateway_sync": {
+                    "enabled": True,
+                    "source_path": str(source_path),
+                    "gateway_name": "artifact-gateway",
+                },
+            },
+        )
+        _write_json(
+            source_path,
+            {
+                "context_servers": {
+                    "artifact-gateway": {
+                        "source": "custom",
+                        "command": "sift-mcp",
+                    },
+                    "github": {
+                        "source": "custom",
+                        "command": "npx",
+                        "args": ["-y", "@modelcontextprotocol/server-github"],
+                    },
+                }
+            },
+        )
+
+        result = run_sync(data_dir)
+
+        assert result["synced"] == 1
+        source = json.loads(source_path.read_text(encoding="utf-8"))
+        assert "context_servers" in source
+        assert list(source["context_servers"].keys()) == ["artifact-gateway"]
+        assert source["context_servers"]["artifact-gateway"][
+            "command"
+        ] == "sift-mcp"
+
 
 class TestSyncDisabled:
     def test_sync_skipped_when_disabled(self, tmp_path: Path) -> None:
