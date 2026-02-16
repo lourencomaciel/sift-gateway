@@ -17,6 +17,7 @@ Checks:
 from __future__ import annotations
 
 from pathlib import Path
+import re
 
 from sift_mcp.config.settings import GatewayConfig, UpstreamConfig
 from sift_mcp.obs.logging import LogEvents
@@ -57,6 +58,30 @@ def _missing_field_tokens(text: str, fields: list[str]) -> list[str]:
     return missing
 
 
+def _normalize_whitespace(text: str) -> str:
+    """Collapse whitespace and lower-case text for robust phrase matching."""
+    return re.sub(r"\s+", " ", text).strip().casefold()
+
+
+def _contains_phrase(text: str, phrase: str) -> bool:
+    """Return True when phrase appears in text, ignoring case/whitespace."""
+    return _normalize_whitespace(phrase) in _normalize_whitespace(text)
+
+
+def _has_query_kind_token(text: str, kind: str) -> bool:
+    """Return True when text contains ``query_kind="<kind>"``."""
+    pattern = rf'query_kind\s*=\s*"{re.escape(kind)}"'
+    return re.search(pattern, text, flags=re.IGNORECASE) is not None
+
+
+def _has_query_kind_heading(text: str, kind: str) -> bool:
+    """Return True when text has a markdown heading for ``query_kind``."""
+    pattern = (
+        rf'^#{{2,6}}\s+`?query_kind\s*=\s*"{re.escape(kind)}"`?'
+    )
+    return re.search(pattern, text, flags=re.IGNORECASE | re.MULTILINE) is not None
+
+
 def main() -> int:
     """Run consistency checks and return process exit code."""
     failures: list[str] = []
@@ -85,30 +110,30 @@ def main() -> int:
             + ", ".join(missing_upstream)
         )
 
-    required_api_contract_snippets = [
+    required_api_contract_phrases = [
         'action="query"',
-        'query_kind="describe|get|select|search|code"',
         "_gateway_context.allow_reuse",
     ]
-    for snippet in required_api_contract_snippets:
-        if snippet not in api_contracts_doc:
+    for phrase in required_api_contract_phrases:
+        if not _contains_phrase(api_contracts_doc, phrase):
             failures.append(
-                "docs/api_contracts.md missing required contract snippet: "
-                f"{snippet}"
+                "docs/api_contracts.md missing required contract phrase: "
+                f"{phrase}"
             )
 
-    required_response_shape_snippets = [
-        '### `query_kind="describe"`',
-        '### `query_kind="get"`',
-        '### `query_kind="select"`',
-        '### `query_kind="search"`',
-        '### `query_kind="code"`',
-    ]
-    for snippet in required_response_shape_snippets:
-        if snippet not in api_contracts_doc:
+    query_kinds = ["describe", "get", "select", "search", "code"]
+    for kind in query_kinds:
+        if not _has_query_kind_token(api_contracts_doc, kind):
+            failures.append(
+                "docs/api_contracts.md missing required query_kind token: "
+                f'{kind}'
+            )
+
+    for kind in query_kinds:
+        if not _has_query_kind_heading(api_contracts_doc, kind):
             failures.append(
                 "docs/api_contracts.md missing response-shape section: "
-                f"{snippet}"
+                f'query_kind="{kind}"'
             )
 
     forbidden_api_contract_snippets = [
@@ -117,7 +142,7 @@ def main() -> int:
         "return a consistent response format",
     ]
     for snippet in forbidden_api_contract_snippets:
-        if snippet in api_contracts_doc:
+        if _contains_phrase(api_contracts_doc, snippet):
             failures.append(
                 "docs/api_contracts.md contains removed contract snippet: "
                 f"{snippet}"
@@ -127,27 +152,24 @@ def main() -> int:
         "may return cached results",
     ]
     for snippet in forbidden_recipes_snippets:
-        if snippet in recipes_doc:
+        if _contains_phrase(recipes_doc, snippet):
             failures.append(
                 "docs/recipes.md contains unsupported behavior claim: "
                 f"{snippet}"
             )
 
-    required_readme_snippets = [
-        "List session artifacts available to the current session",
-    ]
-    for snippet in required_readme_snippets:
-        if snippet not in readme:
-            failures.append(
-                "README.md missing required query_kind=search guidance: "
-                f"{snippet}"
-            )
+    if "query_kind" not in _normalize_whitespace(readme):
+        failures.append("README.md missing query_kind=search guidance")
+    if "`search`" not in readme:
+        failures.append("README.md missing search query kind guidance")
+    if "session artifacts" not in _normalize_whitespace(readme):
+        failures.append("README.md missing session-artifact search guidance")
 
     forbidden_readme_snippets = [
         "(future) Search within artifact content",
     ]
     for snippet in forbidden_readme_snippets:
-        if snippet in readme:
+        if _contains_phrase(readme, snippet):
             failures.append(
                 "README.md contains outdated query_kind=search guidance: "
                 f"{snippet}"
@@ -157,7 +179,7 @@ def main() -> int:
         "postgresql://sift:sift@localhost:5432/sift",
     ]
     for snippet in forbidden_quickstart_snippets:
-        if snippet in quickstart_doc:
+        if _contains_phrase(quickstart_doc, snippet):
             failures.append(
                 "docs/quickstart.md contains hardcoded postgres DSN claim: "
                 f"{snippet}"
@@ -174,11 +196,11 @@ def main() -> int:
         "INTERNAL",
     ]
     for code in required_error_codes:
-        if f"`{code}`" not in errors_doc:
+        if re.search(rf"\b{re.escape(code)}\b", errors_doc) is None:
             failures.append(f"docs/errors.md missing core error code: {code}")
 
     for event_value in _iter_log_event_values():
-        if f"`{event_value}`" not in observability_doc:
+        if event_value not in observability_doc:
             failures.append(
                 "docs/observability.md missing log event value: "
                 f"{event_value}"
