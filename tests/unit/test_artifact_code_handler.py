@@ -70,7 +70,6 @@ def _server(
     *,
     code_query_max_input_records: int = 100_000,
     code_query_max_input_bytes: int = 50_000_000,
-    code_query_allow_analytics_imports: bool = True,
     code_query_allowed_import_roots: list[str] | None = None,
     max_bytes_out: int = 5_000_000,
 ) -> GatewayServer:
@@ -78,7 +77,6 @@ def _server(
         data_dir=tmp_path,
         code_query_max_input_records=code_query_max_input_records,
         code_query_max_input_bytes=code_query_max_input_bytes,
-        code_query_allow_analytics_imports=code_query_allow_analytics_imports,
         code_query_allowed_import_roots=code_query_allowed_import_roots,
         max_bytes_out=max_bytes_out,
     )
@@ -700,7 +698,7 @@ def test_code_query_maps_memory_limit_error(
     assert response["details"]["code"] == "CODE_RUNTIME_MEMORY_LIMIT"
 
 
-def test_code_query_passes_import_allowlist_without_analytics(
+def test_code_query_passes_import_allowlist_from_configured_roots(
     tmp_path: Path, monkeypatch
 ) -> None:
     conn = _SeqConnection(
@@ -727,7 +725,7 @@ def test_code_query_passes_import_allowlist_without_analytics(
     server = _server(
         tmp_path,
         conn,
-        code_query_allow_analytics_imports=False,
+        code_query_allowed_import_roots=["jmespath", "json", "math"],
     )
 
     monkeypatch.setattr(
@@ -763,10 +761,7 @@ def test_code_query_passes_import_allowlist_without_analytics(
         )
     )
     assert response["items"] == [{"ok": 1}]
-    allowed_roots = set(captured["allowed_import_roots"])
-    assert "jmespath" in allowed_roots
-    assert "pandas" not in allowed_roots
-    assert "numpy" not in allowed_roots
+    assert captured["allowed_import_roots"] == ["jmespath", "json", "math"]
 
 
 def test_code_query_passes_custom_import_allowlist(

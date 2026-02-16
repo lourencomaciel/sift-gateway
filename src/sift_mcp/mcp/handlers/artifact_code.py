@@ -660,7 +660,6 @@ async def handle_artifact_code(
     )
     runtime_import_roots = sorted(
         allowed_import_roots(
-            allow_analytics_imports=ctx.config.code_query_allow_analytics_imports,
             configured_roots=ctx.config.code_query_allowed_import_roots,
         )
     )

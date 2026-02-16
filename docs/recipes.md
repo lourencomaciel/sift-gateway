@@ -167,8 +167,8 @@ The response is select-like and includes:
   - `math`, `statistics`, `decimal`, `datetime`, `re`
   - `itertools`, `collections`, `functools`, `operator`, `heapq`
   - `json`, `jmespath`
-  - `pandas`, `numpy` (controlled by `code_query_allow_analytics_imports`, default `true`)
-- **Customization:** Override allowlist with `code_query_allowed_import_roots` or `SIFT_MCP_CODE_QUERY_ALLOWED_IMPORT_ROOTS`
+  - `pandas`, `numpy` (when installed and included in the active import-root allowlist)
+- **Customization:** Set `code_query_allowed_import_roots` or `SIFT_MCP_CODE_QUERY_ALLOWED_IMPORT_ROOTS` to define the exact import-root allowlist
 - **Disable:** Set `code_query_enabled=false` to disable code queries entirely
 
 **Security note:** `query_kind=code` runs model-authored Python. It is guardrailed (AST/import policy, timeout, memory/input budgets) but is **not a full OS-level sandbox**.

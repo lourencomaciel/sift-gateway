@@ -552,12 +552,11 @@ class GatewayConfig(BaseSettings):
 
     # --------------- Code query runtime ---------------
     code_query_enabled: bool = Field(True)
-    code_query_allow_analytics_imports: bool = Field(True)
     code_query_allowed_import_roots: list[str] | None = Field(
         None,
         description=(
             "Explicit import root allowlist for query_kind=code. "
-            "When set, overrides code_query_allow_analytics_imports."
+            "When null, use the built-in import allowlist."
         ),
     )
     code_query_timeout_seconds: float = Field(8.0, gt=0)

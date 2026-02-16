@@ -273,7 +273,7 @@ Configure Python code query execution:
 export SIFT_MCP_CODE_QUERY_ENABLED=true
 export SIFT_MCP_CODE_QUERY_TIMEOUT_SECONDS=30
 export SIFT_MCP_CODE_QUERY_MAX_INPUT_RECORDS=10000
-export SIFT_MCP_CODE_QUERY_ALLOW_ANALYTICS_IMPORTS=true
+export SIFT_MCP_CODE_QUERY_ALLOWED_IMPORT_ROOTS='["math","json","jmespath","numpy","pandas"]'
 ```
 
 See [Configuration Reference](config.md) for all available settings.
