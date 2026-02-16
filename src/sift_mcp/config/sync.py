@@ -37,6 +37,31 @@ def _suppress_os_error() -> Iterator[None]:
 logger = logging.getLogger(__name__)
 
 
+def _refresh_instance_registry(source_path: Path, data_dir: Path) -> None:
+    """Best-effort registry refresh for source -> data_dir mapping."""
+    config_path = data_dir / STATE_SUBDIR / CONFIG_FILENAME
+    if not config_path.is_file():
+        return
+    try:
+        from sift_mcp.config.instances import upsert_instance
+
+        upsert_instance(
+            source_path=source_path,
+            data_dir=data_dir,
+        )
+    except OSError as exc:
+        logger.warning(
+            "sync completed but failed to update instance registry: %s",
+            exc,
+        )
+
+
+def _is_sift_command(command: str) -> bool:
+    """Return whether a command string invokes ``sift-mcp``."""
+    command_name = Path(command).name.lower()
+    return command_name in {"sift-mcp", "sift-mcp.exe"}
+
+
 def _is_gateway_entry(
     name: str,
     server_config: dict[str, Any],
@@ -59,11 +84,45 @@ def _is_gateway_entry(
     if not isinstance(server_config, dict):
         return False
 
-    cmd = server_config.get("command", "")
-    if cmd == "sift-mcp":
+    cmd = server_config.get("command")
+    if isinstance(cmd, str) and _is_sift_command(cmd):
         return True
 
     return False
+
+
+def _ensure_gateway_data_dir_arg(
+    entry: dict[str, Any],
+    data_dir: Path,
+) -> dict[str, Any]:
+    """Ensure gateway command entry includes ``--data-dir <path>``."""
+    if "url" in entry:
+        return dict(entry)
+
+    command = entry.get("command")
+    if not isinstance(command, str) or not _is_sift_command(command):
+        return dict(entry)
+
+    updated = dict(entry)
+    raw_args = updated.get("args")
+    args = (
+        [str(value) for value in raw_args]
+        if isinstance(raw_args, list)
+        else []
+    )
+    data_dir_str = str(data_dir)
+
+    if "--data-dir" in args:
+        idx = args.index("--data-dir")
+        if idx + 1 < len(args):
+            args[idx + 1] = data_dir_str
+        else:
+            args.append(data_dir_str)
+    else:
+        args.extend(["--data-dir", data_dir_str])
+
+    updated["args"] = args
+    return updated
 
 
 def _load_config(config_path: Path) -> dict[str, Any]:
@@ -178,10 +237,32 @@ def run_sync(data_dir: str | Path) -> dict[str, Any]:
     config_path = data_dir / STATE_SUBDIR / CONFIG_FILENAME
 
     gw_config = _load_config(config_path)
-    sync_meta = gw_config.get("_gateway_sync")
-
-    if not isinstance(sync_meta, dict):
+    initial_sync_meta = gw_config.get("_gateway_sync")
+    if not isinstance(initial_sync_meta, dict):
         return {"synced": 0}
+
+    gateway_data_dir = data_dir
+    configured_data_dir = initial_sync_meta.get("data_dir")
+    if isinstance(configured_data_dir, str):
+        candidate_data_dir = Path(configured_data_dir).expanduser().resolve()
+        candidate_config_path = (
+            candidate_data_dir / STATE_SUBDIR / CONFIG_FILENAME
+        )
+        if candidate_config_path == config_path:
+            gateway_data_dir = candidate_data_dir
+        elif candidate_config_path.is_file():
+            configured_gw_config = _load_config(candidate_config_path)
+            # Only follow redirect when the target config is present and valid.
+            if configured_gw_config:
+                gw_config = configured_gw_config
+                gateway_data_dir = candidate_data_dir
+                config_path = candidate_config_path
+
+    # When metadata redirects to another instance config, re-read sync
+    # metadata from that config so source_path and gateway_name stay in sync.
+    sync_meta = gw_config.get("_gateway_sync")
+    if not isinstance(sync_meta, dict):
+        sync_meta = initial_sync_meta
 
     if not sync_meta.get("enabled", False):
         return {"synced": 0}
@@ -192,6 +273,12 @@ def run_sync(data_dir: str | Path) -> dict[str, Any]:
 
     source_path = Path(source_path_str)
     gateway_name = sync_meta.get("gateway_name", "artifact-gateway")
+
+    # Keep sync metadata present and pinned to the same data dir
+    # used for both source rewrite and gateway config writes.
+    normalized_sync_meta = dict(sync_meta)
+    normalized_sync_meta["data_dir"] = str(gateway_data_dir)
+    gw_config["_gateway_sync"] = normalized_sync_meta
 
     # Read the source config file
     if not source_path.exists():
@@ -235,11 +322,12 @@ def run_sync(data_dir: str | Path) -> dict[str, Any]:
         new_servers[name] = entry
 
     if not new_servers:
+        _refresh_instance_registry(source_path, gateway_data_dir)
         return {"synced": 0}
 
     # Import new servers, externalizing secrets
     for name, entry in new_servers.items():
-        entry = _externalize_secrets_for_server(data_dir, name, entry)
+        entry = _externalize_secrets_for_server(gateway_data_dir, name, entry)
         gw_servers[name] = entry
 
     gw_config["mcpServers"] = gw_servers
@@ -258,7 +346,12 @@ def run_sync(data_dir: str | Path) -> dict[str, Any]:
             break
 
     if gw_entry is None:
-        gw_entry = {"command": "sift-mcp"}
+        gw_entry = {
+            "command": "sift-mcp",
+            "args": ["--data-dir", str(gateway_data_dir)],
+        }
+    else:
+        gw_entry = _ensure_gateway_data_dir_arg(gw_entry, gateway_data_dir)
 
     new_source = dict(source_raw)
     if is_vscode:
@@ -289,7 +382,9 @@ def run_sync(data_dir: str | Path) -> dict[str, Any]:
     backup_path = source_path.with_suffix(source_path.suffix + ".sync-backup")
     shutil.copy2(source_path, backup_path)
     os.chmod(backup_path, 0o600)
+    config_path.parent.mkdir(parents=True, exist_ok=True)
     _write_json(config_path, gw_config)
     _write_json(source_path, new_source)
+    _refresh_instance_registry(source_path, gateway_data_dir)
 
     return {"synced": len(new_servers)}

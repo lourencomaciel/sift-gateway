@@ -107,7 +107,9 @@ class TestRunSync:
 
         source = json.loads(source_path.read_text(encoding="utf-8"))
         assert list(source["mcpServers"].keys()) == ["artifact-gateway"]
-        assert source["mcpServers"]["artifact-gateway"]["command"] == "sift-mcp"
+        gw_entry = source["mcpServers"]["artifact-gateway"]
+        assert gw_entry["command"] == "sift-mcp"
+        assert gw_entry["args"] == ["--data-dir", str(data_dir.resolve())]
 
     def test_sync_idempotent_when_no_new_entries(self, tmp_path: Path) -> None:
         data_dir, config_path, source_path = _setup_gateway_and_source(
@@ -237,9 +239,272 @@ class TestRunSync:
         source = json.loads(source_path.read_text(encoding="utf-8"))
         assert "context_servers" in source
         assert list(source["context_servers"].keys()) == ["artifact-gateway"]
-        assert source["context_servers"]["artifact-gateway"][
-            "command"
-        ] == "sift-mcp"
+        assert source["context_servers"]["artifact-gateway"]["command"] == (
+            "sift-mcp"
+        )
+
+    def test_sync_uses_metadata_data_dir_for_rewrite_and_gateway_updates(
+        self, tmp_path: Path
+    ) -> None:
+        custom_data_dir = (tmp_path / "custom-data").resolve()
+        data_dir, config_path, source_path = _setup_gateway_and_source(
+            tmp_path,
+            gateway_servers={},
+            source_servers={
+                "artifact-gateway": {"command": "sift-mcp"},
+                "github": {
+                    "command": "npx",
+                    "env": {"GITHUB_TOKEN": "ghp_secret"},
+                },
+            },
+            extra_gw_keys={
+                "_gateway_sync": {
+                    "enabled": True,
+                    "source_path": str((tmp_path / "source.json").resolve()),
+                    "gateway_name": "artifact-gateway",
+                    "data_dir": str(custom_data_dir),
+                }
+            },
+        )
+        _write_json(
+            custom_data_dir / "state" / "config.json",
+            {
+                "mcpServers": {},
+                "_gateway_sync": {
+                    "enabled": True,
+                    "source_path": str((tmp_path / "source.json").resolve()),
+                    "gateway_name": "artifact-gateway",
+                    "data_dir": str(custom_data_dir),
+                },
+            },
+        )
+
+        run_sync(data_dir)
+
+        source = json.loads(source_path.read_text(encoding="utf-8"))
+        gw_entry = source["mcpServers"]["artifact-gateway"]
+        assert gw_entry["args"] == ["--data-dir", str(custom_data_dir)]
+
+        custom_config_path = custom_data_dir / "state" / "config.json"
+        custom_config = json.loads(custom_config_path.read_text(encoding="utf-8"))
+        assert "github" in custom_config["mcpServers"]
+
+        original_config = json.loads(config_path.read_text(encoding="utf-8"))
+        assert "github" not in original_config["mcpServers"]
+
+        assert (
+            custom_data_dir / "state" / "upstream_secrets" / "github.json"
+        ).exists()
+        assert not (
+            data_dir / "state" / "upstream_secrets" / "github.json"
+        ).exists()
+
+    def test_sync_keeps_current_data_dir_when_redirect_config_missing(
+        self, tmp_path: Path
+    ) -> None:
+        missing_redirect_data_dir = (tmp_path / "missing-redirect").resolve()
+        data_dir, config_path, source_path = _setup_gateway_and_source(
+            tmp_path,
+            gateway_servers={},
+            source_servers={
+                "artifact-gateway": {"command": "sift-mcp"},
+                "github": {
+                    "command": "npx",
+                    "env": {"GITHUB_TOKEN": "ghp_secret"},
+                },
+            },
+            extra_gw_keys={
+                "_gateway_sync": {
+                    "enabled": True,
+                    "source_path": str((tmp_path / "source.json").resolve()),
+                    "gateway_name": "artifact-gateway",
+                    "data_dir": str(missing_redirect_data_dir),
+                }
+            },
+        )
+
+        result = run_sync(data_dir)
+
+        assert result == {"synced": 1}
+        source = json.loads(source_path.read_text(encoding="utf-8"))
+        gw_entry = source["mcpServers"]["artifact-gateway"]
+        assert gw_entry["args"] == ["--data-dir", str(data_dir.resolve())]
+
+        gw_config = json.loads(config_path.read_text(encoding="utf-8"))
+        assert "github" in gw_config["mcpServers"]
+        assert gw_config["_gateway_sync"]["data_dir"] == str(data_dir.resolve())
+        assert (
+            data_dir / "state" / "upstream_secrets" / "github.json"
+        ).exists()
+        assert not (
+            missing_redirect_data_dir / "state" / "config.json"
+        ).exists()
+
+    def test_sync_uses_redirected_config_metadata_for_source_selection(
+        self, tmp_path: Path
+    ) -> None:
+        custom_data_dir = (tmp_path / "custom-data").resolve()
+        source_a = (tmp_path / "source.json").resolve()
+        source_b = (tmp_path / "source-b.json").resolve()
+        data_dir, _config_path, source_a_path = _setup_gateway_and_source(
+            tmp_path,
+            gateway_servers={},
+            source_servers={
+                "artifact-gateway": {"command": "sift-mcp"},
+                "only-in-source-a": {"command": "a-tool"},
+            },
+            extra_gw_keys={
+                "_gateway_sync": {
+                    "enabled": True,
+                    "source_path": str(source_a.resolve()),
+                    "gateway_name": "artifact-gateway",
+                    "data_dir": str(custom_data_dir),
+                }
+            },
+        )
+        _write_json(
+            source_b,
+            {
+                "mcpServers": {
+                    "artifact-gateway": {"command": "sift-mcp"},
+                    "only-in-source-b": {"command": "b-tool"},
+                }
+            },
+        )
+        _write_json(
+            custom_data_dir / "state" / "config.json",
+            {
+                "mcpServers": {},
+                "_gateway_sync": {
+                    "enabled": True,
+                    "source_path": str(source_b),
+                    "gateway_name": "artifact-gateway",
+                    "data_dir": str(custom_data_dir),
+                },
+            },
+        )
+
+        result = run_sync(data_dir)
+
+        assert result == {"synced": 1}
+        custom_config = json.loads(
+            (custom_data_dir / "state" / "config.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        assert "only-in-source-b" in custom_config["mcpServers"]
+        assert "only-in-source-a" not in custom_config["mcpServers"]
+        assert custom_config["_gateway_sync"]["source_path"] == str(source_b)
+
+        source_a_after = json.loads(source_a_path.read_text(encoding="utf-8"))
+        assert "only-in-source-a" in source_a_after["mcpServers"]
+
+        source_b_after = json.loads(source_b.read_text(encoding="utf-8"))
+        assert list(source_b_after["mcpServers"]) == ["artifact-gateway"]
+
+    def test_sync_updates_registry_mapping_to_metadata_data_dir(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        monkeypatch.setenv(
+            "SIFT_MCP_INSTANCES_DIR",
+            str(tmp_path / "instances-root"),
+        )
+        custom_data_dir = (tmp_path / "custom-data").resolve()
+        data_dir, _config_path, source_path = _setup_gateway_and_source(
+            tmp_path,
+            gateway_servers={},
+            source_servers={
+                "artifact-gateway": {"command": "sift-mcp"},
+                "github": {"command": "npx"},
+            },
+            extra_gw_keys={
+                "_gateway_sync": {
+                    "enabled": True,
+                    "source_path": str((tmp_path / "source.json").resolve()),
+                    "gateway_name": "artifact-gateway",
+                    "data_dir": str(custom_data_dir),
+                }
+            },
+        )
+
+        from sift_mcp.config.instances import (
+            find_instance_by_source,
+            upsert_instance,
+        )
+
+        upsert_instance(source_path=source_path, data_dir=data_dir)
+        _write_json(
+            custom_data_dir / "state" / "config.json",
+            {
+                "mcpServers": {},
+                "_gateway_sync": {
+                    "enabled": True,
+                    "source_path": str(source_path),
+                    "gateway_name": "artifact-gateway",
+                    "data_dir": str(custom_data_dir),
+                },
+            },
+        )
+
+        result = run_sync(data_dir)
+
+        assert result == {"synced": 1}
+        entry = find_instance_by_source(source_path)
+        assert entry is not None
+        assert entry["data_dir"] == str(custom_data_dir)
+
+    def test_sync_updates_registry_mapping_when_no_new_servers(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        monkeypatch.setenv(
+            "SIFT_MCP_INSTANCES_DIR",
+            str(tmp_path / "instances-root"),
+        )
+        custom_data_dir = (tmp_path / "custom-data").resolve()
+        source = (tmp_path / "source.json").resolve()
+        data_dir, _config_path, source_path = _setup_gateway_and_source(
+            tmp_path,
+            gateway_servers={"github": {"command": "npx"}},
+            source_servers={
+                "artifact-gateway": {"command": "sift-mcp"},
+                "github": {"command": "npx"},
+            },
+            extra_gw_keys={
+                "_gateway_sync": {
+                    "enabled": True,
+                    "source_path": str(source),
+                    "gateway_name": "artifact-gateway",
+                    "data_dir": str(custom_data_dir),
+                }
+            },
+        )
+
+        _write_json(
+            custom_data_dir / "state" / "config.json",
+            {
+                "mcpServers": {"github": {"command": "npx"}},
+                "_gateway_sync": {
+                    "enabled": True,
+                    "source_path": str(source),
+                    "gateway_name": "artifact-gateway",
+                    "data_dir": str(custom_data_dir),
+                },
+            },
+        )
+
+        from sift_mcp.config.instances import (
+            find_instance_by_source,
+            upsert_instance,
+        )
+
+        upsert_instance(source_path=source_path, data_dir=data_dir)
+
+        result = run_sync(data_dir)
+
+        assert result == {"synced": 0}
+        entry = find_instance_by_source(source_path)
+        assert entry is not None
+        assert entry["data_dir"] == str(custom_data_dir)
 
 
 class TestSyncDisabled:

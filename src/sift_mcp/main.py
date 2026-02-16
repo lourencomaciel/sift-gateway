@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import os
 from pathlib import Path
 import sys
@@ -22,7 +23,6 @@ from typing import Any
 
 from sift_mcp import __version__
 from sift_mcp.config import load_gateway_config
-from sift_mcp.config.init_source import resolve_init_source
 from sift_mcp.lifecycle import run_startup_check
 
 
@@ -49,7 +49,10 @@ def _add_init_mode_group(
     init_parser.add_argument(
         "--data-dir",
         default=None,
-        help="Override DATA_DIR (default: .sift-mcp/)",
+        help=(
+            "Override DATA_DIR (default: managed per-source "
+            "instance under ~/.sift-mcp/instances/)"
+        ),
     )
     init_parser.add_argument(
         "--gateway-name",
@@ -110,10 +113,26 @@ def _add_upstream_subcommand(
             '\'{"name": {"command": "npx", "args": [...]}}\''
         ),
     )
+    add_target = add_parser.add_mutually_exclusive_group()
+    add_target.add_argument(
+        "--from",
+        dest="source",
+        default=None,
+        help=(
+            "Target by source config path or shortcut "
+            "(claude, claude-code, cursor, vscode, windsurf, zed, auto)"
+        ),
+    )
+    add_target.add_argument(
+        "--instance",
+        dest="instance_id",
+        default=None,
+        help="Target a managed instance by id (see: sift-mcp instances list)",
+    )
     add_parser.add_argument(
         "--data-dir",
         default=argparse.SUPPRESS,
-        help="Override DATA_DIR (default: .sift-mcp/)",
+        help="Override DATA_DIR directly (legacy/manual mode)",
     )
     add_parser.add_argument(
         "--dry-run",
@@ -141,12 +160,33 @@ def _add_init_subcommand(
         dest="source",
         required=True,
         help=(
-            "Path or shortcut to source config file "
-            "(e.g., claude, claude-code, cursor, vscode, windsurf, zed, auto, "
-            "/path/to/claude_desktop_config.json)"
+            "Source config path or shortcut "
+            "(claude, claude-code, cursor, vscode, windsurf, zed, auto)"
         ),
     )
     _add_init_mode_group(init_parser)
+
+
+def _add_instances_subcommand(
+    sub: argparse._SubParsersAction[argparse.ArgumentParser],
+) -> None:
+    """Register the ``instances`` management subcommand tree."""
+    instances_parser = sub.add_parser(
+        "instances",
+        help="Inspect managed Sift instances",
+    )
+    instances_sub = instances_parser.add_subparsers(
+        dest="instances_command",
+    )
+    list_parser = instances_sub.add_parser(
+        "list",
+        help="List managed Sift instances",
+    )
+    list_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit JSON output",
+    )
 
 
 def _parse_args() -> argparse.Namespace:
@@ -209,6 +249,7 @@ def _parse_args() -> argparse.Namespace:
     )
     _add_init_subcommand(sub)
     _add_upstream_subcommand(sub)
+    _add_instances_subcommand(sub)
     return parser.parse_args()
 
 
@@ -239,13 +280,73 @@ def _run_upstream_add(args: argparse.Namespace) -> int:
         msg = "snippet must be a JSON object mapping server names to configs"
         raise ValueError(msg)
 
-    data_dir = Path(args.data_dir).resolve() if args.data_dir else None
+    data_dir: Path | None
+    data_dir = None
+    source_arg = getattr(args, "source", None)
+    instance_id = getattr(args, "instance_id", None)
+    raw_data_dir = getattr(args, "data_dir", None)
+    resolved_source_path: Path | None = None
+
+    if instance_id and raw_data_dir is not None:
+        msg = "--instance cannot be combined with --data-dir"
+        raise ValueError(msg)
+
+    if source_arg:
+        from sift_mcp.config.init_source import resolve_source_arg
+        from sift_mcp.config.instances import resolve_instance_data_dir
+
+        resolved_source_path = resolve_source_arg(source_arg)
+        if raw_data_dir is not None:
+            data_dir = Path(raw_data_dir).expanduser().resolve()
+        else:
+            source_data_dir = _resolve_data_dir_from_source_config(
+                resolved_source_path
+            )
+            if source_data_dir is not None:
+                data_dir = source_data_dir
+            else:
+                data_dir = resolve_instance_data_dir(
+                    resolved_source_path,
+                    require_existing=True,
+                )
+    elif instance_id:
+        from sift_mcp.config.instances import get_instance_data_dir
+
+        data_dir = get_instance_data_dir(instance_id)
+    else:
+        effective_data_dir = _resolve_effective_data_dir_arg(raw_data_dir)
+        if effective_data_dir is not None:
+            data_dir = Path(effective_data_dir).expanduser().resolve()
+
     summary = run_upstream_add(
         raw,
         data_dir=data_dir,
         dry_run=args.dry_run,
     )
+
+    registry_warning: str | None = None
+    if not args.dry_run:
+        try:
+            if resolved_source_path is not None and data_dir is not None:
+                from sift_mcp.config.instances import upsert_instance
+
+                upsert_instance(
+                    source_path=resolved_source_path,
+                    data_dir=data_dir,
+                )
+            elif instance_id:
+                from sift_mcp.config.instances import touch_instance_by_id
+
+                touch_instance_by_id(instance_id)
+        except OSError as exc:
+            registry_warning = (
+                "upstream add completed but failed to update instance "
+                f"registry: {exc}"
+            )
+
     print_add_summary(summary, dry_run=args.dry_run)
+    if registry_warning is not None:
+        print(f"Warning: {registry_warning}", file=sys.stderr)
     return 0
 
 
@@ -264,9 +365,14 @@ def _run_init(args: argparse.Namespace) -> int:
         run_init,
         run_revert,
     )
+    from sift_mcp.config.init_source import resolve_source_arg
 
-    source_path = resolve_init_source(args.source)
-    data_dir = Path(args.data_dir).resolve() if args.data_dir else None
+    source_path = resolve_source_arg(args.source)
+    data_dir = (
+        Path(args.data_dir).expanduser().resolve()
+        if args.data_dir
+        else None
+    )
 
     if args.revert:
         result = run_revert(source_path)
@@ -285,6 +391,176 @@ def _run_init(args: argparse.Namespace) -> int:
     )
     print_init_summary(summary, dry_run=args.dry_run)
     return 0
+
+
+def _run_instances_list(args: argparse.Namespace) -> int:
+    """Handle ``instances list``."""
+    import json as json_mod
+
+    from sift_mcp.config.instances import list_instances
+
+    rows = list_instances()
+    if args.json:
+        print(
+            json_mod.dumps(
+                rows,
+                indent=2,
+                ensure_ascii=False,
+            )
+        )
+        return 0
+
+    if not rows:
+        print("No managed instances found.")
+        return 0
+
+    for row in rows:
+        instance_id = str(row.get("id", ""))
+        client = str(row.get("client", ""))
+        label = str(row.get("label", ""))
+        source_path = str(row.get("source_path", ""))
+        data_dir = str(row.get("data_dir", ""))
+        print(f"{instance_id} [{client}] {label}")
+        print(f"  source:   {source_path}")
+        print(f"  data_dir: {data_dir}")
+    return 0
+
+
+def _resolve_managed_default_data_dir() -> Path | None:
+    """Return the most recently used managed instance data dir."""
+    from sift_mcp.config.instances import list_instances
+    from sift_mcp.constants import CONFIG_FILENAME, STATE_SUBDIR
+
+    for row in list_instances():
+        raw_data_dir = row.get("data_dir")
+        if not isinstance(raw_data_dir, str):
+            continue
+        candidate = Path(raw_data_dir).expanduser().resolve()
+        if (candidate / STATE_SUBDIR / CONFIG_FILENAME).is_file():
+            return candidate
+    return None
+
+
+def _is_sift_command(command: str) -> bool:
+    """Return whether a command string invokes ``sift-mcp``."""
+    command_name = Path(command).name.lower()
+    return command_name in {"sift-mcp", "sift-mcp.exe"}
+
+
+def _resolve_data_dir_from_source_config(source_path: Path) -> Path | None:
+    """Extract gateway ``--data-dir`` from a migrated source config."""
+    from sift_mcp.config.mcp_servers import (
+        extract_mcp_servers,
+        read_config_file,
+    )
+
+    try:
+        source_raw = read_config_file(source_path)
+        source_servers = extract_mcp_servers(source_raw)
+    except (OSError, ValueError):
+        return None
+
+    for entry in source_servers.values():
+        if not isinstance(entry, dict):
+            continue
+        command = entry.get("command")
+        if not isinstance(command, str) or not _is_sift_command(command):
+            continue
+        raw_args = entry.get("args")
+        if not isinstance(raw_args, list):
+            continue
+        args = [str(value) for value in raw_args]
+        if "--data-dir" not in args:
+            continue
+        idx = args.index("--data-dir")
+        if idx + 1 >= len(args):
+            continue
+        candidate = Path(args[idx + 1]).expanduser().resolve()
+        return candidate
+
+    return None
+
+
+def _resolve_legacy_initialized_data_dir() -> Path | None:
+    """Resolve an initialized legacy data dir when no source mapping exists."""
+    from sift_mcp.constants import (
+        CONFIG_FILENAME,
+        DEFAULT_DATA_DIR,
+        STATE_SUBDIR,
+    )
+
+    env_data_dir = os.environ.get("SIFT_MCP_DATA_DIR")
+    candidates: list[Path] = []
+    if env_data_dir:
+        candidates.append(Path(env_data_dir).expanduser().resolve())
+    candidates.append(Path(DEFAULT_DATA_DIR).expanduser().resolve())
+
+    seen: set[Path] = set()
+    for candidate in candidates:
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        config_path = candidate / STATE_SUBDIR / CONFIG_FILENAME
+        if config_path.is_file():
+            return candidate
+
+    return None
+
+
+def _resolve_effective_data_dir_arg(
+    explicit_data_dir: str | None,
+) -> str | None:
+    """Resolve the data dir used by sync and runtime config loading."""
+    if explicit_data_dir:
+        return str(Path(explicit_data_dir).expanduser().resolve())
+
+    env_data_dir = os.environ.get("SIFT_MCP_DATA_DIR")
+    if env_data_dir:
+        return str(Path(env_data_dir).expanduser().resolve())
+
+    managed_default = _resolve_managed_default_data_dir()
+    if managed_default is not None:
+        return str(managed_default)
+    return None
+
+
+def _resolve_data_dir_from_sync_metadata(
+    data_dir: str | Path,
+) -> str:
+    """Follow ``_gateway_sync.data_dir`` redirects to a final data dir."""
+    from sift_mcp.constants import CONFIG_FILENAME, STATE_SUBDIR
+
+    current = Path(data_dir).expanduser().resolve()
+    seen: set[Path] = set()
+
+    while current not in seen:
+        seen.add(current)
+        config_path = current / STATE_SUBDIR / CONFIG_FILENAME
+        if not config_path.is_file():
+            break
+        try:
+            raw = json.loads(config_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            break
+        if not isinstance(raw, dict):
+            break
+        sync_meta = raw.get("_gateway_sync")
+        if not isinstance(sync_meta, dict):
+            break
+        redirected = sync_meta.get("data_dir")
+        if not isinstance(redirected, str):
+            break
+        redirected_path = Path(redirected).expanduser().resolve()
+        if redirected_path == current:
+            break
+        redirected_config_path = (
+            redirected_path / STATE_SUBDIR / CONFIG_FILENAME
+        )
+        if not redirected_config_path.is_file():
+            break
+        current = redirected_path
+
+    return str(current)
 
 
 def _print_check_report(
@@ -361,7 +637,7 @@ def _run_server(
             "Validate config and exit\n"
             "  sift-mcp --transport sse   "
             "Run with HTTP transport\n"
-            "  sift-mcp init --from FILE  "
+            "  sift-mcp init --from claude  "
             "Import MCP config",
             file=sys.stderr,
         )
@@ -446,17 +722,26 @@ def serve() -> int:
         )
         return 1
 
+    if args.command == "instances":
+        if getattr(args, "instances_command", None) == "list":
+            return _run_instances_list(args)
+        print(
+            "usage: sift-mcp instances {list} ...",
+            file=sys.stderr,
+        )
+        return 1
+
+    from sift_mcp.constants import DEFAULT_DATA_DIR
+
+    effective_data_dir = _resolve_effective_data_dir_arg(args.data_dir)
+    sync_data_dir = effective_data_dir or DEFAULT_DATA_DIR
+    runtime_data_dir = _resolve_data_dir_from_sync_metadata(sync_data_dir)
+
     # Auto-sync newly added MCPs from source config
     if not args.check:
         from sift_mcp.config.sync import run_sync
-        from sift_mcp.constants import DEFAULT_DATA_DIR
-
-        sync_data_dir = (
-            args.data_dir
-            or os.environ.get("SIFT_MCP_DATA_DIR")
-            or DEFAULT_DATA_DIR
-        )
         sync_result = run_sync(sync_data_dir)
+        runtime_data_dir = _resolve_data_dir_from_sync_metadata(sync_data_dir)
         if sync_result.get("synced", 0) > 0:
             print(
                 f"Auto-synced {sync_result['synced']} new upstream(s)",
@@ -464,7 +749,7 @@ def serve() -> int:
             )
 
     config = load_gateway_config(
-        data_dir_override=args.data_dir,
+        data_dir_override=runtime_data_dir,
     )
     report = run_startup_check(config)
 

@@ -36,21 +36,14 @@ sift-mcp init --from claude
 
 This rewrites your MCP client config to route through Sift.
 
-You can also use:
-
-- `--from claude-code`
-- `--from cursor`
-- `--from vscode`
-- `--from windsurf`
-- `--from zed`
-- `--from auto`
-- `--from /absolute/path/to/config.json` (explicit path)
+Shortcuts supported by `--from`: `claude`, `claude-code`, `cursor`, `vscode`, `windsurf`, `zed`, `auto`.
+You can also pass an explicit config file path.
 
 **3. Restart your MCP client**
 
 Sift is now proxying your upstream MCP servers. Responses > 8 KB are automatically stored as artifacts.
 
-> **Note:** Your MCP client (Claude Desktop, Cursor, Claude Code) launches Sift automatically via the config. Use `sift-mcp --check` to verify health without starting the server.
+> **Note:** Your MCP client (Claude Desktop, Claude Code, Cursor, VS Code, Windsurf, Zed) launches Sift automatically via the config. Use `sift-mcp --check` to verify health without starting the server.
 
 ## How It Works
 

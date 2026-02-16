@@ -51,23 +51,14 @@ sift-mcp init \
   --from claude
 ```
 
-Shortcut options for `--from`:
-
-- `claude`
-- `claude-code`
-- `cursor`
-- `vscode`
-- `windsurf`
-- `zed`
-- `auto` (tries all known client locations)
-
-Explicit file paths still work and override shortcuts.
+`--from` accepts either an explicit path or one of these shortcuts:
+`claude`, `claude-code`, `cursor`, `vscode`, `windsurf`, `zed`, `auto`.
 
 This command:
 
-1. Copies your `mcpServers` configuration into `.sift-mcp/state/config.json`
+1. Copies your `mcpServers` configuration into a managed instance config at `~/.sift-mcp/instances/<instance_id>/state/config.json`
 2. Sets `db_backend` to `sqlite` (default, no setup required)
-3. Externalizes inline `env` and `headers` into per-upstream secret files under `.sift-mcp/state/upstream_secrets/`
+3. Externalizes inline `env` and `headers` into per-upstream secret files under `~/.sift-mcp/instances/<instance_id>/state/upstream_secrets/`
 4. Creates a backup of your original config at `<source>.backup`
 5. Rewrites the source config to point to Sift only
 6. Stores `_gateway_sync` metadata for automatic future syncing
@@ -139,10 +130,10 @@ sift-mcp init \
 When `--postgres-dsn` is not provided, Sift resolves the DSN in this order:
 
 1. `SIFT_MCP_POSTGRES_DSN` environment variable
-2. Existing `postgres_dsn` in `.sift-mcp/state/config.json`
+2. Existing `postgres_dsn` in the selected instance config (`~/.sift-mcp/instances/<instance_id>/state/config.json`)
 3. Auto-provisioned local Docker Postgres DSN
 
-The resolved DSN is written to `.sift-mcp/state/config.json`.
+The resolved DSN is written to the selected instance config.
 
 ### Custom PostgreSQL DSN
 
@@ -164,9 +155,9 @@ After running `init`, your source config file contains only the Sift gateway ent
 ```json
 {
   "mcpServers": {
-    "sift-gateway": {
+    "artifact-gateway": {
       "command": "sift-mcp",
-      "args": []
+      "args": ["--data-dir", "/absolute/path/to/.sift-mcp/instances/<instance_id>"]
     },
     "new-server": {
       "command": "npx",
@@ -182,9 +173,24 @@ On startup, Sift reads the `_gateway_sync` metadata, detects new non-gateway ent
 
 **No manual re-init is needed.**
 
+You can also add servers directly to the selected instance:
+
+```bash
+sift-mcp upstream add '{"new-server":{"command":"npx","args":["-y","@modelcontextprotocol/server-example"]}}' --from claude
+```
+
+Optional targeting overrides:
+- `sift-mcp upstream add '<json>' --from claude --data-dir /abs/path/to/instance`
+- `sift-mcp upstream add '<json>' --instance <instance_id>`
+- `--instance` and `--data-dir` cannot be combined.
+
+For multi-config setups, use:
+- `sift-mcp instances list`
+- `sift-mcp instances list --json`
+
 ## Manual Configuration
 
-You can also manually configure Sift by creating `.sift-mcp/state/config.json`:
+You can also manually configure Sift by creating an instance config such as `~/.sift-mcp/instances/<instance_id>/state/config.json`:
 
 ```json
 {
@@ -210,7 +216,7 @@ You can also manually configure Sift by creating `.sift-mcp/state/config.json`:
 }
 ```
 
-Secrets are stored externally in `.sift-mcp/state/upstream_secrets/<prefix>.json` (with 0600 permissions). Use `_gateway.secret_ref` to reference them instead of placing credentials inline.
+Secrets are stored externally in the same instance under `state/upstream_secrets/<prefix>.json` (with 0600 permissions). Use `_gateway.secret_ref` to reference them instead of placing credentials inline.
 
 See [Configuration Reference](config.md) for all available settings.
 
@@ -267,7 +273,7 @@ The command exits with status `0` if all checks pass.
 
 After setup:
 
-1. **Restart your MCP client** (Claude Desktop, Cursor, or Claude Code)
+1. **Restart your MCP client** (Claude Desktop, Claude Code, Cursor, VS Code, Windsurf, or Zed)
 
 2. **Call an upstream tool** that returns a large response (> 8 KB default)
 
@@ -308,14 +314,14 @@ See [Recipes & Examples](recipes.md) for more usage patterns.
 ### Upstream tools not working
 
 - Verify upstream servers are configured correctly in your original MCP config
-- Check `.sift-mcp/state/upstream_secrets/` for externalized secrets
+- Check `~/.sift-mcp/instances/<instance_id>/state/upstream_secrets/` for externalized secrets
 - Test upstream directly (temporarily remove Sift from config)
 
 ### PostgreSQL connection errors
 
 - Verify Docker container is running: `docker ps`
 - Check DSN format: `postgresql://user:pass@host:port/database`
-- Test with the same DSN Sift is using: `psql "$SIFT_MCP_POSTGRES_DSN"` (or copy `postgres_dsn` from `.sift-mcp/state/config.json`)
+- Test with the same DSN Sift is using: `psql "$SIFT_MCP_POSTGRES_DSN"` (or copy `postgres_dsn` from your instance `state/config.json`)
 
 ### Artifacts not being created
 

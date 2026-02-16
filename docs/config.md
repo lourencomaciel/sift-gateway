@@ -26,6 +26,19 @@ Derived paths (not directly configurable):
 | `config_json_path` | `{data_dir}/state/config.json` |
 | `upstream_secrets_dir` | `{data_dir}/state/upstream_secrets/` |
 
+## Managed instances
+
+`sift-mcp init --from ...` stores migrated configs in per-source managed
+instance directories. Root defaults to `~/.sift-mcp/instances` and can be
+overridden with `SIFT_MCP_INSTANCES_DIR`.
+
+| Path | Derivation |
+|------|-----------|
+| `instances_root` | `SIFT_MCP_INSTANCES_DIR` or `~/.sift-mcp/instances` |
+| `instance_data_dir` | `{instances_root}/{instance_id}` |
+| `instance_config_json_path` | `{instance_data_dir}/state/config.json` |
+| `instances_registry_path` | `{instances_root}/registry.json` |
+
 ## Database backend
 
 | Key | Type | Default | Env var | Description |
@@ -354,10 +367,26 @@ unless args already provide it.
 
 ## Sync metadata (`_gateway_sync`)
 
-After `sift-mcp init --from <file>`, Sift stores sync metadata in
-`state/config.json`. On startup (except `--check`), it imports newly added
-upstreams from the source config, externalizes secrets, then rewrites source
-config back to gateway-only.
+After `sift-mcp init --from <path-or-shortcut>`, Sift stores sync metadata in
+the selected instance `state/config.json`. On startup (except `--check`), it
+imports newly added upstreams from the source config, externalizes secrets,
+then rewrites source config back to gateway-only.
+
+If `_gateway_sync.data_dir` points to another instance, Sift follows that
+redirect only when the target `state/config.json` exists and is valid.
+
+## `upstream add` target resolution
+
+`sift-mcp upstream add` accepts three targeting modes:
+
+- `--from <path-or-shortcut>`: resolve source, then use explicit `--data-dir`
+  if provided, otherwise source-pinned gateway `--data-dir` when present,
+  otherwise resolve an initialized managed instance for that source.
+- `--instance <instance_id>`: resolve target from managed instance registry.
+- no target flag: use explicit `--data-dir`, otherwise
+  `SIFT_MCP_DATA_DIR`, otherwise latest initialized managed instance.
+
+`--instance` cannot be combined with `--data-dir`.
 
 ## Server runtime flags
 
@@ -368,10 +397,17 @@ config back to gateway-only.
 | `--port` | `8080` | HTTP bind port |
 | `--path` | `/mcp` | HTTP route path |
 | `--auth-token` | none | Bearer token for non-local HTTP binds |
-| `--data-dir` | `.sift-mcp` | Data directory override |
+| `--data-dir` | auto | Data directory override |
 | `--check` | flag | Validate config/DB/FS/upstreams and exit |
 
 `--auth-token` also reads `SIFT_MCP_AUTH_TOKEN`.
+
+Runtime `data_dir` resolution order:
+
+1. `--data-dir` (if provided)
+2. `SIFT_MCP_DATA_DIR` environment variable
+3. latest initialized managed instance from registry
+4. legacy default `.sift-mcp`
 
 ## URL mode security
 
