@@ -519,6 +519,34 @@ def _schema_payload_from_describe(
     return mapping_payload, schema_payload, schema_legend
 
 
+def _describe_has_ready_schema(describe: dict[str, Any]) -> bool:
+    """Return True when describe payload includes ready schema data."""
+    mapping = describe.get("mapping")
+    if not isinstance(mapping, dict):
+        return False
+    if mapping.get("map_status") != "ready":
+        return False
+    schemas = describe.get("schemas")
+    return isinstance(schemas, list) and bool(schemas)
+
+
+def _schema_payload_from_describe(
+    describe: dict[str, Any],
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    """Extract canonical schema-first payload fields from describe data."""
+    mapping = describe.get("mapping")
+    schemas = describe.get("schemas")
+    mapping_payload: dict[str, Any] = (
+        dict(mapping) if isinstance(mapping, dict) else {}
+    )
+    schema_payload: list[dict[str, Any]] = (
+        [item for item in schemas if isinstance(item, dict)]
+        if isinstance(schemas, list)
+        else []
+    )
+    return mapping_payload, schema_payload
+
+
 def _inject_pagination_state(
     envelope: Envelope,
     upstream_config: Any,
