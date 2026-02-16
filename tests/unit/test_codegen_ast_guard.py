@@ -74,7 +74,7 @@ def run(data, schema, params):
     assert exc.value.code == "CODE_AST_REJECTED"
 
 
-def test_validate_code_ast_rejects_analytics_import_when_disabled() -> None:
+def test_validate_code_ast_rejects_import_not_in_configured_allowlist() -> None:
     code = """
 import numpy as np
 
@@ -85,7 +85,7 @@ def run(data, schema, params):
         validate_code_ast(
             code,
             allowed_import_roots_set=allowed_import_roots(
-                allow_analytics_imports=False
+                configured_roots=["math", "json"]
             ),
         )
     assert exc.value.code == "CODE_IMPORT_NOT_ALLOWED"
@@ -93,7 +93,6 @@ def run(data, schema, params):
 
 def test_allowed_import_roots_honors_configured_override() -> None:
     roots = allowed_import_roots(
-        allow_analytics_imports=True,
         configured_roots=["math", "json"],
     )
     assert roots == {"math", "json"}

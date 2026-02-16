@@ -175,8 +175,8 @@ Conditional update: `deleted_at IS NULL AND map_status IN (pending, stale) AND g
 - For multi-artifact queries, `artifacts` and `schemas` are dictionaries keyed by requested artifact id.
 - Return contract: any JSON-serializable value; non-list values are normalized to a single-item list.
 - Runtime uses subprocess isolation with deterministic env (`PYTHONHASHSEED=0`, `TZ=UTC`), timeout, memory cap, and input-size guards.
-- Analytics imports (`pandas`, `numpy`) are enabled by default and can be disabled via `code_query_allow_analytics_imports=false`.
-- Import roots can be explicitly overridden via `code_query_allowed_import_roots`.
+- Default import roots include stdlib helpers plus `jmespath`, `pandas`, and `numpy`.
+- Import roots can be explicitly configured via `code_query_allowed_import_roots`.
 - Code query responses are unpaginated: all rows are returned in one response.
 - Output is bounded only by `max_bytes_out`; oversize responses fail with `RESPONSE_TOO_LARGE`.
 - Runtime failures may include `details.traceback` (truncated to 2000 chars) with line numbers.

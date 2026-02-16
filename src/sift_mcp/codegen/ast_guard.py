@@ -95,7 +95,6 @@ def _import_root(name: str) -> str:
 
 def allowed_import_roots(
     *,
-    allow_analytics_imports: bool = True,
     configured_roots: Sequence[str] | None = None,
 ) -> frozenset[str]:
     """Return import allowlist roots for the requested runtime profile.
@@ -109,10 +108,7 @@ def allowed_import_roots(
             for root in configured_roots
             if isinstance(root, str) and root.strip()
         )
-    third_party = set(CORE_THIRD_PARTY_IMPORTS)
-    if allow_analytics_imports:
-        third_party.update(ANALYTICS_IMPORT_ROOTS)
-    return frozenset({*ALLOWED_STDLIB_IMPORTS, *third_party})
+    return ALLOWED_IMPORT_ROOTS
 
 
 def _ensure_allowed_import(

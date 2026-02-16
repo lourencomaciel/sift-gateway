@@ -167,8 +167,7 @@ with `INVALID_ARGUMENT` (`details.code = INCOMPATIBLE_LINEAGE_SCHEMA`).
 | Key | Type | Default | Env var | Description |
 |-----|------|---------|---------|-------------|
 | `code_query_enabled` | bool | `true` | `SIFT_MCP_CODE_QUERY_ENABLED` | Enable `query_kind=code` |
-| `code_query_allow_analytics_imports` | bool | `true` | `SIFT_MCP_CODE_QUERY_ALLOW_ANALYTICS_IMPORTS` | Allow `pandas`/`numpy` imports in code runtime |
-| `code_query_allowed_import_roots` | list[string] \| null | `null` | `SIFT_MCP_CODE_QUERY_ALLOWED_IMPORT_ROOTS` | Explicit import-root allowlist for code runtime; when set, overrides `code_query_allow_analytics_imports` |
+| `code_query_allowed_import_roots` | list[string] \| null | `null` | `SIFT_MCP_CODE_QUERY_ALLOWED_IMPORT_ROOTS` | Explicit import-root allowlist for code runtime; when `null`, built-in defaults are used |
 | `code_query_timeout_seconds` | float | `8.0` | `SIFT_MCP_CODE_QUERY_TIMEOUT_SECONDS` | Subprocess wall-clock timeout |
 | `code_query_max_memory_mb` | int | `512` | `SIFT_MCP_CODE_QUERY_MAX_MEMORY_MB` | Best-effort subprocess memory cap |
 | `code_query_max_input_records` | int | `100000` | `SIFT_MCP_CODE_QUERY_MAX_INPUT_RECORDS` | Max root records passed to code runtime |
