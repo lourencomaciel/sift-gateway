@@ -27,6 +27,40 @@ uv run python -m ruff format src tests    # auto-format
 uv run python -m mypy src                 # strict type checking
 ```
 
+## Project Layout
+
+```
+src/sift_mcp/
+  main.py                  # CLI entrypoint
+  app.py                   # app composition root
+  config/                  # settings, mcpServers parser, init, sync, secrets
+  db/                      # pool, migrations, repositories
+  fs/                      # content-addressed blob storage
+  mcp/                     # upstream connections, mirroring, server wiring
+  artifacts/               # envelope and artifact creation pipeline
+  mapping/                 # full + partial mapping
+  retrieval/               # bounded deterministic traversal responses
+  cursor/                  # signed cursor payload + HMAC verification
+  query/                   # JSONPath subset, select paths, where DSL
+  tools/                   # gateway and artifact retrieval tool handlers
+  jobs/                    # soft delete, hard delete, reconcile tasks
+  obs/                     # structured logging + metrics
+tests/
+  unit/                    # ~1026 unit tests
+  integration/             # integration tests (requires PostgreSQL)
+docs/
+  spec_v1_9.md            # Architecture and design specification
+  config.md               # Configuration reference
+  errors.md               # Error taxonomy
+  observability.md        # Logging and metrics
+  traversal_contract.md   # Traversal ordering rules
+  cursor_contract.md      # Cursor format and staleness
+  quickstart.md           # Getting started guide
+  recipes.md              # Usage patterns and examples
+  deployment.md           # Production deployment
+  api_contracts.md        # API contracts and response formats
+```
+
 ## Coding Conventions
 
 - **Frozen dataclasses** for domain models (`BinaryRef`, `Envelope`, etc.)

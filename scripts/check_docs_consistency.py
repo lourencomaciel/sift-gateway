@@ -3,8 +3,13 @@
 
 Checks:
 - `docs/config.md` mentions all `GatewayConfig` and `UpstreamConfig` fields.
-- `README.md` documents the consolidated artifact query contract.
-- `README.md` does not mention removed `_gateway_context.cache_mode`.
+- `docs/api_contracts.md` documents the consolidated artifact query contract.
+- `docs/api_contracts.md` defines response shapes by `query_kind`.
+- `docs/api_contracts.md` does not mention removed `_gateway_context.cache_mode`.
+- `docs/api_contracts.md` does not include unsupported `BUDGET_EXCEEDED` code.
+- `docs/recipes.md` does not claim code-query result caching behavior.
+- `README.md` documents `query_kind="search"` as current behavior, not future work.
+- `docs/quickstart.md` does not claim a hardcoded default Postgres DSN.
 - `docs/observability.md` lists all `LogEvents` event values.
 - `docs/errors.md` includes required core gateway error codes.
 """
@@ -18,6 +23,9 @@ from sift_mcp.obs.logging import LogEvents
 
 ROOT = Path(__file__).resolve().parents[1]
 README_PATH = ROOT / "README.md"
+API_CONTRACTS_PATH = ROOT / "docs" / "api_contracts.md"
+RECIPES_DOC_PATH = ROOT / "docs" / "recipes.md"
+QUICKSTART_DOC_PATH = ROOT / "docs" / "quickstart.md"
 CONFIG_DOC_PATH = ROOT / "docs" / "config.md"
 ERRORS_DOC_PATH = ROOT / "docs" / "errors.md"
 OBS_DOC_PATH = ROOT / "docs" / "observability.md"
@@ -54,6 +62,9 @@ def main() -> int:
     failures: list[str] = []
 
     readme = _read_text(README_PATH)
+    api_contracts_doc = _read_text(API_CONTRACTS_PATH)
+    recipes_doc = _read_text(RECIPES_DOC_PATH)
+    quickstart_doc = _read_text(QUICKSTART_DOC_PATH)
     config_doc = _read_text(CONFIG_DOC_PATH)
     errors_doc = _read_text(ERRORS_DOC_PATH)
     observability_doc = _read_text(OBS_DOC_PATH)
@@ -74,21 +85,83 @@ def main() -> int:
             + ", ".join(missing_upstream)
         )
 
-    required_readme_snippets = [
+    required_api_contract_snippets = [
         'action="query"',
         'query_kind="describe|get|select|search|code"',
         "_gateway_context.allow_reuse",
     ]
+    for snippet in required_api_contract_snippets:
+        if snippet not in api_contracts_doc:
+            failures.append(
+                "docs/api_contracts.md missing required contract snippet: "
+                f"{snippet}"
+            )
+
+    required_response_shape_snippets = [
+        '### `query_kind="describe"`',
+        '### `query_kind="get"`',
+        '### `query_kind="select"`',
+        '### `query_kind="search"`',
+        '### `query_kind="code"`',
+    ]
+    for snippet in required_response_shape_snippets:
+        if snippet not in api_contracts_doc:
+            failures.append(
+                "docs/api_contracts.md missing response-shape section: "
+                f"{snippet}"
+            )
+
+    forbidden_api_contract_snippets = [
+        "_gateway_context.cache_mode",
+        "BUDGET_EXCEEDED",
+        "return a consistent response format",
+    ]
+    for snippet in forbidden_api_contract_snippets:
+        if snippet in api_contracts_doc:
+            failures.append(
+                "docs/api_contracts.md contains removed contract snippet: "
+                f"{snippet}"
+            )
+
+    forbidden_recipes_snippets = [
+        "may return cached results",
+    ]
+    for snippet in forbidden_recipes_snippets:
+        if snippet in recipes_doc:
+            failures.append(
+                "docs/recipes.md contains unsupported behavior claim: "
+                f"{snippet}"
+            )
+
+    required_readme_snippets = [
+        "List session artifacts available to the current session",
+    ]
     for snippet in required_readme_snippets:
         if snippet not in readme:
-            failures.append(f"README.md missing required contract snippet: {snippet}")
+            failures.append(
+                "README.md missing required query_kind=search guidance: "
+                f"{snippet}"
+            )
 
     forbidden_readme_snippets = [
-        "_gateway_context.cache_mode",
+        "(future) Search within artifact content",
     ]
     for snippet in forbidden_readme_snippets:
         if snippet in readme:
-            failures.append(f"README.md contains removed contract snippet: {snippet}")
+            failures.append(
+                "README.md contains outdated query_kind=search guidance: "
+                f"{snippet}"
+            )
+
+    forbidden_quickstart_snippets = [
+        "postgresql://sift:sift@localhost:5432/sift",
+    ]
+    for snippet in forbidden_quickstart_snippets:
+        if snippet in quickstart_doc:
+            failures.append(
+                "docs/quickstart.md contains hardcoded postgres DSN claim: "
+                f"{snippet}"
+            )
 
     required_error_codes = [
         "INVALID_ARGUMENT",
