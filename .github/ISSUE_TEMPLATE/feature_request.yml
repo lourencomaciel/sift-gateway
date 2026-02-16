@@ -1,0 +1,54 @@
+name: Feature request
+description: Suggest an improvement to Sift MCP.
+title: "[Feature]: "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Describe the problem first, then the proposal.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem statement
+      description: What pain point are you trying to solve?
+      placeholder: "When I try to ..., I can't ..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: What should change?
+      placeholder: "Add support for ..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Other approaches you've tried or considered.
+
+  - type: textarea
+    id: impact
+    attributes:
+      label: Adoption impact
+      description: Who benefits, and how should behavior/docs/tests change?
+      placeholder: |
+        - Target user:
+        - Expected benefit:
+        - Any breaking changes:
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Pre-submit checklist
+      options:
+        - label: I searched existing issues and discussions.
+          required: true
+        - label: I can help test this change.
+          required: false
