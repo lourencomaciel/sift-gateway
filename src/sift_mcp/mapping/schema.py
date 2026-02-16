@@ -444,7 +444,7 @@ def build_sampled_schema(
             distinct_values: list[Any] | None = None
             if isinstance(raw_distinct_values, list) and raw_distinct_values:
                 distinct_values = sorted(
-                    list(raw_distinct_values),
+                    raw_distinct_values,
                     key=_distinct_sort_key,
                 )[:10]
             cardinality_raw = raw.get("cardinality")

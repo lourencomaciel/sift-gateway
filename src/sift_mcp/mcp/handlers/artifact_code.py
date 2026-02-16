@@ -172,7 +172,7 @@ def _normalize_code_root_paths(
             "INVALID_ARGUMENT",
             "missing root_path or root_paths",
         )
-    return {artifact_id: raw_root_path for artifact_id in artifact_ids}, None
+    return dict.fromkeys(artifact_ids, raw_root_path), None
 
 
 def _validate_code_args(arguments: dict[str, Any]) -> dict[str, Any] | None:
