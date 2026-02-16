@@ -1,0 +1,14 @@
+# Enforce maintainer review for contract and policy surfaces.
+* @zmaciel
+
+# Docs and behavior contracts
+/docs/** @zmaciel
+/README.md @zmaciel
+/CLAUDE.md @zmaciel
+/CONTRIBUTING.md @zmaciel
+/scripts/check_docs_consistency.py @zmaciel
+
+# CLI and CI guardrails
+/src/sift_mcp/main.py @zmaciel
+/src/sift_mcp/docs*.py @zmaciel
+/.github/workflows/** @zmaciel

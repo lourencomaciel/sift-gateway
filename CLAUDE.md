@@ -5,6 +5,7 @@
 - `python -m ruff check src tests` — lint
 - `python -m ruff format src tests` — auto-format
 - `python -m mypy src` — strict type checking
+- `PYTHONPATH=src python scripts/check_docs_consistency.py` — enforce docs/runtime contract
 - Integration tests require live Postgres: `SIFT_MCP_TEST_POSTGRES_DSN`
 - Build system: uv_build via pyproject.toml
 
@@ -47,3 +48,10 @@
 - No shared pytest fixtures in root conftest — helpers are module-local
 - Passthrough mode: results < passthrough_max_bytes (default 8 KB) returned raw; larger results return gateway handle payload (`artifact_id`, cache meta, inline describe, usage hint)
 - Binary responses (with blob refs) never passthrough regardless of size
+
+## Docs Contract Guardrails
+- Treat docs as contract surfaces, not optional prose.
+- Any CLI/config/runtime behavior change must update docs in the same PR.
+- `scripts/check_docs_consistency.py` must pass locally before opening a PR.
+- GitHub Actions has a dedicated `Docs Contract` workflow; this check is expected to be required in branch protection.
+- `.github/CODEOWNERS` and PR checklist enforce review attention on docs + CLI surfaces.

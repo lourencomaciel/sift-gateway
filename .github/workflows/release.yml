@@ -26,6 +26,9 @@ jobs:
       - name: Lint
         run: uv run python -m ruff check src tests
 
+      - name: Docs consistency
+        run: PYTHONPATH=src uv run python scripts/check_docs_consistency.py
+
       - name: Type check
         run: uv run python -m mypy src
 
