@@ -258,10 +258,13 @@ Upstream fields:
 | `inherit_parent_env` | bool | `false` | Inherit full parent env for stdio |
 | `external_user_id` | str | null | Stable user identity for upstream auth persistence (`auto` generates UUID) |
 
-### `mcpServers` format
+### MCP Client Formats
 
-Sift accepts the standard `mcpServers` format used by Claude Desktop,
-Cursor, Claude Code, and VS Code (`mcp.servers`).
+Sift accepts:
+
+- `mcpServers` (Claude Desktop, Cursor, Claude Code, Windsurf)
+- `mcp.servers` (VS Code)
+- `context_servers` (Zed)
 
 ```json
 {

@@ -42,14 +42,26 @@ See [CONTRIBUTING.md](../CONTRIBUTING.md) for full development guide.
 
 ## Importing Your MCP Configuration
 
-Sift can import your existing MCP server configuration from Claude Desktop, Cursor, or Claude Code.
+Sift can import your existing MCP server configuration from Claude Desktop, Claude Code, Cursor, VS Code, Windsurf, or Zed.
 
 ### Basic Import (SQLite)
 
 ```bash
 sift-mcp init \
-  --from ~/Library/Application\ Support/Claude/claude_desktop_config.json
+  --from claude
 ```
+
+Shortcut options for `--from`:
+
+- `claude`
+- `claude-code`
+- `cursor`
+- `vscode`
+- `windsurf`
+- `zed`
+- `auto` (tries all known client locations)
+
+Explicit file paths still work and override shortcuts.
 
 This command:
 
@@ -66,7 +78,7 @@ To see what changes will be made without applying them:
 
 ```bash
 sift-mcp init \
-  --from ~/Library/Application\ Support/Claude/claude_desktop_config.json \
+  --from claude \
   --dry-run
 ```
 
@@ -76,7 +88,7 @@ If you need to undo the import and restore your original config:
 
 ```bash
 sift-mcp init \
-  --from ~/Library/Application\ Support/Claude/claude_desktop_config.json \
+  --from claude \
   --revert
 ```
 
@@ -120,7 +132,7 @@ docker compose down -v && docker compose up -d
 
 ```bash
 sift-mcp init \
-  --from ~/Library/Application\ Support/Claude/claude_desktop_config.json \
+  --from claude \
   --db-backend postgres
 ```
 
@@ -138,7 +150,7 @@ To use an existing PostgreSQL instance:
 
 ```bash
 sift-mcp init \
-  --from ~/Library/Application\ Support/Claude/claude_desktop_config.json \
+  --from claude \
   --db-backend postgres \
   --postgres-dsn postgresql://user:pass@host:5432/sift
 ```

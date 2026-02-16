@@ -159,7 +159,7 @@ class TestRunInit:
         source = tmp_path / "empty.json"
         source.write_text(json.dumps({"mcpServers": {}}), encoding="utf-8")
 
-        with pytest.raises(ValueError, match="no mcpServers found"):
+        with pytest.raises(ValueError, match="no MCP server config found"):
             run_init(source, data_dir=tmp_path / "gateway")
 
     def test_missing_source_raises(self, tmp_path: Path) -> None:
@@ -183,6 +183,35 @@ class TestRunInit:
         rewritten = json.loads(source.read_text())
         assert "mcpServers" not in rewritten
         assert "artifact-gateway" in rewritten["mcp"]["servers"]
+
+    def test_zed_format_source(self, tmp_path: Path) -> None:
+        source = tmp_path / "settings.json"
+        source.write_text(
+            json.dumps(
+                {
+                    "context_servers": {
+                        "github": {
+                            "source": "custom",
+                            "command": {
+                                "path": "gh",
+                                "args": ["mcp"],
+                            },
+                        }
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        data_dir = tmp_path / "gateway"
+
+        summary = run_init(source, data_dir=data_dir)
+        assert summary["servers_migrated"] == ["github"]
+
+        # Rewritten source should preserve Zed format
+        rewritten = json.loads(source.read_text())
+        assert "mcpServers" not in rewritten
+        assert "mcp" not in rewritten
+        assert "artifact-gateway" in rewritten["context_servers"]
 
     def test_tilde_expansion(self, tmp_path: Path, monkeypatch) -> None:
         monkeypatch.setenv("HOME", str(tmp_path))

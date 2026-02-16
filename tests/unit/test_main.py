@@ -246,6 +246,52 @@ def test_serve_dispatches_init_command(
     assert json.loads(source.read_text())["mcpServers"]["gh"]["command"] == "gh"
 
 
+def test_serve_dispatches_init_command_with_source_shortcut(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    monkeypatch.setattr("platform.system", lambda: "Darwin")
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    source = (
+        home
+        / "Library"
+        / "Application Support"
+        / "Claude"
+        / "claude_desktop_config.json"
+    )
+    source.parent.mkdir(parents=True, exist_ok=True)
+    source.write_text(
+        json.dumps(
+            {
+                "mcpServers": {"gh": {"command": "gh"}},
+            }
+        ),
+        encoding="utf-8",
+    )
+    data_dir = tmp_path / "gateway"
+
+    monkeypatch.setattr(
+        "sift_mcp.main._parse_args",
+        lambda: argparse.Namespace(
+            command="init",
+            source="claude",
+            revert=False,
+            dry_run=True,
+            data_dir=str(data_dir),
+            gateway_name="artifact-gateway",
+            gateway_url=None,
+            db_backend="sqlite",
+            postgres_dsn=None,
+        ),
+    )
+
+    exit_code = serve()
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert str(source.resolve()) in captured.out
+
+
 def test_init_accepts_postgres_dsn_flag_when_backend_postgres(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:

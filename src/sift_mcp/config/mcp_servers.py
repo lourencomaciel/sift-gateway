@@ -1,8 +1,9 @@
-"""Parse standard mcpServers config format into UpstreamConfig objects.
+"""Parse standard MCP client config formats into UpstreamConfig objects.
 
-Supports the standard config format used by Claude Desktop, Cursor, Claude Code,
-and VS Code. Users can copy-paste their existing MCP server config or use
-``sift-mcp init --from <file>`` to migrate automatically.
+Supports the standard config formats used by Claude Desktop, Cursor,
+Claude Code, VS Code, and Zed. Users can copy-paste their existing MCP
+server config or use ``sift-mcp init --from <file>`` to migrate
+automatically.
 
 Gateway config format::
 
@@ -46,9 +47,10 @@ _GATEWAY_EXTENSION_FIELDS = frozenset(
 def extract_mcp_servers(raw: dict[str, Any]) -> dict[str, dict[str, Any]]:
     """Extract server definitions from a raw config dict.
 
-    Supports two formats:
+    Supports three formats:
     - ``mcpServers`` key (Claude Desktop, Cursor, Claude Code)
     - ``mcp.servers`` nested key (VS Code)
+    - ``context_servers`` key (Zed)
 
     Returns a dict mapping server name to server config.
     """
@@ -67,7 +69,76 @@ def extract_mcp_servers(raw: dict[str, Any]) -> dict[str, dict[str, Any]]:
         if isinstance(servers, dict):
             return dict(servers)
 
+    # Zed format: { "context_servers": { ... } }
+    zed_servers = _extract_zed_context_servers(raw)
+    if zed_servers:
+        return zed_servers
+
     return {}
+
+
+def _extract_zed_context_servers(
+    raw: dict[str, Any],
+) -> dict[str, dict[str, Any]]:
+    """Extract and normalize Zed's ``context_servers`` config format."""
+    servers = raw.get("context_servers")
+    if not isinstance(servers, dict):
+        return {}
+
+    normalized: dict[str, dict[str, Any]] = {}
+    for name, entry in servers.items():
+        if not isinstance(entry, dict):
+            msg = f"zed context server '{name}' must be a JSON object"
+            raise ValueError(msg)
+
+        normalized[name] = _normalize_zed_server_entry(name, entry)
+
+    return normalized
+
+
+def _normalize_zed_server_entry(
+    name: str, entry: dict[str, Any]
+) -> dict[str, Any]:
+    """Convert a single Zed server entry to mcpServers-compatible shape."""
+    if "url" in entry:
+        if not isinstance(entry["url"], str):
+            msg = f"zed context server '{name}' url must be a string"
+            raise ValueError(msg)
+        result: dict[str, Any] = {"url": entry["url"]}
+        headers = entry.get("headers")
+        if headers is not None:
+            result["headers"] = headers
+        return result
+
+    cmd = entry.get("command")
+    if isinstance(cmd, str):
+        result = {"command": cmd}
+        if "args" in entry:
+            result["args"] = entry["args"]
+        if "env" in entry:
+            result["env"] = entry["env"]
+        return result
+
+    if isinstance(cmd, dict):
+        path = cmd.get("path")
+        if not isinstance(path, str):
+            msg = (
+                f"zed context server '{name}' command.path must be a string"
+            )
+            raise ValueError(msg)
+
+        result = {"command": path}
+        if "args" in cmd:
+            result["args"] = cmd["args"]
+        if "env" in cmd:
+            result["env"] = cmd["env"]
+        return result
+
+    msg = (
+        f"zed context server '{name}' must define either "
+        "'url', 'command' string, or 'command.path'"
+    )
+    raise ValueError(msg)
 
 
 def read_config_file(path: Path) -> dict[str, Any]:
@@ -164,8 +235,9 @@ def resolve_mcp_servers_config(
     has_vscode = isinstance(raw.get("mcp"), dict) and "servers" in raw.get(
         "mcp", {}
     )
+    has_zed = isinstance(raw.get("context_servers"), dict)
 
-    if not has_mcp_servers and not has_vscode:
+    if not has_mcp_servers and not has_vscode and not has_zed:
         return None
 
     servers = extract_mcp_servers(raw)
