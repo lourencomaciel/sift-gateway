@@ -1,23 +1,59 @@
-"""Resolve ``sift-mcp init --from`` source path shortcuts."""
+"""Resolve ``init --from``/``upstream add --from`` source shortcuts."""
 
 from __future__ import annotations
 
-import json
 import os
 from pathlib import Path
 import platform
 
-_SHORTCUT_ALIASES = {
+SUPPORTED_SOURCE_SHORTCUTS: tuple[str, ...] = (
+    "auto",
+    "claude",
+    "claude-code",
+    "cursor",
+    "vscode",
+    "windsurf",
+    "zed",
+)
+
+_SOURCE_SHORTCUT_ALIASES: dict[str, str] = {
     "all": "auto",
-    "auto": "auto",
-    "claude": "claude",
-    "claude-code": "claude-code",
+    "claude_desktop": "claude",
+    "claude-desktop": "claude",
     "claudecode": "claude-code",
-    "cursor": "cursor",
-    "vscode": "vscode",
-    "windsurf": "windsurf",
-    "zed": "zed",
+    "claude_code": "claude-code",
+    "vs-code": "vscode",
+    "vs_code": "vscode",
+    "code": "vscode",
 }
+
+
+def supported_source_shortcuts() -> tuple[str, ...]:
+    """Return supported shortcut names for ``--from``."""
+    return SUPPORTED_SOURCE_SHORTCUTS
+
+
+def resolve_source_arg(
+    source_arg: str | Path,
+    *,
+    cwd: Path | None = None,
+) -> Path:
+    """Resolve a user-provided ``--from`` argument to a concrete path.
+
+    ``source_arg`` can be:
+    - explicit path (absolute or relative)
+    - a known shortcut (``claude``, ``claude-code``, ``cursor``,
+      ``vscode``, ``windsurf``, ``zed``, ``auto``)
+    """
+    raw = str(source_arg).strip()
+    root = cwd.expanduser().resolve() if cwd is not None else None
+    if _looks_like_path(raw):
+        return _resolve_literal_path(raw, cwd=root)
+
+    shortcut = _normalize_shortcut(raw)
+    if shortcut is None:
+        return _resolve_literal_path(raw, cwd=root)
+    return resolve_source_shortcut(shortcut, cwd=root)
 
 
 def resolve_init_source(
@@ -25,269 +61,380 @@ def resolve_init_source(
     *,
     cwd: Path | None = None,
 ) -> Path:
-    """Resolve an init source from either a literal path or a shortcut.
-
-    Supported shortcuts:
-    - ``claude``
-    - ``cursor``
-    - ``claude-code``
-    - ``vscode``
-    - ``windsurf``
-    - ``zed``
-    - ``auto`` (tries all supported shortcuts)
-
-    Args:
-        source: CLI value passed to ``--from``.
-        cwd: Optional working directory for resolving relative literal paths.
-
-    Returns:
-        Absolute path to the selected config file.
+    """Backward-compatible alias for init source resolution.
 
     Raises:
-        FileNotFoundError: If a shortcut is used and no matching file is found.
+        FileNotFoundError: When a known shortcut has no matching config file.
     """
-    cwd_path = cwd.resolve() if cwd else Path.cwd().resolve()
-    literal = _resolve_literal_path(source, cwd=cwd_path)
-    if literal.is_file():
-        return literal.resolve()
-
+    root = cwd.expanduser().resolve() if cwd is not None else None
     shortcut = _normalize_shortcut(source)
     if shortcut is None:
-        return literal.resolve()
-
-    candidates = _candidate_paths(shortcut, cwd=cwd_path)
-    for candidate in candidates:
-        if candidate.is_file() and _looks_like_mcp_config(candidate):
-            return candidate.resolve()
-
-    checked = "\n".join(f"  - {path}" for path in candidates)
-    msg = (
-        f"no config file found for shortcut '{source}'.\n"
-        "Checked these paths:\n"
-        f"{checked}\n"
-        "Pass an explicit file path to --from to override."
-    )
-    raise FileNotFoundError(msg)
-
-
-def _normalize_shortcut(source: str) -> str | None:
-    token = source.strip().lower()
-    token = token.replace("_", "-").replace(" ", "-")
-    return _SHORTCUT_ALIASES.get(token)
-
-
-def _resolve_literal_path(source: str, *, cwd: Path) -> Path:
-    path = Path(source).expanduser()
-    if path.is_absolute():
-        return path
-    return cwd / path
-
-
-def _looks_like_mcp_config(path: Path) -> bool:
-    """Return True when file content looks like an MCP client config."""
+        return _resolve_literal_path(source, cwd=root)
     try:
-        raw = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
-        return False
-
-    if not isinstance(raw, dict):
-        return False
-
-    if "mcpServers" in raw:
-        return True
-
-    mcp_block = raw.get("mcp")
-    if isinstance(mcp_block, dict) and "servers" in mcp_block:
-        return True
-
-    zed_block = raw.get("context_servers")
-    return isinstance(zed_block, dict)
+        return resolve_source_shortcut(shortcut, cwd=root)
+    except ValueError as exc:
+        if "did not match any known MCP config file" in str(exc):
+            raise FileNotFoundError(str(exc)) from exc
+        raise
 
 
-def _candidate_paths(shortcut: str, *, cwd: Path) -> list[Path]:
-    home = Path.home()
-    appdata = os.environ.get("APPDATA")
-    os_name = _current_os()
-
-    if shortcut == "auto":
-        return _dedupe_paths(
-            _candidate_paths("claude", cwd=cwd)
-            + _candidate_paths("cursor", cwd=cwd)
-            + _candidate_paths("claude-code", cwd=cwd)
-            + _candidate_paths("vscode", cwd=cwd)
-            + _candidate_paths("windsurf", cwd=cwd)
-            + _candidate_paths("zed", cwd=cwd)
+def resolve_source_shortcut(
+    shortcut: str,
+    *,
+    cwd: Path | None = None,
+) -> Path:
+    """Resolve a known shortcut to exactly one existing config file path."""
+    normalized = _normalize_shortcut(shortcut)
+    if normalized is None:
+        msg = (
+            "unsupported --from shortcut "
+            f"'{shortcut}'. Supported: {', '.join(SUPPORTED_SOURCE_SHORTCUTS)}"
         )
+        raise ValueError(msg)
+
+    matches, checked = find_source_shortcut_matches(
+        normalized,
+        cwd=cwd,
+    )
+    if not matches:
+        checked_list = "\n".join(f"  - {p}" for p in checked)
+        msg = (
+            f"shortcut '{normalized}' did not match any known MCP config file.\n"
+            f"Checked:\n{checked_list}\n"
+            "Pass an explicit path with --from <path>."
+        )
+        raise ValueError(msg)
+
+    if len(matches) > 1:
+        match_list = "\n".join(f"  - {p}" for p in matches)
+        msg = (
+            f"shortcut '{normalized}' matched multiple MCP config files:\n"
+            f"{match_list}\n"
+            "Pass an explicit path with --from <path>."
+        )
+        raise ValueError(msg)
+
+    return matches[0]
+
+
+def find_source_shortcut_matches(
+    shortcut: str,
+    *,
+    cwd: Path | None = None,
+) -> tuple[list[Path], list[Path]]:
+    """Return ``(existing_matches, checked_candidates)`` for a shortcut."""
+    normalized = _normalize_shortcut(shortcut)
+    if normalized is None:
+        msg = (
+            "unsupported --from shortcut "
+            f"'{shortcut}'. Supported: {', '.join(SUPPORTED_SOURCE_SHORTCUTS)}"
+        )
+        raise ValueError(msg)
+
+    root = cwd.expanduser().resolve() if cwd is not None else Path.cwd().resolve()
+    candidates = _candidate_paths_for_shortcut(normalized, cwd=root)
+    checked = _dedupe_paths(candidates)
+    matches = [path for path in checked if _is_mcp_config_file(path)]
+    return matches, checked
+
+
+def _candidate_paths_for_shortcut(
+    shortcut: str,
+    *,
+    cwd: Path,
+) -> list[Path]:
+    if shortcut == "auto":
+        all_candidates: list[Path] = []
+        for name in SUPPORTED_SOURCE_SHORTCUTS:
+            if name == "auto":
+                continue
+            all_candidates.extend(
+                _candidate_paths_for_shortcut(name, cwd=cwd)
+            )
+        return all_candidates
 
     if shortcut == "claude":
-        return _paths_for_os(
-            os_name=os_name,
-            mac=[
-                home
-                / "Library"
-                / "Application Support"
-                / "Claude"
-                / "claude_desktop_config.json"
-            ],
-            linux=[
-                home / ".config" / "Claude" / "claude_desktop_config.json"
-            ],
-            windows=_windows_roaming_candidates(
-                appdata=appdata,
-                home=home,
-                parts=("Claude", "claude_desktop_config.json"),
-            ),
-        )
-
-    if shortcut == "cursor":
-        return _paths_for_os(
-            os_name=os_name,
-            always=[home / ".cursor" / "mcp.json"],
-            mac=[
-                home / "Library" / "Application Support" / "Cursor" / "mcp.json"
-            ],
-            linux=[home / ".config" / "Cursor" / "mcp.json"],
-            windows=_windows_roaming_candidates(
-                appdata=appdata,
-                home=home,
-                parts=("Cursor", "mcp.json"),
-            ),
-        )
-
+        return _claude_desktop_candidates()
     if shortcut == "claude-code":
-        return _paths_for_os(
-            os_name=os_name,
-            always=[
-                cwd / ".mcp.json",
-                cwd / ".claude" / "settings.local.json",
-                cwd / ".claude" / "settings.json",
-                home / ".mcp.json",
-                home / ".claude.json",
-                home / ".claude" / "settings.local.json",
-                home / ".claude" / "settings.json",
-            ],
-            mac=[
-                home
-                / "Library"
-                / "Application Support"
-                / "Claude Code"
-                / "mcp.json"
-            ],
-            linux=[home / ".config" / "claude-code" / "mcp.json"],
-            windows=_windows_roaming_candidates(
-                appdata=appdata,
-                home=home,
-                parts=("Claude Code", "mcp.json"),
-            ),
-        )
-
+        return _claude_code_candidates(cwd)
+    if shortcut == "cursor":
+        return _cursor_candidates(cwd)
     if shortcut == "vscode":
-        return _paths_for_os(
-            os_name=os_name,
-            always=[cwd / ".vscode" / "mcp.json"],
-            mac=[
-                home / "Library" / "Application Support" / "Code" / "User"
-                / "mcp.json"
-            ],
-            linux=[home / ".config" / "Code" / "User" / "mcp.json"],
-            windows=_windows_roaming_candidates(
-                appdata=appdata,
-                home=home,
-                parts=("Code", "User", "mcp.json"),
-            ),
-        )
-
+        return _vscode_candidates(cwd)
     if shortcut == "windsurf":
-        return _paths_for_os(
-            os_name=os_name,
-            always=[home / ".codeium" / "windsurf" / "mcp_config.json"],
-            mac=[
-                home
-                / "Library"
-                / "Application Support"
-                / "Windsurf"
-                / "mcp_config.json"
-            ],
-            linux=[
-                home / ".config" / "Windsurf" / "mcp_config.json",
-            ],
-            windows=_windows_roaming_candidates(
-                appdata=appdata,
-                home=home,
-                parts=("Codeium", "Windsurf", "mcp_config.json"),
-            ),
-        )
-
+        return _windsurf_candidates(cwd)
     if shortcut == "zed":
-        return _paths_for_os(
-            os_name=os_name,
-            always=[cwd / ".zed" / "settings.json"],
-            mac=[
-                home
-                / "Library"
-                / "Application Support"
-                / "Zed"
-                / "settings.json"
-            ],
-            linux=[home / ".config" / "zed" / "settings.json"],
-            windows=_windows_roaming_candidates(
-                appdata=appdata,
-                home=home,
-                parts=("Zed", "settings.json"),
-            ),
+        return _zed_candidates(cwd)
+
+    msg = (
+        "unsupported --from shortcut "
+        f"'{shortcut}'. Supported: {', '.join(SUPPORTED_SOURCE_SHORTCUTS)}"
+    )
+    raise ValueError(msg)
+
+
+def _claude_desktop_candidates() -> list[Path]:
+    candidates: list[Path] = []
+    home = Path.home()
+    platform = _platform_key()
+
+    if platform == "macos":
+        candidates.append(
+            home
+            / "Library"
+            / "Application Support"
+            / "Claude"
+            / "claude_desktop_config.json"
+        )
+    elif platform == "windows":
+        appdata = _windows_roaming_dir()
+        if appdata is not None:
+            candidates.append(
+                appdata / "Claude" / "claude_desktop_config.json"
+            )
+    else:
+        candidates.append(
+            home / ".config" / "Claude" / "claude_desktop_config.json"
+        )
+        candidates.append(
+            home / ".config" / "claude" / "claude_desktop_config.json"
         )
 
-    return []
+    return candidates
+
+
+def _claude_code_candidates(cwd: Path) -> list[Path]:
+    candidates: list[Path] = []
+    home = Path.home()
+    candidates.extend(
+        [
+            home / ".claude" / "settings.local.json",
+            home / ".claude" / "settings.json",
+            home / ".claude.json",
+            home / ".mcp.json",
+        ]
+    )
+    for directory in _cwd_and_parents(cwd):
+        candidates.extend(
+            [
+                directory / ".mcp.json",
+                directory / ".claude" / "settings.local.json",
+                directory / ".claude" / "settings.json",
+            ]
+        )
+    return candidates
+
+
+def _cursor_candidates(cwd: Path) -> list[Path]:
+    candidates: list[Path] = []
+    home = Path.home()
+    platform = _platform_key()
+
+    candidates.append(home / ".cursor" / "mcp.json")
+    for directory in _cwd_and_parents(cwd):
+        candidates.append(directory / ".cursor" / "mcp.json")
+
+    if platform == "macos":
+        base = home / "Library" / "Application Support" / "Cursor" / "User"
+        candidates.extend([base / "mcp.json", base / "settings.json"])
+    elif platform == "windows":
+        appdata = _windows_roaming_dir()
+        if appdata is not None:
+            base = appdata / "Cursor" / "User"
+            candidates.extend([base / "mcp.json", base / "settings.json"])
+    else:
+        base = home / ".config" / "Cursor" / "User"
+        candidates.extend([base / "mcp.json", base / "settings.json"])
+
+    return candidates
+
+
+def _vscode_candidates(cwd: Path) -> list[Path]:
+    candidates: list[Path] = []
+    home = Path.home()
+    platform = _platform_key()
+
+    for directory in _cwd_and_parents(cwd):
+        candidates.extend(
+            [
+                directory / ".vscode" / "mcp.json",
+                directory / ".vscode" / "settings.json",
+            ]
+        )
+
+    if platform == "macos":
+        base = home / "Library" / "Application Support" / "Code" / "User"
+        candidates.extend([base / "mcp.json", base / "settings.json"])
+    elif platform == "windows":
+        appdata = _windows_roaming_dir()
+        if appdata is not None:
+            base = appdata / "Code" / "User"
+            candidates.extend([base / "mcp.json", base / "settings.json"])
+    else:
+        base = home / ".config" / "Code" / "User"
+        candidates.extend([base / "mcp.json", base / "settings.json"])
+
+    return candidates
+
+
+def _windsurf_candidates(cwd: Path) -> list[Path]:
+    candidates: list[Path] = []
+    home = Path.home()
+    platform = _platform_key()
+
+    candidates.append(
+        home / ".codeium" / "windsurf" / "mcp_config.json"
+    )
+    for directory in _cwd_and_parents(cwd):
+        candidates.extend(
+            [
+                directory / ".windsurf" / "mcp.json",
+                directory / ".windsurf" / "settings.json",
+            ]
+        )
+
+    if platform == "macos":
+        base = home / "Library" / "Application Support" / "Windsurf"
+        candidates.extend(
+            [
+                base / "mcp_config.json",
+                base / "User" / "mcp.json",
+                base / "User" / "settings.json",
+            ]
+        )
+    elif platform == "windows":
+        appdata = _windows_roaming_dir()
+        if appdata is not None:
+            candidates.extend(
+                [
+                    appdata / "Codeium" / "Windsurf" / "mcp_config.json",
+                    appdata / "Windsurf" / "User" / "mcp.json",
+                    appdata / "Windsurf" / "User" / "settings.json",
+                ]
+            )
+    else:
+        base = home / ".config" / "Windsurf"
+        candidates.extend(
+            [
+                base / "mcp_config.json",
+                base / "User" / "mcp.json",
+                base / "User" / "settings.json",
+            ]
+        )
+
+    return candidates
+
+
+def _zed_candidates(cwd: Path) -> list[Path]:
+    candidates: list[Path] = []
+    home = Path.home()
+    platform = _platform_key()
+
+    for directory in _cwd_and_parents(cwd):
+        candidates.append(directory / ".zed" / "settings.json")
+
+    if platform == "macos":
+        candidates.append(
+            home / "Library" / "Application Support" / "Zed" / "settings.json"
+        )
+    elif platform == "windows":
+        appdata = _windows_roaming_dir()
+        if appdata is not None:
+            candidates.append(appdata / "Zed" / "settings.json")
+    else:
+        candidates.append(home / ".config" / "zed" / "settings.json")
+
+    return candidates
+
+
+def _looks_like_path(value: str) -> bool:
+    if value.startswith(".") or value.startswith("~"):
+        return True
+    if "/" in value or "\\" in value:
+        return True
+    return value.endswith(".json")
+
+
+def _resolve_literal_path(
+    value: str,
+    *,
+    cwd: Path | None,
+) -> Path:
+    path = Path(value).expanduser()
+    if path.is_absolute():
+        return path.resolve()
+    if cwd is not None:
+        return (cwd / path).resolve()
+    return path.resolve()
+
+
+def _normalize_shortcut(raw: str) -> str | None:
+    lowered = raw.lower().strip().replace("_", "-").replace(" ", "-")
+    if lowered in SUPPORTED_SOURCE_SHORTCUTS:
+        return lowered
+    alias = _SOURCE_SHORTCUT_ALIASES.get(lowered)
+    if alias is not None:
+        return alias
+    return None
+
+
+def _platform_key() -> str:
+    system = platform.system().lower()
+    if system == "darwin":
+        return "macos"
+    if system == "windows":
+        return "windows"
+    return "linux"
+
+
+def _windows_roaming_dir() -> Path | None:
+    appdata = os.environ.get("APPDATA")
+    if appdata:
+        return Path(appdata).expanduser().resolve()
+    if _platform_key() == "windows":
+        return (Path.home() / "AppData" / "Roaming").resolve()
+    return None
+
+
+def _cwd_and_parents(cwd: Path) -> list[Path]:
+    return [cwd, *cwd.parents]
 
 
 def _dedupe_paths(paths: list[Path]) -> list[Path]:
+    unique: list[Path] = []
     seen: set[str] = set()
-    deduped: list[Path] = []
     for path in paths:
-        key = str(path)
+        resolved = path.expanduser().resolve()
+        key = str(resolved)
         if key in seen:
             continue
         seen.add(key)
-        deduped.append(path)
-    return deduped
+        unique.append(resolved)
+    return unique
 
 
-def _current_os() -> str:
-    system = platform.system().lower()
-    if system == "darwin":
-        return "mac"
-    if system == "linux":
-        return "linux"
-    if system == "windows":
-        return "windows"
-    return "other"
+def _is_mcp_config_file(path: Path) -> bool:
+    """Return True when a file contains MCP config shape."""
+    if not path.is_file():
+        return False
 
+    try:
+        from sift_mcp.config.mcp_servers import (
+            extract_mcp_servers,
+            read_config_file,
+        )
 
-def _paths_for_os(
-    *,
-    os_name: str,
-    always: list[Path] | None = None,
-    mac: list[Path] | None = None,
-    linux: list[Path] | None = None,
-    windows: list[Path] | None = None,
-) -> list[Path]:
-    paths = list(always or [])
-    if os_name == "mac":
-        paths.extend(mac or [])
-    elif os_name == "linux":
-        paths.extend(linux or [])
-    elif os_name == "windows":
-        paths.extend(windows or [])
-    return _dedupe_paths(paths)
+        raw = read_config_file(path)
+        extract_mcp_servers(raw)
+    except (OSError, ValueError):
+        return False
 
+    if "mcpServers" in raw:
+        return isinstance(raw.get("mcpServers"), dict)
 
-def _windows_roaming_candidates(
-    *,
-    appdata: str | None,
-    home: Path,
-    parts: tuple[str, ...],
-) -> list[Path]:
-    candidates = [home / "AppData" / "Roaming" / Path(*parts)]
-    if appdata:
-        candidates.insert(0, Path(appdata) / Path(*parts))
-    return candidates
+    mcp = raw.get("mcp")
+    if isinstance(mcp, dict) and isinstance(mcp.get("servers"), dict):
+        return True
+
+    zed = raw.get("context_servers")
+    return isinstance(zed, dict)

@@ -67,9 +67,9 @@ class TestRunInit:
         rewritten = json.loads(source.read_text())
         assert "artifact-gateway" in rewritten["mcpServers"]
         assert len(rewritten["mcpServers"]) == 1
-        assert (
-            rewritten["mcpServers"]["artifact-gateway"]["command"] == "sift-mcp"
-        )
+        gw_entry = rewritten["mcpServers"]["artifact-gateway"]
+        assert gw_entry["command"] == "sift-mcp"
+        assert gw_entry["args"] == ["--data-dir", str(data_dir.resolve())]
 
     def test_preserves_non_mcp_keys_in_source(self, tmp_path: Path) -> None:
         source = tmp_path / "config.json"
@@ -223,6 +223,63 @@ class TestRunInit:
 
         summary = run_init(Path("~/config.json"), data_dir=tmp_path / "gateway")
         assert summary["servers_migrated"] == ["gh"]
+
+    def test_defaults_to_managed_instance_data_dir(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        monkeypatch.setenv(
+            "SIFT_MCP_INSTANCES_DIR",
+            str(tmp_path / "instances-root"),
+        )
+        source = tmp_path / "config.json"
+        source.write_text(
+            json.dumps({"mcpServers": {"gh": {"command": "gh"}}}),
+            encoding="utf-8",
+        )
+
+        summary = run_init(source)
+
+        data_dir = Path(summary["data_dir"])
+        assert summary["gateway_config_path"] == str(
+            data_dir / "state" / "config.json"
+        )
+
+        rewritten = json.loads(source.read_text())
+        gw_entry = rewritten["mcpServers"]["artifact-gateway"]
+        assert gw_entry["args"] == ["--data-dir", str(data_dir)]
+
+        registry = json.loads(
+            (tmp_path / "instances-root" / "registry.json").read_text()
+        )
+        entries = registry["instances"]
+        assert any(
+            entry["source_path"] == str(source.resolve())
+            and entry["data_dir"] == str(data_dir)
+            for entry in entries
+        )
+
+    def test_init_succeeds_when_registry_update_fails(self, tmp_path: Path) -> None:
+        source = tmp_path / "config.json"
+        source.write_text(
+            json.dumps({"mcpServers": {"gh": {"command": "gh"}}}),
+            encoding="utf-8",
+        )
+        data_dir = tmp_path / "gateway"
+
+        with patch(
+            "sift_mcp.config.init.upsert_instance",
+            side_effect=FileExistsError("registry path is not a directory"),
+        ):
+            summary = run_init(source, data_dir=data_dir)
+
+        assert "instance_registry_warning" in summary
+        assert "failed to update instance registry" in summary[
+            "instance_registry_warning"
+        ]
+        assert Path(summary["gateway_config_path"]).exists()
+        assert Path(summary["backup_path"]).exists()
+        rewritten = json.loads(source.read_text(encoding="utf-8"))
+        assert list(rewritten["mcpServers"]) == ["artifact-gateway"]
 
 
 class TestRunRevert:
@@ -501,6 +558,8 @@ class TestInitExternalizeSecrets:
         assert sync["enabled"] is True
         assert sync["source_path"] == str(source.resolve())
         assert sync["gateway_name"] == "artifact-gateway"
+        assert sync["data_dir"] == str(data_dir.resolve())
+        assert sync["instance_id"] == summary["instance_id"]
 
     def test_init_gateway_url_rewrites_source_to_url(
         self, tmp_path: Path

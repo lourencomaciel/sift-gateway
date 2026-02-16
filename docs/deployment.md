@@ -69,11 +69,12 @@ When using URL mode, configure your MCP client with the gateway URL:
 
 ```bash
 sift-mcp init \
-  --from claude_desktop_config.json \
+  --from claude \
   --gateway-url http://localhost:8080/mcp
 ```
 
 This writes a `{"url": "..."}` entry in the source file instead of a `command` entry.
+`--from` accepts either a shortcut (for example `claude`) or an explicit file path.
 
 ## PostgreSQL Production Setup
 
@@ -101,7 +102,7 @@ For production, use a managed PostgreSQL service (AWS RDS, Google Cloud SQL, Azu
 
 ```bash
 sift-mcp init \
-  --from ~/Library/Application\ Support/Claude/claude_desktop_config.json \
+  --from claude \
   --db-backend postgres \
   --postgres-dsn "postgresql://user:password@prod-db.example.com:5432/sift"
 ```

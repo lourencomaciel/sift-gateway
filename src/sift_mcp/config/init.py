@@ -23,6 +23,11 @@ from pathlib import Path
 import shutil
 from typing import Any, Iterator, Literal
 
+from sift_mcp.config.instances import (
+    instance_id_for_source,
+    resolve_instance_data_dir,
+    upsert_instance,
+)
 from sift_mcp.config.mcp_servers import (
     extract_mcp_servers,
     read_config_file,
@@ -30,7 +35,6 @@ from sift_mcp.config.mcp_servers import (
 from sift_mcp.config.upstream_secrets import write_secret
 from sift_mcp.constants import (
     CONFIG_FILENAME,
-    DEFAULT_DATA_DIR,
     STATE_SUBDIR,
 )
 
@@ -46,19 +50,25 @@ def _suppress_os_error() -> Iterator[None]:
 
 def _gateway_server_entry(
     gateway_url: str | None = None,
+    *,
+    data_dir: Path | None = None,
 ) -> dict[str, Any]:
     """Build the server entry for the gateway itself.
 
     Args:
         gateway_url: Optional URL for the gateway. When provided,
             the entry uses URL-based transport instead of command.
+        data_dir: Optional data dir path to pin in command args.
 
     Returns:
         Server entry dict with either ``command`` or ``url`` key.
     """
     if gateway_url:
         return {"url": gateway_url}
-    return {"command": "sift-mcp"}
+    entry: dict[str, Any] = {"command": "sift-mcp"}
+    if data_dir is not None:
+        entry["args"] = ["--data-dir", str(data_dir.expanduser().resolve())]
+    return entry
 
 
 def _ensure_gateway_config_dir(data_dir: Path) -> Path:
@@ -172,7 +182,8 @@ def run_init(
         source_path: Path to the source config file
             (e.g., claude_desktop_config.json).
         data_dir: Gateway data directory. Defaults to
-            ``.sift-mcp``.
+            a managed per-source instance directory under
+            ``~/.sift-mcp/instances/<instance_id>``.
         gateway_name: Name for the gateway entry in the
             rewritten source file.
         gateway_url: Optional URL for the gateway entry.
@@ -188,11 +199,14 @@ def run_init(
 
     Returns:
         Summary dict with keys: servers_migrated, backup_path,
-        source_path, gateway_config_path.
+        source_path, gateway_config_path, instance_id.
     """
     source_path = source_path.expanduser().resolve()
     if data_dir is None:
-        data_dir = Path(DEFAULT_DATA_DIR).resolve()
+        data_dir = resolve_instance_data_dir(source_path)
+    else:
+        data_dir = data_dir.expanduser().resolve()
+    instance_id = instance_id_for_source(source_path)
 
     # 1. Read and validate source file
     source_raw = read_config_file(source_path)
@@ -237,6 +251,8 @@ def run_init(
         "enabled": True,
         "source_path": str(source_path),
         "gateway_name": gateway_name,
+        "data_dir": str(data_dir),
+        "instance_id": instance_id,
     }
 
     # 2.5. Optional Postgres provisioning
@@ -270,8 +286,8 @@ def run_init(
         new_gateway_config.pop("postgres_dsn", None)
 
     # 3. Prepare rewritten source file
-    #    Preserve the original source format.
-    gw_entry = _gateway_server_entry(gateway_url)
+    #    Preserve the original format (mcpServers vs mcp.servers)
+    gw_entry = _gateway_server_entry(gateway_url, data_dir=data_dir)
     new_source = dict(source_raw)
     is_vscode = "mcpServers" not in source_raw and isinstance(
         source_raw.get("mcp"), dict
@@ -309,6 +325,8 @@ def run_init(
     summary: dict[str, Any] = {
         "servers_migrated": server_names,
         "db_backend": db_backend,
+        "instance_id": instance_id,
+        "data_dir": str(data_dir),
         "backup_path": str(backup_path),
         "source_path": str(source_path),
         "gateway_config_path": str(gateway_config_path),
@@ -333,6 +351,13 @@ def run_init(
     shutil.copy2(source_path, backup_path)
     _write_json(gateway_config_path, new_gateway_config)
     _write_json(source_path, new_source)
+    try:
+        upsert_instance(source_path=source_path, data_dir=data_dir)
+    except OSError as exc:
+        summary["instance_registry_warning"] = (
+            "migration completed but failed to update instance registry: "
+            f"{exc}"
+        )
 
     return summary
 
@@ -392,6 +417,9 @@ def print_init_summary(
     print(f"{prefix}Backup:         {summary['backup_path']}")
     print(f"{prefix}Gateway config: {summary['gateway_config_path']}")
     print(f"{prefix}Source updated:  {summary['source_path']}")
+    registry_warning = summary.get("instance_registry_warning")
+    if isinstance(registry_warning, str):
+        print(f"{prefix}Warning:        {registry_warning}")
 
     if not dry_run:
         print()
