@@ -6,7 +6,7 @@ Usage::
         /Claude/claude_desktop_config.json
 
 This command:
-1. Reads the source file and extracts ``mcpServers``
+1. Reads the source file and extracts MCP server config
 2. Copies those servers into the gateway's own config
 3. Backs up the source file to ``<file>.backup``
 4. Rewrites the source file with only the gateway as the MCP server
@@ -199,7 +199,7 @@ def run_init(
     servers = extract_mcp_servers(source_raw)
 
     if not servers:
-        msg = f"no mcpServers found in {source_path}"
+        msg = f"no MCP server config found in {source_path}"
         raise ValueError(msg)
 
     server_names = sorted(servers.keys())
@@ -270,16 +270,34 @@ def run_init(
         new_gateway_config.pop("postgres_dsn", None)
 
     # 3. Prepare rewritten source file
-    #    Preserve the original format (mcpServers vs mcp.servers)
+    #    Preserve the original source format.
     gw_entry = _gateway_server_entry(gateway_url)
     new_source = dict(source_raw)
     is_vscode = "mcpServers" not in source_raw and isinstance(
         source_raw.get("mcp"), dict
     )
+    is_zed = isinstance(source_raw.get("context_servers"), dict)
     if is_vscode:
         new_source["mcp"] = {
             "servers": {gateway_name: gw_entry},
         }
+    elif is_zed:
+        if gateway_url:
+            new_source["context_servers"] = {
+                gateway_name: {
+                    "source": "custom",
+                    "command": "npx",
+                    "args": ["-y", "mcp-remote", gateway_url],
+                }
+            }
+        else:
+            new_source["context_servers"] = {
+                gateway_name: {
+                    "source": "custom",
+                    "command": "sift-mcp",
+                    "args": [],
+                }
+            }
     else:
         new_source["mcpServers"] = {
             gateway_name: gw_entry,

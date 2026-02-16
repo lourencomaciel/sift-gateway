@@ -248,6 +248,7 @@ def run_sync(data_dir: str | Path) -> dict[str, Any]:
     is_vscode = "mcpServers" not in source_raw and isinstance(
         source_raw.get("mcp"), dict
     )
+    is_zed = isinstance(source_raw.get("context_servers"), dict)
 
     # Find the gateway entry to preserve
     gw_entry: dict[str, Any] | None = None
@@ -263,6 +264,21 @@ def run_sync(data_dir: str | Path) -> dict[str, Any]:
     if is_vscode:
         new_source["mcp"] = {
             "servers": {gateway_name: gw_entry},
+        }
+    elif is_zed:
+        context_servers = source_raw.get("context_servers", {})
+        zed_entry: dict[str, Any] = {
+            "source": "custom",
+            "command": "sift-mcp",
+            "args": [],
+        }
+        if (
+            isinstance(context_servers, dict)
+            and isinstance(context_servers.get(gateway_name), dict)
+        ):
+            zed_entry = dict(context_servers[gateway_name])
+        new_source["context_servers"] = {
+            gateway_name: zed_entry,
         }
     else:
         new_source["mcpServers"] = {

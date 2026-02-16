@@ -31,10 +31,20 @@ pipx install sift-mcp
 **2. Import your MCP config**
 
 ```bash
-sift-mcp init --from ~/Library/Application\ Support/Claude/claude_desktop_config.json
+sift-mcp init --from claude
 ```
 
 This rewrites your MCP client config to route through Sift.
+
+You can also use:
+
+- `--from claude-code`
+- `--from cursor`
+- `--from vscode`
+- `--from windsurf`
+- `--from zed`
+- `--from auto`
+- `--from /absolute/path/to/config.json` (explicit path)
 
 **3. Restart your MCP client**
 
