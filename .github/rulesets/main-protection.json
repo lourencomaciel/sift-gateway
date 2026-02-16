@@ -33,11 +33,11 @@
       "parameters": {
         "required_status_checks": [
           {
-            "context": "CI / quality",
+            "context": "quality",
             "integration_id": 15368
           },
           {
-            "context": "Docs Contract / docs-contract",
+            "context": "docs-contract",
             "integration_id": 15368
           }
         ],
