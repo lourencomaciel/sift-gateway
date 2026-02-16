@@ -25,7 +25,23 @@ SIFT_MCP_TEST_POSTGRES_DSN="postgresql://..." uv run python -m pytest tests/inte
 uv run python -m ruff check src tests     # lint
 uv run python -m ruff format src tests    # auto-format
 uv run python -m mypy src                 # strict type checking
+PYTHONPATH=src uv run python scripts/check_docs_consistency.py  # docs/runtime contract
 ```
+
+## Docs and CLI Contract
+
+Treat docs as part of the runtime contract.
+
+- If CLI surface changes (flags, defaults, behavior), update docs in the same PR.
+- If docs claim behavior, ensure that behavior exists in code/tests.
+- `scripts/check_docs_consistency.py` is a required quality gate.
+- Keep examples executable and aligned with current parser behavior.
+
+Guardrails in this repo:
+
+- `.github/workflows/docs-contract.yml` runs docs/runtime consistency checks.
+- `.github/CODEOWNERS` routes docs/CLI/CI changes to maintainer review.
+- `.github/pull_request_template.md` includes docs/CLI contract checklist items.
 
 ## Project Layout
 
@@ -75,8 +91,24 @@ docs/
 
 1. Branch from `main`
 2. Make changes, keeping commits focused
-3. Ensure all checks pass: `ruff check`, `ruff format --check`, `mypy`, `pytest`
+3. Ensure all checks pass: `ruff check`, `ruff format --check`, `mypy`, `pytest`, `check_docs_consistency`
 4. Open a PR with a clear description of what changed and why
+
+## Maintainer GitHub Settings (Required)
+
+For click-by-click setup, see
+`docs/maintainer_github_guardrails.md`.
+
+Use repository rulesets/branch protection on `main` with:
+
+- Require pull requests before merge
+- Require at least one approval
+- Require code owner review
+- Require status checks to pass:
+  - `CI / quality`
+  - `Docs Contract / docs-contract`
+- Require conversation resolution before merge
+- Disable force pushes and branch deletion
 
 ## Maintainer Release Workflow
 
