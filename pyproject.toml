@@ -30,6 +30,13 @@ dependencies = [
     "fastmcp>=2.0.0",
     # Streaming JSON parser (partial mapping)
     "ijson>=3.3.0",
+    # Deterministic query/runtime deps
+    "jmespath>=1.0.1",
+    "orjson>=3.10.0",
+    "jsonschema>=4.23.0",
+    "referencing>=0.35.0",
+    "pandas>=2.2.0",
+    "numpy>=1.26.0",
     # Compression for canonical bytes
     "zstandard>=0.23.0",
     # Structured logging

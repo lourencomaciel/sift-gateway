@@ -37,7 +37,7 @@ Design invariants (from v1.9 spec):
 - `gateway_status` — health and configuration snapshot
 - `artifact` — consolidated retrieval tool with:
   - `action="query"` — retrieval/search entrypoint (requires `query_kind`)
-  - `query_kind="describe|get|select|search"` — explicit query behavior
+  - `query_kind="describe|get|select|search|code"` — explicit query behavior
   - `action="next_page"` — fetch next page of a paginated upstream response
 
 ## Pagination Contract v1
@@ -113,6 +113,58 @@ schemas are returned.
    `root_path` (typically `schemas[0].root_path` when a unique primary exists).
 3. Call `artifact(action="query", query_kind="select")` with pagination.
 4. Continue paging until `pagination.retrieval_status == "COMPLETE"`.
+
+### Root-scoped Python code query
+
+`query_kind="code"` executes generated Python against lineage-merged root
+records in a deterministic subprocess.
+
+Required args:
+
+- `artifact_id`
+- `root_path`
+- `code` (must define `run(data, schema, params)`)
+
+Optional args:
+
+- `params` (JSON object passed to `run`)
+- `limit`
+- `cursor`
+
+Constraints:
+
+- `scope=all_related` only.
+- input is root-scoped only (no full-envelope execution).
+- set `code_query_enabled=false` to disable `query_kind=code` entirely.
+- imports are allowlisted (`math`, `statistics`, `decimal`, `datetime`, `re`,
+  `itertools`, `collections`, `functools`, `operator`, `heapq`, `json`,
+  `jmespath`, `pandas`, `numpy`).
+  - `pandas`/`numpy` availability is controlled by
+    `code_query_allow_analytics_imports` (default `true`).
+  - full allowlist can be overridden with
+    `code_query_allowed_import_roots` /
+    `SIFT_MCP_CODE_QUERY_ALLOWED_IMPORT_ROOTS`.
+- `query_kind=code` runs model-authored Python. It is guardrailed
+  (AST/import policy, timeout, memory/input budgets), but not a full
+  OS-level sandbox.
+
+Example:
+
+```json
+{
+  "action": "query",
+  "query_kind": "code",
+  "artifact_id": "art_123...",
+  "root_path": "$.result.data",
+  "code": "def run(data, schema, params):\\n    floor = float(params.get('min_spend', 0))\\n    out = []\\n    for row in data:\\n        spend = float(row.get('spend', 0) or 0)\\n        if spend >= floor:\\n            out.append({'ad_id': row.get('ad_id'), 'spend': spend})\\n    return out",
+  "params": {"min_spend": 10}
+}
+```
+
+Response remains select-like (`items`, `truncated`, `pagination`, optional
+`cursor`, `total_matched`, `scope`, `lineage`) and includes deterministic
+bindings (`determinism.code_hash`, `determinism.params_hash`,
+`determinism.schema_hash`).
 
 ### Upstream pagination chain
 

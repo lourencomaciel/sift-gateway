@@ -550,6 +550,21 @@ class GatewayConfig(BaseSettings):
     max_wildcards: int = Field(10_000, ge=1)
     max_compute_steps: int = Field(1_000_000, ge=1)
 
+    # --------------- Code query runtime ---------------
+    code_query_enabled: bool = Field(True)
+    code_query_allow_analytics_imports: bool = Field(True)
+    code_query_allowed_import_roots: list[str] | None = Field(
+        None,
+        description=(
+            "Explicit import root allowlist for query_kind=code. "
+            "When set, overrides code_query_allow_analytics_imports."
+        ),
+    )
+    code_query_timeout_seconds: float = Field(8.0, gt=0)
+    code_query_max_memory_mb: int = Field(512, ge=32)
+    code_query_max_input_records: int = Field(100_000, ge=1)
+    code_query_max_input_bytes: int = Field(50_000_000, ge=1)
+
     # --------------- JSONPath caps (§12.3) ---------------
     max_jsonpath_length: int = Field(4096, ge=1)
     max_path_segments: int = Field(64, ge=1)
@@ -662,8 +677,44 @@ class GatewayConfig(BaseSettings):
         """
         return Path(v).resolve()
 
+    @field_validator("code_query_allowed_import_roots")
+    @classmethod
+    def _validate_code_query_allowed_import_roots(
+        cls,
+        value: list[str] | None,
+    ) -> list[str] | None:
+        """Validate configured import roots for code queries.
 
-_JSON_DECODE_TOP_LEVEL_FIELDS = {"upstreams"}
+        Each entry must be a non-empty Python identifier representing
+        a top-level import root (for example ``math`` or ``jmespath``).
+        Duplicates are removed while preserving order.
+        """
+        if value is None:
+            return None
+        cleaned: list[str] = []
+        seen: set[str] = set()
+        for raw in value:
+            root = raw.strip()
+            if not root:
+                msg = "code_query_allowed_import_roots entries must be non-empty"
+                raise ValueError(msg)
+            if not root.isidentifier():
+                msg = (
+                    "code_query_allowed_import_roots entries must be "
+                    "top-level Python module names"
+                )
+                raise ValueError(msg)
+            if root in seen:
+                continue
+            seen.add(root)
+            cleaned.append(root)
+        return cleaned
+
+
+_JSON_DECODE_TOP_LEVEL_FIELDS = {
+    "upstreams",
+    "code_query_allowed_import_roots",
+}
 _JSON_DECODE_UPSTREAM_FIELDS = {
     "args",
     "dedupe_exclusions",

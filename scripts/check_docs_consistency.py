@@ -76,7 +76,7 @@ def main() -> int:
 
     required_readme_snippets = [
         'action="query"',
-        'query_kind="describe|get|select|search"',
+        'query_kind="describe|get|select|search|code"',
         "_gateway_context.allow_reuse",
     ]
     for snippet in required_readme_snippets:

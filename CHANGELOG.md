@@ -8,11 +8,17 @@
 - `prometheus_client` for metrics counters (replaces custom implementation)
 - SQLite per-key advisory lock emulation via `threading.Lock`
 - `artifact_ref` insertion on cache hit so reused artifacts are retrievable
+- Code-query runtime tracebacks in error details (`details.traceback`, up to 2000 chars)
+- Multi-artifact code queries via `artifact_ids`
+- Sample-based schema enum metadata: `distinct_values` (max 10) and `cardinality`
 
 ### Changed
 - Rebranded from "MCP Artifact Gateway" to "Sift"
 - Replaced silent `except Exception: pass` blocks with warning logs
 - Removed unused `orjson` dependency
+- **Breaking:** `query_kind=code` now returns all results without pagination/cursor
+- `query_kind=code` ignores `scope` (always all-related semantics)
+- Documented return normalization for code queries (non-list values auto-wrap to one-item lists)
 
 ## [0.1.0] - 2025
 

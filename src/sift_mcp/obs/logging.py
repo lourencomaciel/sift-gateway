@@ -100,6 +100,13 @@ class LogEvents:
     MAPPING_COMPLETED = "gateway.mapping.completed"
     MAPPING_FAILED = "gateway.mapping.failed"
 
+    # Code query runtime
+    CODEGEN_STARTED = "gateway.codegen.started"
+    CODEGEN_COMPLETED = "gateway.codegen.completed"
+    CODEGEN_FAILED = "gateway.codegen.failed"
+    CODEGEN_TIMEOUT = "gateway.codegen.timeout"
+    CODEGEN_REJECTED = "gateway.codegen.rejected"
+
     # Cursor
     CURSOR_ISSUED = "gateway.cursor.issued"
     CURSOR_VERIFIED = "gateway.cursor.verified"

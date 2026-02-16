@@ -20,7 +20,8 @@ LIMIT 1
 """
 
 FETCH_SCHEMA_FIELDS_SQL = """
-SELECT field_path, types, nullable, required, observed_count, example_value
+SELECT field_path, types, nullable, required, observed_count, example_value,
+       distinct_values, cardinality
 FROM artifact_schema_fields
 WHERE workspace_id = %s AND artifact_id = %s AND root_key = %s
 ORDER BY field_path ASC

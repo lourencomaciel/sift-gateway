@@ -88,6 +88,9 @@ def test_array_root_with_fields() -> None:
     assert "name" in hint
     assert "status" in hint
     assert 'artifact(action="query"' in hint
+    assert 'query_kind="code"' in hint
+    assert "no pagination" in hint
+    assert "auto-wrapped to a list" in hint
     assert "Minimize context" in hint
     assert "art_3" in hint
 
@@ -105,6 +108,40 @@ def test_dict_root_suggests_get() -> None:
     hint = build_usage_hint("art_4", desc)
     assert "dict" in hint
     assert 'artifact(action="query"' in hint
+    assert 'query_kind="code"' not in hint
+
+
+def test_array_hint_includes_available_code_query_packages() -> None:
+    desc = _describe(roots=[_root(root_path="$.items", count_estimate=20)])
+    hint = build_usage_hint(
+        "art_pkg",
+        desc,
+        code_query_packages=["jmespath", "numpy"],
+    )
+    assert (
+        "Available code-query packages in this runtime: jmespath, numpy"
+        in hint
+    )
+
+
+def test_array_hint_handles_empty_code_query_package_list() -> None:
+    desc = _describe(roots=[_root(root_path="$.items", count_estimate=20)])
+    hint = build_usage_hint(
+        "art_pkg_none",
+        desc,
+        code_query_packages=[],
+    )
+    assert "No third-party code-query packages are currently available" in hint
+
+
+def test_array_hint_omits_code_query_when_disabled() -> None:
+    desc = _describe(roots=[_root(root_path="$.items", count_estimate=20)])
+    hint = build_usage_hint(
+        "art_code_disabled",
+        desc,
+        code_query_enabled=False,
+    )
+    assert 'query_kind="code"' not in hint
 
 
 def test_sampled_root_mentions_sample() -> None:
