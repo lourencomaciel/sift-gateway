@@ -1,0 +1,73 @@
+name: Bug report
+description: Report a reproducible problem in Sift MCP.
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting this issue. Please include enough detail to
+        reproduce it reliably.
+
+  - type: input
+    id: summary
+    attributes:
+      label: Summary
+      description: What went wrong?
+      placeholder: Short description of the bug
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Provide exact steps, commands, and inputs.
+      placeholder: |
+        1. Run `...`
+        2. Call tool `...`
+        3. Observe `...`
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      placeholder: What did you expect to happen?
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      placeholder: What actually happened? Include error text if possible.
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs / output
+      description: Paste relevant logs or CI output. Redact secrets.
+      render: shell
+
+  - type: input
+    id: version
+    attributes:
+      label: Sift version
+      description: Output of `sift-mcp --version`
+      placeholder: sift-mcp 0.x.y
+    validations:
+      required: true
+
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, Python version, and install method (pipx/uv/source)
+      placeholder: macOS 14, Python 3.11, pipx
+    validations:
+      required: true
