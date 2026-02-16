@@ -49,10 +49,10 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/zmaciel/sift-mcp"
-Repository = "https://github.com/zmaciel/sift-mcp"
-Issues = "https://github.com/zmaciel/sift-mcp/issues"
-Changelog = "https://github.com/zmaciel/sift-mcp/blob/main/CHANGELOG.md"
+Homepage = "https://github.com/lourencomaciel/sift-mcp"
+Repository = "https://github.com/lourencomaciel/sift-mcp"
+Issues = "https://github.com/lourencomaciel/sift-mcp/issues"
+Changelog = "https://github.com/lourencomaciel/sift-mcp/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
 postgres = [
