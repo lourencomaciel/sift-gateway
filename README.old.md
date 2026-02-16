@@ -139,11 +139,10 @@ Constraints:
 - imports are allowlisted (`math`, `statistics`, `decimal`, `datetime`, `re`,
   `itertools`, `collections`, `functools`, `operator`, `heapq`, `json`,
   `jmespath`, `pandas`, `numpy`).
-  - `pandas`/`numpy` availability is controlled by
-    `code_query_allow_analytics_imports` (default `true`).
-  - full allowlist can be overridden with
+  - full allowlist can be configured with
     `code_query_allowed_import_roots` /
-    `SIFT_MCP_CODE_QUERY_ALLOWED_IMPORT_ROOTS`.
+    `SIFT_MCP_CODE_QUERY_ALLOWED_IMPORT_ROOTS` (when unset, built-in
+    defaults are used).
 - `query_kind=code` runs model-authored Python. It is guardrailed
   (AST/import policy, timeout, memory/input budgets), but not a full
   OS-level sandbox.

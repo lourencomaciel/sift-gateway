@@ -23,21 +23,6 @@ def test_gateway_config_derived_paths(tmp_path: Path) -> None:
     assert config.blobs_bin_dir == tmp_path / "blobs" / "bin"
 
 
-def test_code_query_allow_analytics_imports_defaults_true(
-    tmp_path: Path,
-) -> None:
-    config = GatewayConfig(data_dir=tmp_path)
-    assert config.code_query_allow_analytics_imports is True
-
-
-def test_code_query_allow_analytics_imports_env_override(
-    tmp_path: Path, monkeypatch
-) -> None:
-    monkeypatch.setenv("SIFT_MCP_CODE_QUERY_ALLOW_ANALYTICS_IMPORTS", "false")
-    config = load_gateway_config(data_dir_override=str(tmp_path))
-    assert config.code_query_allow_analytics_imports is False
-
-
 def test_code_query_allowed_import_roots_defaults_none(
     tmp_path: Path,
 ) -> None:
