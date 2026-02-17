@@ -12,7 +12,7 @@ uv sync --extra dev --extra postgres
 ## Running Tests
 
 ```bash
-# Unit tests (~1000+ tests)
+# Unit tests
 uv run python -m pytest tests/unit/ -q
 
 # Integration tests (requires live Postgres)
@@ -62,15 +62,14 @@ src/sift_mcp/
   jobs/                    # soft delete, hard delete, reconcile tasks
   obs/                     # structured logging + metrics
 tests/
-  unit/                    # ~1026 unit tests
+  unit/                    # unit tests
   integration/             # integration tests (requires PostgreSQL)
 docs/
+  README.md              # Documentation map and reading paths
   spec_v1_9.md            # Architecture and design specification
   config.md               # Configuration reference
   errors.md               # Error taxonomy
   observability.md        # Logging and metrics
-  traversal_contract.md   # Traversal ordering rules
-  cursor_contract.md      # Cursor format and staleness
   quickstart.md           # Getting started guide
   recipes.md              # Usage patterns and examples
   deployment.md           # Production deployment
@@ -96,9 +95,6 @@ docs/
 
 ## Maintainer GitHub Settings (Required)
 
-For click-by-click setup, see
-`docs/maintainer_github_guardrails.md`.
-
 Use repository rulesets/branch protection on `main` with:
 
 - Require pull requests before merge
@@ -109,6 +105,17 @@ Use repository rulesets/branch protection on `main` with:
   - `Docs Contract / docs-contract`
 - Require conversation resolution before merge
 - Disable force pushes and branch deletion
+
+Recommended setup path (rulesets):
+
+1. Open repository **Settings**.
+2. Go to **Rules** -> **Rulesets**.
+3. Click **New ruleset** -> **Import a ruleset**.
+4. Upload `.github/rulesets/main-protection.json`.
+5. Confirm required checks include:
+   - `CI / quality`
+   - `Docs Contract / docs-contract`
+6. Save and enable the ruleset.
 
 ## Maintainer Release Workflow
 

@@ -15,7 +15,6 @@
 ### Changed
 - Rebranded from "MCP Artifact Gateway" to "Sift"
 - Replaced silent `except Exception: pass` blocks with warning logs
-- Removed unused `orjson` dependency
 - **Breaking:** `query_kind=code` now returns all results without pagination/cursor
 - `query_kind=code` ignores `scope` (always all-related semantics)
 - Documented return normalization for code queries (non-list values auto-wrap to one-item lists)

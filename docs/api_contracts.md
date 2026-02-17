@@ -1,331 +1,223 @@
 # API Contracts
 
-Technical specifications for Sift MCP's API contracts and response formats.
+Canonical behavior for the consolidated `artifact` tool and related pagination,
+cache, and error surfaces.
 
 ## Artifact Query Entrypoint
 
-Use the consolidated `artifact` tool for retrieval queries:
+Use the consolidated `artifact` tool:
 
-- `action="query"` selects retrieval mode.
-- `query_kind="describe|get|select|search|code"` selects behavior.
+- `action="query"` for retrieval/search operations
+- `action="next_page"` for upstream pagination continuation
 
-`search` is for session artifact discovery; the other `query_kind` values require an `artifact_id`.
+For `action="query"`, `query_kind` is required and must be one of:
+`describe`, `get`, `select`, `search`, `code`.
 
-## Pagination Contract v1
+Argument routing rules:
 
-Sift uses **layer-explicit pagination metadata** to distinguish between upstream pagination and gateway retrieval pagination.
+- `query_kind="describe"|"get"|"select"` requires `artifact_id`
+- `query_kind="code"` requires `artifact_id` (single) or `artifact_ids` (multi)
+- `query_kind="search"` rejects `artifact_id` and `scope`
+- `scope` applies to `describe|get|select`; code queries always run all-related
 
-### Pagination Layers
+## Pagination Contract
 
-**Two distinct layers:**
+Sift uses layer-explicit pagination metadata.
 
-1. **`pagination.layer = "upstream"`** — Mirrored upstream tool responses
-   - Indicates pagination controlled by the upstream MCP server
-   - Use `artifact(action="next_page")` to fetch subsequent pages
+### Layers
 
-2. **`pagination.layer = "artifact_retrieval"`** — Artifact retrieval responses
-   - Indicates pagination controlled by Sift's retrieval tools
-   - Use `cursor` parameter to continue pagination
+- `pagination.layer = "upstream"`
+  Used by mirrored upstream tool responses. Continue with
+  `artifact(action="next_page", artifact_id=...)`.
+- `pagination.layer = "artifact_retrieval"`
+  Used by retrieval/search responses. Continue with
+  `artifact(action="query", query_kind=..., cursor=...)`.
 
-### Key Fields
+### Retrieval Pagination Fields
 
-All pagination responses include these fields:
+For `pagination.layer = "artifact_retrieval"`:
 
-- **`retrieval_status`**: `PARTIAL` or `COMPLETE`
-  - `PARTIAL` — More data exists, pagination required
-  - `COMPLETE` — No more data available
+- `retrieval_status`: `PARTIAL` or `COMPLETE`
+- `partial_reason`: `CURSOR_AVAILABLE` or `null`
+- `has_more`: boolean
+- `next_cursor`: opaque cursor string when `has_more=true`, else `null`
+- `hint`: human-readable continuation guidance
 
-- **`partial_reason`**: machine-readable partial reason or `null`
-  - `"budget_items"` — Hit `max_items` limit
-  - `"budget_bytes"` — Hit `max_bytes_out` limit
-  - `"wildcard_cap"` — Hit wildcard expansion limit
-  - `null` — Complete retrieval
+Compatibility field:
 
-- **`has_more`**: boolean — Whether more data is available
+- `cursor` may also be present at top level in select/get/search responses.
 
-### Upstream Pagination (Compatibility Fields)
+Completion rule:
 
-For `pagination.layer = "upstream"`, these additional fields remain for compatibility:
+- Do not claim completeness until
+  `pagination.retrieval_status == "COMPLETE"`.
 
-- **`has_next_page`**: boolean — Whether upstream has more pages
-- **`hint`**: string — Upstream pagination hint (if provided)
+### Upstream Pagination Fields
 
-### Completion Rule
+For `pagination.layer = "upstream"`:
 
-**CRITICAL:** Do not claim full completeness until:
-
-```python
-pagination["retrieval_status"] == "COMPLETE"
-```
-
-Even if `has_more` is `false`, check `retrieval_status` to ensure completeness.
-
-### Examples
-
-#### Upstream Pagination Response
-
-```json
-{
-  "artifact_id": "art_123...",
-  "pagination": {
-    "layer": "upstream",
-    "retrieval_status": "PARTIAL",
-    "partial_reason": null,
-    "has_more": true,
-    "has_next_page": true,
-    "hint": "Use artifact(action='next_page') to fetch next page"
-  }
-}
-```
-
-#### Artifact Retrieval Pagination Response
-
-```json
-{
-  "items": [...],
-  "pagination": {
-    "layer": "artifact_retrieval",
-    "retrieval_status": "PARTIAL",
-    "partial_reason": "budget_items",
-    "has_more": true,
-    "cursor": "eyJ..."
-  },
-  "total_matched": 1523
-}
-```
+- `retrieval_status`: `PARTIAL` or `COMPLETE`
+- `partial_reason`: one of
+  `MORE_PAGES_AVAILABLE`, `SIGNAL_INCONCLUSIVE`, `CONFIG_MISSING`,
+  `NEXT_TOKEN_MISSING`, or `null`
+- `has_more`: boolean
+- `next_action`: follow-up call shape for `artifact(action="next_page")`
+- Back-compat: `has_next_page`, `hint`
 
 ## Gateway Context Controls
 
-Control artifact creation and caching behavior via `_gateway_context` in mirrored tool calls.
+Mirrored tool calls may include `_gateway_context.allow_reuse`.
 
-### `allow_reuse` Parameter
+- `false` (default): always create a fresh artifact
+- `true`: allow request-key dedupe and reuse when eligible
 
-Mirrored tool calls may include `_gateway_context.allow_reuse`:
+Handle responses include cache metadata under `meta.cache`:
 
-- **`false` (default)** — Always create a fresh artifact, even if an identical one exists
-- **`true`** — Allow request-key deduplication and reuse compatible artifacts
+- `reused`
+- `request_key`
+- `reason` (`fresh` or `request_key_match`)
+- `artifact_id_origin` (`fresh` or `cache`)
+- `allow_reuse`
 
-**Example:**
+Session visibility guarantee:
 
-```json
-{
-  "tool": "github.search_repositories",
-  "arguments": {
-    "query": "MCP server",
-    "_gateway_context": {
-      "allow_reuse": true
-    }
-  }
-}
-```
+- If a cached artifact is reused, Sift attaches it to the caller session before
+  returning the handle, so follow-up retrieval in the same session succeeds.
 
-### Cache Metadata in Responses
+## Handle Response Contract
 
-All handle responses include consistent cache metadata:
+When mirrored responses exceed passthrough budget, Sift returns an artifact
+handle.
 
-- **`reused`**: boolean — Whether this artifact was reused from cache
-- **`request_key`**: string — SHA-256 hash of normalized request
-- **`reason`**: string — Why this artifact was created/reused
-  - `"fresh"` — Newly created artifact
-  - `"request_key_match"` — Reused based on request key
-- **`artifact_id_origin`**: `"cache"` or `"fresh"`
-- **`allow_reuse`**: boolean — The effective `allow_reuse` setting
+Common fields:
 
-**Example (cache hit):**
+- `artifact_id` (required)
+- `schemas` (required)
+- `usage_hint` (required)
+- `meta.cache` (required)
+- `mapping` (optional)
+- `pagination` (optional; upstream-layer metadata)
 
-```json
-{
-  "artifact_id": "art_abc123...",
-  "meta": {
-    "cache": {
-      "reused": true,
-      "request_key": "sha256:def456...",
-      "reason": "request_key_match",
-      "artifact_id_origin": "cache",
-      "allow_reuse": true
-    }
-  }
-}
-```
+## Query Response Shapes
 
-**Example (fresh artifact):**
-
-```json
-{
-  "artifact_id": "art_xyz789...",
-  "meta": {
-    "cache": {
-      "reused": false,
-      "request_key": "sha256:ghi789...",
-      "reason": "fresh",
-      "artifact_id_origin": "fresh",
-      "allow_reuse": false
-    }
-  }
-}
-```
-
-### Session Visibility on Cache Reuse
-
-**Important guarantee:** When a mirrored call returns a reused `artifact_id`, Sift **first attaches that artifact to the caller's session** (`artifact_refs`) before returning the handle.
-
-This guarantees the returned handle is immediately retrievable by:
-- `artifact(action="query", query_kind="get")`
-- `artifact(action="query", query_kind="describe")`
-- `artifact(action="query", query_kind="select")`
-- `artifact(action="query", query_kind="code")`
-
-**You never receive an artifact handle that you can't immediately query.**
-
-## Handle Response Contract (Schema-First)
-
-When a mirrored tool call response exceeds the passthrough threshold (`passthrough_max_bytes`, default 8 KB), Sift returns an **artifact handle** instead of the raw response.
-
-### Handle Response Fields
-
-**Always present:**
-
-- **`artifact_id`**: string — Unique identifier for artifact retrieval
-- **`schemas`**: array — Inferred data structures (schema-first approach)
-- **`usage_hint`**: string — Human-readable guidance for querying the artifact
-- **`meta.cache`**: object — Cache metadata (see Gateway Context Controls above)
-
-**Optional:**
-
-- **`mapping`**: object — Data structure mapping metadata
-- **`pagination`**: object — Pagination metadata (if upstream provides it)
-
-### Schema-First Design
-
-The `schemas` field is **canonical** — there's no duplicated `roots[].schema` embedding. To save space:
-
-- **When one root has unique highest coverage:** Only that schema is returned
-- **When multiple roots tie for highest coverage:** All tied schemas are returned
-
-**Example (single primary schema):**
-
-```json
-{
-  "artifact_id": "art_abc123...",
-  "schemas": [
-    {
-      "root_path": "$.items",
-      "coverage": {
-        "observed_records": 150
-      },
-      "fields": {
-        "id": {"type": "string", "nullable": false},
-        "name": {"type": "string", "nullable": false},
-        "created_at": {"type": "string", "nullable": true}
-      }
-    }
-  ],
-  "usage_hint": "Use artifact(action='query', query_kind='select', root_path='$.items') to retrieve data"
-}
-```
-
-**Example (multiple tied schemas):**
-
-```json
-{
-  "artifact_id": "art_def456...",
-  "schemas": [
-    {
-      "root_path": "$.users",
-      "coverage": {"observed_records": 50}
-    },
-    {
-      "root_path": "$.groups",
-      "coverage": {"observed_records": 50}
-    }
-  ],
-  "usage_hint": "Multiple data roots detected. Choose root_path: '$.users' or '$.groups'"
-}
-```
-
-### Schema Inference
-
-Sift automatically infers schemas from response data by:
-
-1. **Traversing the JSON structure** — Walks all paths to identify roots and fields
-2. **Sampling records** — Observes up to 50 records per root (configurable)
-3. **Type detection** — Infers JSON types (string, number, boolean, array, object, null)
-4. **Nullability tracking** — Marks fields as nullable if any sampled record has null
-
-See [spec_v1_9.md](spec_v1_9.md) for complete schema inference algorithm.
-
-## Artifact Query Response Shapes
-
-`artifact(action="query")` does **not** have one universal response shape. Fields depend on `query_kind`.
+`artifact(action="query")` has query-kind-specific response shapes.
 
 ### `query_kind="describe"`
 
-Metadata response (no retrieval items):
+Required:
 
-- **Required**: `artifact_id`, `scope`, `lineage`, `artifacts`, `roots`
-- **Optional**: `schema_legend`, `schemas` (present for `scope="single"` when schema data exists)
-- **Not present by contract**: `items`, `total_matched`, `cursor`, retrieval `pagination`
+- `artifact_id`, `scope`, `lineage`, `artifacts`, `roots`
+
+Optional:
+
+- `schema_legend`
+- `schemas` (single-scope responses with schema data)
+
+Not present by contract:
+
+- `items`, `cursor`, retrieval `pagination`
 
 ### `query_kind="get"`
 
-`target="envelope"` returns paginated envelope/jsonpath values:
+`target="envelope"` required fields:
 
-- **Required**: `artifact_id`, `scope`, `target`, `items`, `truncated`, `omitted`, `stats`, `lineage`, `pagination`
-- **Optional**: `cursor`, `warnings`
+- `artifact_id`, `scope`, `target`, `items`, `truncated`, `lineage`, `pagination`
 
-`target="mapped"` returns mapped root catalog:
+Common optional fields:
 
-- **Required**: `artifact_id`, `scope`, `target`, `roots`, `lineage`, `pagination`
-- **Optional**: `warnings`
+- `cursor`, `omitted`, `stats`, `warnings`
+
+`target="mapped"` required fields:
+
+- `artifact_id`, `scope`, `target`, `roots`, `lineage`, `pagination`
+
+Optional:
+
+- `warnings`
 
 ### `query_kind="select"`
 
-Select-style retrieval response:
+Required:
 
-- **Required**: `items`, `truncated`, `pagination`, `total_matched`, `scope`, `lineage`
-- **Optional**: `cursor`, `omitted`, `stats`, `determinism`, `warnings`
+- `items`, `truncated`, `total_matched`, `scope`, `lineage`, `pagination`
 
-Special case: `count_only=true` returns `count` plus retrieval `pagination` (no `items` payload).
+Optional:
+
+- `cursor`, `omitted`, `stats`, `determinism`, `warnings`
+- `sampled_only`, `sample_indices_used`, `sampled_prefix_len`
+
+Special case:
+
+- `count_only=true` returns a compact shape: `count`, `truncated=false`,
+  and `pagination` (no `items`, `scope`, or `lineage` fields).
 
 ### `query_kind="code"`
 
-Code-query response is also select-like:
+Code responses are select-like and intentionally unpaginated.
 
-- **Required**: `items`, `truncated`, `pagination`, `total_matched`, `scope`, `lineage`, `determinism`
-- **Optional**: `cursor`, `omitted`, `stats`, `warnings`
+Required:
+
+- `items`, `truncated`, `total_matched`, `scope`, `lineage`, `pagination`,
+  `determinism`
+
+Optional:
+
+- `stats`, `warnings`, `sampled_only`
+
+Not present by contract:
+
+- `cursor` (code queries are unpaginated)
+
+Notes:
+
+- Scalar/dict return values are normalized to a one-item list.
+- Output is bounded by `max_bytes_out`.
+- `limit`/`cursor` are not pagination controls for code queries.
 
 ### `query_kind="search"`
 
-Session artifact listing response:
+Required:
 
-- **Required**: `items`, `truncated`, `omitted`, `pagination`
-- **Optional**: `cursor`
+- `items`, `truncated`, `omitted`, `pagination`
 
-### Example (`query_kind="select"`)
+Optional:
+
+- `cursor`
+
+## Example (`query_kind="select"`)
 
 ```json
 {
   "items": [
-    {"id": 1, "name": "Alice"},
-    {"id": 2, "name": "Bob"}
+    {
+      "_locator": {"artifact_id": "art_1", "index": 0},
+      "projection": {"$.name": "Alice", "$.spend": "42"}
+    }
   ],
+  "truncated": true,
+  "cursor": "cur.v1....",
   "pagination": {
     "layer": "artifact_retrieval",
     "retrieval_status": "PARTIAL",
-    "partial_reason": "budget_items",
+    "partial_reason": "CURSOR_AVAILABLE",
     "has_more": true,
-    "cursor": "eyJvZmZzZXQiOjUwfQ=="
+    "next_cursor": "cur.v1....",
+    "hint": "More results available. Resume with the cursor returned in this response."
   },
   "total_matched": 150,
-  "truncated": true,
   "scope": "all_related",
-  "lineage": ["art_abc123...", "art_def456..."]
+  "lineage": {
+    "scope": "all_related",
+    "anchor_artifact_id": "art_1",
+    "artifact_count": 3,
+    "artifact_ids": ["art_1", "art_2", "art_3"]
+  }
 }
 ```
 
 ## Error Contract
 
-All errors follow a consistent envelope format:
+Gateway errors are returned in this envelope:
 
 ```json
 {
@@ -333,40 +225,19 @@ All errors follow a consistent envelope format:
     "code": "RESOURCE_EXHAUSTED",
     "message": "lineage query exceeds related artifact limit",
     "details": {
-      "artifact_count": 3500,
-      "max_artifacts": 2000
+      "artifact_count": 300,
+      "max_artifacts": 256
     }
   }
 }
 ```
 
-See [errors.md](errors.md) for complete error taxonomy.
+See `errors.md` for the complete taxonomy.
 
 ## Reserved Keys
 
-Sift reserves keys with the `_gateway_*` prefix for internal use. These keys:
+Keys with `_gateway_` prefix are gateway-reserved.
 
-- Are **stripped before upstream forwarding** — Upstreams never see them
-- Are **excluded from hashing** — Don't affect request_key computation
-- Control gateway behavior (caching, dedupe, passthrough, etc.)
-
-**Example:**
-
-```json
-{
-  "query": "search term",
-  "_gateway_context": {
-    "allow_reuse": true
-  },
-  "_gateway_trace_id": "abc123"
-}
-```
-
-The upstream receives only `{"query": "search term"}`.
-
-## Next Steps
-
-- **[Recipes & Examples](recipes.md)** — See these contracts in action
-- **[Architecture & Spec](spec_v1_9.md)** — Deep dive into technical design
-- **[Configuration Reference](config.md)** — Configure pagination budgets and thresholds
-- **[Error Reference](errors.md)** — Complete error code catalog
+- Stripped before upstream forwarding
+- Excluded from request-key hashing
+- Used for gateway control and metadata
