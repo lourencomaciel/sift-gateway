@@ -79,7 +79,9 @@ def _worker_error(
     return payload
 
 
-def _validate_run_callable(run_fn: Any) -> tuple[str, CodeValidationError | None]:
+def _validate_run_callable(
+    run_fn: Any,
+) -> tuple[str, CodeValidationError | None]:
     if not callable(run_fn):
         return "invalid", CodeValidationError(
             code="CODE_ENTRYPOINT_MISSING",
@@ -95,13 +97,13 @@ def _validate_run_callable(run_fn: Any) -> tuple[str, CodeValidationError | None
     if names == ["data", "schema", "params"]:
         return "legacy", None
     return "invalid", CodeValidationError(
-            code="CODE_ENTRYPOINT_MISSING",
-            message=(
-                "run must have signature "
-                "run(artifacts, schemas, params) "
-                "or run(data, schema, params)"
-            ),
-        )
+        code="CODE_ENTRYPOINT_MISSING",
+        message=(
+            "run must have signature "
+            "run(artifacts, schemas, params) "
+            "or run(data, schema, params)"
+        ),
+    )
     return "invalid", None
 
 
@@ -273,7 +275,9 @@ def main() -> int:
     if not isinstance(payload, dict):
         sys.stdout.buffer.write(
             encode_json_bytes(
-                _worker_error("CODE_AST_REJECTED", "input payload must be object")
+                _worker_error(
+                    "CODE_AST_REJECTED", "input payload must be object"
+                )
             )
         )
         return 0

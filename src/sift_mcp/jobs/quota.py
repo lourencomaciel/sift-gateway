@@ -283,7 +283,7 @@ def _hard_delete_cutoff_timestamp(hard_delete_grace_seconds: int) -> str:
         ISO-formatted UTC timestamp string.
     """
     return (
-        dt.datetime.now(dt.timezone.utc)
+        dt.datetime.now(dt.UTC)
         - dt.timedelta(seconds=hard_delete_grace_seconds)
     ).isoformat()
 

@@ -9,9 +9,10 @@ thread-safe ``get_metrics`` singleton accessor.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 import threading
-from typing import Any, Callable
+from typing import Any
 
 from prometheus_client import CollectorRegistry
 from prometheus_client import Counter as _PromCounter

@@ -90,6 +90,7 @@ async def handle_artifact_describe(
         )
 
     with ctx.db_pool.connection() as connection:
+
         def _load_schemas_for_artifact(
             artifact_id: str,
         ) -> list[dict[str, Any]]:
@@ -252,7 +253,9 @@ async def handle_artifact_describe(
             if artifact_row is None:
                 continue
             map_status = str(artifact_row.get("map_status", "unknown"))
-            map_status_counts[map_status] = map_status_counts.get(map_status, 0) + 1
+            map_status_counts[map_status] = (
+                map_status_counts.get(map_status, 0) + 1
+            )
             artifact_summaries.append(
                 {
                     "artifact_id": artifact_id,
@@ -310,15 +313,15 @@ async def handle_artifact_describe(
 
     roots = build_lineage_root_catalog(root_entries)
     roots_with_schema = [
-        root
-        for root in roots
-        if isinstance(root.get("schema"), dict)
+        root for root in roots if isinstance(root.get("schema"), dict)
     ]
     if roots_with_schema:
         compact_root_schemas = compact_schema_payload(
             [root["schema"] for root in roots_with_schema]
         )
-        for root, compact_schema in zip(roots_with_schema, compact_root_schemas):
+        for root, compact_schema in zip(
+            roots_with_schema, compact_root_schemas, strict=True
+        ):
             root["schema"] = compact_schema
 
     compact_anchor_schemas = compact_schema_payload(anchor_schemas)

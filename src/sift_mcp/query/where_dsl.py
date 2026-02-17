@@ -10,10 +10,11 @@ dicts.  Key exports are ``parse_where_expression``,
 
 from __future__ import annotations
 
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from decimal import Decimal
 import re
-from typing import Any, Callable, Mapping, cast
+from typing import Any, cast
 
 from sift_mcp.canon.rfc8785 import canonical_bytes
 from sift_mcp.query.jsonpath import (

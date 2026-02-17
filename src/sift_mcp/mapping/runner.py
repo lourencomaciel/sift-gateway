@@ -11,9 +11,10 @@ appropriate mapper.  Key exports are ``run_mapping``,
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 import json
-from typing import Any, BinaryIO, Callable
+from typing import Any, BinaryIO
 
 from sift_mcp.config.settings import GatewayConfig
 from sift_mcp.mapping.schema import (

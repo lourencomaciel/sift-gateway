@@ -7,13 +7,14 @@ that were added since the last sync.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 import contextlib
 import json
 import logging
 import os
 from pathlib import Path
 import shutil
-from typing import Any, Iterator
+from typing import Any
 
 from sift_mcp.config.mcp_servers import (
     extract_mcp_servers,
@@ -28,10 +29,8 @@ from sift_mcp.constants import (
 @contextlib.contextmanager
 def _suppress_os_error() -> Iterator[None]:
     """Suppress OSError during cleanup (e.g. unlinking a tmp)."""
-    try:
+    with contextlib.suppress(OSError):
         yield
-    except OSError:
-        pass
 
 
 logger = logging.getLogger(__name__)
@@ -85,10 +84,7 @@ def _is_gateway_entry(
         return False
 
     cmd = server_config.get("command")
-    if isinstance(cmd, str) and _is_sift_command(cmd):
-        return True
-
-    return False
+    return isinstance(cmd, str) and _is_sift_command(cmd)
 
 
 def _ensure_gateway_data_dir_arg(
@@ -106,9 +102,7 @@ def _ensure_gateway_data_dir_arg(
     updated = dict(entry)
     raw_args = updated.get("args")
     args = (
-        [str(value) for value in raw_args]
-        if isinstance(raw_args, list)
-        else []
+        [str(value) for value in raw_args] if isinstance(raw_args, list) else []
     )
     data_dir_str = str(data_dir)
 
@@ -365,9 +359,8 @@ def run_sync(data_dir: str | Path) -> dict[str, Any]:
             "command": "sift-mcp",
             "args": [],
         }
-        if (
-            isinstance(context_servers, dict)
-            and isinstance(context_servers.get(gateway_name), dict)
+        if isinstance(context_servers, dict) and isinstance(
+            context_servers.get(gateway_name), dict
         ):
             zed_entry = dict(context_servers[gateway_name])
         new_source["context_servers"] = {

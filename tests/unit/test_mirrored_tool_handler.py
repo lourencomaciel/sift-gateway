@@ -126,7 +126,7 @@ def test_fetch_inline_describe_happy_path() -> None:
 
 def test_fetch_inline_describe_no_artifact_row() -> None:
     conn = _mock_connection(artifact_row=None)
-    desc, hint = _fetch_inline_describe(conn, "art_missing")
+    desc, _hint = _fetch_inline_describe(conn, "art_missing")
     assert desc["artifact_id"] == "art_missing"
     assert desc["mapping"]["map_kind"] == "none"
     assert desc["roots"] == []
@@ -198,7 +198,9 @@ def test_fetch_inline_describe_cache_hit_with_schema_paths() -> None:
     assert "Also available" not in hint
 
 
-def test_fetch_inline_describe_keeps_all_schemas_when_primary_not_unique() -> None:
+def test_fetch_inline_describe_keeps_all_schemas_when_primary_not_unique() -> (
+    None
+):
     artifact_row = (
         "art_tie",
         "full",

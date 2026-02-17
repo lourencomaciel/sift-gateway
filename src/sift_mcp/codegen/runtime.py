@@ -50,7 +50,9 @@ def _to_json_compatible(value: Any) -> Any:
     if value is None or isinstance(value, (str, bool, int, float)):
         return value
     if isinstance(value, dict):
-        return {str(key): _to_json_compatible(item) for key, item in value.items()}
+        return {
+            str(key): _to_json_compatible(item) for key, item in value.items()
+        }
     if isinstance(value, (list, tuple, set, frozenset)):
         return [_to_json_compatible(item) for item in value]
 
@@ -116,11 +118,11 @@ class CodeRuntimeError(RuntimeError):
         return self.message
 
 
-class CodeRuntimeTimeout(CodeRuntimeError):
+class CodeRuntimeTimeoutError(CodeRuntimeError):
     """Raised when worker execution exceeds wall-clock timeout."""
 
 
-class CodeRuntimeMemoryLimit(CodeRuntimeError):
+class CodeRuntimeMemoryLimitError(CodeRuntimeError):
     """Raised when worker hits configured memory cap."""
 
 
@@ -198,7 +200,7 @@ def _preexec_set_memory_limit(max_memory_mb: int) -> Any | None:
             resource.setrlimit(resource.RLIMIT_AS, (limit_bytes, limit_bytes))
         except Exception:
             # Sandbox/container runtimes may reject rlimit changes.
-            return None
+            return
 
     return _preexec
 
@@ -233,8 +235,8 @@ def execute_code_in_subprocess(
         JSON-serializable value returned by ``run``.
 
     Raises:
-        CodeRuntimeTimeout: Timeout exceeded.
-        CodeRuntimeMemoryLimit: Memory cap exceeded.
+        CodeRuntimeTimeoutError: Timeout exceeded.
+        CodeRuntimeMemoryLimitError: Memory cap exceeded.
         CodeRuntimeError: User/runtime validation failure.
         CodeRuntimeInfrastructureError: Worker protocol failure.
     """
@@ -273,8 +275,7 @@ def execute_code_in_subprocess(
         return subprocess.run(
             [sys.executable, "-m", worker_module],
             input=payload,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            capture_output=True,
             timeout=runtime.timeout_seconds,
             check=False,
             env=_build_env(),
@@ -284,7 +285,7 @@ def execute_code_in_subprocess(
     try:
         completed = _run(preexec)
     except subprocess.TimeoutExpired as exc:
-        raise CodeRuntimeTimeout(
+        raise CodeRuntimeTimeoutError(
             code="CODE_RUNTIME_TIMEOUT",
             message="code execution timed out",
         ) from exc
@@ -294,7 +295,7 @@ def execute_code_in_subprocess(
             try:
                 completed = _run(None)
             except subprocess.TimeoutExpired as timeout_exc:
-                raise CodeRuntimeTimeout(
+                raise CodeRuntimeTimeoutError(
                     code="CODE_RUNTIME_TIMEOUT",
                     message="code execution timed out",
                 ) from timeout_exc
@@ -333,7 +334,7 @@ def execute_code_in_subprocess(
             traceback_val = err.get("traceback")
             if isinstance(code_val, str) and isinstance(msg_val, str):
                 if code_val == "CODE_RUNTIME_MEMORY_LIMIT":
-                    raise CodeRuntimeMemoryLimit(
+                    raise CodeRuntimeMemoryLimitError(
                         code=code_val,
                         message=msg_val,
                         traceback=(
@@ -356,7 +357,7 @@ def execute_code_in_subprocess(
         message = stderr or "code runtime worker failed"
         lowered = message.lower()
         if "memory" in lowered or completed.returncode in {137, -9}:
-            raise CodeRuntimeMemoryLimit(
+            raise CodeRuntimeMemoryLimitError(
                 code="CODE_RUNTIME_MEMORY_LIMIT",
                 message="code execution exceeded memory limit",
             )

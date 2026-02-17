@@ -270,17 +270,17 @@ async def handle_artifact_get(
                     (WORKSPACE_ID, artifact_id),
                 ).fetchall()
                 roots = rows_to_dicts(roots_rows, ROOT_COLUMNS)
-                for root in roots:
-                    root_entries.append(
-                        {
-                            "artifact_id": artifact_id,
-                            "root_path": root.get("root_path"),
-                            "root_shape": root.get("root_shape"),
-                            "fields_top": root.get("fields_top"),
-                            "count_estimate": root.get("count_estimate"),
-                            "map_kind": artifact_row.get("map_kind"),
-                        }
-                    )
+                root_entries.extend(
+                    {
+                        "artifact_id": artifact_id,
+                        "root_path": root.get("root_path"),
+                        "root_shape": root.get("root_shape"),
+                        "fields_top": root.get("fields_top"),
+                        "count_estimate": root.get("count_estimate"),
+                        "map_kind": artifact_row.get("map_kind"),
+                    }
+                    for root in roots
+                )
             mapped_lineage: dict[str, Any] = {
                 "scope": scope,
                 "anchor_artifact_id": anchor_artifact_id,

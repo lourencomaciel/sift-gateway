@@ -72,7 +72,7 @@ def _parse_utc(timestamp: str) -> dt.datetime:
     """
     if timestamp.endswith("Z"):
         timestamp = timestamp[:-1] + "+00:00"
-    return dt.datetime.fromisoformat(timestamp).astimezone(dt.timezone.utc)
+    return dt.datetime.fromisoformat(timestamp).astimezone(dt.UTC)
 
 
 def _to_aware_utc(value: dt.datetime) -> dt.datetime:
@@ -87,8 +87,8 @@ def _to_aware_utc(value: dt.datetime) -> dt.datetime:
         A timezone-aware UTC datetime.
     """
     if value.tzinfo is None:
-        return value.replace(tzinfo=dt.timezone.utc)
-    return value.astimezone(dt.timezone.utc)
+        return value.replace(tzinfo=dt.UTC)
+    return value.astimezone(dt.UTC)
 
 
 def sign_cursor_payload(payload: dict[str, Any], secrets: CursorSecrets) -> str:
@@ -178,11 +178,7 @@ def verify_cursor_token(
     if not isinstance(expires_at, str):
         msg = "cursor missing expires_at"
         raise CursorTokenError(msg)
-    current = (
-        _to_aware_utc(now)
-        if now is not None
-        else dt.datetime.now(dt.timezone.utc)
-    )
+    current = _to_aware_utc(now) if now is not None else dt.datetime.now(dt.UTC)
     try:
         expires_at_dt = _parse_utc(expires_at)
     except ValueError as exc:

@@ -15,7 +15,8 @@ Typical usage example::
 
 from __future__ import annotations
 
-from typing import Any, Sequence
+from collections.abc import Sequence
+from typing import Any
 
 from sift_mcp.pagination.contract import (
     build_retrieval_pagination_meta,

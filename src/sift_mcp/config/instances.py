@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+import contextlib
+from datetime import UTC, datetime
 import hashlib
 import json
 import os
@@ -124,10 +125,8 @@ def save_registry(registry: dict[str, Any]) -> None:
     except BaseException:
         if fd >= 0:
             os.close(fd)
-        try:
+        with contextlib.suppress(OSError):
             os.unlink(tmp)
-        except OSError:
-            pass
         raise
 
 
@@ -243,7 +242,7 @@ def list_instances() -> list[dict[str, Any]]:
 
 
 def _utc_now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    return datetime.now(UTC).isoformat().replace("+00:00", "Z")
 
 
 def _detect_client_hint(source: Path) -> str:
@@ -271,11 +270,14 @@ def _derive_label(source: Path) -> str:
 
     if name == ".mcp.json":
         raw = parent.name
-    elif name in {"settings.local.json", "settings.json"} and parent.name == ".claude":
-        raw = parent.parent.name
-    elif name == "mcp.json" and parent.name == ".vscode":
-        raw = parent.parent.name
-    elif name == "settings.json" and parent.name == ".zed":
+    elif (
+        (
+            name in {"settings.local.json", "settings.json"}
+            and parent.name == ".claude"
+        )
+        or (name == "mcp.json" and parent.name == ".vscode")
+        or (name == "settings.json" and parent.name == ".zed")
+    ):
         raw = parent.parent.name
     elif name == "claude_desktop_config.json":
         raw = "desktop"

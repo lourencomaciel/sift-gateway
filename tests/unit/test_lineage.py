@@ -44,7 +44,8 @@ def test_resolve_related_artifacts_maps_rows_and_binds_params() -> None:
         anchor_artifact_id="art_root",
     )
     assert [row["artifact_id"] for row in rows] == ["art_root", "art_child"]
-    assert conn.query is not None and "WITH RECURSIVE" in conn.query
+    assert conn.query is not None
+    assert "WITH RECURSIVE" in conn.query
     assert "related(artifact_id)" in conn.query
     assert conn.params is not None
     assert conn.params[1] == "sess_1"

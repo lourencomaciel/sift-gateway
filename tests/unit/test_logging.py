@@ -89,7 +89,9 @@ def test_log_events_prune_events() -> None:
 
 
 def test_log_events_auto_pagination_events() -> None:
-    assert LogEvents.AUTO_PAGINATION_TIMEOUT == "gateway.auto_pagination.timeout"
+    assert (
+        LogEvents.AUTO_PAGINATION_TIMEOUT == "gateway.auto_pagination.timeout"
+    )
     assert (
         LogEvents.AUTO_PAGINATION_REF_RESOLUTION_ERROR
         == "gateway.auto_pagination.ref_resolution_error"

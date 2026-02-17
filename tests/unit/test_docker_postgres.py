@@ -194,7 +194,7 @@ class TestFindAvailablePort:
             call_count[0] += 1
             if call_count[0] == 1:
                 raise OSError(errno.EADDRINUSE, "in use")
-            return None
+            return
 
         monkeypatch.setattr("socket.socket.bind", _bind)
         port = _find_available_port(59100)

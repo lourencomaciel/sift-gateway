@@ -551,26 +551,26 @@ def run_partial_mapping(
                 not in_element
                 and active_root is None
                 and depth <= budgets.max_root_discovery_depth
+                and event == "start_array"
             ):
-                if event == "start_array":
-                    root_path = _prefix_to_jsonpath(prefix)
-                    root_key = prefix if prefix else "$"
-                    if root_key not in roots:
-                        seed = _make_reservoir_seed(
-                            config.payload_hash_full,
-                            root_path,
-                            config.map_budget_fingerprint,
-                        )
-                        root_state = _RootState(
-                            root_key=root_key,
-                            root_path=root_path,
-                            root_shape="array",
-                            prng=DeterministicPRNG(seed),
-                            max_reservoir_size=budgets.max_records_sampled,
-                        )
-                        roots[root_key] = root_state
-                        active_root = root_key
-                    continue
+                root_path = _prefix_to_jsonpath(prefix)
+                root_key = prefix if prefix else "$"
+                if root_key not in roots:
+                    seed = _make_reservoir_seed(
+                        config.payload_hash_full,
+                        root_path,
+                        config.map_budget_fingerprint,
+                    )
+                    root_state = _RootState(
+                        root_key=root_key,
+                        root_path=root_path,
+                        root_shape="array",
+                        prng=DeterministicPRNG(seed),
+                        max_reservoir_size=budgets.max_records_sampled,
+                    )
+                    roots[root_key] = root_state
+                    active_root = root_key
+                continue
 
             # If we have an active root, process elements within it
             if active_root is not None and active_root in roots:

@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 import hashlib
 import json
-from typing import Any, Mapping
+from typing import Any
 
 from sift_mcp.constants import WORKSPACE_ID
 
@@ -131,7 +132,9 @@ def compute_related_set_hash(artifacts: list[dict[str, Any]]) -> str:
         generation = artifact.get("generation")
         if not isinstance(artifact_id, str):
             continue
-        generation_token = str(generation) if isinstance(generation, int) else ""
+        generation_token = (
+            str(generation) if isinstance(generation, int) else ""
+        )
         tokens.append(f"{artifact_id}:{generation_token}")
     payload = json.dumps(sorted(tokens), separators=(",", ":"))
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
@@ -253,9 +256,7 @@ def build_lineage_root_catalog(
                 "root_shape": representative.get("root_shape")
                 if compatible
                 else "mixed",
-                "schema": representative.get("schema")
-                if compatible
-                else None,
+                "schema": representative.get("schema") if compatible else None,
                 "count_estimate": row["count_estimate_total"]
                 if row["has_count"]
                 else None,

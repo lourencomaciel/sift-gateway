@@ -154,13 +154,7 @@ def test_resolve_source_shortcut_vscode_ignores_non_mcp_settings_json(
         "sift_mcp.config.init_source._platform_key",
         lambda: "macos",
     )
-    base = (
-        tmp_path
-        / "Library"
-        / "Application Support"
-        / "Code"
-        / "User"
-    )
+    base = tmp_path / "Library" / "Application Support" / "Code" / "User"
     settings = base / "settings.json"
     mcp = base / "mcp.json"
     settings.parent.mkdir(parents=True, exist_ok=True)

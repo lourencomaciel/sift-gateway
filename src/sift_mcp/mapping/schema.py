@@ -12,11 +12,12 @@ deterministic ``schema_hash`` and per-field ``required`` /
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from decimal import Decimal
 import json
 import math
-from typing import Any, Sequence
+from typing import Any
 
 from sift_mcp.canon.rfc8785 import canonical_bytes
 from sift_mcp.constants import TRAVERSAL_CONTRACT_VERSION
@@ -217,7 +218,10 @@ def _walk_value(
     existing.types.add(_json_type_name(value))
     seen_paths.add(path)
 
-    if not isinstance(value, (dict, list)) and len(existing.distinct_values) < 10:
+    if (
+        not isinstance(value, (dict, list))
+        and len(existing.distinct_values) < 10
+    ):
         distinct_key = _distinct_identity_key(value)
         if distinct_key is not None:
             existing.distinct_values.setdefault(distinct_key, value)
@@ -244,7 +248,9 @@ def _walk_value(
             )
 
 
-def _build_fields(records: Sequence[Any]) -> tuple[list[SchemaFieldInventory], int]:
+def _build_fields(
+    records: Sequence[Any],
+) -> tuple[list[SchemaFieldInventory], int]:
     """Build field inventories and observed record count from records."""
     observed_records = len(records)
     stats: dict[str, _PathStats] = {}
@@ -431,7 +437,8 @@ def build_sampled_schema(
             observed_count_raw = raw.get("observed_count")
             observed_count = (
                 int(observed_count_raw)
-                if isinstance(observed_count_raw, int) and observed_count_raw >= 0
+                if isinstance(observed_count_raw, int)
+                and observed_count_raw >= 0
                 else 0
             )
             example_raw = raw.get("example_value")
@@ -490,14 +497,15 @@ def build_sampled_schema(
             key=lambda sample: int(getattr(sample, "sample_index", 0)),
         )
         records: list[Any] = [
-            resolve_json_strings(getattr(sample, "record"))
+            resolve_json_strings(sample.record)
             for sample in root_samples
             if hasattr(sample, "record")
         ]
         observed_records_raw = getattr(root, "sampled_prefix_len", None)
         observed_records = (
             int(observed_records_raw)
-            if isinstance(observed_records_raw, int) and observed_records_raw >= 0
+            if isinstance(observed_records_raw, int)
+            and observed_records_raw >= 0
             else len(records)
         )
         fields_from_paths = _build_fields_from_path_stats(
@@ -506,15 +514,14 @@ def build_sampled_schema(
         )
         if fields_from_paths:
             sampled_fields, _ = _build_fields(records)
-            sampled_by_path = {
-                field.path: field for field in sampled_fields
-            }
+            sampled_by_path = {field.path: field for field in sampled_fields}
             merged_fields: dict[str, SchemaFieldInventory] = {}
             for field in fields_from_paths:
                 sampled_field = sampled_by_path.get(field.path)
                 merged_fields[field.path] = SchemaFieldInventory(
                     path=field.path,
-                    types=field.types or (
+                    types=field.types
+                    or (
                         sampled_field.types if sampled_field is not None else []
                     ),
                     nullable=field.nullable

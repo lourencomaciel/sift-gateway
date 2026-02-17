@@ -50,44 +50,30 @@ def test_jsonpath_decodes_supported_bracket_escapes() -> None:
 
 
 def test_jsonpath_rejects_unsupported_bracket_escape() -> None:
-    try:
+    with pytest.raises(JsonPathError, match="unsupported escape sequence"):
         evaluate_jsonpath({"a": 1}, r"$['a\q']")
-    except JsonPathError as exc:
-        assert "unsupported escape sequence" in str(exc)
-    else:
-        raise AssertionError("expected JsonPathError")
 
 
 def test_jsonpath_enforces_max_length_cap() -> None:
-    try:
+    with pytest.raises(JsonPathError, match="max length"):
         evaluate_jsonpath({"a": 1}, "$.a", max_length=2)
-    except JsonPathError as exc:
-        assert "max length" in str(exc)
-    else:
-        raise AssertionError("expected JsonPathError")
 
 
 def test_jsonpath_enforces_max_segments_cap() -> None:
-    try:
+    with pytest.raises(JsonPathError, match="max segments"):
         canonicalize_jsonpath("$.a.b", max_segments=1)
-    except JsonPathError as exc:
-        assert "max segments" in str(exc)
-    else:
-        raise AssertionError("expected JsonPathError")
 
 
 def test_jsonpath_enforces_wildcard_expansion_cap() -> None:
     doc = {"items": [1, 2, 3]}
-    try:
+    with pytest.raises(
+        JsonPathError, match="wildcard expansion exceeds max total"
+    ):
         evaluate_jsonpath(
             doc,
             "$.items[*]",
             max_wildcard_expansion_total=2,
         )
-    except JsonPathError as exc:
-        assert "wildcard expansion exceeds max total" in str(exc)
-    else:
-        raise AssertionError("expected JsonPathError")
 
 
 # ---------------------------------------------------------------------------

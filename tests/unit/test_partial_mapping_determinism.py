@@ -18,13 +18,13 @@ def test_same_payload_same_budgets_produces_identical_sample_indices() -> None:
     config = make_partial_config(budgets)
 
     # Run twice
-    roots1, samples1 = run_partial_mapping(make_json_stream(data), config)
-    roots2, samples2 = run_partial_mapping(make_json_stream(data), config)
+    roots1, _samples1 = run_partial_mapping(make_json_stream(data), config)
+    roots2, _samples2 = run_partial_mapping(make_json_stream(data), config)
 
     assert len(roots1) > 0
     assert len(roots1) == len(roots2)
 
-    for r1, r2 in zip(roots1, roots2):
+    for r1, r2 in zip(roots1, roots2, strict=True):
         assert r1.sample_indices == r2.sample_indices
         assert r1.fields_top == r2.fields_top
 
@@ -38,7 +38,7 @@ def test_same_payload_same_budgets_produces_identical_fields_top() -> None:
     roots1, _ = run_partial_mapping(make_json_stream(data), config)
     roots2, _ = run_partial_mapping(make_json_stream(data), config)
 
-    for r1, r2 in zip(roots1, roots2):
+    for r1, r2 in zip(roots1, roots2, strict=True):
         assert r1.fields_top == r2.fields_top
 
 
@@ -148,7 +148,7 @@ def test_skipped_oversize_records_tracking() -> None:
         max_record_bytes=50,
     )
     config = make_partial_config(budgets)
-    roots, samples = run_partial_mapping(make_json_stream(data), config)
+    roots, _samples = run_partial_mapping(make_json_stream(data), config)
     assert len(roots) == 1
     summary = roots[0].root_summary
     assert summary is not None
@@ -163,7 +163,7 @@ def test_sample_record_hashes_are_deterministic() -> None:
     _, samples1 = run_partial_mapping(make_json_stream(data), config)
     _, samples2 = run_partial_mapping(make_json_stream(data), config)
     assert len(samples1) == len(samples2)
-    for s1, s2 in zip(samples1, samples2):
+    for s1, s2 in zip(samples1, samples2, strict=True):
         assert s1.record_hash == s2.record_hash
         assert s1.record_bytes == s2.record_bytes
         assert s1.sample_index == s2.sample_index

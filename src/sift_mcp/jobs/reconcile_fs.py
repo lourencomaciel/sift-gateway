@@ -9,6 +9,7 @@ orphans and cleans up empty parent directories.
 
 from __future__ import annotations
 
+import contextlib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -191,10 +192,8 @@ def run_reconcile(
     missing_hashes = find_missing(db_paths)
     orphan_bytes = 0
     for path in orphan_paths:
-        try:
+        with contextlib.suppress(OSError):
             orphan_bytes += path.stat().st_size
-        except OSError:
-            pass
     log = logger or get_logger(component="jobs.reconcile_fs")
     removed_count = 0
     if remove and orphan_paths:

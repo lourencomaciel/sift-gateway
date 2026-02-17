@@ -10,6 +10,7 @@ and ``acquire_advisory_lock``.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 from dataclasses import dataclass
 import threading as _threading
 import time
@@ -215,10 +216,8 @@ def release_advisory_lock(connection: Any, *, request_key: str) -> None:
     with _sqlite_guard:
         lock = _sqlite_key_locks.pop(request_key, None)
     if lock is not None:
-        try:
+        with contextlib.suppress(RuntimeError):
             lock.release()
-        except RuntimeError:
-            pass  # lock was not held
 
 
 def acquire_advisory_lock(

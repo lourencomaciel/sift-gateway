@@ -95,7 +95,7 @@ def write_secret(
         )
         raise ValueError(msg)
 
-    now = datetime.datetime.now(datetime.timezone.utc)
+    now = datetime.datetime.now(datetime.UTC)
     payload = {
         "version": 1,
         "transport": transport,

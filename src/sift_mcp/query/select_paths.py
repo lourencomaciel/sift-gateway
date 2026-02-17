@@ -9,7 +9,8 @@ selected fields from JSON records.  Key exports are
 
 from __future__ import annotations
 
-from typing import Any, Sequence
+from collections.abc import Sequence
+from typing import Any
 
 from sift_mcp.canon.rfc8785 import canonical_bytes
 from sift_mcp.query.jsonpath import (

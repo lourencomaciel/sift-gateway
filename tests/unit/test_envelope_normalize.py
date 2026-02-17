@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from sift_mcp.envelope.model import BinaryRefContentPart
 from sift_mcp.envelope.normalize import (
     normalize_envelope,
@@ -51,7 +53,7 @@ def test_normalize_infers_error_when_error_object_is_present() -> None:
 
 
 def test_normalize_rejects_inline_binary_bytes() -> None:
-    try:
+    with pytest.raises(ValueError, match="not allowed inline"):
         normalize_envelope(
             upstream_instance_id="up_1",
             upstream_prefix="github",
@@ -67,14 +69,10 @@ def test_normalize_rejects_inline_binary_bytes() -> None:
                 }
             ],
         )
-    except ValueError as exc:
-        assert "not allowed inline" in str(exc)
-    else:
-        raise AssertionError("expected ValueError")
 
 
 def test_normalize_rejects_binary_ref_missing_identifiers() -> None:
-    try:
+    with pytest.raises(ValueError, match="blob_id"):
         normalize_envelope(
             upstream_instance_id="up_1",
             upstream_prefix="github",
@@ -87,7 +85,3 @@ def test_normalize_rejects_binary_ref_missing_identifiers() -> None:
                 }
             ],
         )
-    except ValueError as exc:
-        assert "blob_id" in str(exc)
-    else:
-        raise AssertionError("expected ValueError")

@@ -6,7 +6,9 @@ new callers.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Mapping
+from collections.abc import Mapping
+import contextlib
+from typing import TYPE_CHECKING, Any
 
 from sift_mcp.constants import WORKSPACE_ID
 from sift_mcp.cursor.hmac import (
@@ -155,10 +157,8 @@ def _find_full_mapping_items(
 
             record_hash: str | None = None
             if isinstance(record, dict):
-                try:
+                with contextlib.suppress(TypeError, ValueError):
                     record_hash = sha256_trunc(_canon(record), 32)
-                except (TypeError, ValueError):
-                    pass
 
             items.append(
                 {

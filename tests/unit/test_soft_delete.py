@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from sift_mcp.constants import WORKSPACE_ID
 from sift_mcp.db.backend import Dialect
 from sift_mcp.jobs.soft_delete import (
@@ -126,12 +128,8 @@ def test_run_soft_delete_updates_metrics() -> None:
 
 def test_run_soft_delete_rolls_back_on_error() -> None:
     connection = _FakeConnection(rows_sequence=[[]], fail_on_call=1)
-    try:
+    with pytest.raises(RuntimeError, match="simulated execute failure"):
         run_soft_delete_expired(connection, batch_size=1)
-    except RuntimeError as exc:
-        assert "simulated execute failure" in str(exc)
-    else:
-        raise AssertionError("expected RuntimeError")
     assert connection.committed is False
     assert connection.rolled_back is True
 

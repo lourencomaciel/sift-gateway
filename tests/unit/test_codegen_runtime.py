@@ -7,7 +7,7 @@ import pytest
 from sift_mcp.codegen.runtime import (
     CodeRuntimeConfig,
     CodeRuntimeError,
-    CodeRuntimeTimeout,
+    CodeRuntimeTimeoutError,
     _build_env,
     execute_code_in_subprocess,
 )
@@ -49,7 +49,7 @@ def run(data, schema, params):
 
 
 def test_execute_code_in_subprocess_timeout() -> None:
-    with pytest.raises(CodeRuntimeTimeout):
+    with pytest.raises(CodeRuntimeTimeoutError):
         execute_code_in_subprocess(
             code="""
 def run(data, schema, params):

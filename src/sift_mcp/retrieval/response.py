@@ -9,8 +9,9 @@ and ``build_retrieval_response``.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 import json
-from typing import Any, Sequence
+from typing import Any
 
 from sift_mcp.canon.rfc8785 import canonical_bytes
 from sift_mcp.pagination.contract import (

@@ -5,6 +5,8 @@ from __future__ import annotations
 import datetime as dt
 from decimal import Decimal
 
+import pytest
+
 from sift_mcp.constants import WORKSPACE_ID
 from sift_mcp.jobs.hard_delete import (
     FIND_HARD_DELETE_CANDIDATES_SQL,
@@ -525,7 +527,7 @@ def test_enforce_quota_uses_past_cutoff_for_hard_delete_grace(
         _fake_hard_delete,
     )
 
-    before = dt.datetime.now(dt.timezone.utc)
+    before = dt.datetime.now(dt.UTC)
     enforce_quota(
         conn,
         max_binary_blob_bytes=500,
@@ -535,7 +537,7 @@ def test_enforce_quota_uses_past_cutoff_for_hard_delete_grace(
         max_prune_rounds=1,
         blobs_root=tmp_path,
     )
-    after = dt.datetime.now(dt.timezone.utc)
+    after = dt.datetime.now(dt.UTC)
 
     cutoff = dt.datetime.fromisoformat(captured["grace_period_timestamp"])
     assert cutoff <= after - dt.timedelta(seconds=59)
@@ -551,12 +553,8 @@ def test_enforce_quota_recomputes_cutoff_each_round(monkeypatch) -> None:
     captured: list[str] = []
     cutoff_values = iter(
         [
-            dt.datetime(
-                2026, 1, 1, 0, 0, 1, tzinfo=dt.timezone.utc
-            ).isoformat(),
-            dt.datetime(
-                2026, 1, 1, 0, 0, 4, tzinfo=dt.timezone.utc
-            ).isoformat(),
+            dt.datetime(2026, 1, 1, 0, 0, 1, tzinfo=dt.UTC).isoformat(),
+            dt.datetime(2026, 1, 1, 0, 0, 4, tzinfo=dt.UTC).isoformat(),
         ]
     )
 
@@ -614,7 +612,7 @@ def test_enforce_quota_rolls_back_on_usage_query_error() -> None:
             max_payload_total_bytes=500,
             max_total_storage_bytes=500,
         )
-        assert False, "should have raised"
+        pytest.fail("should have raised")
     except RuntimeError:
         assert conn.rolled_back >= 1
 
@@ -667,7 +665,7 @@ def test_storage_usage_is_frozen() -> None:
     )
     try:
         usage.binary_blob_bytes = 1  # type: ignore[misc]
-        assert False, "should be frozen"
+        pytest.fail("should be frozen")
     except AttributeError:
         pass
 
@@ -680,7 +678,7 @@ def test_quota_breaches_is_frozen() -> None:
     )
     try:
         breaches.binary_blob_exceeded = True  # type: ignore[misc]
-        assert False, "should be frozen"
+        pytest.fail("should be frozen")
     except AttributeError:
         pass
 
@@ -699,6 +697,6 @@ def test_quota_enforcement_result_is_frozen() -> None:
     )
     try:
         result.space_cleared = False  # type: ignore[misc]
-        assert False, "should be frozen"
+        pytest.fail("should be frozen")
     except AttributeError:
         pass

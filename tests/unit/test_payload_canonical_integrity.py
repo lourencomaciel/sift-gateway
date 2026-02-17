@@ -5,6 +5,8 @@ from __future__ import annotations
 from decimal import Decimal
 import hashlib
 
+import pytest
+
 from sift_mcp.canon import (
     canonical_bytes,
     compress_bytes,
@@ -205,45 +207,31 @@ def test_reconstruct_envelope_roundtrip() -> None:
 def test_reconstruct_envelope_verifies_hash() -> None:
     env = _sample_envelope()
     prepared = prepare_payload(env)
-    try:
+    with pytest.raises(ValueError, match="integrity"):
         reconstruct_envelope(
             prepared.compressed_bytes,
             prepared.encoding,
             "0000000000000000000000000000000000000000000000000000000000000000",
         )
-    except ValueError as exc:
-        assert "integrity" in str(exc)
-    else:
-        raise AssertionError("expected ValueError for hash mismatch")
 
 
 def test_reconstruct_envelope_rejects_invalid_json_payload() -> None:
     raw = b"this is not json"
     compressed = compress_bytes(raw, "none")
     expected_hash = hashlib.sha256(raw).hexdigest()
-    try:
+    with pytest.raises(ValueError, match="valid JSON"):
         reconstruct_envelope(
             compressed.data, compressed.encoding, expected_hash
         )
-    except ValueError as exc:
-        assert "valid JSON" in str(exc)
-    else:
-        raise AssertionError("expected ValueError for invalid JSON payload")
 
 
 def test_reconstruct_envelope_rejects_non_object_json() -> None:
     raw = b'["not","an","object"]'
     compressed = compress_bytes(raw, "none")
     expected_hash = hashlib.sha256(raw).hexdigest()
-    try:
+    with pytest.raises(ValueError, match="JSON object"):
         reconstruct_envelope(
             compressed.data, compressed.encoding, expected_hash
-        )
-    except ValueError as exc:
-        assert "JSON object" in str(exc)
-    else:
-        raise AssertionError(
-            "expected ValueError for non-object envelope payload"
         )
 
 
