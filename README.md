@@ -59,7 +59,7 @@ That's it. Sift is now proxying your upstream servers. Responses over 8 KB are a
 1. Sift connects to your configured upstream MCP servers (stdio or HTTP).
 2. Each upstream tool is mirrored as `{prefix}.{tool_name}` with the original schema preserved. No injected fields.
 3. When a tool returns a response under 8 KB (configurable), the raw response passes through to your client unchanged.
-4. When a response exceeds the threshold, Sift stores it durably (SQLite default, PostgreSQL for production), infers the schema, and returns a lightweight **artifact handle** containing the `artifact_id`, discovered schemas, and a usage hint.
+4. When a response exceeds the threshold, Sift stores it durably (SQLite by default, or PostgreSQL), infers the schema, and returns a lightweight **artifact handle** containing the `artifact_id`, discovered schemas, and a usage hint.
 5. You query the stored artifact using `artifact(action="query", query_kind=...)` with bounded, paginated responses.
 
 ## What You Can Do With Artifacts
