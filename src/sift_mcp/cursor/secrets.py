@@ -179,7 +179,19 @@ def load_or_create_cursor_secrets(
         return load_cursor_secrets(path)
 
     secrets = CursorSecrets(
-        active={initial_version: _new_secret()}, signing_version=initial_version
+        active={initial_version: _new_secret()},
+        signing_version=initial_version,
     )
+
+    # Use O_CREAT | O_EXCL to atomically claim the file.  If
+    # another process raced us and created it first, fall back to
+    # loading the existing file instead of overwriting it.
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        os.close(fd)
+    except FileExistsError:
+        return load_cursor_secrets(path)
+
     save_cursor_secrets(path, secrets)
     return secrets
