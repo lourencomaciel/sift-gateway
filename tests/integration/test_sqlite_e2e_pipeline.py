@@ -389,3 +389,30 @@ def test_sqlite_e2e_cache_reuse_across_sessions(sqlite_e2e_env):
         scope="single",
     )
     assert get_b["artifact_id"] == artifact_id
+
+
+def test_sqlite_e2e_cache_fresh_when_reuse_disabled(sqlite_e2e_env):
+    server, _config, _backend = sqlite_e2e_env
+    session_id = f"sess_{uuid.uuid4().hex}"
+    marker = f"sqlite_fresh_{uuid.uuid4().hex}"
+
+    first = _call_mirrored(
+        server,
+        "test.get_users",
+        session_id,
+        extra_args={"marker": marker},
+        allow_reuse=False,
+    )
+    second = _call_mirrored(
+        server,
+        "test.get_users",
+        session_id,
+        extra_args={"marker": marker},
+        allow_reuse=False,
+    )
+
+    assert first["type"] == "gateway_tool_result"
+    assert second["type"] == "gateway_tool_result"
+    assert first["artifact_id"] != second["artifact_id"]
+    assert first["meta"]["cache"]["reused"] is False
+    assert second["meta"]["cache"]["reused"] is False
