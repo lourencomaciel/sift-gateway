@@ -1,7 +1,7 @@
 # Sift
 
 ## Build & Test
-- `python -m pytest tests/unit/ -q` — run unit tests (~1026 tests)
+- `python -m pytest tests/unit/ -q` — run unit tests
 - `python -m ruff check src tests` — lint
 - `python -m ruff format src tests` — auto-format
 - `python -m mypy src` — strict type checking
@@ -11,7 +11,7 @@
 
 ## CLI
 - `sift-mcp --check` — validate config/DB/FS/upstreams and exit
-- `sift-mcp init --from <file>` — import mcpServers config, auto-provisions Docker Postgres
+- `sift-mcp init --from <file>` — import mcpServers config (SQLite by default; use `--db-backend postgres` for Postgres auto-provisioning)
 - `--dry-run` and `--revert` flags on init; `--data-dir` works globally
 
 ## Project Structure
@@ -21,7 +21,7 @@
 - `lifecycle.py` — Startup checks, exports `CheckResult` (not `StartupReport`)
 - `constants.py` — Version strings, WORKSPACE_ID, reserved keys
 - Tests: `tests/unit/`, fixtures in `conftest.py`
-- Docs: `docs/` — spec_v1_9.md, traversal_contract.md, cursor_contract.md, config.md
+- Docs: `docs/` — README.md, quickstart.md, config.md, api_contracts.md, deployment.md, errors.md, observability.md, recipes.md, spec_v1_9.md
 - Local dev: `local/` — gitignored; place ad-hoc validation scripts, scratch files, and test data here (not in `scripts/` which is tracked)
 
 ## Task Plan Workflow

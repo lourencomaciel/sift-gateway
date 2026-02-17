@@ -298,7 +298,14 @@ artifact(action="query", query_kind="describe", artifact_id="art_7f3a...")
 artifact(action="query", query_kind="get", artifact_id="art_7f3a...")
 
 # Select specific data
-artifact(action="query", query_kind="select", artifact_id="art_7f3a...", root_path="$.items", limit=100)
+artifact(
+    action="query",
+    query_kind="select",
+    artifact_id="art_7f3a...",
+    root_path="$.items",
+    select_paths=["id", "name"],
+    limit=100,
+)
 ```
 
 See [Recipes & Examples](recipes.md) for more usage patterns.

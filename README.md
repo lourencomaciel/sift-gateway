@@ -94,6 +94,7 @@ Only top-level string arguments are resolved. Nested values inside dicts or list
 
 ## Documentation
 
+- **[Documentation Map](docs/README.md)** — Start here to choose the right doc
 - **[Quick Start Guide](docs/quickstart.md)** — Detailed setup walkthrough
 - **[Configuration Reference](docs/config.md)** — All settings and environment variables
 - **[Recipes & Examples](docs/recipes.md)** — Common usage patterns
@@ -110,7 +111,7 @@ Only top-level string arguments are resolved. Nested values inside dicts or list
 uv sync
 
 # Tests
-uv run pytest tests/unit/ -q          # ~1026 unit tests
+uv run pytest tests/unit/ -q          # unit tests
 uv run pytest tests/integration/ -q   # requires PostgreSQL
 
 # Lint & type check
