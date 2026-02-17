@@ -1438,8 +1438,12 @@ async def handle_mirrored_tool(
         )
     except Exception:
         get_logger(component="mcp.handlers").warning(
-            "artifact ref resolution failed (best-effort)",
+            "artifact ref resolution failed",
             exc_info=True,
+        )
+        return gateway_error(
+            "INTERNAL",
+            "artifact ref resolution failed",
         )
 
     # Phase 2: Upstream call — no DB connection held.
@@ -1617,15 +1621,6 @@ async def handle_mirrored_tool(
 
     pagination_meta = None
     pagination_assessment_for_response = pagination_assessment
-    if (
-        pagination_assessment_for_response is not None
-        and ctx.db_pool is None
-        and pagination_assessment_for_response.state is not None
-    ):
-        pagination_assessment_for_response = dataclasses.replace(
-            pagination_assessment_for_response,
-            state=None,
-        )
     if pagination_assessment_for_response is not None:
         pagination_meta = _pagination_response_meta(
             pagination_assessment_for_response, handle.artifact_id

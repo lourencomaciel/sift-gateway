@@ -133,24 +133,29 @@ def _remove_blob_file_with_root(
     fs_path: str, *, blobs_root: Path | None
 ) -> bool:
     """Attempt to unlink a blob file with optional root confinement."""
+    log = get_logger(component="jobs.hard_delete")
     try:
         target = Path(os.path.abspath(fs_path))
         if blobs_root is not None:
             root = Path(os.path.abspath(blobs_root)).resolve(strict=False)
-            # Use resolved paths for confinement checks so symlinked
-            # directories cannot escape blobs_root.
-            target_for_check = target.resolve(strict=False)
+            # Resolve the target so the confinement check and the
+            # unlink operate on the same final path, closing the
+            # TOCTOU window for symlink swaps.
+            target = target.resolve(strict=False)
             try:
-                target_for_check.relative_to(root)
+                target.relative_to(root)
             except ValueError:
                 return False
         target.unlink()
         return True
     except FileNotFoundError:
         return False
-    except RuntimeError:
-        return False
-    except OSError:
+    except (RuntimeError, OSError) as exc:
+        log.warning(
+            "blob file removal failed",
+            fs_path=fs_path,
+            error=str(exc),
+        )
         return False
 
 

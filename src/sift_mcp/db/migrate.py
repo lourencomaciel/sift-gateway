@@ -143,6 +143,51 @@ def _validate_migration_sequence(paths: list[Path]) -> None:
         raise ValueError(msg)
 
 
+def _split_sql_statements(sql: str) -> list[str]:
+    """Split a multi-statement SQL string into individual statements.
+
+    Handles semicolons inside SQL body (e.g. trigger definitions that
+    use ``BEGIN ... END;``) by treating ``BEGIN``/``END`` blocks as
+    atomic units.  Empty statements are discarded.
+
+    Args:
+        sql: Raw SQL text possibly containing multiple statements.
+
+    Returns:
+        List of non-empty SQL statement strings.
+    """
+    statements: list[str] = []
+    current: list[str] = []
+    depth = 0
+
+    for line in sql.splitlines():
+        stripped = line.strip()
+        upper = stripped.upper()
+
+        # Track BEGIN/END depth for compound statements (triggers,
+        # functions) so that interior semicolons are not treated as
+        # statement terminators.
+        if upper.startswith("BEGIN"):
+            depth += 1
+        if upper.startswith("END") and depth > 0:
+            depth -= 1
+
+        current.append(line)
+
+        if stripped.endswith(";") and depth == 0:
+            stmt = "\n".join(current).strip()
+            if stmt and stmt != ";":
+                statements.append(stmt)
+            current = []
+
+    # Capture any trailing SQL without a final semicolon.
+    trailing = "\n".join(current).strip()
+    if trailing and trailing != ";":
+        statements.append(trailing)
+
+    return statements
+
+
 def apply_migrations(
     connection: ConnectionLike,
     migrations_dir: Path,
@@ -171,12 +216,12 @@ def apply_migrations(
     for migration in load_migrations(migrations_dir):
         if migration.name in applied:
             continue
-        # SQLite's execute() only supports one statement at a time;
-        # use executescript() when available for multi-statement DDL.
-        if hasattr(connection, "executescript"):
-            connection.executescript(migration.sql)
-        else:
-            connection.execute(migration.sql)
+        # Split multi-statement SQL and execute each statement
+        # individually.  We avoid SQLite's executescript() because
+        # it implicitly commits before running, breaking atomicity
+        # for multi-statement migrations.
+        for stmt in _split_sql_statements(migration.sql):
+            connection.execute(stmt)
         insert_sql = (
             "INSERT INTO schema_migrations"
             f" (migration_name) VALUES ({param_marker})"
