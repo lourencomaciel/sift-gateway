@@ -175,7 +175,7 @@ Conditional update: `deleted_at IS NULL AND map_status IN (pending, stale) AND g
 - For multi-artifact queries, `artifacts` and `schemas` are dictionaries keyed by requested artifact id.
 - Return contract: any JSON-serializable value; non-list values are normalized to a single-item list.
 - Runtime uses subprocess isolation with deterministic env (`PYTHONHASHSEED=0`, `TZ=UTC`), timeout, memory cap, and input-size guards.
-- Default import roots include stdlib helpers plus `jmespath`, `pandas`, and `numpy`.
+- Default import roots include stdlib helpers (`math`, `statistics`, `decimal`, `datetime`, `re`, `itertools`, `collections`, `functools`, `operator`, `heapq`, `json`, `csv`, `io`, `string`, `textwrap`, `copy`, `typing`, `dataclasses`, `enum`, `fractions`, `bisect`, `pprint`, `uuid`, `base64`, `struct`, `array`, `numbers`, `cmath`, `random`, `secrets`, `fnmatch`, `difflib`, `html`, `urllib`) plus `jmespath`, `pandas`, and `numpy`. The `io` module restricts file-backed classes; only `StringIO` and `BytesIO` are usable. The `urllib` module is restricted to `urllib.parse` only; `urllib.request` and other submodules are blocked.
 - Import roots can be explicitly configured via `code_query_allowed_import_roots`.
 - Code query responses are unpaginated: all rows are returned in one response.
 - Output is bounded only by `max_bytes_out`; oversize responses fail with `RESPONSE_TOO_LARGE`.

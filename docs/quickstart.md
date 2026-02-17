@@ -341,4 +341,4 @@ See [Recipes & Examples](recipes.md) for more usage patterns.
 - **[Recipes & Examples](recipes.md)** — Learn common usage patterns
 - **[Configuration Reference](config.md)** — Customize Sift's behavior
 - **[Deployment Guide](deployment.md)** — Run Sift in production
-- **[Architecture & Spec](spec_v1_9.md)** — Understand how Sift works internally
+- **[Architecture](architecture.md)** — Understand how Sift works internally
