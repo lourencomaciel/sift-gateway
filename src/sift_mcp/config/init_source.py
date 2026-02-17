@@ -11,6 +11,7 @@ SUPPORTED_SOURCE_SHORTCUTS: tuple[str, ...] = (
     "claude",
     "claude-code",
     "cursor",
+    "openclaw",
     "vscode",
     "windsurf",
     "zed",
@@ -22,6 +23,8 @@ _SOURCE_SHORTCUT_ALIASES: dict[str, str] = {
     "claude-desktop": "claude",
     "claudecode": "claude-code",
     "claude_code": "claude-code",
+    "open-claw": "openclaw",
+    "open_claw": "openclaw",
     "vs-code": "vscode",
     "vs_code": "vscode",
     "code": "vscode",
@@ -43,7 +46,7 @@ def resolve_source_arg(
     ``source_arg`` can be:
     - explicit path (absolute or relative)
     - a known shortcut (``claude``, ``claude-code``, ``cursor``,
-      ``vscode``, ``windsurf``, ``zed``, ``auto``)
+      ``openclaw``, ``vscode``, ``windsurf``, ``zed``, ``auto``)
     """
     raw = str(source_arg).strip()
     root = cwd.expanduser().resolve() if cwd is not None else None
@@ -159,6 +162,8 @@ def _candidate_paths_for_shortcut(
         return _claude_code_candidates(cwd)
     if shortcut == "cursor":
         return _cursor_candidates(cwd)
+    if shortcut == "openclaw":
+        return _openclaw_candidates()
     if shortcut == "vscode":
         return _vscode_candidates(cwd)
     if shortcut == "windsurf":
@@ -346,6 +351,32 @@ def _zed_candidates(cwd: Path) -> list[Path]:
     return candidates
 
 
+def _openclaw_candidates() -> list[Path]:
+    candidates: list[Path] = []
+    home = Path.home()
+    plat = _platform_key()
+
+    # Primary: ~/.openclaw/openclaw.json (all platforms)
+    candidates.append(home / ".openclaw" / "openclaw.json")
+
+    if plat == "macos":
+        candidates.append(
+            home
+            / "Library"
+            / "Application Support"
+            / "OpenClaw"
+            / "openclaw.json"
+        )
+    elif plat == "windows":
+        appdata = _windows_roaming_dir()
+        if appdata is not None:
+            candidates.append(appdata / "OpenClaw" / "openclaw.json")
+    else:
+        candidates.append(home / ".config" / "openclaw" / "openclaw.json")
+
+    return candidates
+
+
 def _looks_like_path(value: str) -> bool:
     if value.startswith((".", "~")):
         return True
@@ -433,6 +464,12 @@ def _is_mcp_config_file(path: Path) -> bool:
 
     mcp = raw.get("mcp")
     if isinstance(mcp, dict) and isinstance(mcp.get("servers"), dict):
+        return True
+
+    provider = raw.get("provider")
+    if isinstance(provider, dict) and isinstance(
+        provider.get("mcpServers"), dict
+    ):
         return True
 
     zed = raw.get("context_servers")

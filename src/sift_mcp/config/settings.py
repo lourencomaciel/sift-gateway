@@ -1051,8 +1051,10 @@ def _resolve_mcp_servers_format(
 
     has_mcp_servers = "mcpServers" in merged
     has_vscode = isinstance(merged.get("mcp"), dict)
+    _provider = merged.get("provider")
+    has_openclaw = isinstance(_provider, dict) and "mcpServers" in _provider
 
-    uses_new_format = has_mcp_servers or has_vscode
+    uses_new_format = has_mcp_servers or has_vscode or has_openclaw
 
     if not uses_new_format:
         return merged
@@ -1077,6 +1079,7 @@ def _resolve_mcp_servers_format(
     # Strip keys that GatewayConfig doesn't know about (extra="forbid")
     merged.pop("mcpServers", None)
     merged.pop("mcp", None)
+    merged.pop("provider", None)
     merged.pop("_gateway_sync", None)
 
     return merged
