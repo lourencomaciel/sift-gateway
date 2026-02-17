@@ -216,9 +216,8 @@ def _check_sqlite(config: GatewayConfig) -> tuple[bool, list[str]]:
 
     details: list[str] = []
     try:
-        conn = sqlite3.connect(str(config.sqlite_path))
-        conn.execute("SELECT 1")
-        conn.close()
+        with sqlite3.connect(str(config.sqlite_path)) as conn:
+            conn.execute("SELECT 1")
     except Exception as exc:
         details.append(f"SQLite check failed: {exc}")
         return False, details

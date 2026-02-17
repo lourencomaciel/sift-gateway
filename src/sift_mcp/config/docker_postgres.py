@@ -18,6 +18,7 @@ import socket
 import subprocess
 import time
 from typing import Any, cast
+from urllib.parse import quote
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -325,7 +326,10 @@ def _build_dsn(
     db: str,
 ) -> str:
     """Build a ``postgresql://`` connection string."""
-    return f"postgresql://{user}:{password}@{host}:{port}/{db}"
+    return (
+        f"postgresql://{quote(user, safe='')}:"
+        f"{quote(password, safe='')}@{host}:{port}/{db}"
+    )
 
 
 # ---------------------------------------------------------------------------
