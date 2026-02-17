@@ -166,7 +166,7 @@ See [SECURITY.md](SECURITY.md) for reporting vulnerabilities.
 | **[Deployment Guide](docs/deployment.md)** | Transport modes, PostgreSQL, multi-process, monitoring |
 | **[Error Reference](docs/errors.md)** | Error codes and troubleshooting |
 | **[Observability](docs/observability.md)** | Structured logging events and metrics |
-| **[Architecture & Spec](docs/spec_v1_9.md)** | v1.9 design specification and invariants |
+| **[Architecture](docs/architecture.md)** | Design specification and invariants |
 
 ## Development
 

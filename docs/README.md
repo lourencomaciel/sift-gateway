@@ -15,7 +15,7 @@ maintainer-only guide.
 
 ## Architecture Reference
 
-- `spec_v1_9.md` — implementation architecture and invariants
+- `architecture.md` — implementation architecture and invariants
 
 ## Maintainer Workflow
 
