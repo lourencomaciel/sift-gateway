@@ -41,7 +41,7 @@
 - `obs/` — structlog setup (`LogEvents` constants), Prometheus metrics (`GatewayMetrics`)
 - `jobs/` — quota enforcement, soft/hard delete, FS reconciliation
 - Tests: `tests/unit/` (~97 files), `tests/integration/` (requires Postgres)
-- Docs: `docs/` — README.md, quickstart.md, config.md, api_contracts.md, deployment.md, errors.md, observability.md, recipes.md, spec_v1_9.md
+- Docs: `docs/` — README.md, quickstart.md, config.md, api_contracts.md, deployment.md, errors.md, observability.md, recipes.md, architecture.md
 - Local dev: `local/` — gitignored; place ad-hoc validation scripts, scratch files, and test data here (not in `scripts/` which is tracked)
 
 ## Style Guide

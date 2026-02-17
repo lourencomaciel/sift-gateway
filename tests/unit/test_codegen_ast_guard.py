@@ -96,3 +96,158 @@ def test_allowed_import_roots_honors_configured_override() -> None:
         configured_roots=["math", "json"],
     )
     assert roots == {"math", "json"}
+
+
+@pytest.mark.parametrize(
+    "module_name",
+    [
+        "csv",
+        "io",
+        "string",
+        "textwrap",
+        "copy",
+        "typing",
+        "dataclasses",
+        "enum",
+        "fractions",
+        "bisect",
+        "pprint",
+        "uuid",
+        "base64",
+        "struct",
+        "array",
+        "numbers",
+        "cmath",
+        "random",
+        "secrets",
+        "fnmatch",
+        "difflib",
+        "html",
+    ],
+)
+def test_validate_code_ast_accepts_new_stdlib_imports(
+    module_name: str,
+) -> None:
+    code = f"""
+import {module_name}
+
+def run(data, schema, params):
+    return []
+"""
+    module = validate_code_ast(code)
+    assert module is not None
+
+
+def test_validate_code_ast_accepts_io_stringio() -> None:
+    code = """
+import io
+
+def run(data, schema, params):
+    buf = io.StringIO()
+    buf.write("hello")
+    return [buf.getvalue()]
+"""
+    module = validate_code_ast(code)
+    assert module is not None
+
+
+def test_validate_code_ast_accepts_io_bytesio() -> None:
+    code = """
+import io
+
+def run(data, schema, params):
+    buf = io.BytesIO(b"hello")
+    return [len(buf.getvalue())]
+"""
+    module = validate_code_ast(code)
+    assert module is not None
+
+
+@pytest.mark.parametrize(
+    "blocked_attr",
+    ["open", "FileIO", "BufferedReader", "BufferedWriter", "BufferedRandom"],
+)
+def test_validate_code_ast_rejects_io_file_access(
+    blocked_attr: str,
+) -> None:
+    code = f"""
+import io
+
+def run(data, schema, params):
+    return io.{blocked_attr}("/tmp/x")
+"""
+    with pytest.raises(CodeValidationError) as exc:
+        validate_code_ast(code)
+    assert exc.value.code == "CODE_AST_REJECTED"
+    assert f"io.{blocked_attr}" in exc.value.message
+
+
+def test_validate_code_ast_accepts_import_urllib_parse() -> None:
+    code = """
+import urllib.parse
+
+def run(data, schema, params):
+    return [urllib.parse.quote("hello world")]
+"""
+    module = validate_code_ast(code)
+    assert module is not None
+
+
+def test_validate_code_ast_accepts_from_urllib_import_parse() -> None:
+    code = """
+from urllib import parse
+
+def run(data, schema, params):
+    return [parse.quote("hello world")]
+"""
+    module = validate_code_ast(code)
+    assert module is not None
+
+
+def test_validate_code_ast_accepts_from_urllib_parse_import() -> None:
+    code = """
+from urllib.parse import urlparse, quote
+
+def run(data, schema, params):
+    return [quote("hello"), urlparse("https://x.com").netloc]
+"""
+    module = validate_code_ast(code)
+    assert module is not None
+
+
+@pytest.mark.parametrize(
+    "blocked_module",
+    ["urllib.request", "urllib.error", "urllib.robotparser"],
+)
+def test_validate_code_ast_rejects_urllib_submodules(
+    blocked_module: str,
+) -> None:
+    code = f"""
+import {blocked_module}
+
+def run(data, schema, params):
+    return []
+"""
+    with pytest.raises(CodeValidationError) as exc:
+        validate_code_ast(code)
+    assert exc.value.code == "CODE_IMPORT_NOT_ALLOWED"
+    assert "urllib.parse" in exc.value.message
+
+
+@pytest.mark.parametrize(
+    "blocked_name",
+    ["request", "error", "robotparser"],
+)
+def test_validate_code_ast_rejects_from_urllib_import_submodules(
+    blocked_name: str,
+) -> None:
+    code = f"""
+from urllib import {blocked_name}
+
+def run(data, schema, params):
+    return []
+"""
+    with pytest.raises(CodeValidationError) as exc:
+        validate_code_ast(code)
+    assert exc.value.code == "CODE_IMPORT_NOT_ALLOWED"
+    assert "urllib.parse" in exc.value.message

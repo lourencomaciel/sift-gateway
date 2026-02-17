@@ -66,7 +66,7 @@ tests/
   integration/             # integration tests (requires PostgreSQL)
 docs/
   README.md              # Documentation map and reading paths
-  spec_v1_9.md            # Architecture and design specification
+  architecture.md         # Architecture and design specification
   config.md               # Configuration reference
   errors.md               # Error taxonomy
   observability.md        # Logging and metrics

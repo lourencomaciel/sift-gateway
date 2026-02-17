@@ -38,6 +38,9 @@ _BLOCKED_BUILTINS = frozenset(
 )
 
 
+_ALLOWED_URLLIB_MODULES = frozenset({"urllib", "urllib.parse"})
+
+
 def _safe_import(
     name: str,
     globals: dict[str, Any] | None = None,
@@ -50,6 +53,11 @@ def _safe_import(
     root = name.split(".", 1)[0]
     if root not in _ALLOWED_IMPORT_ROOTS:
         raise ImportError(f"import not allowed: {name}")
+    if root == "urllib" and name not in _ALLOWED_URLLIB_MODULES:
+        raise ImportError(
+            f"import not allowed: {name}"
+            " (only urllib.parse is permitted)"
+        )
     return _builtins.__import__(name, globals, locals, fromlist, level)
 
 

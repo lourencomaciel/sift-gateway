@@ -348,5 +348,5 @@ tar -xzf blobs_backup.tar.gz
 
 - **[Configuration Reference](config.md)** — Full list of environment variables and settings
 - **[Observability](observability.md)** — Structured logging and metrics catalog
-- **[Architecture & Spec](spec_v1_9.md)** — Understanding Sift's design for production planning
+- **[Architecture](architecture.md)** — Understanding Sift's design for production planning
 - **[Quick Start Guide](quickstart.md)** — Return to basic setup if needed
