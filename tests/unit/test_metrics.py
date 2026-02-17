@@ -3,7 +3,6 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 import threading
 
-from prometheus_client import CollectorRegistry
 import pytest
 
 from sift_mcp.obs.metrics import (
@@ -16,7 +15,7 @@ from sift_mcp.obs.metrics import (
 
 
 def test_counter_increment_and_value() -> None:
-    m = GatewayMetrics(registry=CollectorRegistry())
+    m = GatewayMetrics()
     c = m.cache_hits
     assert counter_value(c) == 0
     c.inc()
@@ -26,7 +25,7 @@ def test_counter_increment_and_value() -> None:
 
 
 def test_counter_reset_returns_previous_value() -> None:
-    m = GatewayMetrics(registry=CollectorRegistry())
+    m = GatewayMetrics()
     c = m.cache_hits
     c.inc(10)
     val = counter_reset(c)
@@ -35,7 +34,7 @@ def test_counter_reset_returns_previous_value() -> None:
 
 
 def test_counter_reset_when_zero() -> None:
-    m = GatewayMetrics(registry=CollectorRegistry())
+    m = GatewayMetrics()
     c = m.cache_hits
     val = counter_reset(c)
     assert val == 0
@@ -78,7 +77,7 @@ def test_histogram_reset() -> None:
 
 
 def test_gateway_metrics_record_stop_reason_all() -> None:
-    m = GatewayMetrics(registry=CollectorRegistry())
+    m = GatewayMetrics()
 
     reasons = ["none", "max_bytes", "max_compute", "max_depth", "parse_error"]
     for reason in reasons:
@@ -92,14 +91,14 @@ def test_gateway_metrics_record_stop_reason_all() -> None:
 
 
 def test_gateway_metrics_record_stop_reason_unknown_ignored() -> None:
-    m = GatewayMetrics(registry=CollectorRegistry())
+    m = GatewayMetrics()
     m.record_stop_reason("unknown_reason")
     # Should not raise and all counters should remain 0
     assert counter_value(m.mapping_stop_none) == 0
 
 
 def test_gateway_metrics_record_cursor_stale_reason() -> None:
-    m = GatewayMetrics(registry=CollectorRegistry())
+    m = GatewayMetrics()
 
     reasons = [
         "sample_set_mismatch",
@@ -119,13 +118,13 @@ def test_gateway_metrics_record_cursor_stale_reason() -> None:
 
 
 def test_gateway_metrics_record_cursor_stale_reason_unknown_ignored() -> None:
-    m = GatewayMetrics(registry=CollectorRegistry())
+    m = GatewayMetrics()
     m.record_cursor_stale_reason("nonexistent")
     assert counter_value(m.cursor_stale_sample_set) == 0
 
 
 def test_gateway_metrics_snapshot_returns_complete_dict() -> None:
-    m = GatewayMetrics(registry=CollectorRegistry())
+    m = GatewayMetrics()
     m.cache_hits.inc(3)
     m.upstream_calls.inc(1)
     m.prune_soft_deletes.inc(5)
@@ -157,7 +156,7 @@ def test_gateway_metrics_snapshot_returns_complete_dict() -> None:
 
 def test_counter_thread_safety() -> None:
     """Test that concurrent increments produce correct total."""
-    m = GatewayMetrics(registry=CollectorRegistry())
+    m = GatewayMetrics()
     c = m.cache_hits
     num_threads = 10
     increments_per_thread = 1000
@@ -226,7 +225,7 @@ def test_get_metrics_thread_safe_singleton_creation(
 
 def test_gateway_metrics_reset_returns_snapshot_and_clears() -> None:
     """GatewayMetrics.reset() should return a snapshot and zero all counters."""
-    m = GatewayMetrics(registry=CollectorRegistry())
+    m = GatewayMetrics()
     m.cache_hits.inc(5)
     m.upstream_calls.inc(2)
     m.upstream_latency.observe(100.0)
@@ -263,7 +262,7 @@ def test_gateway_metrics_reset_returns_snapshot_and_clears() -> None:
 
 def test_gateway_metrics_reset_has_same_keys_as_snapshot() -> None:
     """GatewayMetrics.reset() should return the same top-level structure as snapshot()."""
-    m = GatewayMetrics(registry=CollectorRegistry())
+    m = GatewayMetrics()
     snap_keys = set(m.snapshot().keys())
     reset_keys = set(m.reset().keys())
     assert snap_keys == reset_keys
@@ -271,116 +270,7 @@ def test_gateway_metrics_reset_has_same_keys_as_snapshot() -> None:
 
 def test_gateway_metrics_reset_empty_is_safe() -> None:
     """GatewayMetrics.reset() on a fresh instance should not raise."""
-    m = GatewayMetrics(registry=CollectorRegistry())
+    m = GatewayMetrics()
     snap = m.reset()
     assert snap["cache"]["hits"] == 0
     assert snap["upstream"]["latency"]["count"] == 0
-
-
-# ---- prometheus counter name verification ----
-
-
-def test_all_counters_use_gateway_prefix_and_total_suffix() -> None:
-    """Every prometheus counter must follow the gateway_*_total naming convention.
-
-    prometheus_client strips _total from describe().name (it appends it during
-    rendering), so we check that the base name starts with gateway_ and that
-    the rendered exposition output contains the full name_total line.
-    """
-    from prometheus_client import Counter as PromCounter
-    from prometheus_client import generate_latest
-
-    reg = CollectorRegistry()
-    m = GatewayMetrics(registry=reg)
-    counters = [
-        (attr, getattr(m, attr))
-        for attr in dir(m)
-        if not attr.startswith("_")
-        and isinstance(getattr(m, attr), PromCounter)
-    ]
-    assert len(counters) >= 25, (
-        f"Expected at least 25 counters, got {len(counters)}"
-    )
-
-    output = generate_latest(reg).decode("utf-8")
-
-    for attr, counter in counters:
-        base_name = counter.describe()[0].name
-        assert base_name.startswith("gateway_"), (
-            f"Counter {attr!r} has base name {base_name!r} — expected 'gateway_' prefix"
-        )
-        # prometheus_client renders Counter as {base_name}_total in exposition
-        full_name = f"{base_name}_total"
-        assert full_name in output, (
-            f"Counter {attr!r} ({full_name!r}) not found in prometheus text output"
-        )
-
-
-def test_counter_names_are_unique() -> None:
-    """No two counters share the same prometheus name."""
-    from prometheus_client import Counter as PromCounter
-
-    m = GatewayMetrics(registry=CollectorRegistry())
-    names: list[str] = []
-    for attr in dir(m):
-        if attr.startswith("_"):
-            continue
-        obj = getattr(m, attr)
-        if isinstance(obj, PromCounter):
-            names.append(obj.describe()[0].name)
-    assert len(names) == len(set(names)), (
-        f"Duplicate counter names: {sorted(names)}"
-    )
-
-
-def test_counters_render_in_prometheus_text_format() -> None:
-    """All counters render valid prometheus exposition text."""
-    from prometheus_client import generate_latest
-
-    reg = CollectorRegistry()
-    m = GatewayMetrics(registry=reg)
-    m.cache_hits.inc(3)
-    m.upstream_errors.inc(1)
-    m.mapping_full_count.inc(2)
-
-    output = generate_latest(reg).decode("utf-8")
-
-    # Verify key counters appear with correct values
-    assert "gateway_cache_hits_total 3.0" in output
-    assert "gateway_upstream_errors_total 1.0" in output
-    assert "gateway_mapping_full_total 2.0" in output
-    # Counters that weren't incremented should show 0
-    assert "gateway_cache_misses_total 0.0" in output
-
-
-def test_snapshot_keys_match_counter_names() -> None:
-    """Snapshot structure accounts for every counter (no orphaned counters)."""
-    from prometheus_client import Counter as PromCounter
-
-    m = GatewayMetrics(registry=CollectorRegistry())
-    snap = m.snapshot()
-
-    def _flatten(d: dict, prefix: str = "") -> dict[str, object]:
-        result: dict[str, object] = {}
-        for k, v in d.items():
-            key = f"{prefix}.{k}" if prefix else k
-            if isinstance(v, dict):
-                result.update(_flatten(v, key))
-            else:
-                result[key] = v
-        return result
-
-    flat = _flatten(snap)
-
-    counter_attrs = [
-        attr
-        for attr in dir(m)
-        if not attr.startswith("_")
-        and isinstance(getattr(m, attr), PromCounter)
-    ]
-
-    # Snapshot should have at least as many leaf values as counters
-    # (it also has histogram values, so >= not ==)
-    assert len(flat) >= len(counter_attrs), (
-        f"Snapshot has {len(flat)} leaf values but {len(counter_attrs)} counters exist"
-    )

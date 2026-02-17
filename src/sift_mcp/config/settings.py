@@ -58,12 +58,10 @@ class CanonicalEncoding(StrEnum):
     """Compression algorithm for canonical envelope bytes.
 
     Attributes:
-        zstd: Compress with Zstandard.
         gzip: Compress with gzip.
         none: Store uncompressed.
     """
 
-    zstd = "zstd"
     gzip = "gzip"
     none = "none"
 
@@ -510,8 +508,30 @@ class GatewayConfig(BaseSettings):
     envelope_jsonb_mode: EnvelopeJsonbMode = Field(EnvelopeJsonbMode.full)
     envelope_jsonb_minimize_threshold_bytes: int = Field(1_000_000, ge=0)
     envelope_canonical_encoding: CanonicalEncoding = Field(
-        CanonicalEncoding.zstd
+        CanonicalEncoding.gzip
     )
+
+    @field_validator("envelope_canonical_encoding", mode="before")
+    @classmethod
+    def _coerce_legacy_zstd_encoding(
+        cls, value: object
+    ) -> object:
+        """Accept legacy ``zstd`` config values gracefully.
+
+        Existing installations may have ``envelope_canonical_encoding:
+        "zstd"`` persisted in config or env vars.  Silently coerce to
+        ``gzip`` so upgrades don't hard-fail at startup.
+
+        Args:
+            value: Raw config value.
+
+        Returns:
+            ``"gzip"`` when the input was ``"zstd"``, otherwise
+            the original value.
+        """
+        if isinstance(value, str) and value.strip().lower() == "zstd":
+            return "gzip"
+        return value
 
     # --------------- Ingest caps (§16.1) ---------------
     max_inbound_request_bytes: int = Field(10_000_000, ge=1)
@@ -1051,10 +1071,8 @@ def _resolve_mcp_servers_format(
 
     has_mcp_servers = "mcpServers" in merged
     has_vscode = isinstance(merged.get("mcp"), dict)
-    _provider = merged.get("provider")
-    has_openclaw = isinstance(_provider, dict) and "mcpServers" in _provider
 
-    uses_new_format = has_mcp_servers or has_vscode or has_openclaw
+    uses_new_format = has_mcp_servers or has_vscode
 
     if not uses_new_format:
         return merged

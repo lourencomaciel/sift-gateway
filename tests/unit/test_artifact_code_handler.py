@@ -11,6 +11,10 @@ from sift_mcp.codegen.runtime import (
     CodeRuntimeMemoryLimitError,
 )
 from sift_mcp.config.settings import GatewayConfig
+from sift_mcp.mcp.handlers.artifact_code import (
+    _enrich_install_hint,
+    _module_to_dist,
+)
 from sift_mcp.mcp.server import GatewayServer
 
 
@@ -1157,3 +1161,90 @@ def test_code_query_multi_artifact_requires_root_path_or_root_paths(
     )
     assert response["code"] == "INVALID_ARGUMENT"
     assert "missing root_path or root_paths" in response["message"]
+
+
+# ------------------------------------------------------------------
+# _enrich_install_hint
+# ------------------------------------------------------------------
+
+
+def test_enrich_install_hint_no_module() -> None:
+    msg = "No module named 'pandas'"
+    result = _enrich_install_hint(msg)
+    assert result.endswith("sift-mcp install pandas")
+
+
+def test_enrich_install_hint_no_module_uses_static_map() -> None:
+    """Well-known mismatches use the distribution name."""
+    msg = "No module named 'sklearn'"
+    result = _enrich_install_hint(msg)
+    assert result.endswith("sift-mcp install scikit-learn")
+
+
+def test_enrich_install_hint_import_not_allowed_third_party(
+    monkeypatch,
+) -> None:
+    # Simulate runtime metadata returning the dist name.
+    import sift_mcp.mcp.handlers.artifact_code as _ac_mod
+
+    monkeypatch.setattr(
+        _ac_mod,
+        "packages_distributions",
+        lambda: {"some_lib": ["some-lib"]},
+    )
+    msg = "import not allowed: some_lib"
+    result = _enrich_install_hint(msg)
+    assert result.endswith("sift-mcp install some-lib")
+
+
+def test_enrich_install_hint_import_not_allowed_stdlib_no_hint() -> None:
+    """Policy-blocked stdlib imports should not get install hints."""
+    msg = "import not allowed: os"
+    assert _enrich_install_hint(msg) == msg
+
+    msg2 = "import not allowed: subprocess"
+    assert _enrich_install_hint(msg2) == msg2
+
+
+def test_enrich_install_hint_unrelated_message() -> None:
+    msg = "something completely different"
+    assert _enrich_install_hint(msg) == msg
+
+
+# ------------------------------------------------------------------
+# _module_to_dist
+# ------------------------------------------------------------------
+
+
+def test_module_to_dist_static_map(monkeypatch) -> None:
+    """Static map resolves well-known mismatches."""
+    # Disable runtime metadata so the static map is exercised.
+    import sift_mcp.mcp.handlers.artifact_code as _ac_mod
+
+    monkeypatch.setattr(
+        _ac_mod,
+        "packages_distributions",
+        dict,
+    )
+    assert _module_to_dist("sklearn") == "scikit-learn"
+    assert _module_to_dist("PIL") == "pillow"
+    assert _module_to_dist("yaml") == "pyyaml"
+    assert _module_to_dist("cv2") == "opencv-python"
+    assert _module_to_dist("dateutil") == "python-dateutil"
+
+
+def test_module_to_dist_runtime_metadata(monkeypatch) -> None:
+    """Runtime metadata takes precedence over static map."""
+    import sift_mcp.mcp.handlers.artifact_code as _ac_mod
+
+    monkeypatch.setattr(
+        _ac_mod,
+        "packages_distributions",
+        lambda: {"PIL": ["pillow-simd"]},
+    )
+    assert _module_to_dist("PIL") == "pillow-simd"
+
+
+def test_module_to_dist_passthrough() -> None:
+    """Unknown modules fall through to the root name."""
+    assert _module_to_dist("pandas") == "pandas"

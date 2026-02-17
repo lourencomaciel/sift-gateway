@@ -30,22 +30,13 @@ dependencies = [
     "fastmcp>=2.0.0",
     # Streaming JSON parser (partial mapping)
     "ijson>=3.3.0",
-    # Deterministic query/runtime deps
-    "jmespath>=1.0.1",
+    # Fast JSON serialization
     "orjson>=3.10.0",
-    "jsonschema>=4.23.0",
-    "referencing>=0.35.0",
-    "pandas>=2.2.0",
-    "numpy>=1.26.0",
-    # Compression for canonical bytes
-    "zstandard>=0.23.0",
     # Structured logging
     "structlog>=24.0.0",
     # Config & model validation
     "pydantic>=2.0.0",
     "pydantic-settings>=2.0.0",
-    # Prometheus metrics
-    "prometheus_client>=0.20.0",
 ]
 
 [project.urls]
@@ -58,7 +49,13 @@ Changelog = "https://github.com/lourencomaciel/sift-mcp/blob/main/CHANGELOG.md"
 postgres = [
     "psycopg[binary,pool]>=3.2.0",
 ]
+data-science = [
+    "pandas>=2.2.0",
+    "numpy>=1.26.0",
+    "jmespath>=1.0.1",
+]
 dev = [
+    "sift-mcp[postgres,data-science]",
     "pytest>=8.0.0",
     "pytest-asyncio>=0.24.0",
     "pytest-cov>=6.0.0",
@@ -115,6 +112,7 @@ known-first-party = ["sift_mcp"]
 "src/sift_mcp/main.py" = ["T201"]
 "src/sift_mcp/config/init.py" = ["T201"]
 "src/sift_mcp/config/upstream_add.py" = ["T201"]
+"src/sift_mcp/config/package_install.py" = ["T201"]
 "tests/**/*.py" = [
     "D100",
     "D101",
@@ -129,5 +127,5 @@ python_version = "3.11"
 strict = true
 
 [[tool.mypy.overrides]]
-module = "prometheus_client.*"
+module = "ijson.*"
 ignore_missing_imports = true
