@@ -42,7 +42,7 @@ See [CONTRIBUTING.md](../CONTRIBUTING.md) for full development guide.
 
 ## Importing Your MCP Configuration
 
-Sift can import your existing MCP server configuration from Claude Desktop, Claude Code, Cursor, VS Code, Windsurf, or Zed.
+Sift can import your existing MCP server configuration from Claude Desktop, Claude Code, Cursor, OpenClaw, VS Code, Windsurf, or Zed.
 
 ### Basic Import (SQLite)
 
@@ -52,7 +52,7 @@ sift-mcp init \
 ```
 
 `--from` accepts either an explicit path or one of these shortcuts:
-`claude`, `claude-code`, `cursor`, `vscode`, `windsurf`, `zed`, `auto`.
+`claude`, `claude-code`, `cursor`, `openclaw`, `vscode`, `windsurf`, `zed`, `auto`.
 
 This command:
 
@@ -273,7 +273,7 @@ The command exits with status `0` if all checks pass.
 
 After setup:
 
-1. **Restart your MCP client** (Claude Desktop, Claude Code, Cursor, VS Code, Windsurf, or Zed)
+1. **Restart your MCP client** (Claude Desktop, Claude Code, Cursor, OpenClaw, VS Code, Windsurf, or Zed)
 
 2. **Call an upstream tool** that returns a large response (> 8 KB default)
 

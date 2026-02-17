@@ -120,7 +120,7 @@ def _add_upstream_subcommand(
         default=None,
         help=(
             "Target by source config path or shortcut "
-            "(claude, claude-code, cursor, vscode, windsurf, zed, auto)"
+            "(claude, claude-code, cursor, openclaw, vscode, windsurf, zed, auto)"
         ),
     )
     add_target.add_argument(
@@ -161,7 +161,7 @@ def _add_init_subcommand(
         required=True,
         help=(
             "Source config path or shortcut "
-            "(claude, claude-code, cursor, vscode, windsurf, zed, auto)"
+            "(claude, claude-code, cursor, openclaw, vscode, windsurf, zed, auto)"
         ),
     )
     _add_init_mode_group(init_parser)
