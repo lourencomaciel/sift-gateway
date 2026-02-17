@@ -70,7 +70,7 @@ def test_prepare_payload_creates_valid_result() -> None:
     result = prepare_payload(env)
     assert isinstance(result, PreparedPayload)
     assert len(result.payload_hash) == 64
-    assert result.encoding in ("zstd", "gzip", "none")
+    assert result.encoding in ("gzip", "none")
     assert result.uncompressed_len > 0
     assert result.canonicalizer_version == CANONICALIZER_VERSION
     assert result.contains_binary_refs is False
@@ -88,14 +88,6 @@ def test_prepare_payload_with_binary_refs() -> None:
 
 
 # ---- Compression roundtrip ----
-
-
-def test_compression_roundtrip_zstd() -> None:
-    env = _sample_envelope()
-    uncompressed = canonical_bytes(env)
-    compressed = compress_bytes(uncompressed, "zstd")
-    roundtrip = decompress_bytes(compressed.data, compressed.encoding)
-    assert roundtrip == uncompressed
 
 
 def test_compression_roundtrip_gzip() -> None:
@@ -236,10 +228,9 @@ def test_reconstruct_envelope_rejects_non_object_json() -> None:
 
 
 def test_reconstruct_envelope_all_encodings() -> None:
-    """Verify reconstruct works for all three encoding modes."""
+    """Verify reconstruct works for both encoding modes."""
     env = _sample_envelope()
     for enc in (
-        CanonicalEncoding.zstd,
         CanonicalEncoding.gzip,
         CanonicalEncoding.none,
     ):
@@ -304,7 +295,6 @@ def test_compression_integrity_verified_in_prepare() -> None:
     env = _sample_envelope()
     # This implicitly tests the integrity check inside prepare_payload
     for enc in (
-        CanonicalEncoding.zstd,
         CanonicalEncoding.gzip,
         CanonicalEncoding.none,
     ):
@@ -324,7 +314,7 @@ def test_reconstruct_roundtrip_with_decimal_preserves_hash() -> None:
     uncompressed = canonical_bytes(env)
     expected_hash = hashlib.sha256(uncompressed).hexdigest()
 
-    compressed = compress_bytes(uncompressed, "zstd")
+    compressed = compress_bytes(uncompressed, "gzip")
     decompressed = decompress_bytes(compressed.data, compressed.encoding)
     assert hashlib.sha256(decompressed).hexdigest() == expected_hash
     assert decompressed == uncompressed

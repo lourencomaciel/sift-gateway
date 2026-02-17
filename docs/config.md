@@ -83,7 +83,7 @@ Runtime behavior:
 |-----|------|---------|---------|-------------|
 | `envelope_jsonb_mode` | enum | `full` | `SIFT_MCP_ENVELOPE_JSONB_MODE` | `full`, `minimal_for_large`, `none` |
 | `envelope_jsonb_minimize_threshold_bytes` | int | `1000000` | `SIFT_MCP_ENVELOPE_JSONB_MINIMIZE_THRESHOLD_BYTES` | Threshold for minimal JSONB mode |
-| `envelope_canonical_encoding` | enum | `zstd` | `SIFT_MCP_ENVELOPE_CANONICAL_ENCODING` | `zstd`, `gzip`, `none` |
+| `envelope_canonical_encoding` | enum | `gzip` | `SIFT_MCP_ENVELOPE_CANONICAL_ENCODING` | `gzip`, `none` |
 
 ## Ingest caps
 
@@ -190,6 +190,33 @@ Example env override:
 
 ```bash
 SIFT_MCP_CODE_QUERY_ALLOWED_IMPORT_ROOTS='["math","json","jmespath","numpy","pandas"]'
+```
+
+### Installing packages for code queries
+
+Sift runs in an isolated Python environment (e.g. via `pipx` or `uv tool`).
+Packages installed in your system Python are not available to code queries.
+Use the built-in install command to add packages into Sift's own environment:
+
+```bash
+# Install into Sift's environment and update the allowlist
+sift-mcp install pandas scipy
+
+# Uninstall and remove from allowlist
+sift-mcp uninstall scipy
+```
+
+These commands:
+
+1. Run `pip install` (or `pip uninstall`) using Sift's own Python interpreter.
+2. Add (or remove) the package root to the instance's
+   `code_query_allowed_import_roots` config so the import is permitted.
+
+For convenience, common data-science packages are available as an install
+extra:
+
+```bash
+pipx install "sift-mcp[data-science]"   # pandas, numpy, jmespath
 ```
 
 `query_kind=code` is intended for trusted environments. Policy checks

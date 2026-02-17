@@ -120,7 +120,7 @@ def _add_upstream_subcommand(
         default=None,
         help=(
             "Target by source config path or shortcut "
-            "(claude, claude-code, cursor, openclaw, vscode, windsurf, zed, auto)"
+            "(claude, claude-code, cursor, vscode, windsurf, zed, auto)"
         ),
     )
     add_target.add_argument(
@@ -161,7 +161,7 @@ def _add_init_subcommand(
         required=True,
         help=(
             "Source config path or shortcut "
-            "(claude, claude-code, cursor, openclaw, vscode, windsurf, zed, auto)"
+            "(claude, claude-code, cursor, vscode, windsurf, zed, auto)"
         ),
     )
     _add_init_mode_group(init_parser)
@@ -186,6 +186,43 @@ def _add_instances_subcommand(
         "--json",
         action="store_true",
         help="Emit JSON output",
+    )
+
+
+def _add_install_subcommand(
+    sub: argparse._SubParsersAction[argparse.ArgumentParser],
+) -> None:
+    """Register ``install`` and ``uninstall`` subcommands."""
+    install_parser = sub.add_parser(
+        "install",
+        help="Install Python packages for code queries",
+    )
+    install_parser.add_argument(
+        "packages",
+        nargs="+",
+        help="Package names to install (e.g. pandas scipy)",
+    )
+    # Use SUPPRESS so a subcommand-level --data-dir doesn't
+    # overwrite the global one with None when omitted.
+    install_parser.add_argument(
+        "--data-dir",
+        default=argparse.SUPPRESS,
+        help="Override instance DATA_DIR for allowlist update",
+    )
+
+    uninstall_parser = sub.add_parser(
+        "uninstall",
+        help="Uninstall Python packages from code queries",
+    )
+    uninstall_parser.add_argument(
+        "packages",
+        nargs="+",
+        help="Package names to uninstall",
+    )
+    uninstall_parser.add_argument(
+        "--data-dir",
+        default=argparse.SUPPRESS,
+        help="Override instance DATA_DIR for allowlist update",
     )
 
 
@@ -250,6 +287,7 @@ def _parse_args() -> argparse.Namespace:
     _add_init_subcommand(sub)
     _add_upstream_subcommand(sub)
     _add_instances_subcommand(sub)
+    _add_install_subcommand(sub)
     return parser.parse_args()
 
 
@@ -422,6 +460,45 @@ def _run_instances_list(args: argparse.Namespace) -> int:
         print(f"  source:   {source_path}")
         print(f"  data_dir: {data_dir}")
     return 0
+
+
+def _run_install(args: argparse.Namespace) -> int:
+    """Handle ``install`` and ``uninstall`` subcommands.
+
+    Args:
+        args: Parsed CLI arguments with package names and
+            optional data-dir override.
+
+    Returns:
+        Exit code (``0`` on success).
+    """
+    from sift_mcp.config.package_install import (
+        install_packages,
+        uninstall_packages,
+    )
+
+    data_dir: Path | None = None
+    raw_data_dir = getattr(args, "data_dir", None)
+    if raw_data_dir:
+        data_dir = Path(raw_data_dir).expanduser().resolve()
+    else:
+        env_data_dir = os.environ.get("SIFT_MCP_DATA_DIR")
+        if env_data_dir:
+            data_dir = Path(env_data_dir).expanduser().resolve()
+        else:
+            managed = _resolve_managed_default_data_dir()
+            if managed is not None:
+                data_dir = managed
+            else:
+                legacy = _resolve_legacy_initialized_data_dir()
+                if legacy is not None:
+                    data_dir = legacy
+
+    if args.command == "uninstall":
+        return uninstall_packages(
+            args.packages, data_dir=data_dir
+        )
+    return install_packages(args.packages, data_dir=data_dir)
 
 
 def _resolve_managed_default_data_dir() -> Path | None:
@@ -727,6 +804,9 @@ def serve() -> int:
             file=sys.stderr,
         )
         return 1
+
+    if args.command in ("install", "uninstall"):
+        return _run_install(args)
 
     from sift_mcp.constants import DEFAULT_DATA_DIR
 
