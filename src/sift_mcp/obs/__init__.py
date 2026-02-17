@@ -6,6 +6,7 @@ from sift_mcp.obs.logging import (
     get_logger,
 )
 from sift_mcp.obs.metrics import (
+    Counter,
     GatewayMetrics,
     counter_reset,
     counter_value,
@@ -13,6 +14,7 @@ from sift_mcp.obs.metrics import (
 )
 
 __all__ = [
+    "Counter",
     "GatewayMetrics",
     "LogEvents",
     "configure_logging",

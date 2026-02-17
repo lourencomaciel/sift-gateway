@@ -1,10 +1,10 @@
-"""Collect gateway metrics via Prometheus counters and histograms.
+"""Collect gateway metrics via counters and histograms.
 
-Provides ``GatewayMetrics``, a central registry of Prometheus
-counters and custom ``Histogram`` objects covering cache, ingest,
-mapping, cursor, lock, pruning, and quota subsystems.  Also
-exposes ``counter_value``/``counter_reset`` helpers and a
-thread-safe ``get_metrics`` singleton accessor.
+Provides ``GatewayMetrics``, a central registry of ``Counter``
+and ``Histogram`` objects covering cache, ingest, mapping,
+cursor, lock, pruning, and quota subsystems.  Also exposes
+``counter_value``/``counter_reset`` helpers and a thread-safe
+``get_metrics`` singleton accessor.
 """
 
 from __future__ import annotations
@@ -14,25 +14,74 @@ from dataclasses import dataclass, field
 import threading
 from typing import Any
 
-from prometheus_client import CollectorRegistry
-from prometheus_client import Counter as _PromCounter
+# ---------------------------------------------------------------------------
+# Pure-Python thread-safe counter (replaces prometheus_client)
+# ---------------------------------------------------------------------------
+
+
+class _CounterValue:
+    """Thread-safe counter value with get/set interface."""
+
+    __slots__ = ("_lock", "_val")
+
+    def __init__(self) -> None:
+        self._val: float = 0.0
+        self._lock = threading.Lock()
+
+    def get(self) -> float:
+        """Return current value."""
+        with self._lock:
+            return self._val
+
+    def set(self, v: float) -> None:
+        """Set value (intended for testing resets)."""
+        with self._lock:
+            self._val = v
+
+
+class Counter:
+    """Minimal thread-safe monotonic counter."""
+
+    __slots__ = ("_doc", "_name", "_value")
+
+    def __init__(self, name: str, doc: str) -> None:
+        """Create a named counter.
+
+        Args:
+            name: Metric name (e.g.
+                ``gateway_cache_hits_total``).
+            doc: Human-readable description.
+        """
+        self._name = name
+        self._doc = doc
+        self._value = _CounterValue()
+
+    def inc(self, amount: float = 1) -> None:
+        """Increment counter by *amount*.
+
+        Args:
+            amount: Value to add (default ``1``).
+        """
+        with self._value._lock:
+            self._value._val += amount
+
 
 # ---------------------------------------------------------------------------
 # Type alias for counter reader functions
 # ---------------------------------------------------------------------------
 
-_CounterFn = Callable[[_PromCounter], int]
+_CounterFn = Callable[[Counter], int]
 
 # ---------------------------------------------------------------------------
-# Helpers for reading / resetting prometheus counters
+# Helpers for reading / resetting counters
 # ---------------------------------------------------------------------------
 
 
-def counter_value(counter: _PromCounter) -> int:
-    """Read the current value of a label-less Prometheus counter.
+def counter_value(counter: Counter) -> int:
+    """Read the current value of a counter.
 
     Args:
-        counter: A Prometheus Counter without labels.
+        counter: A Counter instance.
 
     Returns:
         Current integer value of the counter.
@@ -40,14 +89,14 @@ def counter_value(counter: _PromCounter) -> int:
     return int(counter._value.get())
 
 
-def counter_reset(counter: _PromCounter) -> int:
-    """Reset a Prometheus counter to zero for testing.
+def counter_reset(counter: Counter) -> int:
+    """Reset a counter to zero for testing.
 
     Only intended for use in tests; production counters are
     monotonic.
 
     Args:
-        counter: A Prometheus Counter without labels.
+        counter: A Counter instance.
 
     Returns:
         The counter value immediately before the reset.
@@ -151,19 +200,19 @@ class Histogram:
 def _make(
     name: str,
     doc: str,
-    registry: CollectorRegistry,
-) -> _PromCounter:
-    """Create and register a Prometheus counter.
+    registry: Any = None,
+) -> Counter:
+    """Create a named counter.
 
     Args:
         name: Metric name (e.g. ``gateway_cache_hits_total``).
         doc: Human-readable description of the counter.
-        registry: Prometheus collector registry to register in.
+        registry: Ignored (kept for backward compatibility).
 
     Returns:
-        A new Prometheus Counter instance.
+        A new Counter instance.
     """
-    return _PromCounter(name, doc, registry=registry)
+    return Counter(name, doc)
 
 
 # ---------------------------------------------------------------------------
@@ -171,7 +220,7 @@ def _make(
 # ---------------------------------------------------------------------------
 
 
-def _init_cache_counters(m: GatewayMetrics, reg: CollectorRegistry) -> None:
+def _init_cache_counters(m: GatewayMetrics, reg: Any) -> None:
     """Register cache and upstream counters.
 
     Args:
@@ -190,7 +239,7 @@ def _init_cache_counters(m: GatewayMetrics, reg: CollectorRegistry) -> None:
     m.upstream_latency = Histogram()
 
 
-def _init_ingest_counters(m: GatewayMetrics, reg: CollectorRegistry) -> None:
+def _init_ingest_counters(m: GatewayMetrics, reg: Any) -> None:
     """Register ingest counters.
 
     Args:
@@ -214,7 +263,7 @@ def _init_ingest_counters(m: GatewayMetrics, reg: CollectorRegistry) -> None:
     )
 
 
-def _init_mapping_counters(m: GatewayMetrics, reg: CollectorRegistry) -> None:
+def _init_mapping_counters(m: GatewayMetrics, reg: Any) -> None:
     """Register mapping result counters and latency.
 
     Args:
@@ -238,7 +287,7 @@ def _init_mapping_counters(m: GatewayMetrics, reg: CollectorRegistry) -> None:
 
 
 def _init_mapping_stop_counters(
-    m: GatewayMetrics, reg: CollectorRegistry
+    m: GatewayMetrics, reg: Any
 ) -> None:
     """Register mapping stop-reason counters.
 
@@ -273,7 +322,7 @@ def _init_mapping_stop_counters(
     )
 
 
-def _init_cursor_counters(m: GatewayMetrics, reg: CollectorRegistry) -> None:
+def _init_cursor_counters(m: GatewayMetrics, reg: Any) -> None:
     """Register cursor-stale, invalid, and expired counters.
 
     Args:
@@ -317,7 +366,7 @@ def _init_cursor_counters(m: GatewayMetrics, reg: CollectorRegistry) -> None:
     )
 
 
-def _init_lock_counters(m: GatewayMetrics, reg: CollectorRegistry) -> None:
+def _init_lock_counters(m: GatewayMetrics, reg: Any) -> None:
     """Register advisory-lock counters.
 
     Args:
@@ -336,7 +385,7 @@ def _init_lock_counters(m: GatewayMetrics, reg: CollectorRegistry) -> None:
     )
 
 
-def _init_pruning_counters(m: GatewayMetrics, reg: CollectorRegistry) -> None:
+def _init_pruning_counters(m: GatewayMetrics, reg: Any) -> None:
     """Register pruning counters.
 
     Args:
@@ -365,7 +414,7 @@ def _init_pruning_counters(m: GatewayMetrics, reg: CollectorRegistry) -> None:
     )
 
 
-def _init_quota_counters(m: GatewayMetrics, reg: CollectorRegistry) -> None:
+def _init_quota_counters(m: GatewayMetrics, reg: Any) -> None:
     """Register quota counters.
 
     Args:
@@ -385,7 +434,7 @@ def _init_quota_counters(m: GatewayMetrics, reg: CollectorRegistry) -> None:
     )
 
 
-def _init_codegen_counters(m: GatewayMetrics, reg: CollectorRegistry) -> None:
+def _init_codegen_counters(m: GatewayMetrics, reg: Any) -> None:
     """Register code-query execution counters and latency."""
     m.codegen_executions = _make(
         "gateway_codegen_executions_total",
@@ -654,64 +703,63 @@ class GatewayMetrics:
     counters by reason string.
     """
 
-    cache_hits: _PromCounter
-    cache_misses: _PromCounter
-    alias_hits: _PromCounter
-    upstream_calls: _PromCounter
-    upstream_errors: _PromCounter
+    cache_hits: Counter
+    cache_misses: Counter
+    alias_hits: Counter
+    upstream_calls: Counter
+    upstream_errors: Counter
     upstream_latency: Histogram
 
-    oversize_json_count: _PromCounter
-    binary_blob_writes: _PromCounter
-    binary_blob_dedupes: _PromCounter
+    oversize_json_count: Counter
+    binary_blob_writes: Counter
+    binary_blob_dedupes: Counter
 
-    mapping_full_count: _PromCounter
-    mapping_partial_count: _PromCounter
-    mapping_failed_count: _PromCounter
+    mapping_full_count: Counter
+    mapping_partial_count: Counter
+    mapping_failed_count: Counter
     mapping_latency: Histogram
 
-    mapping_stop_none: _PromCounter
-    mapping_stop_max_bytes: _PromCounter
-    mapping_stop_max_compute: _PromCounter
-    mapping_stop_max_depth: _PromCounter
-    mapping_stop_parse_error: _PromCounter
+    mapping_stop_none: Counter
+    mapping_stop_max_bytes: Counter
+    mapping_stop_max_compute: Counter
+    mapping_stop_max_depth: Counter
+    mapping_stop_parse_error: Counter
 
-    cursor_stale_sample_set: _PromCounter
-    cursor_stale_map_budget: _PromCounter
-    cursor_stale_where_mode: _PromCounter
-    cursor_stale_traversal: _PromCounter
-    cursor_stale_generation: _PromCounter
-    cursor_invalid: _PromCounter
-    cursor_expired: _PromCounter
+    cursor_stale_sample_set: Counter
+    cursor_stale_map_budget: Counter
+    cursor_stale_where_mode: Counter
+    cursor_stale_traversal: Counter
+    cursor_stale_generation: Counter
+    cursor_invalid: Counter
+    cursor_expired: Counter
 
-    advisory_lock_timeouts: _PromCounter
-    advisory_lock_acquired: _PromCounter
+    advisory_lock_timeouts: Counter
+    advisory_lock_acquired: Counter
 
-    prune_soft_deletes: _PromCounter
-    prune_hard_deletes: _PromCounter
-    prune_bytes_reclaimed: _PromCounter
-    prune_fs_orphans_removed: _PromCounter
+    prune_soft_deletes: Counter
+    prune_hard_deletes: Counter
+    prune_bytes_reclaimed: Counter
+    prune_fs_orphans_removed: Counter
 
-    quota_checks: _PromCounter
-    quota_breaches: _PromCounter
-    quota_prune_triggered: _PromCounter
+    quota_checks: Counter
+    quota_breaches: Counter
+    quota_prune_triggered: Counter
 
-    codegen_executions: _PromCounter
-    codegen_success: _PromCounter
-    codegen_failure: _PromCounter
-    codegen_timeout: _PromCounter
-    codegen_input_records: _PromCounter
-    codegen_output_records: _PromCounter
+    codegen_executions: Counter
+    codegen_success: Counter
+    codegen_failure: Counter
+    codegen_timeout: Counter
+    codegen_input_records: Counter
+    codegen_output_records: Counter
     codegen_latency: Histogram
 
-    def __init__(self, registry: CollectorRegistry | None = None) -> None:
-        """Initialize and register all gateway metric counters.
+    def __init__(self, registry: Any = None) -> None:
+        """Initialize all gateway metric counters.
 
         Args:
-            registry: Optional Prometheus registry; creates a new
-                one if not provided.
+            registry: Ignored (kept for backward compatibility).
         """
-        reg = registry or CollectorRegistry()
+        reg = registry
         _init_cache_counters(self, reg)
         _init_ingest_counters(self, reg)
         _init_mapping_counters(self, reg)

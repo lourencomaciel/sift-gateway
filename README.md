@@ -46,13 +46,13 @@ pipx install sift-mcp
 sift-mcp init --from claude
 ```
 
-This reads your existing MCP client config, moves your servers behind Sift, and writes everything back. One command. Shortcuts: `claude`, `claude-code`, `cursor`, `openclaw`, `vscode`, `windsurf`, `zed`, `auto`, or pass an explicit file path.
+This reads your existing MCP client config, moves your servers behind Sift, and writes everything back. One command. Shortcuts: `claude`, `claude-code`, `cursor`, `vscode`, `windsurf`, `zed`, `auto`, or pass an explicit file path.
 
 **3. Restart your MCP client**
 
 That's it. Sift is now proxying your upstream servers. Responses over 8 KB are automatically stored as queryable artifacts. Everything under 8 KB flows through transparently, as if Sift isn't there.
 
-> **Note:** Your MCP client (Claude Desktop, Claude Code, Cursor, OpenClaw, VS Code, Windsurf, Zed) launches Sift automatically via the config. Use `sift-mcp --check` to verify health without starting the server.
+> **Note:** Your MCP client (Claude Desktop, Claude Code, Cursor, VS Code, Windsurf, Zed) launches Sift automatically via the config. Use `sift-mcp --check` to verify health without starting the server.
 
 ## How It Works
 
@@ -83,7 +83,7 @@ Results come back paginated. Continue with the returned cursor until `pagination
 
 ### Code queries
 
-Run Python against stored data without loading it into context. Pandas, NumPy, jmespath, and other libraries are available:
+Run Python against stored data without loading it into context. Install libraries with `sift-mcp install pandas` (or `pipx install "sift-mcp[data-science]"` for the bundle):
 
 ```python
 artifact(

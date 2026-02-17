@@ -831,6 +831,63 @@ def test_parse_args_instances_list_json(monkeypatch) -> None:
     assert args.json is True
 
 
+def test_parse_args_global_data_dir_reaches_install(
+    monkeypatch,
+) -> None:
+    """Global --data-dir before 'install' is visible to the handler."""
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "sift-mcp",
+            "--data-dir",
+            "/tmp/my-instance",
+            "install",
+            "pandas",
+        ],
+    )
+    args = _parse_args()
+    assert args.command == "install"
+    assert args.data_dir == "/tmp/my-instance"
+
+
+def test_parse_args_data_dir_after_install_subcommand(
+    monkeypatch,
+) -> None:
+    """--data-dir after 'install' subcommand is accepted."""
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "sift-mcp",
+            "install",
+            "pandas",
+            "--data-dir",
+            "/tmp/sub-instance",
+        ],
+    )
+    args = _parse_args()
+    assert args.command == "install"
+    assert args.data_dir == "/tmp/sub-instance"
+
+
+def test_parse_args_data_dir_after_uninstall_subcommand(
+    monkeypatch,
+) -> None:
+    """--data-dir after 'uninstall' subcommand is accepted."""
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "sift-mcp",
+            "uninstall",
+            "pandas",
+            "--data-dir",
+            "/tmp/sub-instance",
+        ],
+    )
+    args = _parse_args()
+    assert args.command == "uninstall"
+    assert args.data_dir == "/tmp/sub-instance"
+
+
 def test_parse_args_host_default(monkeypatch) -> None:
     monkeypatch.setattr("sys.argv", ["sift-mcp"])
     args = _parse_args()

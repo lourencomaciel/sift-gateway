@@ -110,27 +110,6 @@ class TestExtractMcpServers:
         with pytest.raises(ValueError, match=r"command\.path must be a string"):
             extract_mcp_servers(raw)
 
-    def test_openclaw_provider_format(self) -> None:
-        raw = {
-            "provider": {
-                "mcpServers": {
-                    "github": {"command": "gh", "args": ["mcp"]},
-                }
-            }
-        }
-        servers = extract_mcp_servers(raw)
-        assert "github" in servers
-        assert servers["github"]["command"] == "gh"
-
-    def test_mcpservers_takes_precedence_over_openclaw(self) -> None:
-        raw = {
-            "mcpServers": {"a": {"command": "a"}},
-            "provider": {"mcpServers": {"b": {"command": "b"}}},
-        }
-        servers = extract_mcp_servers(raw)
-        assert "a" in servers
-        assert "b" not in servers
-
     def test_mcpservers_takes_precedence_over_vscode(self) -> None:
         raw = {
             "mcpServers": {"a": {"command": "a"}},
@@ -467,28 +446,6 @@ class TestLoadGatewayConfigMcpServers:
         )
         with pytest.raises(ValueError, match="use one format or the other"):
             load_gateway_config(data_dir_override=str(tmp_path))
-
-    def test_openclaw_provider_format_loads(self, tmp_path: Path) -> None:
-        state_dir = tmp_path / "state"
-        state_dir.mkdir(parents=True)
-        (state_dir / "config.json").write_text(
-            json.dumps(
-                {
-                    "provider": {
-                        "mcpServers": {
-                            "github": {
-                                "command": "/usr/bin/gh",
-                                "args": ["mcp"],
-                            }
-                        }
-                    }
-                }
-            )
-        )
-        config = load_gateway_config(data_dir_override=str(tmp_path))
-        assert len(config.upstreams) == 1
-        assert config.upstreams[0].prefix == "github"
-        assert config.upstreams[0].command == "/usr/bin/gh"
 
     def test_empty_mcp_servers_ok(self, tmp_path: Path) -> None:
         state_dir = tmp_path / "state"

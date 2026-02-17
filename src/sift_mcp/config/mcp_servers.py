@@ -1,7 +1,7 @@
 """Parse standard MCP client config formats into UpstreamConfig objects.
 
 Supports the standard config formats used by Claude Desktop, Cursor,
-Claude Code, VS Code, Zed, and OpenClaw. Users can copy-paste their
+Claude Code, VS Code, and Zed. Users can copy-paste their
 existing MCP server config or use ``sift-mcp init --from <file>`` to
 migrate automatically.
 
@@ -47,10 +47,9 @@ _GATEWAY_EXTENSION_FIELDS = frozenset(
 def extract_mcp_servers(raw: dict[str, Any]) -> dict[str, dict[str, Any]]:
     """Extract server definitions from a raw config dict.
 
-    Supports four formats:
+    Supports three formats:
     - ``mcpServers`` key (Claude Desktop, Cursor, Claude Code)
     - ``mcp.servers`` nested key (VS Code)
-    - ``provider.mcpServers`` nested key (OpenClaw)
     - ``context_servers`` key (Zed)
 
     Returns a dict mapping server name to server config.
@@ -67,13 +66,6 @@ def extract_mcp_servers(raw: dict[str, Any]) -> dict[str, dict[str, Any]]:
     mcp_block = raw.get("mcp")
     if isinstance(mcp_block, dict):
         servers = mcp_block.get("servers")
-        if isinstance(servers, dict):
-            return dict(servers)
-
-    # OpenClaw format: { "provider": { "mcpServers": { ... } } }
-    provider_block = raw.get("provider")
-    if isinstance(provider_block, dict):
-        servers = provider_block.get("mcpServers")
         if isinstance(servers, dict):
             return dict(servers)
 
@@ -241,17 +233,9 @@ def resolve_mcp_servers_config(
     has_vscode = isinstance(raw.get("mcp"), dict) and "servers" in raw.get(
         "mcp", {}
     )
-    has_openclaw = isinstance(
-        raw.get("provider"), dict
-    ) and "mcpServers" in raw.get("provider", {})
     has_zed = isinstance(raw.get("context_servers"), dict)
 
-    if (
-        not has_mcp_servers
-        and not has_vscode
-        and not has_openclaw
-        and not has_zed
-    ):
+    if not has_mcp_servers and not has_vscode and not has_zed:
         return None
 
     servers = extract_mcp_servers(raw)

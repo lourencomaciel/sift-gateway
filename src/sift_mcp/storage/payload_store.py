@@ -1,7 +1,7 @@
 """Prepare and reconstruct envelope payloads for database storage.
 
 Canonicalizes envelope dicts to RFC 8785 bytes, compresses them
-with zstd (or stores raw), hashes for integrity, and computes
+with gzip (or stores raw), hashes for integrity, and computes
 JSON/binary size metrics.  ``prepare_payload`` produces a
 ``PreparedPayload`` ready for insertion into ``payload_blobs``.
 ``reconstruct_envelope`` reverses the process with integrity
@@ -38,7 +38,7 @@ class PreparedPayload:
     Attributes:
         payload_hash: SHA-256 hex of uncompressed canonical
             bytes (storage identity).
-        encoding: Compression encoding name (e.g. ``zstd``).
+        encoding: Compression encoding name (e.g. ``gzip``).
         compressed_bytes: The compressed payload data.
         uncompressed_len: Byte length before compression.
         canonicalizer_version: Version string of the
@@ -136,7 +136,7 @@ def _build_jsonb(
 def prepare_payload(
     envelope_dict: dict[str, Any],
     *,
-    encoding: CanonicalEncoding = CanonicalEncoding.zstd,
+    encoding: CanonicalEncoding = CanonicalEncoding.gzip,
     jsonb_mode: EnvelopeJsonbMode = EnvelopeJsonbMode.full,
     jsonb_minimize_threshold: int = 1_000_000,
 ) -> PreparedPayload:
@@ -208,7 +208,7 @@ def reconstruct_envelope(
 
     Args:
         compressed_bytes: Compressed payload data.
-        encoding: Compression encoding name (e.g. ``zstd``).
+        encoding: Compression encoding name (e.g. ``gzip``).
         expected_hash: SHA-256 hex digest of the uncompressed
             canonical bytes.
 

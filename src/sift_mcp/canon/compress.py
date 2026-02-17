@@ -5,8 +5,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 import gzip
 
-import zstandard as zstd
-
 
 @dataclass(frozen=True)
 class CompressedBytes:
@@ -29,13 +27,6 @@ def compress_bytes(data: bytes, encoding: str) -> CompressedBytes:
             data=gzip.compress(data),
             uncompressed_len=len(data),
         )
-    if encoding == "zstd":
-        compressor = zstd.ZstdCompressor(level=3)
-        return CompressedBytes(
-            encoding="zstd",
-            data=compressor.compress(data),
-            uncompressed_len=len(data),
-        )
 
     msg = f"unsupported encoding: {encoding}"
     raise ValueError(msg)
@@ -51,8 +42,8 @@ def decompress_bytes(
 
     Args:
         data: Compressed byte payload.
-        encoding: Compression encoding (``"none"``, ``"gzip"``,
-            or ``"zstd"``).
+        encoding: Compression encoding (``"none"``, ``"gzip"``, or
+            ``"zstd"`` for legacy payloads).
         max_output_size: Upper bound on decompressed output in
             bytes.  ``0`` means unlimited (default for backward
             compatibility).
@@ -69,7 +60,16 @@ def decompress_bytes(
     if encoding == "gzip":
         out = gzip.decompress(data)
     elif encoding == "zstd":
-        out = zstd.ZstdDecompressor().decompress(data)
+        try:
+            import zstandard  # type: ignore[import-not-found]
+        except ModuleNotFoundError:
+            msg = (
+                "zstd-compressed payload found but the"
+                " 'zstandard' package is not installed;"
+                " run: pip install zstandard"
+            )
+            raise ValueError(msg) from None
+        out = zstandard.ZstdDecompressor().decompress(data)
     else:
         msg = f"unsupported encoding: {encoding}"
         raise ValueError(msg)

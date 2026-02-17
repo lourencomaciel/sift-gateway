@@ -5,6 +5,9 @@ from __future__ import annotations
 from collections.abc import Mapping
 from decimal import Decimal
 import hashlib
+from importlib.metadata import packages_distributions
+import re
+import sys
 import time
 from typing import TYPE_CHECKING, Any
 
@@ -81,6 +84,69 @@ def _hash_json(value: Any) -> str:
         canonical_bytes(_coerce_floats_to_decimal(value))
     ).hexdigest()
     return f"sha256:{digest}"
+
+
+_RE_NO_MODULE = re.compile(r"No module named '([^']+)'")
+_RE_IMPORT_NOT_ALLOWED = re.compile(r"import not allowed: (\S+)")
+_STDLIB_ROOTS = sys.stdlib_module_names
+
+# Well-known module-to-distribution mappings for packages where
+# the import root differs from the pip distribution name.  Used
+# as a fallback when runtime metadata is unavailable (i.e. the
+# package is not installed).
+_MODULE_TO_DIST: dict[str, str] = {
+    "PIL": "pillow",
+    "attr": "attrs",
+    "bs4": "beautifulsoup4",
+    "cv2": "opencv-python",
+    "dateutil": "python-dateutil",
+    "dotenv": "python-dotenv",
+    "skimage": "scikit-image",
+    "sklearn": "scikit-learn",
+    "yaml": "pyyaml",
+}
+
+
+def _module_to_dist(root: str) -> str:
+    """Map an import root to its pip distribution name.
+
+    Checks installed distribution metadata first, then falls
+    back to a static mapping of well-known mismatches.
+
+    Args:
+        root: Top-level import root (e.g. ``"sklearn"``).
+
+    Returns:
+        Pip distribution name (e.g. ``"scikit-learn"``).
+    """
+    # Runtime lookup for installed packages.
+    try:
+        dists = packages_distributions().get(root)
+        if dists:
+            return dists[0]
+    except Exception:
+        pass
+    # Static map for well-known mismatches.
+    return _MODULE_TO_DIST.get(root, root)
+
+
+def _enrich_install_hint(msg: str) -> str:
+    """Append an agent-actionable install hint when possible."""
+    m = _RE_NO_MODULE.search(msg)
+    if m:
+        root = m.group(1).split(".")[0]
+        dist = _module_to_dist(root)
+        return f"{msg}\nRun: sift-mcp install {dist}"
+    m = _RE_IMPORT_NOT_ALLOWED.search(msg)
+    if m:
+        root = m.group(1).split(".")[0]
+        # stdlib modules are policy-blocked, not missing —
+        # suggesting install would be misleading.
+        if root in _STDLIB_ROOTS:
+            return msg
+        dist = _module_to_dist(root)
+        return f"{msg}\nRun: sift-mcp install {dist}"
+    return msg
 
 
 def _code_error(
@@ -772,8 +838,9 @@ async def handle_artifact_code(
             code=exc.code,
             message=str(exc),
         )
+        user_msg = _enrich_install_hint(str(exc))
         return _code_error(
-            str(exc),
+            user_msg,
             details_code=exc.code,
             details={
                 "traceback": exc.traceback,

@@ -42,7 +42,7 @@ See [CONTRIBUTING.md](../CONTRIBUTING.md) for full development guide.
 
 ## Importing Your MCP Configuration
 
-Sift can import your existing MCP server configuration from Claude Desktop, Claude Code, Cursor, OpenClaw, VS Code, Windsurf, or Zed.
+Sift can import your existing MCP server configuration from Claude Desktop, Claude Code, Cursor, VS Code, Windsurf, or Zed.
 
 ### Basic Import (SQLite)
 
@@ -52,7 +52,7 @@ sift-mcp init \
 ```
 
 `--from` accepts either an explicit path or one of these shortcuts:
-`claude`, `claude-code`, `cursor`, `openclaw`, `vscode`, `windsurf`, `zed`, `auto`.
+`claude`, `claude-code`, `cursor`, `vscode`, `windsurf`, `zed`, `auto`.
 
 This command:
 
@@ -84,6 +84,40 @@ sift-mcp init \
 ```
 
 This restores the `.backup` file.
+
+## Data-Science Packages (Optional)
+
+Code queries (`query_kind="code"`) can use pandas, NumPy, jmespath, and other
+libraries. These are not included in the base install to keep Sift lightweight.
+
+### Install the data-science bundle
+
+```bash
+# Using pipx
+pipx install "sift-mcp[data-science]"
+
+# Using uv
+uv tool install "sift-mcp[data-science]"
+```
+
+### Install individual packages
+
+You can install any pip package into Sift's environment:
+
+```bash
+sift-mcp install pandas scipy matplotlib
+```
+
+This installs the package and updates the instance allowlist so the import
+is permitted in code queries. To remove:
+
+```bash
+sift-mcp uninstall scipy
+```
+
+> **Note:** Sift runs in an isolated Python environment. Packages installed
+> in your system Python are not available to code queries — use
+> `sift-mcp install` instead of `pip install`.
 
 ## PostgreSQL Setup (Optional)
 
@@ -273,7 +307,7 @@ The command exits with status `0` if all checks pass.
 
 After setup:
 
-1. **Restart your MCP client** (Claude Desktop, Claude Code, Cursor, OpenClaw, VS Code, Windsurf, or Zed)
+1. **Restart your MCP client** (Claude Desktop, Claude Code, Cursor, VS Code, Windsurf, or Zed)
 
 2. **Call an upstream tool** that returns a large response (> 8 KB default)
 
