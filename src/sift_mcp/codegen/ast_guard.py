@@ -23,6 +23,25 @@ ALLOWED_STDLIB_IMPORTS = frozenset(
         "io",
         "string",
         "textwrap",
+        "copy",
+        "typing",
+        "dataclasses",
+        "enum",
+        "fractions",
+        "bisect",
+        "pprint",
+        "uuid",
+        "base64",
+        "struct",
+        "array",
+        "numbers",
+        "cmath",
+        "random",
+        "secrets",
+        "fnmatch",
+        "difflib",
+        "html",
+        "urllib",
     }
 )
 
@@ -89,6 +108,13 @@ _BLOCKED_IO_ATTRS = frozenset(
     }
 )
 
+_ALLOWED_URLLIB_MODULES = frozenset(
+    {
+        "urllib",
+        "urllib.parse",
+    }
+)
+
 
 @dataclass(frozen=True)
 class CodeValidationError(ValueError):
@@ -137,6 +163,45 @@ def _ensure_allowed_import(
             code="CODE_IMPORT_NOT_ALLOWED",
             message=f"import not allowed: {raw}",
         )
+
+
+def _ensure_allowed_urllib(
+    module_path: str,
+    *,
+    root: str,
+    from_names: list[str] | None = None,
+) -> None:
+    """Restrict urllib imports to urllib.parse only.
+
+    Args:
+        module_path: Full dotted module path (e.g. ``urllib.request``).
+        root: Top-level import root.
+        from_names: Names imported via ``from ... import``.
+
+    Raises:
+        CodeValidationError: When a disallowed urllib submodule is used.
+    """
+    if root != "urllib":
+        return
+    if module_path not in _ALLOWED_URLLIB_MODULES:
+        raise CodeValidationError(
+            code="CODE_IMPORT_NOT_ALLOWED",
+            message=(
+                f"import not allowed: {module_path}"
+                " (only urllib.parse is permitted)"
+            ),
+        )
+    if module_path == "urllib" and from_names:
+        for name in from_names:
+            if name != "parse":
+                raise CodeValidationError(
+                    code="CODE_IMPORT_NOT_ALLOWED",
+                    message=(
+                        f"from urllib import {name} is not"
+                        " allowed (only urllib.parse is"
+                        " permitted)"
+                    ),
+                )
 
 
 def _validate_run_signature(node: ast.FunctionDef) -> None:
@@ -214,6 +279,7 @@ def validate_code_ast(
                     raw=alias.name,
                     allowed_import_roots_set=import_roots,
                 )
+                _ensure_allowed_urllib(alias.name, root=root)
         elif isinstance(module_node, ast.ImportFrom):
             if module_node.level and module_node.level > 0:
                 raise CodeValidationError(
@@ -230,6 +296,13 @@ def validate_code_ast(
                 root,
                 raw=module_node.module,
                 allowed_import_roots_set=import_roots,
+            )
+            _ensure_allowed_urllib(
+                module_node.module,
+                root=root,
+                from_names=[
+                    a.name for a in (module_node.names or [])
+                ],
             )
         elif isinstance(module_node, ast.Attribute):
             if module_node.attr.startswith("__"):
