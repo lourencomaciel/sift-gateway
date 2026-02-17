@@ -254,10 +254,12 @@ _BUILTIN_TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
                     "run(artifacts, schemas, params) for multi-artifact "
                     "queries, or run(data, schema, params) for single-artifact "
                     "queries. "
-                    "Allowed imports: math, statistics, decimal, datetime, re, "
-                    "itertools, collections, functools, operator, heapq, json, "
-                    "jmespath, pandas, numpy by default; allowlist can be "
-                    "overridden by config."
+                    "Allowed imports: math, statistics, decimal, datetime, "
+                    "re, itertools, collections, functools, operator, "
+                    "heapq, json, csv, io (StringIO/BytesIO only — "
+                    "io.open and file-backed classes are blocked), "
+                    "string, textwrap, jmespath, pandas, numpy by "
+                    "default; allowlist can be overridden by config."
                 ),
             },
             "params": {

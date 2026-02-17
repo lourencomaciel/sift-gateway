@@ -96,3 +96,64 @@ def test_allowed_import_roots_honors_configured_override() -> None:
         configured_roots=["math", "json"],
     )
     assert roots == {"math", "json"}
+
+
+@pytest.mark.parametrize(
+    "module_name",
+    ["csv", "io", "string", "textwrap"],
+)
+def test_validate_code_ast_accepts_new_stdlib_imports(
+    module_name: str,
+) -> None:
+    code = f"""
+import {module_name}
+
+def run(data, schema, params):
+    return []
+"""
+    module = validate_code_ast(code)
+    assert module is not None
+
+
+def test_validate_code_ast_accepts_io_stringio() -> None:
+    code = """
+import io
+
+def run(data, schema, params):
+    buf = io.StringIO()
+    buf.write("hello")
+    return [buf.getvalue()]
+"""
+    module = validate_code_ast(code)
+    assert module is not None
+
+
+def test_validate_code_ast_accepts_io_bytesio() -> None:
+    code = """
+import io
+
+def run(data, schema, params):
+    buf = io.BytesIO(b"hello")
+    return [len(buf.getvalue())]
+"""
+    module = validate_code_ast(code)
+    assert module is not None
+
+
+@pytest.mark.parametrize(
+    "blocked_attr",
+    ["open", "FileIO", "BufferedReader", "BufferedWriter", "BufferedRandom"],
+)
+def test_validate_code_ast_rejects_io_file_access(
+    blocked_attr: str,
+) -> None:
+    code = f"""
+import io
+
+def run(data, schema, params):
+    return io.{blocked_attr}("/tmp/x")
+"""
+    with pytest.raises(CodeValidationError) as exc:
+        validate_code_ast(code)
+    assert exc.value.code == "CODE_AST_REJECTED"
+    assert f"io.{blocked_attr}" in exc.value.message

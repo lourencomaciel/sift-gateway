@@ -19,6 +19,10 @@ ALLOWED_STDLIB_IMPORTS = frozenset(
         "operator",
         "heapq",
         "json",
+        "csv",
+        "io",
+        "string",
+        "textwrap",
     }
 )
 
@@ -72,6 +76,16 @@ _BLOCKED_NAME_PATTERNS = frozenset(
         "shutil",
         "importlib",
         "builtins",
+    }
+)
+
+_BLOCKED_IO_ATTRS = frozenset(
+    {
+        "open",
+        "FileIO",
+        "BufferedReader",
+        "BufferedWriter",
+        "BufferedRandom",
     }
 )
 
@@ -239,6 +253,18 @@ def validate_code_ast(
                     raise CodeValidationError(
                         code="CODE_AST_REJECTED",
                         message="dynamic import helpers are not allowed",
+                    )
+                if (
+                    isinstance(base, ast.Name)
+                    and base.id == "io"
+                    and fn.attr in _BLOCKED_IO_ATTRS
+                ):
+                    raise CodeValidationError(
+                        code="CODE_AST_REJECTED",
+                        message=(
+                            f"io.{fn.attr} is not allowed"
+                            " (use io.StringIO / io.BytesIO)"
+                        ),
                     )
         elif (
             isinstance(module_node, ast.Name)
