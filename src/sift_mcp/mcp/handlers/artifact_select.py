@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 import json
-from typing import TYPE_CHECKING, Any, Mapping
+from typing import TYPE_CHECKING, Any
 
 from sift_mcp.constants import WORKSPACE_ID
 from sift_mcp.cursor.hmac import (
@@ -170,9 +171,11 @@ async def handle_artifact_select(
         if caller_where is None:
             caller_where = cursor_payload.get("where_serialized")
         # Restore distinct flag from cursor if caller didn't set it.
-        if arguments.get("distinct") is None:
-            if cursor_payload.get("distinct") is True:
-                arguments["distinct"] = True
+        if (
+            arguments.get("distinct") is None
+            and cursor_payload.get("distinct") is True
+        ):
+            arguments["distinct"] = True
         # Restore order_by from cursor if caller omitted it.
         if arguments.get("order_by") is None:
             cursor_order_by = cursor_payload.get("order_by")
@@ -351,9 +354,7 @@ async def handle_artifact_select(
             related_ids = resolved_candidates.related_ids
             related_set_hash = resolved_candidates.related_set_hash
             candidate_rows = resolved_candidates.candidate_rows
-            missing_root_artifacts = (
-                resolved_candidates.missing_root_artifacts
-            )
+            missing_root_artifacts = resolved_candidates.missing_root_artifacts
 
         if missing_root_artifacts:
             warnings.append(
@@ -385,7 +386,9 @@ async def handle_artifact_select(
                         expected=related_set_hash,
                     )
                 else:
-                    generation = anchor_meta.get("generation") if anchor_meta else None
+                    generation = (
+                        anchor_meta.get("generation") if anchor_meta else None
+                    )
                     if isinstance(generation, int):
                         ctx._assert_cursor_field(
                             cursor_payload,
@@ -421,7 +424,12 @@ async def handle_artifact_select(
             except CursorStaleError as exc:
                 return ctx._cursor_error(exc)
 
-        for artifact_id, artifact_meta, root_row, _schema_root in candidate_rows:
+        for (
+            artifact_id,
+            artifact_meta,
+            root_row,
+            _schema_root,
+        ) in candidate_rows:
             map_kind = str(artifact_meta.get("map_kind", "none"))
             sampled_only = map_kind == "partial"
 
@@ -476,9 +484,7 @@ async def handle_artifact_select(
                                 cursor_payload, expected_sample_set_hash
                             )
                         except SampleSetHashBindingError as exc:
-                            return ctx._cursor_error(
-                                CursorStaleError(str(exc))
-                            )
+                            return ctx._cursor_error(CursorStaleError(str(exc)))
 
                 for sample in sample_rows:
                     record = sample.get("record")
@@ -538,7 +544,9 @@ async def handle_artifact_select(
                     envelope = reconstruct_envelope(
                         compressed_bytes=bytes(canonical_bytes_raw),
                         encoding=str(
-                            artifact_row.get("envelope_canonical_encoding", "none")
+                            artifact_row.get(
+                                "envelope_canonical_encoding", "none"
+                            )
                         ),
                         expected_hash=str(
                             artifact_row.get("payload_hash_full", "")
@@ -712,7 +720,9 @@ async def handle_artifact_select(
         and isinstance(item["_locator"].get("sample_index"), int)
     ]
     sampled_prefix_len: int | None = None
-    root_summary = single_root_row.get("root_summary") if single_root_row else None
+    root_summary = (
+        single_root_row.get("root_summary") if single_root_row else None
+    )
     if sampled_only_single and isinstance(root_summary, Mapping):
         raw_sampled_prefix_len = root_summary.get("sampled_prefix_len")
         if (
@@ -745,7 +755,9 @@ async def handle_artifact_select(
         cursor=next_cursor,
         total_matched=total_matched,
         sampled_only=sampled_only_single,
-        sample_indices_used=sample_indices_used if sampled_only_single else None,
+        sample_indices_used=sample_indices_used
+        if sampled_only_single
+        else None,
         sampled_prefix_len=sampled_prefix_len,
         omitted={"count": omitted, "reason": "budget"} if truncated else None,
         stats={"bytes_out": used_bytes},

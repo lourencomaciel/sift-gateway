@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any
 
 from sift_mcp.constants import WORKSPACE_ID
 from sift_mcp.envelope.responses import gateway_error
@@ -148,7 +149,9 @@ def resolve_all_related_root_candidates(
             schema_completeness=schema_root.get("completeness"),
         )
         signature_groups.setdefault(signature, []).append(artifact_id)
-        candidate_rows.append((artifact_id, artifact_meta, root_row, schema_root))
+        candidate_rows.append(
+            (artifact_id, artifact_meta, root_row, schema_root)
+        )
 
     if not candidate_rows:
         details: dict[str, Any] = {}
@@ -176,7 +179,9 @@ def resolve_all_related_root_candidates(
                         "signature": signature,
                         "artifact_ids": sorted(artifact_ids),
                     }
-                    for signature, artifact_ids in sorted(signature_groups.items())
+                    for signature, artifact_ids in sorted(
+                        signature_groups.items()
+                    )
                 ],
             },
         )

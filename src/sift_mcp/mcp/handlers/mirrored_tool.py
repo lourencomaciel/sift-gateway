@@ -94,7 +94,7 @@ if TYPE_CHECKING:
     from sift_mcp.mcp.server import GatewayServer
 
 
-class _NeverRaised(Exception):
+class _NeverRaisedError(Exception):
     """Sentinel exception that is never raised.
 
     Used as the fallback when ``psycopg`` is not installed so
@@ -110,8 +110,8 @@ try:
     _PG_OPERATIONAL_ERROR: type[BaseException] = psycopg.OperationalError
     _PG_INTERFACE_ERROR: type[BaseException] = psycopg.InterfaceError
 except ImportError:
-    _PG_OPERATIONAL_ERROR = _NeverRaised
-    _PG_INTERFACE_ERROR = _NeverRaised
+    _PG_OPERATIONAL_ERROR = _NeverRaisedError
+    _PG_INTERFACE_ERROR = _NeverRaisedError
 
 _DB_CONNECTIVITY_ERRORS: tuple[type[BaseException], ...] = (
     _PG_OPERATIONAL_ERROR,
@@ -932,7 +932,7 @@ async def _auto_paginate_loop(
                 ),
                 timeout=remaining,
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             log.info(
                 LogEvents.AUTO_PAGINATION_UPSTREAM_TIMEOUT,
                 pages_fetched=pages_fetched,
@@ -1107,12 +1107,15 @@ async def handle_mirrored_tool(
     # Pre-flight health gate: refuse artifact creation when
     # gateway is unhealthy. Probe before refusing -- the failure
     # that latched db_ok=False may have been transient.
-    if ctx.db_pool is not None and not ctx.db_ok:
-        if not ctx._probe_db_recovery():
-            return gateway_error(
-                "INTERNAL",
-                "gateway database is unhealthy; cannot create artifact",
-            )
+    if (
+        ctx.db_pool is not None
+        and not ctx.db_ok
+        and not ctx._probe_db_recovery()
+    ):
+        return gateway_error(
+            "INTERNAL",
+            "gateway database is unhealthy; cannot create artifact",
+        )
     if not ctx.fs_ok:
         return gateway_error(
             "INTERNAL",
@@ -1207,424 +1210,410 @@ async def handle_mirrored_tool(
             "NOT_IMPLEMENTED",
             "schema-first responses require database persistence",
         )
-    else:
-        # Phase 1: Cache check in a short-lived connection.
-        # The advisory lock is transaction-scoped and released when this
-        # connection closes, so there is a small window for duplicate
-        # upstream calls.  This is an acceptable trade-off: pool starvation
-        # from holding a connection during a 30 s upstream call is far worse
-        # than an occasional redundant call (persist handles the race via
-        # unique artifact IDs).
-        if allow_reuse:
-            try:
-                with ctx.db_pool.connection() as connection:
-                    acquired = await acquire_advisory_lock_async(
+    # Phase 1: Cache check in a short-lived connection.
+    # The advisory lock is transaction-scoped and released when this
+    # connection closes, so there is a small window for duplicate
+    # upstream calls.  This is an acceptable trade-off: pool starvation
+    # from holding a connection during a 30 s upstream call is far worse
+    # than an occasional redundant call (persist handles the race via
+    # unique artifact IDs).
+    if allow_reuse:
+        try:
+            with ctx.db_pool.connection() as connection:
+                acquired = await acquire_advisory_lock_async(
+                    connection,
+                    request_key=identity.request_key,
+                    timeout_ms=ctx.config.advisory_lock_timeout_ms,
+                    metrics=ctx.metrics,
+                )
+                if not acquired:
+                    return gateway_error(
+                        "RESOURCE_BUSY",
+                        "advisory lock acquisition timed out",
+                        details={
+                            "timeout_ms": (ctx.config.advisory_lock_timeout_ms),
+                        },
+                    )
+                try:
+                    reuse = ctx._check_reuse_on_connection(
                         connection,
                         request_key=identity.request_key,
-                        timeout_ms=ctx.config.advisory_lock_timeout_ms,
-                        metrics=ctx.metrics,
+                        expected_schema_hash=mirrored.upstream_tool.schema_hash,
+                        strict_schema_reuse=mirrored.upstream.config.strict_schema_reuse,
                     )
-                    if not acquired:
-                        return gateway_error(
-                            "RESOURCE_BUSY",
-                            "advisory lock acquisition timed out",
-                            details={
-                                "timeout_ms": (
-                                    ctx.config.advisory_lock_timeout_ms
-                                ),
-                            },
-                        )
-                    try:
-                        reuse = ctx._check_reuse_on_connection(
-                            connection,
-                            request_key=identity.request_key,
-                            expected_schema_hash=mirrored.upstream_tool.schema_hash,
-                            strict_schema_reuse=mirrored.upstream.config.strict_schema_reuse,
-                        )
-                        if reuse.reused and reuse.artifact_id is not None:
-                            ref_attached = False
-                            try:
-                                upsert_session(connection, session_id)
-                                upsert_artifact_ref(
-                                    connection,
-                                    session_id,
-                                    reuse.artifact_id,
-                                )
-                                connection.commit()
-                                ref_attached = True
-                            except _DB_CONNECTIVITY_ERRORS:
-                                raise
-                            except Exception:
-                                get_logger(component="mcp.handlers").warning(
-                                    "artifact_ref upsert on cache hit failed",
-                                    exc_info=True,
-                                )
-                                cache_reason = "artifact_ref_attach_failed"
-                            if ref_attached:
-                                desc, hint = _fetch_inline_describe(
-                                    connection,
-                                    reuse.artifact_id,
-                                    code_query_packages=code_query_packages,
-                                )
-                                if _describe_has_ready_schema(desc):
-                                    ctx._increment_metric("cache_hits")
-                                    cache_reason = (
-                                        reuse.reason
-                                        or "request_key_match"
-                                    )
-                                    (
-                                        mapping_payload,
-                                        schema_payload,
-                                        schema_legend,
-                                    ) = _schema_payload_from_describe(desc)
-                                    pagination_meta = None
-                                    try:
-                                        pagination_meta = (
-                                            _cached_pagination_meta_for_reuse(
-                                                connection,
-                                                artifact_id=reuse.artifact_id,
-                                                mirrored=mirrored,
-                                                forwarded_args=forwarded_args,
-                                            )
-                                        )
-                                    except Exception:
-                                        get_logger(
-                                            component="mcp.handlers"
-                                        ).warning(
-                                            "cached pagination rebuild failed "
-                                            "(best-effort)",
-                                            exc_info=True,
-                                        )
-                                    return gateway_tool_result(
-                                        artifact_id=reuse.artifact_id,
-                                        cache_meta={
-                                            "reused": True,
-                                            "reason": cache_reason,
-                                            "request_key": identity.request_key,
-                                            "artifact_id_origin": "cache",
-                                            "allow_reuse": True,
-                                        },
-                                        mapping=mapping_payload,
-                                        schemas=schema_payload,
-                                        schema_legend=schema_legend,
-                                        usage_hint=hint,
-                                        pagination=pagination_meta,
-                                    )
-                                cache_reason = "cache_schema_unavailable"
-                            ctx._increment_metric("cache_misses")
-                            reuse = ReuseResult(
-                                reused=False,
-                                reason=cache_reason,
+                    if reuse.reused and reuse.artifact_id is not None:
+                        ref_attached = False
+                        try:
+                            upsert_session(connection, session_id)
+                            upsert_artifact_ref(
+                                connection,
+                                session_id,
+                                reuse.artifact_id,
                             )
-                        else:
-                            if reuse.reason is not None:
-                                cache_reason = reuse.reason
-                            ctx._increment_metric("cache_misses")
-                    finally:
-                        release_advisory_lock(
-                            connection,
-                            request_key=identity.request_key,
+                            connection.commit()
+                            ref_attached = True
+                        except _DB_CONNECTIVITY_ERRORS:
+                            raise
+                        except Exception:
+                            get_logger(component="mcp.handlers").warning(
+                                "artifact_ref upsert on cache hit failed",
+                                exc_info=True,
+                            )
+                            cache_reason = "artifact_ref_attach_failed"
+                        if ref_attached:
+                            desc, hint = _fetch_inline_describe(
+                                connection,
+                                reuse.artifact_id,
+                                code_query_packages=code_query_packages,
+                            )
+                            if _describe_has_ready_schema(desc):
+                                ctx._increment_metric("cache_hits")
+                                cache_reason = (
+                                    reuse.reason or "request_key_match"
+                                )
+                                (
+                                    mapping_payload,
+                                    schema_payload,
+                                    schema_legend,
+                                ) = _schema_payload_from_describe(desc)
+                                pagination_meta = None
+                                try:
+                                    pagination_meta = (
+                                        _cached_pagination_meta_for_reuse(
+                                            connection,
+                                            artifact_id=reuse.artifact_id,
+                                            mirrored=mirrored,
+                                            forwarded_args=forwarded_args,
+                                        )
+                                    )
+                                except Exception:
+                                    get_logger(
+                                        component="mcp.handlers"
+                                    ).warning(
+                                        "cached pagination rebuild failed "
+                                        "(best-effort)",
+                                        exc_info=True,
+                                    )
+                                return gateway_tool_result(
+                                    artifact_id=reuse.artifact_id,
+                                    cache_meta={
+                                        "reused": True,
+                                        "reason": cache_reason,
+                                        "request_key": identity.request_key,
+                                        "artifact_id_origin": "cache",
+                                        "allow_reuse": True,
+                                    },
+                                    mapping=mapping_payload,
+                                    schemas=schema_payload,
+                                    schema_legend=schema_legend,
+                                    usage_hint=hint,
+                                    pagination=pagination_meta,
+                                )
+                            cache_reason = "cache_schema_unavailable"
+                        ctx._increment_metric("cache_misses")
+                        reuse = ReuseResult(
+                            reused=False,
+                            reason=cache_reason,
                         )
-            except _DB_CONNECTIVITY_ERRORS:
-                ctx.db_ok = False
-                return gateway_error(
-                    "INTERNAL",
-                    "cache check failed; gateway marked unhealthy",
-                )
-            except Exception:
-                get_logger(component="mcp.handlers").warning(
-                    "cache check failed (best-effort)",
-                    exc_info=True,
-                )
-        else:
-            cache_reason = "reuse_disabled"
-
-        # Phase 1.5: Quota enforcement preflight.
-        # Rejecting here avoids invoking side-effecting upstream tools when
-        # the workspace is already over hard quota and cannot be cleared.
-        # Uses a separate connection (prune needs its own transaction).
-        # Non-connectivity errors fail closed but do not mark DB unhealthy.
-        quota_ok = True
-        quota_breaches: QuotaBreaches | None = None
-        if ctx.config.quota_enforcement_enabled:
-            try:
-                blobs_root = (
-                    ctx.blob_store.blobs_bin_dir
-                    if ctx.blob_store is not None
-                    else None
-                )
-                with ctx.db_pool.connection() as quota_conn:
-                    quota_result = enforce_quota(
-                        quota_conn,
-                        max_binary_blob_bytes=ctx.config.max_binary_blob_bytes,
-                        max_payload_total_bytes=ctx.config.max_payload_total_bytes,
-                        max_total_storage_bytes=ctx.config.max_total_storage_bytes,
-                        prune_batch_size=ctx.config.quota_prune_batch_size,
-                        max_prune_rounds=ctx.config.quota_max_prune_rounds,
-                        hard_delete_grace_seconds=ctx.config.quota_hard_delete_grace_seconds,
-                        remove_fs_blobs=ctx.blob_store is not None,
-                        blobs_root=blobs_root,
-                        metrics=ctx.metrics,
+                    else:
+                        if reuse.reason is not None:
+                            cache_reason = reuse.reason
+                        ctx._increment_metric("cache_misses")
+                finally:
+                    release_advisory_lock(
+                        connection,
+                        request_key=identity.request_key,
                     )
-                    quota_breaches = (
-                        quota_result.breaches_after
-                        or quota_result.breaches_before
-                    )
-                    if not quota_result.space_cleared:
-                        quota_ok = False
-            except _DB_CONNECTIVITY_ERRORS:
-                ctx.db_ok = False
-                return gateway_error(
-                    "INTERNAL",
-                    "quota check failed; gateway marked unhealthy",
-                )
-            except Exception:
-                return gateway_error(
-                    "INTERNAL",
-                    "quota check failed; refusing to create artifact",
-                )
-
-        if not quota_ok:
-            quota_details: dict[str, Any] = {"exceeded_caps": []}
-            if (
-                quota_breaches is not None
-                and quota_breaches.binary_blob_exceeded
-            ):
-                quota_details["max_binary_blob_bytes"] = (
-                    ctx.config.max_binary_blob_bytes
-                )
-                quota_details["exceeded_caps"].append("max_binary_blob_bytes")
-            if (
-                quota_breaches is not None
-                and quota_breaches.payload_total_exceeded
-            ):
-                quota_details["max_payload_total_bytes"] = (
-                    ctx.config.max_payload_total_bytes
-                )
-                quota_details["exceeded_caps"].append("max_payload_total_bytes")
-            if (
-                quota_breaches is not None
-                and quota_breaches.total_storage_exceeded
-            ):
-                quota_details["max_total_storage_bytes"] = (
-                    ctx.config.max_total_storage_bytes
-                )
-                quota_details["exceeded_caps"].append("max_total_storage_bytes")
-            if not quota_details["exceeded_caps"]:
-                quota_details["max_total_storage_bytes"] = (
-                    ctx.config.max_total_storage_bytes
-                )
-                quota_details["exceeded_caps"].append("max_total_storage_bytes")
-            return gateway_error(
-                "QUOTA_EXCEEDED",
-                "workspace storage quota exceeded;"
-                " prune could not free enough space",
-                details=quota_details,
-            )
-
-        # Phase 1.75: Resolve artifact refs in forwarded args.
-        # Uses a short-lived connection; resolved args are only
-        # sent upstream — identity / cache / storage use the
-        # original pointer-containing forwarded_args.
-        # Import is deferred to avoid a circular dependency
-        # (resolve_refs → handlers.common → handlers.__init__
-        #  → mirrored_tool → resolve_refs).
-        from sift_mcp.mcp.resolve_refs import (
-            ResolveError,
-            resolve_artifact_refs,
-        )
-
-        upstream_args = forwarded_args
-        try:
-            with ctx.db_pool.connection() as resolve_conn:
-                resolved = resolve_artifact_refs(resolve_conn, forwarded_args)
-                if isinstance(resolved, ResolveError):
-                    return gateway_error(resolved.code, resolved.message)
-                upstream_args = resolved
         except _DB_CONNECTIVITY_ERRORS:
             ctx.db_ok = False
             return gateway_error(
                 "INTERNAL",
-                "artifact ref resolution failed; gateway marked unhealthy",
+                "cache check failed; gateway marked unhealthy",
             )
         except Exception:
             get_logger(component="mcp.handlers").warning(
-                "artifact ref resolution failed (best-effort)",
+                "cache check failed (best-effort)",
                 exc_info=True,
             )
+    else:
+        cache_reason = "reuse_disabled"
 
-        # Phase 2: Upstream call — no DB connection held.
+    # Phase 1.5: Quota enforcement preflight.
+    # Rejecting here avoids invoking side-effecting upstream tools when
+    # the workspace is already over hard quota and cannot be cleared.
+    # Uses a separate connection (prune needs its own transaction).
+    # Non-connectivity errors fail closed but do not mark DB unhealthy.
+    quota_ok = True
+    quota_breaches: QuotaBreaches | None = None
+    if ctx.config.quota_enforcement_enabled:
         try:
-            upstream_result = await ctx._call_upstream_with_metrics(
-                mirrored=mirrored,
-                forwarded_args=upstream_args,
+            blobs_root = (
+                ctx.blob_store.blobs_bin_dir
+                if ctx.blob_store is not None
+                else None
             )
-        except Exception as exc:
-            error_code = classify_upstream_exception(exc)
-            error_text = _truncate_error_text(
-                str(exc), ctx.config.max_upstream_error_capture_bytes
-            )
-            upstream_result = {
-                "content": [{"type": "text", "text": error_text}],
-                "structuredContent": None,
-                "isError": True,
-                "meta": {
-                    "exception_type": type(exc).__name__,
-                    "gateway_error_code": error_code,
-                    "gateway_error_detail": error_text,
-                },
-            }
-
-        try:
-            envelope, binary_refs = ctx._envelope_from_upstream_result(
-                mirrored=mirrored,
-                upstream_result=upstream_result,
-            )
-        except ValueError as exc:
+            with ctx.db_pool.connection() as quota_conn:
+                quota_result = enforce_quota(
+                    quota_conn,
+                    max_binary_blob_bytes=ctx.config.max_binary_blob_bytes,
+                    max_payload_total_bytes=ctx.config.max_payload_total_bytes,
+                    max_total_storage_bytes=ctx.config.max_total_storage_bytes,
+                    prune_batch_size=ctx.config.quota_prune_batch_size,
+                    max_prune_rounds=ctx.config.quota_max_prune_rounds,
+                    hard_delete_grace_seconds=ctx.config.quota_hard_delete_grace_seconds,
+                    remove_fs_blobs=ctx.blob_store is not None,
+                    blobs_root=blobs_root,
+                    metrics=ctx.metrics,
+                )
+                quota_breaches = (
+                    quota_result.breaches_after or quota_result.breaches_before
+                )
+                if not quota_result.space_cleared:
+                    quota_ok = False
+        except _DB_CONNECTIVITY_ERRORS:
+            ctx.db_ok = False
             return gateway_error(
-                "UPSTREAM_RESPONSE_INVALID",
-                str(exc),
+                "INTERNAL",
+                "quota check failed; gateway marked unhealthy",
+            )
+        except Exception:
+            return gateway_error(
+                "INTERNAL",
+                "quota check failed; refusing to create artifact",
             )
 
-        page_number = chain_seq or 0
-        envelope, pagination_assessment = _inject_pagination_state(
-            envelope,
-            mirrored.upstream.config,
-            forwarded_args,
-            mirrored.prefix,
-            page_number=page_number,
+    if not quota_ok:
+        quota_details: dict[str, Any] = {"exceeded_caps": []}
+        if quota_breaches is not None and quota_breaches.binary_blob_exceeded:
+            quota_details["max_binary_blob_bytes"] = (
+                ctx.config.max_binary_blob_bytes
+            )
+            quota_details["exceeded_caps"].append("max_binary_blob_bytes")
+        if quota_breaches is not None and quota_breaches.payload_total_exceeded:
+            quota_details["max_payload_total_bytes"] = (
+                ctx.config.max_payload_total_bytes
+            )
+            quota_details["exceeded_caps"].append("max_payload_total_bytes")
+        if quota_breaches is not None and quota_breaches.total_storage_exceeded:
+            quota_details["max_total_storage_bytes"] = (
+                ctx.config.max_total_storage_bytes
+            )
+            quota_details["exceeded_caps"].append("max_total_storage_bytes")
+        if not quota_details["exceeded_caps"]:
+            quota_details["max_total_storage_bytes"] = (
+                ctx.config.max_total_storage_bytes
+            )
+            quota_details["exceeded_caps"].append("max_total_storage_bytes")
+        return gateway_error(
+            "QUOTA_EXCEEDED",
+            "workspace storage quota exceeded;"
+            " prune could not free enough space",
+            details=quota_details,
         )
 
-        # Phase 2.25: Auto-pagination — fetch additional upstream
-        # pages and merge into a single artifact when enabled.
-        if (
-            pagination_assessment is not None
-            and pagination_assessment.has_more
-            and pagination_assessment.state is not None
-        ):
-            ap_limits = resolve_auto_paginate_limits(
-                ctx.config, mirrored.upstream.config
+    # Phase 1.75: Resolve artifact refs in forwarded args.
+    # Uses a short-lived connection; resolved args are only
+    # sent upstream — identity / cache / storage use the
+    # original pointer-containing forwarded_args.
+    # Import is deferred to avoid a circular dependency
+    # (resolve_refs → handlers.common → handlers.__init__
+    #  → mirrored_tool → resolve_refs).
+    from sift_mcp.mcp.resolve_refs import (
+        ResolveError,
+        resolve_artifact_refs,
+    )
+
+    upstream_args = forwarded_args
+    try:
+        with ctx.db_pool.connection() as resolve_conn:
+            resolved = resolve_artifact_refs(resolve_conn, forwarded_args)
+            if isinstance(resolved, ResolveError):
+                return gateway_error(resolved.code, resolved.message)
+            upstream_args = resolved
+    except _DB_CONNECTIVITY_ERRORS:
+        ctx.db_ok = False
+        return gateway_error(
+            "INTERNAL",
+            "artifact ref resolution failed; gateway marked unhealthy",
+        )
+    except Exception:
+        get_logger(component="mcp.handlers").warning(
+            "artifact ref resolution failed (best-effort)",
+            exc_info=True,
+        )
+
+    # Phase 2: Upstream call — no DB connection held.
+    try:
+        upstream_result = await ctx._call_upstream_with_metrics(
+            mirrored=mirrored,
+            forwarded_args=upstream_args,
+        )
+    except Exception as exc:
+        error_code = classify_upstream_exception(exc)
+        error_text = _truncate_error_text(
+            str(exc), ctx.config.max_upstream_error_capture_bytes
+        )
+        upstream_result = {
+            "content": [{"type": "text", "text": error_text}],
+            "structuredContent": None,
+            "isError": True,
+            "meta": {
+                "exception_type": type(exc).__name__,
+                "gateway_error_code": error_code,
+                "gateway_error_detail": error_text,
+            },
+        }
+
+    try:
+        envelope, binary_refs = ctx._envelope_from_upstream_result(
+            mirrored=mirrored,
+            upstream_result=upstream_result,
+        )
+    except ValueError as exc:
+        return gateway_error(
+            "UPSTREAM_RESPONSE_INVALID",
+            str(exc),
+        )
+
+    page_number = chain_seq or 0
+    envelope, pagination_assessment = _inject_pagination_state(
+        envelope,
+        mirrored.upstream.config,
+        forwarded_args,
+        mirrored.prefix,
+        page_number=page_number,
+    )
+
+    # Phase 2.25: Auto-pagination — fetch additional upstream
+    # pages and merge into a single artifact when enabled.
+    if (
+        pagination_assessment is not None
+        and pagination_assessment.has_more
+        and pagination_assessment.state is not None
+    ):
+        ap_limits = resolve_auto_paginate_limits(
+            ctx.config, mirrored.upstream.config
+        )
+        if ap_limits.max_pages > 1:
+            ap_result = await _auto_paginate_loop(
+                ctx,
+                mirrored,
+                first_envelope=envelope,
+                first_assessment=pagination_assessment,
+                forwarded_args=forwarded_args,
+                max_pages=ap_limits.max_pages,
+                max_records=ap_limits.max_records,
+                timeout=ap_limits.timeout,
             )
-            if ap_limits.max_pages > 1:
-                ap_result = await _auto_paginate_loop(
-                    ctx,
-                    mirrored,
-                    first_envelope=envelope,
-                    first_assessment=pagination_assessment,
-                    forwarded_args=forwarded_args,
-                    max_pages=ap_limits.max_pages,
-                    max_records=ap_limits.max_records,
-                    timeout=ap_limits.timeout,
+            envelope = ap_result.envelope
+            pagination_assessment = ap_result.assessment
+            binary_refs.extend(ap_result.binary_refs)
+
+            # Reapply oversize guard: individual pages may
+            # fit under the threshold, but the merged JSON
+            # can exceed it.
+            if ctx.blob_store is not None:
+                from sift_mcp.envelope.oversize import (
+                    replace_oversized_json_parts,
                 )
-                envelope = ap_result.envelope
-                pagination_assessment = ap_result.assessment
-                binary_refs.extend(ap_result.binary_refs)
 
-                # Reapply oversize guard: individual pages may
-                # fit under the threshold, but the merged JSON
-                # can exceed it.
-                if ctx.blob_store is not None:
-                    from sift_mcp.envelope.oversize import (
-                        replace_oversized_json_parts,
-                    )
-
-                    merged_refs: list[Any] = []
-                    envelope = replace_oversized_json_parts(
-                        envelope,
-                        max_json_part_parse_bytes=(
-                            ctx.config.max_json_part_parse_bytes
-                        ),
-                        blob_store=ctx.blob_store,
-                        binary_refs_out=merged_refs,
-                    )
-                    binary_refs.extend(merged_refs)
-
-        # Phase 3: Persist + Phase 4: inline mapping in a single connection.
-        # Reusing the same connection avoids a second pool checkout that
-        # could silently fail (e.g. PoolTimeout under load).
-        stage = "persist_artifact"
-        try:
-            with ctx.db_pool.connection() as connection:
-                binary_hashes = ctx._binary_hashes_from_envelope(envelope)
-                handle = persist_artifact(
-                    connection=connection,
-                    config=ctx.config,
-                    input_data=_create_input(envelope),
-                    binary_hashes=binary_hashes,
-                    binary_refs=binary_refs or None,
+                merged_refs: list[Any] = []
+                envelope = replace_oversized_json_parts(
+                    envelope,
+                    max_json_part_parse_bytes=(
+                        ctx.config.max_json_part_parse_bytes
+                    ),
+                    blob_store=ctx.blob_store,
+                    binary_refs_out=merged_refs,
                 )
-                stage = "run_mapping_inline"
-                mapped = ctx._run_mapping_inline(
+                binary_refs.extend(merged_refs)
+
+    # Phase 3: Persist + Phase 4: inline mapping in a single connection.
+    # Reusing the same connection avoids a second pool checkout that
+    # could silently fail (e.g. PoolTimeout under load).
+    stage = "persist_artifact"
+    try:
+        with ctx.db_pool.connection() as connection:
+            binary_hashes = ctx._binary_hashes_from_envelope(envelope)
+            handle = persist_artifact(
+                connection=connection,
+                config=ctx.config,
+                input_data=_create_input(envelope),
+                binary_hashes=binary_hashes,
+                binary_refs=binary_refs or None,
+            )
+            stage = "run_mapping_inline"
+            mapped = ctx._run_mapping_inline(
+                connection,
+                handle=handle,
+                envelope=envelope,
+            )
+            if not mapped:
+                return gateway_error(
+                    "INTERNAL",
+                    "mapping did not complete for artifact",
+                )
+            # Phase 5: Inline describe — fetch roots on
+            # the same connection (2 indexed lookups).
+            stage = "fetch_inline_describe"
+            try:
+                desc, hint = _fetch_inline_describe(
                     connection,
-                    handle=handle,
-                    envelope=envelope,
+                    handle.artifact_id,
+                    code_query_packages=code_query_packages,
                 )
-                if not mapped:
-                    return gateway_error(
-                        "INTERNAL",
-                        "mapping did not complete for artifact",
-                    )
-                # Phase 5: Inline describe — fetch roots on
-                # the same connection (2 indexed lookups).
-                stage = "fetch_inline_describe"
-                try:
-                    desc, hint = _fetch_inline_describe(
-                        connection,
-                        handle.artifact_id,
-                        code_query_packages=code_query_packages,
-                    )
-                except Exception as exc:
-                    _logger.warning(
-                        "inline describe failed; returning minimal describe",
-                        artifact_id=handle.artifact_id,
-                        error_type=type(exc).__name__,
-                        exc_info=True,
-                    )
+            except Exception as exc:
+                _logger.warning(
+                    "inline describe failed; returning minimal describe",
+                    artifact_id=handle.artifact_id,
+                    error_type=type(exc).__name__,
+                    exc_info=True,
+                )
+                desc, hint = _minimal_describe(
+                    handle.artifact_id,
+                    code_query_packages=code_query_packages,
+                )
+            if not _describe_has_ready_schema(desc):
+                map_status = desc.get("mapping", {}).get("map_status")
+                schemas = desc.get("schemas")
+                has_schemas = isinstance(schemas, list) and bool(schemas)
+                if map_status == "ready" and not has_schemas:
+                    # Inconsistent state: ready mapping but no schema rows.
+                    # Fall back to a minimal describe payload rather than
+                    # failing the mirrored call.
                     desc, hint = _minimal_describe(
                         handle.artifact_id,
                         code_query_packages=code_query_packages,
                     )
-                if not _describe_has_ready_schema(desc):
                     map_status = desc.get("mapping", {}).get("map_status")
-                    schemas = desc.get("schemas")
-                    has_schemas = isinstance(schemas, list) and bool(schemas)
-                    if map_status == "ready" and not has_schemas:
-                        # Inconsistent state: ready mapping but no schema rows.
-                        # Fall back to a minimal describe payload rather than
-                        # failing the mirrored call.
-                        desc, hint = _minimal_describe(
-                            handle.artifact_id,
-                            code_query_packages=code_query_packages,
-                        )
-                        map_status = desc.get("mapping", {}).get("map_status")
-                        has_schemas = False
-                    _logger.warning(
-                        "schema-first inline describe not ready; returning best-effort payload",
-                        artifact_id=handle.artifact_id,
-                        map_status=map_status,
-                        has_schemas=has_schemas,
-                    )
-        except _DB_CONNECTIVITY_ERRORS:
-            ctx.db_ok = False
-            return gateway_error(
-                "INTERNAL",
-                "artifact persistence failed; gateway marked unhealthy",
-            )
-        except Exception as exc:
-            _logger.warning(
-                "artifact persistence flow failed",
-                stage=stage,
-                error_type=type(exc).__name__,
-                exc_info=True,
-            )
-            return gateway_error(
-                "INTERNAL",
-                "artifact persistence failed",
-                details={
-                    "stage": stage,
-                    "error_type": type(exc).__name__,
-                },
-            )
+                    has_schemas = False
+                _logger.warning(
+                    "schema-first inline describe not ready; returning best-effort payload",
+                    artifact_id=handle.artifact_id,
+                    map_status=map_status,
+                    has_schemas=has_schemas,
+                )
+    except _DB_CONNECTIVITY_ERRORS:
+        ctx.db_ok = False
+        return gateway_error(
+            "INTERNAL",
+            "artifact persistence failed; gateway marked unhealthy",
+        )
+    except Exception as exc:
+        _logger.warning(
+            "artifact persistence flow failed",
+            stage=stage,
+            error_type=type(exc).__name__,
+            exc_info=True,
+        )
+        return gateway_error(
+            "INTERNAL",
+            "artifact persistence failed",
+            details={
+                "stage": stage,
+                "error_type": type(exc).__name__,
+            },
+        )
 
     pagination_meta = None
     pagination_assessment_for_response = pagination_assessment

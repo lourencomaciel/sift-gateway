@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from decimal import Decimal
 
+import pytest
+
 from sift_mcp.canon.decimal_json import (
     NonFiniteNumberError,
     ensure_no_floats,
@@ -25,9 +27,5 @@ def test_loads_decimal_rejects_non_finite() -> None:
 
 
 def test_ensure_no_floats_detects_nested_float() -> None:
-    try:
+    with pytest.raises(TypeError, match=r"\$\.a\[1\]"):
         ensure_no_floats({"a": [1, 1.5]})
-    except TypeError as exc:
-        assert "$.a[1]" in str(exc)
-    else:
-        raise AssertionError("expected TypeError")

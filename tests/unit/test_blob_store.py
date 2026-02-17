@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from sift_mcp.fs.blob_store import BlobStore
 
 
@@ -26,12 +28,8 @@ def test_blob_store_rejects_existing_size_mismatch(tmp_path: Path) -> None:
 
     # Corrupt file size manually and force re-put same payload hash path.
     Path(ref.fs_path).write_bytes(b"x")
-    try:
+    with pytest.raises(ValueError, match="size mismatch"):
         store.put_bytes(payload)
-    except ValueError as exc:
-        assert "size mismatch" in str(exc)
-    else:
-        raise AssertionError("expected ValueError")
 
 
 def test_blob_store_rejects_existing_content_mismatch_same_size(
@@ -43,9 +41,5 @@ def test_blob_store_rejects_existing_content_mismatch_same_size(
 
     # Corrupt content while preserving file size.
     Path(ref.fs_path).write_bytes(b"X" * len(payload))
-    try:
+    with pytest.raises(ValueError, match="content hash mismatch"):
         store.put_bytes(payload)
-    except ValueError as exc:
-        assert "content hash mismatch" in str(exc)
-    else:
-        raise AssertionError("expected ValueError")

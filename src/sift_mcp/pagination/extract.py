@@ -161,9 +161,7 @@ def _has_more(
         return False
     if isinstance(val, bool):
         return val
-    if isinstance(val, list) and len(val) == 0:
-        return False
-    return True
+    return not (isinstance(val, list) and len(val) == 0)
 
 
 def _has_more_signal(

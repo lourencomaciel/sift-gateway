@@ -122,9 +122,7 @@ def _normalize_zed_server_entry(
     if isinstance(cmd, dict):
         path = cmd.get("path")
         if not isinstance(path, str):
-            msg = (
-                f"zed context server '{name}' command.path must be a string"
-            )
+            msg = f"zed context server '{name}' command.path must be a string"
             raise ValueError(msg)
 
         result = {"command": path}

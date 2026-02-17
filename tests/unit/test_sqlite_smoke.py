@@ -11,7 +11,7 @@ from sift_mcp.db.backend import SqliteBackend
 from sift_mcp.db.migrate import apply_migrations
 
 
-@pytest.fixture()
+@pytest.fixture
 def sqlite_backend(tmp_path: Path) -> SqliteBackend:
     db_path = tmp_path / "gateway.db"
     backend = SqliteBackend(db_path=db_path)
@@ -91,31 +91,33 @@ class TestSqliteSmoke:
         self, sqlite_backend: SqliteBackend
     ) -> None:
         """Inserting artifact without session should fail due to FK constraint."""
-        with sqlite_backend.connection() as conn:
-            with pytest.raises(Exception):
-                conn.execute(
-                    """INSERT INTO artifacts (
+        with (
+            sqlite_backend.connection() as conn,
+            pytest.raises(Exception, match="FOREIGN KEY"),
+        ):
+            conn.execute(
+                """INSERT INTO artifacts (
                         workspace_id, artifact_id, created_seq, session_id,
                         source_tool, upstream_instance_id, request_key,
                         payload_hash_full, canonicalizer_version,
                         payload_json_bytes, payload_binary_bytes_total,
                         payload_total_bytes, mapper_version
                     ) VALUES (?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                    (
-                        "local",
-                        "art-1",
-                        "nonexistent-session",
-                        "tool",
-                        "upstream-1",
-                        "rk-1",
-                        "ph-1",
-                        "cv-1",
-                        100,
-                        0,
-                        100,
-                        "v1",
-                    ),
-                )
+                (
+                    "local",
+                    "art-1",
+                    "nonexistent-session",
+                    "tool",
+                    "upstream-1",
+                    "rk-1",
+                    "ph-1",
+                    "cv-1",
+                    100,
+                    0,
+                    100,
+                    "v1",
+                ),
+            )
 
     def test_advisory_lock_noop_on_sqlite(
         self, sqlite_backend: SqliteBackend

@@ -16,12 +16,13 @@ Use ``sift-mcp init --from <file> --revert`` to restore the backup.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 import contextlib
 import json
 import os
 from pathlib import Path
 import shutil
-from typing import Any, Iterator, Literal
+from typing import Any, Literal
 
 from sift_mcp.config.instances import (
     instance_id_for_source,
@@ -42,10 +43,8 @@ from sift_mcp.constants import (
 @contextlib.contextmanager
 def _suppress_os_error() -> Iterator[None]:
     """Suppress OSError during cleanup (e.g. unlinking a tmp)."""
-    try:
+    with contextlib.suppress(OSError):
         yield
-    except OSError:
-        pass
 
 
 def _gateway_server_entry(
@@ -355,8 +354,7 @@ def run_init(
         upsert_instance(source_path=source_path, data_dir=data_dir)
     except OSError as exc:
         summary["instance_registry_warning"] = (
-            "migration completed but failed to update instance registry: "
-            f"{exc}"
+            f"migration completed but failed to update instance registry: {exc}"
         )
 
     return summary

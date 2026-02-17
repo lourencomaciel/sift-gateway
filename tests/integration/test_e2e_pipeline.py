@@ -249,7 +249,7 @@ async def _stub_upstream(
     _instance: Any,
     tool_name: str,
     arguments: dict[str, Any],
-    data_dir: str | None = None,  # noqa: ARG001
+    data_dir: str | None = None,
 ) -> dict[str, Any]:
     """Fake upstream that returns controlled payloads by tool name."""
     if tool_name == "get_cursor_users":
@@ -572,7 +572,7 @@ def _chain_pages(
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture()
+@pytest.fixture
 def e2e_env(tmp_path, monkeypatch):
     """Provision config, DB pool, migrations, server, and upstream stub."""
     config = _e2e_config(tmp_path)
@@ -599,7 +599,7 @@ def e2e_env(tmp_path, monkeypatch):
         pool.close()
 
 
-@pytest.fixture()
+@pytest.fixture
 def e2e_env_paginated(tmp_path, monkeypatch):
     """Provision a paginated upstream with default auto-pagination limits."""
     config = _e2e_config(tmp_path)
@@ -628,7 +628,7 @@ def e2e_env_paginated(tmp_path, monkeypatch):
         pool.close()
 
 
-@pytest.fixture()
+@pytest.fixture
 def e2e_env_paginated_manual(tmp_path, monkeypatch):
     """Provision a paginated upstream with manual next_page flow."""
     config = _e2e_config(tmp_path)
@@ -1092,7 +1092,7 @@ def _status(server: GatewayServer) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture()
+@pytest.fixture
 def e2e_env_oversize(tmp_path, monkeypatch):
     """Environment with minimal_for_large JSONB mode and low threshold."""
     dsn = os.getenv(_POSTGRES_DSN_ENV)
@@ -1126,7 +1126,7 @@ def e2e_env_oversize(tmp_path, monkeypatch):
         pool.close()
 
 
-@pytest.fixture()
+@pytest.fixture
 def e2e_env_passthrough(tmp_path, monkeypatch):
     """Provision config where passthrough is enabled for upstream calls."""
     config = _e2e_config(tmp_path)
@@ -1152,7 +1152,7 @@ def e2e_env_passthrough(tmp_path, monkeypatch):
         pool.close()
 
 
-@pytest.fixture()
+@pytest.fixture
 def e2e_env_paginated_failures(tmp_path, monkeypatch):
     """Provision paginated upstream with tight timeout for failure scenarios."""
     config = _e2e_config(tmp_path)
@@ -1750,7 +1750,9 @@ def test_e2e_auto_pagination_default_merges_pages(e2e_env_paginated):
         artifact_id=artifact_id,
         scope="single",
     )
-    data_root = next(root for root in desc["roots"] if root["root_path"] == "$.data")
+    data_root = next(
+        root for root in desc["roots"] if root["root_path"] == "$.data"
+    )
     assert data_root["count_estimate"] == 12
 
 
@@ -1830,7 +1832,10 @@ def test_e2e_passthrough_eventually_persists_artifact(e2e_env_passthrough):
         allow_reuse=False,
     )
     assert first.get("type") != "gateway_tool_result"
-    assert first.get("structuredContent", {}).get("received", {}).get("nonce") == nonce
+    assert (
+        first.get("structuredContent", {}).get("received", {}).get("nonce")
+        == nonce
+    )
 
     handle: dict[str, Any] | None = None
     deadline = time.monotonic() + 5.0
@@ -1847,7 +1852,9 @@ def test_e2e_passthrough_eventually_persists_artifact(e2e_env_passthrough):
             break
         time.sleep(0.05)
 
-    assert handle is not None, "timed out waiting for async passthrough persistence"
+    assert handle is not None, (
+        "timed out waiting for async passthrough persistence"
+    )
     assert handle["meta"]["cache"]["reused"] is True
     artifact_id = handle["artifact_id"]
 
@@ -2026,7 +2033,7 @@ def test_e2e_passthrough_async_persist_failure_is_non_fatal(
     session_id = f"sess_{uuid.uuid4().hex}"
     nonce = f"pt_fail_{uuid.uuid4().hex}"
 
-    def _raise_persist(*args, **kwargs):  # noqa: ARG001
+    def _raise_persist(*args, **kwargs):
         raise RuntimeError("simulated persist failure")
 
     monkeypatch.setattr(
@@ -2042,7 +2049,10 @@ def test_e2e_passthrough_async_persist_failure_is_non_fatal(
         allow_reuse=False,
     )
     assert result.get("type") != "gateway_tool_result"
-    assert result.get("structuredContent", {}).get("received", {}).get("nonce") == nonce
+    assert (
+        result.get("structuredContent", {}).get("received", {}).get("nonce")
+        == nonce
+    )
 
     time.sleep(0.15)
 
@@ -2069,7 +2079,7 @@ def test_e2e_passthrough_async_persist_failure_is_non_fatal(
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture()
+@pytest.fixture
 def e2e_env_paginated_max_pages(tmp_path, monkeypatch):
     """Paginated upstream capped to 2 total pages via auto-pagination."""
     config = _e2e_config(tmp_path)
@@ -2100,7 +2110,7 @@ def e2e_env_paginated_max_pages(tmp_path, monkeypatch):
         pool.close()
 
 
-@pytest.fixture()
+@pytest.fixture
 def e2e_env_paginated_max_records(tmp_path, monkeypatch):
     """Paginated upstream capped to first page by record budget."""
     config = _e2e_config(tmp_path)

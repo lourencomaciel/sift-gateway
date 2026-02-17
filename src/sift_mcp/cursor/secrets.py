@@ -10,6 +10,7 @@ and ``save_cursor_secrets``.
 from __future__ import annotations
 
 import base64
+import contextlib
 from dataclasses import dataclass
 import json
 import os
@@ -74,7 +75,7 @@ class CursorSecrets:
         }
 
     @classmethod
-    def from_dict(cls, raw: dict[str, object]) -> "CursorSecrets":
+    def from_dict(cls, raw: dict[str, object]) -> CursorSecrets:
         """Deserialize a CursorSecrets from a raw dict.
 
         Args:
@@ -155,10 +156,8 @@ def save_cursor_secrets(path: Path, secrets: CursorSecrets) -> None:
         os.chmod(path, 0o600)
     finally:
         if tmp_path is not None and tmp_path.exists():
-            try:
+            with contextlib.suppress(FileNotFoundError):
                 tmp_path.unlink()
-            except FileNotFoundError:
-                pass
 
 
 def load_or_create_cursor_secrets(

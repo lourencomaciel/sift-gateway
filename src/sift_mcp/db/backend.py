@@ -9,11 +9,12 @@ the two production implementations.
 
 from __future__ import annotations
 
+from collections.abc import Generator
 from contextlib import contextmanager
 from enum import Enum
 from pathlib import Path
 import sqlite3
-from typing import Any, Generator, Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 
 class Dialect(Enum):
@@ -137,13 +138,13 @@ class _SqliteCursorProxy:
     def __init__(self, cursor: sqlite3.Cursor) -> None:
         self._cursor = cursor
 
-    def __enter__(self) -> "_SqliteCursorProxy":
+    def __enter__(self) -> _SqliteCursorProxy:
         return self
 
     def __exit__(self, *exc: Any) -> None:
         self._cursor.close()
 
-    def execute(self, sql: str, params: Any = None) -> "_SqliteCursorProxy":
+    def execute(self, sql: str, params: Any = None) -> _SqliteCursorProxy:
         """Execute SQL with Postgres-to-SQLite adaptation."""
         if params is not None and "ANY(" in sql.upper():
             sql, params = _SqliteConnectionProxy._expand_any(
@@ -225,8 +226,7 @@ class _SqliteConnectionProxy:
             flags=re.IGNORECASE,
         )
         # Strip Postgres type casts (e.g. ::text, ::text[], ::integer)
-        sql = re.sub(r"::\w+(\[\])?", "", sql)
-        return sql
+        return re.sub(r"::\w+(\[\])?", "", sql)
 
     @staticmethod
     def _adapt_params(params: Any) -> Any:

@@ -664,6 +664,4 @@ def check_worker_safety(
         return False
     if current_row.get("map_status") not in ("pending", "stale"):
         return False
-    if current_row.get("generation") != expected_generation:
-        return False
-    return True
+    return current_row.get("generation") == expected_generation

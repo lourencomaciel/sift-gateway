@@ -157,9 +157,10 @@ def _serialize(value: Any) -> str:
             if not isinstance(key, str):
                 msg = "JSON object keys must be strings"
                 raise TypeError(msg)
-        items = []
-        for key in sorted(value.keys(), key=_utf16_sort_key):
-            items.append(f"{_serialize(key)}:{_serialize(value[key])}")
+        items = [
+            f"{_serialize(key)}:{_serialize(value[key])}"
+            for key in sorted(value.keys(), key=_utf16_sort_key)
+        ]
         return "{" + ",".join(items) + "}"
 
     msg = f"unsupported type for canonicalization: {type(value)!r}"

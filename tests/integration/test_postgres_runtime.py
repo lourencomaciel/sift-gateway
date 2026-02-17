@@ -172,7 +172,7 @@ def test_mirrored_tool_flow_persists_artifact_with_real_postgres(
             _upstream,
             _tool,
             args,
-            data_dir: str | None = None,  # noqa: ARG001
+            data_dir: str | None = None,
         ):
             return {
                 "content": [
@@ -201,7 +201,8 @@ def test_mirrored_tool_flow_persists_artifact_with_real_postgres(
         )
         assert response["type"] == "gateway_tool_result"
         artifact_id = response["artifact_id"]
-        assert isinstance(artifact_id, str) and artifact_id.startswith("art_")
+        assert isinstance(artifact_id, str)
+        assert artifact_id.startswith("art_")
 
         search = asyncio.run(
             server.handle_artifact_search(

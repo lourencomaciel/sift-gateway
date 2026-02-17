@@ -143,7 +143,7 @@ def test_resolve_limits_zero_disables() -> None:
 def test_upstream_rejects_negative_max_pages() -> None:
     import pytest
 
-    with pytest.raises(Exception):
+    with pytest.raises(ValueError, match="auto_paginate_max_pages"):
         UpstreamConfig(
             prefix="test",
             transport="stdio",
@@ -155,7 +155,7 @@ def test_upstream_rejects_negative_max_pages() -> None:
 def test_upstream_rejects_negative_timeout() -> None:
     import pytest
 
-    with pytest.raises(Exception):
+    with pytest.raises(ValueError, match="auto_paginate_timeout_seconds"):
         UpstreamConfig(
             prefix="test",
             transport="stdio",
@@ -353,4 +353,3 @@ def test_count_value_records_non_countable() -> None:
 
 def test_count_value_records_empty_list() -> None:
     assert _count_json_value_records([]) == 0
-

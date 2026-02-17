@@ -83,7 +83,7 @@ async def _stub_upstream(
     _instance: Any,
     tool_name: str,
     arguments: dict[str, Any],
-    data_dir: str | None = None,  # noqa: ARG001
+    data_dir: str | None = None,
 ) -> dict[str, Any]:
     if tool_name == "get_cursor_users":
         after = arguments.get("after")
@@ -220,7 +220,7 @@ def _artifact_next_page(
     )
 
 
-@pytest.fixture()
+@pytest.fixture
 def sqlite_e2e_env(tmp_path, monkeypatch):
     """Provision SQLite backend, migrations, server, and upstream stub."""
     config = _sqlite_config(tmp_path)
@@ -248,7 +248,7 @@ def sqlite_e2e_env(tmp_path, monkeypatch):
         backend.close()
 
 
-@pytest.fixture()
+@pytest.fixture
 def sqlite_e2e_paginated_env(tmp_path, monkeypatch):
     """Provision SQLite backend with manual next_page pagination flow."""
     config = _sqlite_config(tmp_path)

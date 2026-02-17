@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import hashlib
 
+import pytest
+
 from sift_mcp.util.hashing import (
     advisory_lock_keys,
     binary_hash,
@@ -28,12 +30,8 @@ def test_sha256_trunc_respects_length() -> None:
 
 
 def test_sha256_trunc_requires_positive_length() -> None:
-    try:
+    with pytest.raises(ValueError, match="positive"):
         sha256_trunc(b"abc", 0)
-    except ValueError as exc:
-        assert "positive" in str(exc)
-    else:
-        raise AssertionError("expected ValueError")
 
 
 # ---- binary_hash ----

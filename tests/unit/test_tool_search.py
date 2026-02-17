@@ -141,12 +141,12 @@ def test_build_search_query_base_has_workspace_and_session() -> None:
 
 
 def test_build_search_query_excludes_deleted_by_default() -> None:
-    sql, params = build_search_query("sess_1", {}, "created_seq_desc", 50)
+    sql, _params = build_search_query("sess_1", {}, "created_seq_desc", 50)
     assert "a.deleted_at IS NULL" in sql
 
 
 def test_build_search_query_includes_deleted_when_requested() -> None:
-    sql, params = build_search_query(
+    sql, _params = build_search_query(
         "sess_1", {"include_deleted": True}, "created_seq_desc", 50
     )
     assert "a.deleted_at IS NULL" not in sql

@@ -16,9 +16,10 @@ Typical usage example::
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 import re
-from typing import Any, Literal, Sequence
+from typing import Any, Literal
 
 from sift_mcp.pagination.contract import (
     build_retrieval_pagination_meta,
@@ -247,12 +248,15 @@ def validate_select_args(arguments: dict[str, Any]) -> dict[str, Any] | None:
         return {"code": "INVALID_ARGUMENT", "message": "missing root_path"}
 
     select_paths = arguments.get("select_paths")
-    if not has_cursor and not count_only:
-        if not isinstance(select_paths, list) or not select_paths:
-            return {
-                "code": "INVALID_ARGUMENT",
-                "message": "select_paths must be a non-empty list",
-            }
+    if (
+        not has_cursor
+        and not count_only
+        and (not isinstance(select_paths, list) or not select_paths)
+    ):
+        return {
+            "code": "INVALID_ARGUMENT",
+            "message": "select_paths must be a non-empty list",
+        }
 
     # Validate individual select_paths entries.
     if isinstance(select_paths, list):

@@ -6,7 +6,10 @@ import asyncio
 from pathlib import Path
 from typing import Any
 
-from sift_mcp.codegen.runtime import CodeRuntimeError, CodeRuntimeMemoryLimit
+from sift_mcp.codegen.runtime import (
+    CodeRuntimeError,
+    CodeRuntimeMemoryLimitError,
+)
 from sift_mcp.config.settings import GatewayConfig
 from sift_mcp.mcp.server import GatewayServer
 
@@ -150,7 +153,9 @@ def _schema_field_row(path: str = "$.id") -> tuple[object, ...]:
     )
 
 
-def _artifact_row(artifact_id: str, envelope: dict[str, Any]) -> tuple[object, ...]:
+def _artifact_row(
+    artifact_id: str, envelope: dict[str, Any]
+) -> tuple[object, ...]:
     return (
         artifact_id,
         f"hash_{artifact_id}",
@@ -584,9 +589,7 @@ def test_code_query_rejects_when_input_bytes_exceed_limit(
                             {
                                 "type": "json",
                                 "value": {
-                                    "items": [
-                                        {"id": 1, "blob": "x" * 300}
-                                    ]
+                                    "items": [{"id": 1, "blob": "x" * 300}]
                                 },
                             }
                         ]
@@ -675,7 +678,7 @@ def test_code_query_maps_memory_limit_error(
     monkeypatch.setattr(
         "sift_mcp.mcp.handlers.artifact_code.execute_code_in_subprocess",
         lambda **_kwargs: (_ for _ in ()).throw(
-            CodeRuntimeMemoryLimit(
+            CodeRuntimeMemoryLimitError(
                 code="CODE_RUNTIME_MEMORY_LIMIT",
                 message="memory limit reached",
             )
@@ -1127,8 +1130,14 @@ def test_code_query_multi_artifact_supports_per_artifact_root_paths(
         "art_1": "$.items_a",
         "art_2": "$.items_b",
     }
-    assert captured["artifacts"]["art_1"][0]["_locator"]["root_path"] == "$.items_a"
-    assert captured["artifacts"]["art_2"][0]["_locator"]["root_path"] == "$.items_b"
+    assert (
+        captured["artifacts"]["art_1"][0]["_locator"]["root_path"]
+        == "$.items_a"
+    )
+    assert (
+        captured["artifacts"]["art_2"][0]["_locator"]["root_path"]
+        == "$.items_b"
+    )
 
 
 def test_code_query_multi_artifact_requires_root_path_or_root_paths(

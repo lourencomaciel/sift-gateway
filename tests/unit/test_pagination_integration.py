@@ -180,7 +180,7 @@ def test_inject_page_number_passed_through() -> None:
         },
     }
     env = _envelope(json_value)
-    result_env, assessment = _inject_pagination_state(
+    _result_env, assessment = _inject_pagination_state(
         env, config, {}, "meta-ads", page_number=2
     )
     assert assessment is not None

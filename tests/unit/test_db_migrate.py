@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import re
+from typing import ClassVar
 
 import pytest
 
@@ -104,7 +105,7 @@ def test_list_migrations_fails_on_missing_numeric_prefix(
 class TestSchemaTablesExist:
     """All v1.9 tables are created in 001_init.sql."""
 
-    _EXPECTED_TABLES = [
+    _EXPECTED_TABLES: ClassVar[list[str]] = [
         "schema_migrations",
         "sessions",
         "binary_blobs",
@@ -132,7 +133,7 @@ class TestSchemaTablesExist:
 class TestPrimaryKeysIncludeWorkspaceId:
     """Every PK (except schema_migrations) includes workspace_id."""
 
-    _TABLES_WITH_WORKSPACE_PK = [
+    _TABLES_WITH_WORKSPACE_PK: ClassVar[list[str]] = [
         "sessions",
         "binary_blobs",
         "payload_blobs",
@@ -237,7 +238,7 @@ class TestIndexStatusCheck:
 class TestArtifactsColumnsComplete:
     """All columns used by the codebase exist in the 001_init.sql artifacts table."""
 
-    _EXPECTED_COLUMNS = [
+    _EXPECTED_COLUMNS: ClassVar[list[str]] = [
         "workspace_id",
         "artifact_id",
         "created_seq",

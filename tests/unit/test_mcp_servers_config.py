@@ -92,9 +92,7 @@ class TestExtractMcpServers:
         }
         servers = extract_mcp_servers(raw)
         assert servers["remote"]["url"] == "https://example.com/mcp"
-        assert servers["remote"]["headers"] == {
-            "Authorization": "Bearer token"
-        }
+        assert servers["remote"]["headers"] == {"Authorization": "Bearer token"}
 
     def test_invalid_zed_server_entry_raises(self) -> None:
         raw = {"context_servers": {"bad": "not-a-dict"}}
@@ -109,7 +107,7 @@ class TestExtractMcpServers:
                 }
             }
         }
-        with pytest.raises(ValueError, match="command.path must be a string"):
+        with pytest.raises(ValueError, match=r"command\.path must be a string"):
             extract_mcp_servers(raw)
 
     def test_mcpservers_takes_precedence_over_vscode(self) -> None:

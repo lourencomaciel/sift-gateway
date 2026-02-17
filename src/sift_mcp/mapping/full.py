@@ -236,7 +236,7 @@ def run_full_mapping(
         candidates.sort(key=lambda c: (-c[0], c[1]))
 
         roots: list[RootInventory] = []
-        for score, key, root_path, val in candidates[:max_roots]:
+        for _score, key, root_path, val in candidates[:max_roots]:
             root = _build_root_inventory(
                 root_key=key,
                 root_path=root_path,

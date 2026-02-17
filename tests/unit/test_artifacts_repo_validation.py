@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from sift_mcp.db.repos.artifacts_repo import validate_artifact_row
 
 
@@ -23,20 +25,12 @@ def test_artifacts_repo_validation_accepts_valid_row() -> None:
 def test_artifacts_repo_validation_rejects_workspace() -> None:
     row = _valid_row()
     row["workspace_id"] = "other"
-    try:
+    with pytest.raises(ValueError, match="workspace_id"):
         validate_artifact_row(row)
-    except ValueError as exc:
-        assert "workspace_id" in str(exc)
-    else:
-        raise AssertionError("expected ValueError")
 
 
 def test_artifacts_repo_validation_rejects_negative_size() -> None:
     row = _valid_row()
     row["payload_total_bytes"] = -1
-    try:
+    with pytest.raises(ValueError, match="non-negative"):
         validate_artifact_row(row)
-    except ValueError as exc:
-        assert "non-negative" in str(exc)
-    else:
-        raise AssertionError("expected ValueError")

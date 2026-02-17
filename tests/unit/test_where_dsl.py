@@ -51,22 +51,14 @@ def test_where_dsl_compute_limit() -> None:
 
 def test_where_dsl_rejects_non_object_clause() -> None:
     where = {"op": "and", "clauses": [1]}
-    try:
+    with pytest.raises(WhereDslError, match="clauses must contain objects"):
         evaluate_where({"a": 1}, where)
-    except WhereDslError as exc:
-        assert "clauses must contain objects" in str(exc)
-    else:
-        raise AssertionError("expected WhereDslError")
 
 
 def test_where_dsl_rejects_non_comparable_values() -> None:
     where = {"path": "$.n", "op": "gt", "value": 1}
-    try:
+    with pytest.raises(WhereDslError, match="requires numeric operands"):
         evaluate_where({"n": "3"}, where)
-    except WhereDslError as exc:
-        assert "requires numeric operands" in str(exc)
-    else:
-        raise AssertionError("expected WhereDslError")
 
 
 def test_where_dsl_missing_path_false_except_ne_null() -> None:
@@ -97,12 +89,8 @@ def test_where_dsl_wildcard_is_existential() -> None:
 
 def test_where_dsl_wildcard_expansion_limit_enforced() -> None:
     where = {"path": "$.items[*]", "op": "exists"}
-    try:
+    with pytest.raises(WhereDslError, match="wildcard expansion"):
         evaluate_where({"items": [1, 2, 3]}, where, max_wildcard_expansion=2)
-    except WhereDslError as exc:
-        assert "wildcard expansion" in str(exc)
-    else:
-        raise AssertionError("expected WhereDslError")
 
 
 def test_parse_where_expression_builds_ast() -> None:
@@ -823,7 +811,7 @@ def test_canonicalize_where_ast_deep_sort() -> None:
         ],
     }
     result = canonicalize_where_ast(ast)
-    inner = [c for c in result["clauses"] if c.get("op") == "or"][0]
+    inner = next(c for c in result["clauses"] if c.get("op") == "or")
     assert len(inner["clauses"]) == 2
 
 

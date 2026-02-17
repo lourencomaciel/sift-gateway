@@ -14,7 +14,7 @@ class _FakeCursor:
     def __init__(self, *, fail: bool = False) -> None:
         self._fail = fail
 
-    def __enter__(self) -> "_FakeCursor":
+    def __enter__(self) -> _FakeCursor:
         return self
 
     def __exit__(self, exc_type, exc, tb) -> None:

@@ -22,7 +22,7 @@ def test_oversize_records_skipped_and_counted() -> None:
     budgets = make_partial_budgets(max_record_bytes=50, max_records_sampled=100)
     config = make_partial_config(budgets)
 
-    roots, samples = run_partial_mapping(make_json_stream(data), config)
+    roots, _samples = run_partial_mapping(make_json_stream(data), config)
 
     assert len(roots) > 0
     root = roots[0]
@@ -45,7 +45,7 @@ def test_sample_indices_exclude_oversize_records() -> None:
     budgets = make_partial_budgets(max_record_bytes=50, max_records_sampled=100)
     config = make_partial_config(budgets)
 
-    roots, samples = run_partial_mapping(make_json_stream(data), config)
+    roots, _samples = run_partial_mapping(make_json_stream(data), config)
 
     assert len(roots) > 0
     root = roots[0]
@@ -103,7 +103,7 @@ def test_all_records_sampled_when_count_below_reservoir_size() -> None:
     budgets = make_partial_budgets(max_records_sampled=100)
     config = make_partial_config(budgets)
 
-    roots, samples = run_partial_mapping(make_json_stream(data), config)
+    roots, _samples = run_partial_mapping(make_json_stream(data), config)
 
     assert len(roots) > 0
     root = roots[0]

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from sift_mcp.config.settings import UpstreamConfig
 from sift_mcp.mcp.mirror import (
     build_mirrored_tools,
@@ -62,12 +64,8 @@ def test_build_mirrored_tools_multiple_upstreams() -> None:
 def test_build_mirrored_tools_duplicate_raises() -> None:
     up1 = _make_upstream("github", ["search"])
     up2 = _make_upstream("github", ["search"])
-    try:
+    with pytest.raises(ValueError, match=r"(?i)duplicate"):
         build_mirrored_tools([up1, up2])
-    except ValueError as exc:
-        assert "duplicate" in str(exc).lower()
-    else:
-        raise AssertionError("expected ValueError for duplicate tool name")
 
 
 def test_build_mirrored_tools_empty() -> None:

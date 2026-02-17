@@ -202,7 +202,7 @@ def test_get_metrics_returns_singleton() -> None:
 
 
 def test_get_metrics_thread_safe_singleton_creation(
-    monkeypatch: "pytest.MonkeyPatch",
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     import sift_mcp.obs.metrics as metrics_module
 

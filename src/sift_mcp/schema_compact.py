@@ -41,9 +41,7 @@ SCHEMA_LEGEND: dict[str, Any] = {
         "bf": "map_budget_fingerprint",
     },
     "rules": {
-        "field_oc_default": (
-            "field.oc omitted when equal to schema.fd.oc"
-        )
+        "field_oc_default": ("field.oc omitted when equal to schema.fd.oc")
     },
 }
 
@@ -68,14 +66,10 @@ def compact_schema_entry(schema: dict[str, Any]) -> dict[str, Any]:
     """Convert a verbose schema object to compact key form."""
     coverage = schema.get("coverage")
     coverage_completeness = (
-        coverage.get("completeness")
-        if isinstance(coverage, dict)
-        else None
+        coverage.get("completeness") if isinstance(coverage, dict) else None
     )
     observed_records_raw = (
-        coverage.get("observed_records")
-        if isinstance(coverage, dict)
-        else None
+        coverage.get("observed_records") if isinstance(coverage, dict) else None
     )
     observed_records = (
         int(observed_records_raw)
@@ -92,14 +86,15 @@ def compact_schema_entry(schema: dict[str, Any]) -> dict[str, Any]:
             raw_types = field.get("types")
             compact_field: dict[str, Any] = {
                 "p": field.get("path"),
-                "t": (
-                    list(raw_types) if isinstance(raw_types, list) else []
-                ),
+                "t": (list(raw_types) if isinstance(raw_types, list) else []),
                 "n": bool(field.get("nullable")),
                 "r": bool(field.get("required")),
             }
             observed_count_raw = field.get("observed_count")
-            if isinstance(observed_count_raw, int) and observed_count_raw != observed_records:
+            if (
+                isinstance(observed_count_raw, int)
+                and observed_count_raw != observed_records
+            ):
                 compact_field["oc"] = observed_count_raw
 
             example_value = field.get("example_value")

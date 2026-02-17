@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from decimal import Decimal
 
+import pytest
+
 from sift_mcp.retrieval.response import (
     apply_output_budgets,
     build_retrieval_response,
@@ -9,12 +11,8 @@ from sift_mcp.retrieval.response import (
 
 
 def test_retrieval_response_requires_cursor_when_truncated() -> None:
-    try:
+    with pytest.raises(ValueError, match="cursor is required"):
         build_retrieval_response(items=[1], truncated=True, cursor=None)
-    except ValueError as exc:
-        assert "cursor is required" in str(exc)
-    else:
-        raise AssertionError("expected ValueError")
 
 
 def test_retrieval_response_shape() -> None:

@@ -258,7 +258,9 @@ class TestRunInit:
             for entry in entries
         )
 
-    def test_init_succeeds_when_registry_update_fails(self, tmp_path: Path) -> None:
+    def test_init_succeeds_when_registry_update_fails(
+        self, tmp_path: Path
+    ) -> None:
         source = tmp_path / "config.json"
         source.write_text(
             json.dumps({"mcpServers": {"gh": {"command": "gh"}}}),
@@ -273,9 +275,10 @@ class TestRunInit:
             summary = run_init(source, data_dir=data_dir)
 
         assert "instance_registry_warning" in summary
-        assert "failed to update instance registry" in summary[
-            "instance_registry_warning"
-        ]
+        assert (
+            "failed to update instance registry"
+            in summary["instance_registry_warning"]
+        )
         assert Path(summary["gateway_config_path"]).exists()
         assert Path(summary["backup_path"]).exists()
         rewritten = json.loads(source.read_text(encoding="utf-8"))

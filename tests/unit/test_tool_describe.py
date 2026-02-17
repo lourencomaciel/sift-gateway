@@ -143,7 +143,9 @@ def test_build_describe_response_defaults_for_missing_mapping_fields() -> None:
     assert mapping["mapper_version"] is None
 
 
-def test_build_describe_response_includes_schema_without_root_duplication() -> None:
+def test_build_describe_response_includes_schema_without_root_duplication() -> (
+    None
+):
     artifact_row = {"artifact_id": "art_schema", "map_kind": "full"}
     roots = [
         {

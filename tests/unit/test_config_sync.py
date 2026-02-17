@@ -59,7 +59,7 @@ def _setup_gateway_and_source(
 
 class TestRunSync:
     def test_sync_imports_new_mcp_from_source(self, tmp_path: Path) -> None:
-        data_dir, config_path, source_path = _setup_gateway_and_source(
+        data_dir, config_path, _source_path = _setup_gateway_and_source(
             tmp_path,
             gateway_servers={},
             source_servers={
@@ -87,7 +87,7 @@ class TestRunSync:
     def test_sync_rewrites_source_back_to_gateway_only(
         self, tmp_path: Path
     ) -> None:
-        data_dir, config_path, source_path = _setup_gateway_and_source(
+        data_dir, _config_path, source_path = _setup_gateway_and_source(
             tmp_path,
             gateway_servers={},
             source_servers={
@@ -112,7 +112,7 @@ class TestRunSync:
         assert gw_entry["args"] == ["--data-dir", str(data_dir.resolve())]
 
     def test_sync_idempotent_when_no_new_entries(self, tmp_path: Path) -> None:
-        data_dir, config_path, source_path = _setup_gateway_and_source(
+        data_dir, _config_path, _source_path = _setup_gateway_and_source(
             tmp_path,
             gateway_servers={
                 "github": {"command": "npx"},
@@ -167,7 +167,7 @@ class TestRunSync:
         assert result == {"synced": 0}
 
     def test_sync_externalizes_imported_secrets(self, tmp_path: Path) -> None:
-        data_dir, config_path, source_path = _setup_gateway_and_source(
+        data_dir, config_path, _source_path = _setup_gateway_and_source(
             tmp_path,
             gateway_servers={},
             source_servers={
@@ -286,7 +286,9 @@ class TestRunSync:
         assert gw_entry["args"] == ["--data-dir", str(custom_data_dir)]
 
         custom_config_path = custom_data_dir / "state" / "config.json"
-        custom_config = json.loads(custom_config_path.read_text(encoding="utf-8"))
+        custom_config = json.loads(
+            custom_config_path.read_text(encoding="utf-8")
+        )
         assert "github" in custom_config["mcpServers"]
 
         original_config = json.loads(config_path.read_text(encoding="utf-8"))
@@ -509,7 +511,7 @@ class TestRunSync:
 
 class TestSyncDisabled:
     def test_sync_skipped_when_disabled(self, tmp_path: Path) -> None:
-        data_dir, config_path, source_path = _setup_gateway_and_source(
+        data_dir, _config_path, _source_path = _setup_gateway_and_source(
             tmp_path,
             gateway_servers={},
             source_servers={

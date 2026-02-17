@@ -118,7 +118,7 @@ def test_text_part_falls_back_to_scalar_mapping(tmp_path: Path) -> None:
 
 def test_text_part_json_string_is_parsed_for_mapping(tmp_path: Path) -> None:
     """JSON encoded as text is parsed and mapped as structured JSON."""
-    envelope = {"content": [{"type": "text", "text": "{\"users\":[{\"id\":1}]}"}]}
+    envelope = {"content": [{"type": "text", "text": '{"users":[{"id":1}]}'}]}
     selected = select_json_part(envelope)
     assert selected is not None
     assert selected.part_index == 0
@@ -324,11 +324,15 @@ def test_full_schema_resolves_json_encoded_strings(tmp_path: Path) -> None:
     assert data_schema.observed_records == 2
     field_paths = {field.path for field in data_schema.fields}
     assert "$.id" in field_paths
-    id_field = next(field for field in data_schema.fields if field.path == "$.id")
+    id_field = next(
+        field for field in data_schema.fields if field.path == "$.id"
+    )
     assert id_field.example_value == "1"
 
 
-def test_schema_field_example_value_truncates_long_values(tmp_path: Path) -> None:
+def test_schema_field_example_value_truncates_long_values(
+    tmp_path: Path,
+) -> None:
     data = {
         "items": [
             {"description": "abcdefghijklmnopqrstuvwxyz1234567890"},
@@ -359,12 +363,7 @@ def test_schema_field_example_value_truncates_long_values(tmp_path: Path) -> Non
 def test_schema_field_distinct_values_are_capped_with_cardinality(
     tmp_path: Path,
 ) -> None:
-    data = {
-        "items": [
-            {"action_type": f"type_{idx}"}
-            for idx in range(12)
-        ]
-    }
+    data = {"items": [{"action_type": f"type_{idx}"} for idx in range(12)]}
     envelope = {"content": [{"type": "json", "value": data}]}
     result = run_mapping(
         MappingInput(
@@ -389,9 +388,7 @@ def test_schema_field_distinct_values_are_capped_with_cardinality(
 def test_sampled_schema_distinct_values_reflect_sampled_records(
     tmp_path: Path,
 ) -> None:
-    data = {
-        "items": [{"action_type": f"type_{idx % 8}"} for idx in range(80)]
-    }
+    data = {"items": [{"action_type": f"type_{idx % 8}"} for idx in range(80)]}
     envelope = {"content": [{"type": "json", "value": data}]}
     result = run_mapping(
         MappingInput(

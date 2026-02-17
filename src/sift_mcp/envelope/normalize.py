@@ -9,7 +9,8 @@ are ``normalize_envelope`` and ``strip_reserved_args``.
 
 from __future__ import annotations
 
-from typing import Any, Literal, Mapping, cast
+from collections.abc import Mapping
+from typing import Any, Literal, cast
 
 from sift_mcp.constants import RESERVED_EXACT_KEYS, RESERVED_PREFIX
 from sift_mcp.envelope.model import (
@@ -226,9 +227,9 @@ def normalize_envelope(
         msg = "status=error requires error block"
         raise ValueError(msg)
 
-    normalized_content: list[ContentPart] = []
-    for raw_part in content or []:
-        normalized_content.append(_normalize_part(raw_part))
+    normalized_content: list[ContentPart] = [
+        _normalize_part(raw_part) for raw_part in content or []
+    ]
 
     normalized_meta = dict(meta or {})
     warnings = normalized_meta.get("warnings")

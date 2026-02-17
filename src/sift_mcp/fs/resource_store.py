@@ -9,6 +9,7 @@ references to externally-hosted content).
 
 from __future__ import annotations
 
+import contextlib
 from dataclasses import dataclass
 from hashlib import sha256
 import os
@@ -69,10 +70,8 @@ def _atomic_write_bytes(path: Path, payload: bytes) -> None:
         os.replace(tmp_path, path)
     finally:
         if tmp_path is not None and tmp_path.exists():
-            try:
+            with contextlib.suppress(FileNotFoundError):
                 tmp_path.unlink()
-            except FileNotFoundError:
-                pass
 
 
 def _sha256_file(path: Path) -> str:

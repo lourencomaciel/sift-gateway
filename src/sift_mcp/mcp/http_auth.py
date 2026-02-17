@@ -7,8 +7,9 @@ token checks on every incoming HTTP request.
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 import hmac
-from typing import Any, Awaitable, Callable
+from typing import Any
 
 _LOCAL_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
 

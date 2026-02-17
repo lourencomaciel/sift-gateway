@@ -194,9 +194,8 @@ def map_budget_fingerprint(
         "mapper_version": mapper_version,
         "prng_version": prng_version,
         "traversal_contract_version": traversal_contract_version,
+        **budgets,
     }
-    for key, value in budgets.items():
-        payload[key] = value
     return hashlib.sha256(canonical_bytes(payload)).hexdigest()[:32]
 
 
