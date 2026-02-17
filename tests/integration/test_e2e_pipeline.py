@@ -996,6 +996,38 @@ def test_e2e_cache_reuse(e2e_env):
 
 
 # ---------------------------------------------------------------------------
+# Coverage: Cache fresh mode
+# ---------------------------------------------------------------------------
+
+
+def test_e2e_cache_fresh_when_reuse_disabled(e2e_env):
+    server, _config, _pool = e2e_env
+    session_id = f"sess_{uuid.uuid4().hex}"
+    unique = f"fresh_test_{uuid.uuid4().hex}"
+
+    first = _call_mirrored(
+        server,
+        "test.get_users",
+        session_id,
+        extra_args={"message": unique},
+        allow_reuse=False,
+    )
+    second = _call_mirrored(
+        server,
+        "test.get_users",
+        session_id,
+        extra_args={"message": unique},
+        allow_reuse=False,
+    )
+
+    assert first["type"] == "gateway_tool_result"
+    assert second["type"] == "gateway_tool_result"
+    assert first["artifact_id"] != second["artifact_id"]
+    assert first["meta"]["cache"]["reused"] is False
+    assert second["meta"]["cache"]["reused"] is False
+
+
+# ---------------------------------------------------------------------------
 # Test 10: Session isolation
 # ---------------------------------------------------------------------------
 
