@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import ClassVar
+
 import pytest
 
 from sift_mcp.config.settings import UpstreamConfig
@@ -199,8 +201,8 @@ class _FakeCallResult:
 
 
 class _FakeClient:
-    instances: list["_FakeClient"] = []
-    tools: list[_FakeTool] = []
+    instances: ClassVar[list[_FakeClient]] = []
+    tools: ClassVar[list[_FakeTool]] = []
 
     def __init__(self, transport, timeout: float | None = None) -> None:
         self.transport = transport
@@ -208,7 +210,7 @@ class _FakeClient:
         self.calls: list[tuple[str, dict]] = []
         _FakeClient.instances.append(self)
 
-    async def __aenter__(self) -> "_FakeClient":
+    async def __aenter__(self) -> _FakeClient:
         return self
 
     async def __aexit__(self, exc_type, exc, tb) -> bool:

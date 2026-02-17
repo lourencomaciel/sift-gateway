@@ -9,12 +9,13 @@ mode for output so both client families can interoperate.
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from functools import partial
 import os
 import sys
-from typing import Any, AsyncIterator
+from typing import Any
 
 import anyio
 from anyio.streams.memory import (

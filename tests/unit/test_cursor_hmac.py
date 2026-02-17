@@ -5,6 +5,8 @@ import datetime as dt
 from hashlib import sha256
 import hmac
 
+import pytest
+
 from sift_mcp.constants import CURSOR_VERSION
 from sift_mcp.cursor.hmac import (
     CursorExpiredError,
@@ -54,7 +56,7 @@ def test_cursor_hmac_detects_expired() -> None:
         verify_cursor_token(
             token,
             _secrets(),
-            now=dt.datetime(2026, 1, 1, tzinfo=dt.timezone.utc),
+            now=dt.datetime(2026, 1, 1, tzinfo=dt.UTC),
         )
     except CursorExpiredError:
         pass
@@ -65,22 +67,14 @@ def test_cursor_hmac_detects_expired() -> None:
 def test_cursor_hmac_requires_expires_at() -> None:
     payload = {"cursor_version": CURSOR_VERSION}
     token = sign_cursor_payload(payload, _secrets())
-    try:
+    with pytest.raises(CursorTokenError, match="missing expires_at"):
         verify_cursor_token(token, _secrets())
-    except CursorTokenError as exc:
-        assert "missing expires_at" in str(exc)
-    else:
-        raise AssertionError("expected CursorTokenError")
 
 
 def test_cursor_hmac_rejects_invalid_base64() -> None:
     token = "cur.v1.a.a"
-    try:
+    with pytest.raises(CursorTokenError, match="invalid base64"):
         verify_cursor_token(token, _secrets())
-    except CursorTokenError as exc:
-        assert "invalid base64" in str(exc)
-    else:
-        raise AssertionError("expected CursorTokenError")
 
 
 def test_cursor_hmac_rejects_non_object_payload() -> None:
@@ -95,12 +89,8 @@ def test_cursor_hmac_rejects_non_object_payload() -> None:
     )
     token = f"cur.v1.{payload_b64}.{signature_b64}"
 
-    try:
+    with pytest.raises(CursorTokenError, match="JSON object"):
         verify_cursor_token(token, _secrets())
-    except CursorTokenError as exc:
-        assert "JSON object" in str(exc)
-    else:
-        raise AssertionError("expected CursorTokenError")
 
 
 def test_cursor_hmac_accepts_naive_now_for_comparison() -> None:

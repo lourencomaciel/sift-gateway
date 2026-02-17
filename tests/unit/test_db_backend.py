@@ -70,7 +70,7 @@ class TestPostgresBackendConnectionInterface:
 
 
 class TestSqliteBackend:
-    @pytest.fixture()
+    @pytest.fixture
     def backend(self, tmp_path: Path) -> SqliteBackend:
         db = SqliteBackend(db_path=tmp_path / "test.db")
         yield db
@@ -150,9 +150,8 @@ class TestSqliteBackend:
     def test_close_then_connection_raises(self, tmp_path: Path):
         backend = SqliteBackend(db_path=tmp_path / "test.db")
         backend.close()
-        with pytest.raises(RuntimeError, match="closed"):
-            with backend.connection():
-                pass
+        with pytest.raises(RuntimeError, match="closed"), backend.connection():
+            pass
 
     def test_close_idempotent(self, tmp_path: Path):
         backend = SqliteBackend(db_path=tmp_path / "test.db")
@@ -190,7 +189,7 @@ class TestSqliteMigrationFiles:
 class TestSqliteMigrationIntegration:
     """Apply SQLite migrations to an in-memory database and verify tables."""
 
-    @pytest.fixture()
+    @pytest.fixture
     def migrated_conn(self, tmp_path: Path) -> sqlite3.Connection:
         backend = SqliteBackend(db_path=tmp_path / "mig.db")
         migrations_dir = (

@@ -214,7 +214,9 @@ def test_serve_check_mode_loads_config_from_sync_redirect_data_dir(
 ) -> None:
     source = (tmp_path / "source.json").resolve()
     source.write_text(
-        json.dumps({"mcpServers": {"artifact-gateway": {"command": "sift-mcp"}}}),
+        json.dumps(
+            {"mcpServers": {"artifact-gateway": {"command": "sift-mcp"}}}
+        ),
         encoding="utf-8",
     )
 
@@ -276,7 +278,9 @@ def test_serve_check_mode_ignores_stale_sync_redirect_data_dir(
 ) -> None:
     source = (tmp_path / "source.json").resolve()
     source.write_text(
-        json.dumps({"mcpServers": {"artifact-gateway": {"command": "sift-mcp"}}}),
+        json.dumps(
+            {"mcpServers": {"artifact-gateway": {"command": "sift-mcp"}}}
+        ),
         encoding="utf-8",
     )
 
@@ -1118,7 +1122,9 @@ def test_run_upstream_add_with_source_respects_explicit_data_dir(
 ) -> None:
     source = tmp_path / "config.json"
     source.write_text(
-        json.dumps({"mcpServers": {"artifact-gateway": {"command": "sift-mcp"}}}),
+        json.dumps(
+            {"mcpServers": {"artifact-gateway": {"command": "sift-mcp"}}}
+        ),
         encoding="utf-8",
     )
     explicit_data_dir = tmp_path / "explicit-data"
@@ -1173,7 +1179,9 @@ def test_run_upstream_add_from_source_rejects_unresolved_target(
 
     source = tmp_path / "config.json"
     source.write_text(
-        json.dumps({"mcpServers": {"artifact-gateway": {"command": "sift-mcp"}}}),
+        json.dumps(
+            {"mcpServers": {"artifact-gateway": {"command": "sift-mcp"}}}
+        ),
         encoding="utf-8",
     )
 

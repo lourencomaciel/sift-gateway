@@ -1,6 +1,5 @@
 """Shared SQL helpers for persisted schema rows."""
 
-
 FETCH_SCHEMA_ROOTS_SQL = """
 SELECT root_key, root_path, schema_version, schema_hash,
        mode, completeness, observed_records, dataset_hash,

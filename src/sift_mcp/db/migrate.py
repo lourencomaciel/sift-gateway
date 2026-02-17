@@ -59,16 +59,14 @@ def load_migrations(migrations_dir: Path) -> list[Migration]:
         FileNotFoundError: If no SQL files are found.
         ValueError: If versions are duplicated or have gaps.
     """
-    migrations = []
-    for path in list_migrations(migrations_dir):
-        migrations.append(
-            Migration(
-                name=path.name,
-                sql=path.read_text(encoding="utf-8"),
-                path=path,
-            )
+    return [
+        Migration(
+            name=path.name,
+            sql=path.read_text(encoding="utf-8"),
+            path=path,
         )
-    return migrations
+        for path in list_migrations(migrations_dir)
+    ]
 
 
 def _ensure_schema_migrations(connection: ConnectionLike) -> None:

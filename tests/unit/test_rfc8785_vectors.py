@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from decimal import Decimal
 
+import pytest
+
 from sift_mcp.canon.rfc8785 import canonical_text
 
 
@@ -33,9 +35,5 @@ def test_canonical_sorts_keys_by_utf16_code_units() -> None:
 
 
 def test_canonical_rejects_python_float() -> None:
-    try:
+    with pytest.raises(TypeError, match="float value not allowed"):
         canonical_text({"v": 1.2})
-    except TypeError as exc:
-        assert "float value not allowed" in str(exc)
-    else:
-        raise AssertionError("expected TypeError")

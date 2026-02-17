@@ -220,6 +220,7 @@ def build_usage_hint(
             and isinstance(schema.get("root_path"), str)
         ]
         if schema_entries:
+
             def _schema_sort_key(schema: dict[str, Any]) -> tuple[int, str]:
                 coverage = schema.get("coverage")
                 observed_records = 0

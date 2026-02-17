@@ -69,7 +69,9 @@ def test_query_non_search_requires_artifact_id(tmp_path: Path) -> None:
         )
     )
     assert response["code"] == "INVALID_ARGUMENT"
-    assert "artifact_id is required for query_kind=describe" in response["message"]
+    assert (
+        "artifact_id is required for query_kind=describe" in response["message"]
+    )
 
 
 def test_query_get_rejects_where(tmp_path: Path) -> None:
@@ -81,7 +83,7 @@ def test_query_get_rejects_where(tmp_path: Path) -> None:
                 "query_kind": "get",
                 "_gateway_context": {"session_id": "sess_1"},
                 "artifact_id": "art_1",
-                "where": 'to_number(spend) > 0',
+                "where": "to_number(spend) > 0",
             }
         )
     )
@@ -152,7 +154,7 @@ def test_query_code_rejects_select_only_args(tmp_path: Path) -> None:
                 "artifact_id": "art_1",
                 "root_path": "$.items",
                 "code": "def run(data, schema, params): return []",
-                "where": 'to_number(spend) > 0',
+                "where": "to_number(spend) > 0",
             }
         )
     )
@@ -169,7 +171,7 @@ def test_query_rejects_unsupported_query_kind(tmp_path: Path) -> None:
                 "query_kind": "schema",
                 "_gateway_context": {"session_id": "sess_1"},
                 "artifact_id": "art_1",
-                "where": 'to_number(spend) > 0',
+                "where": "to_number(spend) > 0",
             }
         )
     )

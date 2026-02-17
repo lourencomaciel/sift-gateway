@@ -152,7 +152,10 @@ async def _handle_query(
         )
 
     # query_kind == "select"
-    if query_args.get("target") is not None or query_args.get("jsonpath") is not None:
+    if (
+        query_args.get("target") is not None
+        or query_args.get("jsonpath") is not None
+    ):
         return gateway_error(
             "INVALID_ARGUMENT",
             "target/jsonpath are only supported with query_kind=get",

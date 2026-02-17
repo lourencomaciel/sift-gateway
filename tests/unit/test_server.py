@@ -1866,7 +1866,9 @@ def test_artifact_describe_db_runtime_returns_roots(
     assert response["artifact_id"] == "art_1"
     assert response["roots"][0]["root_path"] == "$.items"
     assert response["roots"][0]["compatible_for_select"] is True
-    assert response["roots"][0]["signature_groups"][0]["schema_mode"] == "sampled"
+    assert (
+        response["roots"][0]["signature_groups"][0]["schema_mode"] == "sampled"
+    )
 
 
 def test_artifact_select_db_runtime_partial_projects_records(
@@ -1990,14 +1992,14 @@ def test_artifact_select_cursor_sample_set_mismatch_returns_stale(
     monkeypatch.setattr(
         server,
         "_verify_cursor_payload",
-            lambda **_kwargs: {
-                "position_state": {"offset": 0},
-                "scope": "single",
-                "root_path": "$.items",
-                "select_paths_hash": select_paths_hash(["$.id"]),
-                "where_hash": where_hash(
-                    where_expr,
-                    mode=server.config.where_canonicalization_mode.value,
+        lambda **_kwargs: {
+            "position_state": {"offset": 0},
+            "scope": "single",
+            "root_path": "$.items",
+            "select_paths_hash": select_paths_hash(["$.id"]),
+            "where_hash": where_hash(
+                where_expr,
+                mode=server.config.where_canonicalization_mode.value,
             ),
             "artifact_generation": 1,
             "map_budget_fingerprint": "mbf",
@@ -2209,7 +2211,9 @@ def test_artifact_select_cursor_always_binds_order_by(
     conn = _SeqConnection(
         [
             _SeqCursor(one=(1,)),
-            _SeqCursor(one=("art_1", "partial", "ready", "off", None, 1, "mbf")),
+            _SeqCursor(
+                one=("art_1", "partial", "ready", "off", None, 1, "mbf")
+            ),
             _SeqCursor(
                 one=(
                     "rk_1",

@@ -269,17 +269,21 @@ def evaluate_jsonpath(
         next_nodes: list[Any] = []
         if seg.kind == "field":
             field = str(seg.value)
-            for node in nodes:
-                if isinstance(node, dict) and field in node:
-                    next_nodes.append(node[field])
+            next_nodes.extend(
+                node[field]
+                for node in nodes
+                if isinstance(node, dict) and field in node
+            )
         elif seg.kind == "index":
             if not isinstance(seg.value, int):
                 msg = "invalid index segment in parsed JSONPath"
                 raise JsonPathError(msg)
             idx = seg.value
-            for node in nodes:
-                if isinstance(node, list) and 0 <= idx < len(node):
-                    next_nodes.append(node[idx])
+            next_nodes.extend(
+                node[idx]
+                for node in nodes
+                if isinstance(node, list) and 0 <= idx < len(node)
+            )
         else:
             for node in nodes:
                 if isinstance(node, list):
@@ -287,8 +291,7 @@ def evaluate_jsonpath(
                     next_nodes.extend(node)
                 elif isinstance(node, dict):
                     wildcard_expansion_total += len(node)
-                    for key in sorted(node):
-                        next_nodes.append(node[key])
+                    next_nodes.extend(node[key] for key in sorted(node))
             if (
                 max_wildcard_expansion_total is not None
                 and wildcard_expansion_total > max_wildcard_expansion_total

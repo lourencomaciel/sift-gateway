@@ -288,7 +288,7 @@ def build_artifact_row(
         "payload_json_bytes": payload_json_bytes,
         "payload_binary_bytes_total": payload_binary_bytes_total,
         "payload_total_bytes": payload_total_bytes,
-        "last_referenced_at": dt.datetime.now(dt.timezone.utc),
+        "last_referenced_at": dt.datetime.now(dt.UTC),
         "generation": 1,
         "parent_artifact_id": input_data.parent_artifact_id,
         "chain_seq": input_data.chain_seq,

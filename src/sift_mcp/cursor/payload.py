@@ -54,7 +54,7 @@ def _utc_now() -> dt.datetime:
     Returns:
         A timezone-aware UTC datetime with microsecond = 0.
     """
-    return dt.datetime.now(dt.timezone.utc).replace(microsecond=0)
+    return dt.datetime.now(dt.UTC).replace(microsecond=0)
 
 
 def _iso_z(value: dt.datetime) -> str:
@@ -66,7 +66,7 @@ def _iso_z(value: dt.datetime) -> str:
     Returns:
         An ISO-8601 string ending with ``Z``.
     """
-    return value.astimezone(dt.timezone.utc).isoformat().replace("+00:00", "Z")
+    return value.astimezone(dt.UTC).isoformat().replace("+00:00", "Z")
 
 
 def build_cursor_payload(
@@ -104,7 +104,7 @@ def build_cursor_payload(
     Raises:
         ValueError: If extra contains reserved cursor fields.
     """
-    issued_at = (now or _utc_now()).astimezone(dt.timezone.utc)
+    issued_at = (now or _utc_now()).astimezone(dt.UTC)
     expires_at = issued_at + dt.timedelta(minutes=ttl_minutes)
 
     payload: dict[str, Any] = {

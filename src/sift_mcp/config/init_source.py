@@ -131,7 +131,9 @@ def find_source_shortcut_matches(
         )
         raise ValueError(msg)
 
-    root = cwd.expanduser().resolve() if cwd is not None else Path.cwd().resolve()
+    root = (
+        cwd.expanduser().resolve() if cwd is not None else Path.cwd().resolve()
+    )
     candidates = _candidate_paths_for_shortcut(normalized, cwd=root)
     checked = _dedupe_paths(candidates)
     matches = [path for path in checked if _is_mcp_config_file(path)]
@@ -148,9 +150,7 @@ def _candidate_paths_for_shortcut(
         for name in SUPPORTED_SOURCE_SHORTCUTS:
             if name == "auto":
                 continue
-            all_candidates.extend(
-                _candidate_paths_for_shortcut(name, cwd=cwd)
-            )
+            all_candidates.extend(_candidate_paths_for_shortcut(name, cwd=cwd))
         return all_candidates
 
     if shortcut == "claude":
@@ -189,9 +189,7 @@ def _claude_desktop_candidates() -> list[Path]:
     elif platform == "windows":
         appdata = _windows_roaming_dir()
         if appdata is not None:
-            candidates.append(
-                appdata / "Claude" / "claude_desktop_config.json"
-            )
+            candidates.append(appdata / "Claude" / "claude_desktop_config.json")
     else:
         candidates.append(
             home / ".config" / "Claude" / "claude_desktop_config.json"
@@ -231,8 +229,10 @@ def _cursor_candidates(cwd: Path) -> list[Path]:
     platform = _platform_key()
 
     candidates.append(home / ".cursor" / "mcp.json")
-    for directory in _cwd_and_parents(cwd):
-        candidates.append(directory / ".cursor" / "mcp.json")
+    candidates.extend(
+        directory / ".cursor" / "mcp.json"
+        for directory in _cwd_and_parents(cwd)
+    )
 
     if platform == "macos":
         base = home / "Library" / "Application Support" / "Cursor" / "User"
@@ -282,9 +282,7 @@ def _windsurf_candidates(cwd: Path) -> list[Path]:
     home = Path.home()
     platform = _platform_key()
 
-    candidates.append(
-        home / ".codeium" / "windsurf" / "mcp_config.json"
-    )
+    candidates.append(home / ".codeium" / "windsurf" / "mcp_config.json")
     for directory in _cwd_and_parents(cwd):
         candidates.extend(
             [
@@ -326,12 +324,13 @@ def _windsurf_candidates(cwd: Path) -> list[Path]:
 
 
 def _zed_candidates(cwd: Path) -> list[Path]:
-    candidates: list[Path] = []
     home = Path.home()
     platform = _platform_key()
 
-    for directory in _cwd_and_parents(cwd):
-        candidates.append(directory / ".zed" / "settings.json")
+    candidates: list[Path] = [
+        directory / ".zed" / "settings.json"
+        for directory in _cwd_and_parents(cwd)
+    ]
 
     if platform == "macos":
         candidates.append(
@@ -348,7 +347,7 @@ def _zed_candidates(cwd: Path) -> list[Path]:
 
 
 def _looks_like_path(value: str) -> bool:
-    if value.startswith(".") or value.startswith("~"):
+    if value.startswith((".", "~")):
         return True
     if "/" in value or "\\" in value:
         return True

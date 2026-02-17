@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from decimal import Decimal
 import hashlib
 import time
-from typing import TYPE_CHECKING, Any, Mapping
+from typing import TYPE_CHECKING, Any
 
 from sift_mcp.canon.rfc8785 import canonical_bytes
 from sift_mcp.codegen.ast_guard import allowed_import_roots
@@ -14,8 +15,8 @@ from sift_mcp.codegen.runtime import (
     CodeRuntimeConfig,
     CodeRuntimeError,
     CodeRuntimeInfrastructureError,
-    CodeRuntimeMemoryLimit,
-    CodeRuntimeTimeout,
+    CodeRuntimeMemoryLimitError,
+    CodeRuntimeTimeoutError,
     encode_json_bytes,
     execute_code_in_subprocess,
 )
@@ -213,10 +214,16 @@ def _build_schema(
     fields: list[dict[str, Any]] = []
     for field in field_rows:
         raw_types = field.get("types")
-        types = [str(item) for item in raw_types] if isinstance(raw_types, list) else []
+        types = (
+            [str(item) for item in raw_types]
+            if isinstance(raw_types, list)
+            else []
+        )
         observed_count_raw = field.get("observed_count")
         observed_count = (
-            int(observed_count_raw) if isinstance(observed_count_raw, int) else 0
+            int(observed_count_raw)
+            if isinstance(observed_count_raw, int)
+            else 0
         )
         entry: dict[str, Any] = {
             "path": field.get("field_path"),
@@ -238,7 +245,9 @@ def _build_schema(
 
     observed_records_raw = schema_root.get("observed_records")
     observed_records = (
-        int(observed_records_raw) if isinstance(observed_records_raw, int) else 0
+        int(observed_records_raw)
+        if isinstance(observed_records_raw, int)
+        else 0
     )
     return {
         "version": schema_root.get("schema_version"),
@@ -255,9 +264,7 @@ def _build_schema(
             "traversal_contract_version": schema_root.get(
                 "traversal_contract_version"
             ),
-            "map_budget_fingerprint": schema_root.get(
-                "map_budget_fingerprint"
-            ),
+            "map_budget_fingerprint": schema_root.get("map_budget_fingerprint"),
         },
     }
 
@@ -400,7 +407,9 @@ async def handle_artifact_code(
 
         all_related_ids: set[str] = set()
         for requested_artifact_id in requested_artifact_ids:
-            root_path_for_requested = requested_root_paths[requested_artifact_id]
+            root_path_for_requested = requested_root_paths[
+                requested_artifact_id
+            ]
             resolved_candidates = resolve_all_related_root_candidates(
                 connection,
                 session_id=session_id,
@@ -518,8 +527,13 @@ async def handle_artifact_code(
                     continue
 
                 envelope_value = artifact_row.get("envelope")
-                canonical_bytes_raw = artifact_row.get("envelope_canonical_bytes")
-                if isinstance(envelope_value, dict) and "content" in envelope_value:
+                canonical_bytes_raw = artifact_row.get(
+                    "envelope_canonical_bytes"
+                )
+                if (
+                    isinstance(envelope_value, dict)
+                    and "content" in envelope_value
+                ):
                     envelope = envelope_value
                 elif canonical_bytes_raw is None:
                     return gateway_error(
@@ -581,7 +595,10 @@ async def handle_artifact_code(
                         stop_collection = True
                         break
 
-            if input_limit_reason is not None or input_serialization_error is not None:
+            if (
+                input_limit_reason is not None
+                or input_serialization_error is not None
+            ):
                 break
 
         related_ids = sorted(all_related_ids)
@@ -695,7 +712,7 @@ async def handle_artifact_code(
             runtime_args["artifacts"] = input_records_by_artifact
             runtime_args["schemas"] = schema_by_artifact
         runtime_result = execute_code_in_subprocess(**runtime_args)
-    except CodeRuntimeTimeout as exc:
+    except CodeRuntimeTimeoutError as exc:
         ctx._increment_metric("codegen_timeout")
         ctx._increment_metric("codegen_failure")
         _logger.warning(
@@ -708,7 +725,7 @@ async def handle_artifact_code(
             str(exc),
             details_code="CODE_RUNTIME_TIMEOUT",
         )
-    except CodeRuntimeMemoryLimit as exc:
+    except CodeRuntimeMemoryLimitError as exc:
         ctx._increment_metric("codegen_failure")
         _logger.warning(
             LogEvents.CODEGEN_FAILED,

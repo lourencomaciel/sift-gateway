@@ -84,10 +84,26 @@ src = ["src"]
 
 [tool.ruff.lint]
 extend-select = [
-    "D",      # pydocstyle
-    "I",      # isort
+    "B",      # flake8-bugbear
     "C4",     # flake8-comprehensions
+    "D",      # pydocstyle
+    "FLY",    # flynt (f-string conversion)
+    "G",      # flake8-logging-format
+    "I",      # isort
+    "N",      # pep8-naming
+    "PERF",   # perflint
+    "PIE",    # flake8-pie
+    "PT",     # flake8-pytest-style
+    "RET",    # flake8-return
+    "RSE",    # flake8-raise
+    "RUF",    # ruff-specific
+    "SIM",    # flake8-simplify
+    "T20",    # flake8-print
+    "TID",    # flake8-tidy-imports
+    "UP",     # pyupgrade
+    "W",      # pycodestyle warnings
 ]
+
 [tool.ruff.lint.pydocstyle]
 convention = "google"
 
@@ -96,6 +112,9 @@ force-sort-within-sections = true
 known-first-party = ["sift_mcp"]
 
 [tool.ruff.lint.per-file-ignores]
+"src/sift_mcp/main.py" = ["T201"]
+"src/sift_mcp/config/init.py" = ["T201"]
+"src/sift_mcp/config/upstream_add.py" = ["T201"]
 "tests/**/*.py" = [
     "D100",
     "D101",

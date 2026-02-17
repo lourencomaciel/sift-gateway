@@ -369,9 +369,7 @@ def _run_init(args: argparse.Namespace) -> int:
 
     source_path = resolve_source_arg(args.source)
     data_dir = (
-        Path(args.data_dir).expanduser().resolve()
-        if args.data_dir
-        else None
+        Path(args.data_dir).expanduser().resolve() if args.data_dir else None
     )
 
     if args.revert:
@@ -475,8 +473,7 @@ def _resolve_data_dir_from_source_config(source_path: Path) -> Path | None:
         idx = args.index("--data-dir")
         if idx + 1 >= len(args):
             continue
-        candidate = Path(args[idx + 1]).expanduser().resolve()
-        return candidate
+        return Path(args[idx + 1]).expanduser().resolve()
 
     return None
 
@@ -740,6 +737,7 @@ def serve() -> int:
     # Auto-sync newly added MCPs from source config
     if not args.check:
         from sift_mcp.config.sync import run_sync
+
         sync_result = run_sync(sync_data_dir)
         runtime_data_dir = _resolve_data_dir_from_sync_metadata(sync_data_dir)
         if sync_result.get("synced", 0) > 0:

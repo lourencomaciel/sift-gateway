@@ -15,6 +15,7 @@ Typical usage example::
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 import datetime as dt
 import importlib.util
@@ -22,7 +23,7 @@ import json
 from pathlib import Path
 import shutil
 import time
-from typing import Any, Awaitable, Callable, Mapping
+from typing import Any
 
 from fastmcp import FastMCP
 from fastmcp.server.dependencies import get_context
@@ -704,15 +705,13 @@ class GatewayServer:
         current = dict(self.upstream_runtime.get(prefix, {}))
         current["last_error_code"] = code
         current["last_error_message"] = message
-        current["last_error_at"] = dt.datetime.now(dt.timezone.utc).isoformat()
+        current["last_error_at"] = dt.datetime.now(dt.UTC).isoformat()
         self.upstream_runtime[prefix] = current
 
     def _record_upstream_success(self, *, prefix: str) -> None:
         """Persist the latest successful upstream-call timestamp."""
         current = dict(self.upstream_runtime.get(prefix, {}))
-        current["last_success_at"] = dt.datetime.now(
-            dt.timezone.utc
-        ).isoformat()
+        current["last_success_at"] = dt.datetime.now(dt.UTC).isoformat()
         self.upstream_runtime[prefix] = current
 
     async def _probe_upstream_tools(
@@ -1225,10 +1224,11 @@ class GatewayServer:
             List of binary_hash strings from BinaryRefContentPart
             entries.
         """
-        hashes: list[str] = []
-        for part in envelope.content:
-            if isinstance(part, BinaryRefContentPart):
-                hashes.append(part.binary_hash)
+        hashes: list[str] = [
+            part.binary_hash
+            for part in envelope.content
+            if isinstance(part, BinaryRefContentPart)
+        ]
         return hashes
 
     # -- Mapping helpers --
@@ -1386,7 +1386,7 @@ class GatewayServer:
         pending = set(self._mapping_tasks)
         if not pending:
             return 0
-        done, still_pending = await asyncio.wait(pending, timeout=timeout)
+        _done, still_pending = await asyncio.wait(pending, timeout=timeout)
         return len(still_pending)
 
     def _trigger_mapping_for_artifact(

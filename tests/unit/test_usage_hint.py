@@ -119,8 +119,7 @@ def test_array_hint_includes_available_code_query_packages() -> None:
         code_query_packages=["jmespath", "numpy"],
     )
     assert (
-        "Available code-query packages in this runtime: jmespath, numpy"
-        in hint
+        "Available code-query packages in this runtime: jmespath, numpy" in hint
     )
 
 

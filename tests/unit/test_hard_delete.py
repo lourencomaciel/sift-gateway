@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from sift_mcp.constants import WORKSPACE_ID
 from sift_mcp.db.backend import Dialect
 from sift_mcp.jobs.hard_delete import (
@@ -245,16 +247,12 @@ def test_run_hard_delete_batch_rolls_back_on_error() -> None:
         candidate_rows=[("art_1", "payload_a")],
         fail_on_contains="DELETE FROM artifacts",
     )
-    try:
+    with pytest.raises(RuntimeError, match="simulated execute failure"):
         run_hard_delete_batch(
             connection,
             grace_period_timestamp="2025-01-01T00:00:00Z",
             batch_size=1,
         )
-    except RuntimeError as exc:
-        assert "simulated execute failure" in str(exc)
-    else:
-        raise AssertionError("expected RuntimeError")
     assert connection.committed is False
     assert connection.rolled_back is True
 
@@ -301,7 +299,7 @@ class _SqliteFakeConnection:
 
     def execute(
         self, query: str, _params: tuple[object, ...] | None = None
-    ) -> "_SqliteFakeCursor":
+    ) -> _SqliteFakeCursor:
         self.executed.append(query.strip())
         normalized = query.strip().upper()
         if "DELETED_AT IS NOT NULL" in normalized and "SELECT" in normalized:

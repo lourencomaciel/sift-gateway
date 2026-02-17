@@ -27,7 +27,8 @@ def test_where_hash_raw_string_dict_input() -> None:
     h1 = where_hash(d, mode="raw_string")
     h2 = where_hash(d, mode="raw_string")
     assert h1 == h2
-    assert isinstance(h1, str) and len(h1) == 64  # sha256 hex
+    assert isinstance(h1, str)
+    assert len(h1) == 64  # sha256 hex
 
 
 def test_where_hash_raw_string_whitespace_matters() -> None:
@@ -176,12 +177,8 @@ def test_where_hash_canonical_ast_case_insensitive_keywords() -> None:
 
 
 def test_where_hash_rejects_unknown_mode() -> None:
-    try:
+    with pytest.raises(ValueError, match="unsupported"):
         where_hash("x", mode="invalid")
-    except ValueError as exc:
-        assert "unsupported" in str(exc)
-    else:
-        raise AssertionError("expected ValueError")
 
 
 def test_where_hash_canonical_ast_rejects_non_dict_non_string() -> None:

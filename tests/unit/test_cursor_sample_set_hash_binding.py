@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from sift_mcp.cursor.sample_set_hash import (
     SampleSetHashBindingError,
     assert_sample_set_hash_binding,
@@ -13,9 +15,5 @@ def test_cursor_sample_set_hash_binding_ok() -> None:
 
 def test_cursor_sample_set_hash_binding_rejects_mismatch() -> None:
     payload = {"sample_set_hash": "abc"}
-    try:
+    with pytest.raises(SampleSetHashBindingError, match="mismatch"):
         assert_sample_set_hash_binding(payload, "def")
-    except SampleSetHashBindingError as exc:
-        assert "mismatch" in str(exc)
-    else:
-        raise AssertionError("expected SampleSetHashBindingError")

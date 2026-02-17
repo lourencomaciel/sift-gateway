@@ -129,15 +129,18 @@ def validate_against_schema(
         indicates valid arguments.
     """
     # Basic validation - check required properties exist
-    violations: list[str] = []
     required = schema.get("required", [])
     properties = schema.get("properties", {})
-    for key in required:
-        if key not in args:
-            violations.append(f"missing required argument: {key}")
+    violations: list[str] = [
+        f"missing required argument: {key}"
+        for key in required
+        if key not in args
+    ]
     additional = schema.get("additionalProperties", True)
     if additional is False:
-        for key in args:
-            if properties and key not in properties:
-                violations.append(f"unknown argument: {key}")
+        violations.extend(
+            f"unknown argument: {key}"
+            for key in args
+            if properties and key not in properties
+        )
     return violations

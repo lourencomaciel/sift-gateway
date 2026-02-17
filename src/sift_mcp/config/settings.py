@@ -13,11 +13,12 @@ Typical usage example::
 
 from __future__ import annotations
 
-from enum import Enum
+from collections.abc import Mapping
+from enum import StrEnum
 import json
 import os
 from pathlib import Path
-from typing import Literal, Mapping, cast
+from typing import Literal, cast
 
 from pydantic import (
     BaseModel,
@@ -39,7 +40,7 @@ from sift_mcp.constants import (
 # ---------------------------------------------------------------------------
 # Enums
 # ---------------------------------------------------------------------------
-class EnvelopeJsonbMode(str, Enum):
+class EnvelopeJsonbMode(StrEnum):
     """Control how envelope JSONB is stored in the database.
 
     Attributes:
@@ -53,7 +54,7 @@ class EnvelopeJsonbMode(str, Enum):
     none = "none"
 
 
-class CanonicalEncoding(str, Enum):
+class CanonicalEncoding(StrEnum):
     """Compression algorithm for canonical envelope bytes.
 
     Attributes:
@@ -67,7 +68,7 @@ class CanonicalEncoding(str, Enum):
     none = "none"
 
 
-class MappingMode(str, Enum):
+class MappingMode(StrEnum):
     """Control when artifact mapping runs after persistence.
 
     Attributes:
@@ -81,7 +82,7 @@ class MappingMode(str, Enum):
     sync = "sync"
 
 
-class WhereCanonicalizationMode(str, Enum):
+class WhereCanonicalizationMode(StrEnum):
     """Control how ``where`` filter expressions are canonicalized.
 
     Attributes:
@@ -575,8 +576,7 @@ class GatewayConfig(BaseSettings):
         256,
         ge=1,
         description=(
-            "Maximum related artifacts allowed in a "
-            "lineage-scoped query."
+            "Maximum related artifacts allowed in a lineage-scoped query."
         ),
     )
 
@@ -695,7 +695,9 @@ class GatewayConfig(BaseSettings):
         for raw in value:
             root = raw.strip()
             if not root:
-                msg = "code_query_allowed_import_roots entries must be non-empty"
+                msg = (
+                    "code_query_allowed_import_roots entries must be non-empty"
+                )
                 raise ValueError(msg)
             if not root.isidentifier():
                 msg = (

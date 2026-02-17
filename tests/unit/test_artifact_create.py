@@ -164,11 +164,12 @@ def test_prepare_envelope_storage_full_jsonb_mode(tmp_path: Path) -> None:
     config = _config(tmp_path, envelope_jsonb_mode=EnvelopeJsonbMode.full)
     envelope = _ok_envelope()
 
-    p_hash, uncompressed, compressed, jsonb = prepare_envelope_storage(
+    p_hash, uncompressed, _compressed, jsonb = prepare_envelope_storage(
         envelope, config
     )
 
-    assert isinstance(p_hash, str) and len(p_hash) == 64
+    assert isinstance(p_hash, str)
+    assert len(p_hash) == 64
     assert isinstance(uncompressed, bytes)
     assert jsonb is not None
     assert jsonb["type"] == "mcp_envelope"

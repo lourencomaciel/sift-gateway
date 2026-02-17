@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sift_mcp.tools.artifact_chain_pages import (
     build_chain_pages_response,
@@ -42,7 +42,7 @@ def test_validate_chain_pages_args_accepts_valid_arguments() -> None:
 
 
 def test_build_chain_pages_response_formats_rows() -> None:
-    ts = datetime(2024, 6, 15, 12, 0, 0, tzinfo=timezone.utc)
+    ts = datetime(2024, 6, 15, 12, 0, 0, tzinfo=UTC)
     rows = [
         {
             "artifact_id": "art_page_1",
@@ -91,7 +91,7 @@ def test_build_chain_pages_response_empty_rows() -> None:
 
 
 def test_build_chain_pages_response_with_truncated_and_cursor() -> None:
-    ts = datetime(2024, 6, 15, 12, 0, 0, tzinfo=timezone.utc)
+    ts = datetime(2024, 6, 15, 12, 0, 0, tzinfo=UTC)
     rows = [
         {
             "artifact_id": "art_1",
@@ -107,7 +107,7 @@ def test_build_chain_pages_response_with_truncated_and_cursor() -> None:
 
 
 def test_build_chain_pages_response_handles_missing_optional_fields() -> None:
-    ts = datetime(2024, 6, 15, 12, 0, 0, tzinfo=timezone.utc)
+    ts = datetime(2024, 6, 15, 12, 0, 0, tzinfo=UTC)
     rows = [
         {
             "artifact_id": "art_1",

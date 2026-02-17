@@ -15,6 +15,7 @@ Typical usage example::
 
 from __future__ import annotations
 
+import contextlib
 from dataclasses import dataclass
 import logging
 from pathlib import Path
@@ -101,10 +102,8 @@ def _check_writable(paths: list[Path]) -> tuple[bool, list[str]]:
         except OSError as exc:
             details.append(f"FS write failed at {path}: {exc}")
             if probe is not None:
-                try:
+                with contextlib.suppress(OSError):
                     probe.unlink(missing_ok=True)
-                except OSError:
-                    pass
             return False, details
     return True, details
 

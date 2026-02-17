@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import ast
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Sequence
 
 ALLOWED_STDLIB_IMPORTS = frozenset(
     {
@@ -240,13 +240,14 @@ def validate_code_ast(
                         code="CODE_AST_REJECTED",
                         message="dynamic import helpers are not allowed",
                     )
-        elif isinstance(module_node, ast.Name):
-            if module_node.id in _BLOCKED_NAME_PATTERNS and isinstance(
-                module_node.ctx, ast.Load
-            ):
-                raise CodeValidationError(
-                    code="CODE_AST_REJECTED",
-                    message=f"blocked name access: {module_node.id}",
-                )
+        elif (
+            isinstance(module_node, ast.Name)
+            and module_node.id in _BLOCKED_NAME_PATTERNS
+            and isinstance(module_node.ctx, ast.Load)
+        ):
+            raise CodeValidationError(
+                code="CODE_AST_REJECTED",
+                message=f"blocked name access: {module_node.id}",
+            )
 
     return module

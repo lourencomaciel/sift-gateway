@@ -37,10 +37,8 @@ from sift_mcp.constants import (
 @contextlib.contextmanager
 def _suppress_os_error() -> Iterator[None]:
     """Suppress OSError during cleanup."""
-    try:
+    with contextlib.suppress(OSError):
         yield
-    except OSError:
-        pass
 
 
 def _ensure_gateway_config_dir(data_dir: Path) -> Path:
@@ -285,7 +283,7 @@ def run_upstream_add(
     added: list[str] = []
     skipped: list[str] = []
 
-    for name, entry in servers.items():
+    for name in servers:
         if name in existing_servers:
             skipped.append(name)
             continue

@@ -9,7 +9,7 @@ changed.  Key exports are ``compute_sample_set_hash`` and
 
 from __future__ import annotations
 
-from typing import Sequence
+from collections.abc import Sequence
 
 from sift_mcp.canon.rfc8785 import canonical_bytes
 from sift_mcp.constants import MAPPER_VERSION

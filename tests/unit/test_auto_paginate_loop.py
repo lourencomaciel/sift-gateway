@@ -112,9 +112,7 @@ class _DummyCtx:
                 tool=mirrored.original_name,
                 status="ok",
                 content=[
-                    JsonContentPart(
-                        value=upstream_result["structuredContent"]
-                    )
+                    JsonContentPart(value=upstream_result["structuredContent"])
                 ],
             ),
             [],

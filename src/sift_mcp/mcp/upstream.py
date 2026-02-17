@@ -14,6 +14,7 @@ Typical usage example::
 
 from __future__ import annotations
 
+from collections.abc import Generator
 from contextlib import contextmanager
 from dataclasses import dataclass
 import json
@@ -21,7 +22,7 @@ import logging
 import os
 from pathlib import Path
 import tempfile
-from typing import Any, Generator
+from typing import Any
 import uuid
 
 from fastmcp import Client
@@ -624,7 +625,7 @@ async def discover_tools(
         schema_hash = sha256_trunc(canonical_bytes(input_schema), 32)
         discovered.append(
             UpstreamToolSchema(
-                name=str(getattr(tool, "name")),
+                name=str(tool.name),
                 description=str(getattr(tool, "description", "") or ""),
                 input_schema=input_schema,
                 schema_hash=schema_hash,
@@ -681,7 +682,7 @@ async def connect_upstreams(
     """
     upstreams: list[UpstreamInstance] = []
     for config in configs:
-        upstreams.append(await connect_upstream(config, data_dir))
+        upstreams.append(await connect_upstream(config, data_dir))  # noqa: PERF401
     return upstreams
 
 
