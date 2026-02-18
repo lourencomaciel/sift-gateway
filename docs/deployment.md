@@ -90,7 +90,7 @@ sift-mcp --check
 
 ### Health Checks
 
-Use `sift-mcp --check` for health check endpoints:
+Use `sift-mcp --check` as a CLI health check:
 
 ```bash
 #!/bin/bash
@@ -123,17 +123,26 @@ Sift records Prometheus-style counters and histograms internally for gateway ope
 
 ## Performance Tuning
 
-### Passthrough Threshold
+### Mirrored Response Handling
 
-Control when responses are stored as artifacts:
+Mirrored upstream responses are always persisted as artifacts. Return shape is
+controlled by passthrough size settings.
 
 ```bash
 export SIFT_MCP_PASSTHROUGH_MAX_BYTES=8192  # Default: 8 KB
 ```
 
-**Guidance:**
-- Lower threshold (2-4 KB) → More artifacts, lower context usage
-- Higher threshold (16-32 KB) → Fewer artifacts, higher context usage
+- Small responses at or under this threshold may return raw upstream payloads.
+- Larger responses return artifact handles.
+- Responses requiring explicit continuation (`pagination.has_more=true`) return
+  handles regardless of size.
+
+To limit disk growth, tune storage quota settings instead:
+
+```bash
+export SIFT_MCP_MAX_TOTAL_STORAGE_BYTES=10000000000
+export SIFT_MCP_QUOTA_ENFORCEMENT_ENABLED=true
+```
 
 ### Response Budgets
 

@@ -106,6 +106,7 @@ Runtime behavior:
 | `max_bytes_out` | int | `5000000` | `SIFT_MCP_MAX_BYTES_OUT` | Max response bytes |
 | `max_wildcards` | int | `10000` | `SIFT_MCP_MAX_WILDCARDS` | Max wildcard expansions |
 | `max_compute_steps` | int | `1000000` | `SIFT_MCP_MAX_COMPUTE_STEPS` | Max retrieval compute steps |
+| `passthrough_max_bytes` | int | `8192` | `SIFT_MCP_PASSTHROUGH_MAX_BYTES` | Max serialized mirrored-response size to return raw (`0` disables) |
 
 ## JSONPath
 
@@ -242,6 +243,7 @@ Upstream fields:
 | `auto_paginate_max_pages` | int | null | Per-upstream override for gateway auto-pagination page cap |
 | `auto_paginate_max_records` | int | null | Per-upstream override for gateway auto-pagination record cap |
 | `auto_paginate_timeout_seconds` | float | null | Per-upstream override for gateway auto-pagination timeout |
+| `passthrough_allowed` | bool | `true` | Allow small mirrored responses to return raw for this upstream |
 | `secret_ref` | str | null | Reference to upstream secret file |
 | `inherit_parent_env` | bool | `false` | Inherit full parent env for stdio |
 | `external_user_id` | str | null | Stable user identity for upstream auth persistence (`auto` generates UUID) |
@@ -264,6 +266,7 @@ Sift accepts:
         "secret_ref": "github",
         "inherit_parent_env": false,
         "external_user_id": "auto",
+        "passthrough_allowed": true,
         "auto_paginate_max_pages": 5,
         "auto_paginate_max_records": 500,
         "auto_paginate_timeout_seconds": 15.0,
@@ -309,6 +312,19 @@ Pagination layers are explicit:
 
 - Retrieval-layer continuation: `artifact(action="query", query_kind=..., cursor=...)`
 - Upstream-page continuation: `artifact(action="next_page", artifact_id=...)`
+
+## Mirrored response passthrough
+
+For mirrored tool calls, Sift always persists/map-indexes responses. Return
+shape is controlled by passthrough settings:
+
+- if serialized response size <= `passthrough_max_bytes` and
+  `upstream.passthrough_allowed=true`, Sift returns the raw upstream result.
+- otherwise Sift returns the gateway artifact handle payload.
+
+Passthrough is automatically disabled when a mirrored call still has upstream
+pages remaining (`pagination.has_more=true`) or when gateway auto-pagination
+merged additional pages.
 
 ### `_gateway.secret_ref`
 

@@ -8,7 +8,7 @@
 
 ---
 
-AI agents connect to real-world tools through MCP. When those tools return large responses, the data floods the context window, degrading model performance, inflating cost, and blocking multi-step workflows. Sift sits invisibly between your MCP client and upstream servers: small responses pass through untouched, large payloads get stored and replaced with lightweight handles. You get retrieval tools to query, page, chain, and compute over the stored data without loading it into context.
+AI agents connect to real-world tools through MCP. When those tools return large responses, the data floods the context window, degrading model performance, inflating cost, and blocking multi-step workflows. Sift sits invisibly between your MCP client and upstream servers: mirrored tool responses are always stored durably, and small responses can still pass through directly to the model. You get retrieval tools to query, page, chain, and compute over the stored data without loading it into context.
 
 Nothing about your existing MCP servers needs to change.
 
@@ -16,12 +16,13 @@ Nothing about your existing MCP servers needs to change.
 ┌──────────────┐         ┌──────────────┐         ┌──────────────────────┐
 │  MCP Client  │────────▶│     Sift     │────────▶│  Upstream MCP Servers│
 │  (Claude,    │◀────────│              │◀────────│  (GitHub, Slack,     │
-│   Cursor,    │ handle  │   ┌──────┐   │  large  │   Meta Ads, ...)     │
-│   VS Code)   │ or raw  │   │Store │   │  resp.  │                      │
+│   Cursor,    │ handle  │   ┌──────┐   │  tool   │   Meta Ads, ...)     │
+│   VS Code)   │ or raw  │   │Store │   │  calls  │                      │
 └──────────────┘         │   └──────┘   │         └──────────────────────┘
                          └──────────────┘
-                          < 8 KB ─▶ passthrough (raw response)
-                          ≥ 8 KB ─▶ store + return handle (artifact_id + schema)
+                          <= 8 KB default ─▶ return raw response
+                          > 8 KB or pagination continuation ─▶ return handle
+                          all mirrored responses are still persisted
 ```
 
 ## Why This Matters
@@ -50,7 +51,7 @@ This reads your existing MCP client config, moves your servers behind Sift, and 
 
 **3. Restart your MCP client**
 
-That's it. Sift is now proxying your upstream servers. Responses over 8 KB are automatically stored as queryable artifacts. Everything under 8 KB flows through transparently, as if Sift isn't there.
+That's it. Sift is now proxying your upstream servers. Mirrored responses are persisted as queryable artifacts; small responses return raw, larger/continuation responses return artifact handles.
 
 > **Note:** Your MCP client (Claude Desktop, Claude Code, Cursor, VS Code, Windsurf, Zed) launches Sift automatically via the config. Use `sift-mcp --check` to verify health without starting the server.
 
@@ -58,9 +59,10 @@ That's it. Sift is now proxying your upstream servers. Responses over 8 KB are a
 
 1. Sift connects to your configured upstream MCP servers (stdio or HTTP).
 2. Each upstream tool is mirrored as `{prefix}.{tool_name}` with the original schema preserved. No injected fields.
-3. When a tool returns a response under 8 KB (configurable), the raw response passes through to your client unchanged.
-4. When a response exceeds the threshold, Sift stores it durably in SQLite, infers the schema, and returns a lightweight **artifact handle** containing the `artifact_id`, discovered schemas, and a usage hint.
-5. You query the stored artifact using `artifact(action="query", query_kind=...)` with bounded, paginated responses.
+3. Every mirrored tool response is persisted durably in SQLite + blob storage as an artifact envelope.
+4. If the serialized response is small (default <= 8 KB), Sift returns the raw upstream result directly; otherwise it returns a lightweight **artifact handle** with `artifact_id`, schemas, and usage hints.
+5. You query persisted artifacts using `artifact(action="query", query_kind=...)` with bounded responses and explicit pagination metadata.
+6. Raw passthrough responses omit `artifact_id`; set `SIFT_MCP_PASSTHROUGH_MAX_BYTES=0` when you need deterministic handle returns.
 
 ## What You Can Do With Artifacts
 
@@ -124,8 +126,8 @@ def run(artifacts, schemas, params):
 Pass data between tools without the model ever loading the intermediate payload:
 
 ```python
-# tool_a returns an artifact handle with artifact_id
-# Pass the artifact_id (or a JSONPath into it) to another tool
+# If tool_a returned a handle, pass artifact_id (or a JSONPath into it) to another tool
+# Small mirrored responses may return raw payloads; set passthrough_max_bytes=0 for deterministic handles
 tool_b(input="art_7f3a...")                     # full payload resolved server-side
 tool_b(email="art_7f3a...:$.users[0].email")    # specific field
 tool_b(ids="art_7f3a...:$.items[*].id")         # wildcard expansion

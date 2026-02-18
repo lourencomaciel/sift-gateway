@@ -34,6 +34,7 @@ _GATEWAY_EXTENSION_FIELDS = frozenset(
         "auto_paginate_max_pages",
         "auto_paginate_max_records",
         "auto_paginate_timeout_seconds",
+        "passthrough_allowed",
         "secret_ref",
         "inherit_parent_env",
         "external_user_id",
@@ -110,7 +111,9 @@ def _normalize_zed_url_entry(
     return result
 
 
-def _normalize_zed_string_command_entry(entry: dict[str, Any]) -> dict[str, Any]:
+def _normalize_zed_string_command_entry(
+    entry: dict[str, Any],
+) -> dict[str, Any]:
     """Normalize command-string Zed entry."""
     command = entry["command"]
     assert isinstance(command, str)

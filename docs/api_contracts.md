@@ -81,10 +81,19 @@ Session visibility guarantee:
 - Created artifacts are attached to the caller session before returning the
   handle, so follow-up retrieval in the same session succeeds.
 
-## Handle Response Contract
+## Mirrored Response Contract
 
-When mirrored responses exceed passthrough budget, Sift returns an artifact
-handle.
+Mirrored upstream tool responses always persist an artifact. Return shape is
+size- and state-dependent:
+
+- small responses (<= `passthrough_max_bytes`) may return raw upstream payloads
+- larger responses return gateway artifact handles
+- responses with unresolved upstream continuation (`pagination.has_more=true`)
+  return handles so `artifact(action="next_page")` remains available
+- raw passthrough responses do not include `artifact_id`; disable passthrough
+  (`passthrough_max_bytes=0`) when you need deterministic handle IDs
+
+## Handle Response Contract
 
 Common fields:
 
@@ -177,7 +186,7 @@ Not present by contract:
 Notes:
 
 - Scalar/dict return values are normalized to a one-item list.
-- Output is bounded by `max_bytes_out`.
+- Output is bounded by `max_bytes_out` and overflow fails with `RESPONSE_TOO_LARGE`.
 - `limit`/`cursor` are not pagination controls for code queries.
 
 ### `query_kind="search"`
@@ -312,17 +321,16 @@ Groups and negations can be nested arbitrarily:
 
 ## Error Contract
 
-Gateway errors are returned in this envelope:
+Gateway errors are returned as top-level gateway payloads:
 
 ```json
 {
-  "error": {
-    "code": "RESOURCE_EXHAUSTED",
-    "message": "lineage query exceeds related artifact limit",
-    "details": {
-      "artifact_count": 300,
-      "max_artifacts": 256
-    }
+  "type": "gateway_error",
+  "code": "RESOURCE_EXHAUSTED",
+  "message": "lineage query exceeds related artifact limit",
+  "details": {
+    "artifact_count": 300,
+    "max_artifacts": 256
   }
 }
 ```
