@@ -14,9 +14,9 @@ from dataclasses import dataclass, field
 import threading
 from typing import Any
 
-# ---------------------------------------------------------------------------
+# ------------------------------------------------------------------
 # Pure-Python thread-safe counter (replaces prometheus_client)
-# ---------------------------------------------------------------------------
+# ------------------------------------------------------------------
 
 
 class _CounterValue:
@@ -66,17 +66,6 @@ class Counter:
             self._value._val += amount
 
 
-# ---------------------------------------------------------------------------
-# Type alias for counter reader functions
-# ---------------------------------------------------------------------------
-
-_CounterFn = Callable[[Counter], int]
-
-# ---------------------------------------------------------------------------
-# Helpers for reading / resetting counters
-# ---------------------------------------------------------------------------
-
-
 def counter_value(counter: Counter) -> int:
     """Read the current value of a counter.
 
@@ -106,9 +95,9 @@ def counter_reset(counter: Counter) -> int:
     return val
 
 
-# ---------------------------------------------------------------------------
+# ------------------------------------------------------------------
 # Custom Histogram (prometheus has no min/max tracking)
-# ---------------------------------------------------------------------------
+# ------------------------------------------------------------------
 
 
 @dataclass
@@ -124,7 +113,9 @@ class Histogram:
     _max: float = float("-inf")
     _sum: float = 0.0
     _count: int = 0
-    _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
+    _lock: threading.Lock = field(
+        default_factory=threading.Lock, repr=False
+    )
 
     def observe(self, value: float) -> None:
         """Record a single observation.
@@ -138,6 +129,24 @@ class Histogram:
             self._sum += value
             self._count += 1
 
+    def _snap_dict(self) -> dict[str, float]:
+        """Build a stats dict from current state (caller holds lock)."""
+        if self._count == 0:
+            return {
+                "min": 0.0,
+                "max": 0.0,
+                "sum": 0.0,
+                "count": 0.0,
+                "avg": 0.0,
+            }
+        return {
+            "min": self._min,
+            "max": self._max,
+            "sum": self._sum,
+            "count": float(self._count),
+            "avg": self._sum / self._count,
+        }
+
     def snapshot(self) -> dict[str, float]:
         """Return current statistics without resetting.
 
@@ -145,21 +154,7 @@ class Histogram:
             Dict with min, max, sum, count, and avg keys.
         """
         with self._lock:
-            if self._count == 0:
-                return {
-                    "min": 0.0,
-                    "max": 0.0,
-                    "sum": 0.0,
-                    "count": 0.0,
-                    "avg": 0.0,
-                }
-            return {
-                "min": self._min,
-                "max": self._max,
-                "sum": self._sum,
-                "count": float(self._count),
-                "avg": self._sum / self._count,
-            }
+            return self._snap_dict()
 
     def reset(self) -> dict[str, float]:
         """Return current statistics and reset to initial state.
@@ -169,22 +164,7 @@ class Histogram:
             reflecting values before the reset.
         """
         with self._lock:
-            if self._count == 0:
-                snap: dict[str, float] = {
-                    "min": 0.0,
-                    "max": 0.0,
-                    "sum": 0.0,
-                    "count": 0.0,
-                    "avg": 0.0,
-                }
-            else:
-                snap = {
-                    "min": self._min,
-                    "max": self._max,
-                    "sum": self._sum,
-                    "count": float(self._count),
-                    "avg": self._sum / self._count,
-                }
+            snap = self._snap_dict()
             self._min = float("inf")
             self._max = float("-inf")
             self._sum = 0.0
@@ -192,559 +172,204 @@ class Histogram:
             return snap
 
 
-# ---------------------------------------------------------------------------
-# GatewayMetrics — counter factory
-# ---------------------------------------------------------------------------
+# ------------------------------------------------------------------
+# Data-driven metric definitions
+# ------------------------------------------------------------------
 
+_HISTOGRAM_ATTRS: frozenset[str] = frozenset({
+    "upstream_latency",
+    "mapping_latency",
+    "codegen_latency",
+})
 
-def _make(
-    name: str,
-    doc: str,
-    registry: Any = None,
-) -> Counter:
-    """Create a named counter.
-
-    Args:
-        name: Metric name (e.g. ``gateway_cache_hits_total``).
-        doc: Human-readable description of the counter.
-        registry: Ignored (kept for backward compatibility).
-
-    Returns:
-        A new Counter instance.
-    """
-    return Counter(name, doc)
-
-
-# ---------------------------------------------------------------------------
-# __init__ helpers — each registers one logical group of counters
-# ---------------------------------------------------------------------------
-
-
-def _init_cache_counters(m: GatewayMetrics, reg: Any) -> None:
-    """Register cache and upstream counters.
-
-    Args:
-        m: Metrics instance to attach counters to.
-        reg: Prometheus collector registry.
-    """
-    m.cache_hits = _make("gateway_cache_hits_total", "Cache hits", reg)
-    m.cache_misses = _make("gateway_cache_misses_total", "Cache misses", reg)
-    m.alias_hits = _make("gateway_alias_hits_total", "Alias hits", reg)
-    m.upstream_calls = _make(
-        "gateway_upstream_calls_total", "Upstream calls", reg
-    )
-    m.upstream_errors = _make(
-        "gateway_upstream_errors_total", "Upstream errors", reg
-    )
-    m.upstream_latency = Histogram()
-
-
-def _init_ingest_counters(m: GatewayMetrics, reg: Any) -> None:
-    """Register ingest counters.
-
-    Args:
-        m: Metrics instance to attach counters to.
-        reg: Prometheus collector registry.
-    """
-    m.oversize_json_count = _make(
-        "gateway_oversize_json_total",
-        "Oversize JSON parts",
-        reg,
-    )
-    m.binary_blob_writes = _make(
-        "gateway_binary_blob_writes_total",
-        "Binary blob writes",
-        reg,
-    )
-    m.binary_blob_dedupes = _make(
-        "gateway_binary_blob_dedupes_total",
-        "Binary blob dedupes",
-        reg,
-    )
-
-
-def _init_mapping_counters(m: GatewayMetrics, reg: Any) -> None:
-    """Register mapping result counters and latency.
-
-    Args:
-        m: Metrics instance to attach counters to.
-        reg: Prometheus collector registry.
-    """
-    m.mapping_full_count = _make(
-        "gateway_mapping_full_total", "Full mappings", reg
-    )
-    m.mapping_partial_count = _make(
-        "gateway_mapping_partial_total",
-        "Partial mappings",
-        reg,
-    )
-    m.mapping_failed_count = _make(
-        "gateway_mapping_failed_total",
-        "Failed mappings",
-        reg,
-    )
-    m.mapping_latency = Histogram()
-
-
-def _init_mapping_stop_counters(
-    m: GatewayMetrics, reg: Any
-) -> None:
-    """Register mapping stop-reason counters.
-
-    Args:
-        m: Metrics instance to attach counters to.
-        reg: Prometheus collector registry.
-    """
-    m.mapping_stop_none = _make(
-        "gateway_mapping_stop_none_total",
-        "Mapping stop: none",
-        reg,
-    )
-    m.mapping_stop_max_bytes = _make(
-        "gateway_mapping_stop_max_bytes_total",
-        "Mapping stop: max_bytes",
-        reg,
-    )
-    m.mapping_stop_max_compute = _make(
-        "gateway_mapping_stop_max_compute_total",
-        "Mapping stop: max_compute",
-        reg,
-    )
-    m.mapping_stop_max_depth = _make(
-        "gateway_mapping_stop_max_depth_total",
-        "Mapping stop: max_depth",
-        reg,
-    )
-    m.mapping_stop_parse_error = _make(
-        "gateway_mapping_stop_parse_error_total",
-        "Mapping stop: parse_error",
-        reg,
-    )
-
-
-def _init_cursor_counters(m: GatewayMetrics, reg: Any) -> None:
-    """Register cursor-stale, invalid, and expired counters.
-
-    Args:
-        m: Metrics instance to attach counters to.
-        reg: Prometheus collector registry.
-    """
-    m.cursor_stale_sample_set = _make(
-        "gateway_cursor_stale_sample_set_total",
-        "Cursor stale: sample_set",
-        reg,
-    )
-    m.cursor_stale_map_budget = _make(
-        "gateway_cursor_stale_map_budget_total",
-        "Cursor stale: map_budget",
-        reg,
-    )
-    m.cursor_stale_where_mode = _make(
-        "gateway_cursor_stale_where_mode_total",
-        "Cursor stale: where_mode",
-        reg,
-    )
-    m.cursor_stale_traversal = _make(
-        "gateway_cursor_stale_traversal_total",
-        "Cursor stale: traversal",
-        reg,
-    )
-    m.cursor_stale_generation = _make(
-        "gateway_cursor_stale_generation_total",
-        "Cursor stale: generation",
-        reg,
-    )
-    m.cursor_invalid = _make(
-        "gateway_cursor_invalid_total",
-        "Invalid cursors",
-        reg,
-    )
-    m.cursor_expired = _make(
-        "gateway_cursor_expired_total",
-        "Expired cursors",
-        reg,
-    )
-
-
-def _init_lock_counters(m: GatewayMetrics, reg: Any) -> None:
-    """Register advisory-lock counters.
-
-    Args:
-        m: Metrics instance to attach counters to.
-        reg: Prometheus collector registry.
-    """
-    m.advisory_lock_timeouts = _make(
-        "gateway_advisory_lock_timeouts_total",
-        "Advisory lock timeouts",
-        reg,
-    )
-    m.advisory_lock_acquired = _make(
-        "gateway_advisory_lock_acquired_total",
-        "Advisory locks acquired",
-        reg,
-    )
-
-
-def _init_pruning_counters(m: GatewayMetrics, reg: Any) -> None:
-    """Register pruning counters.
-
-    Args:
-        m: Metrics instance to attach counters to.
-        reg: Prometheus collector registry.
-    """
-    m.prune_soft_deletes = _make(
-        "gateway_prune_soft_deletes_total",
-        "Soft deletes",
-        reg,
-    )
-    m.prune_hard_deletes = _make(
-        "gateway_prune_hard_deletes_total",
-        "Hard deletes",
-        reg,
-    )
-    m.prune_bytes_reclaimed = _make(
-        "gateway_prune_bytes_reclaimed_total",
-        "Bytes reclaimed",
-        reg,
-    )
-    m.prune_fs_orphans_removed = _make(
-        "gateway_prune_fs_orphans_removed_total",
-        "FS orphans removed",
-        reg,
-    )
-
-
-def _init_quota_counters(m: GatewayMetrics, reg: Any) -> None:
-    """Register quota counters.
-
-    Args:
-        m: Metrics instance to attach counters to.
-        reg: Prometheus collector registry.
-    """
-    m.quota_checks = _make("gateway_quota_checks_total", "Quota checks", reg)
-    m.quota_breaches = _make(
-        "gateway_quota_breaches_total",
-        "Quota breaches",
-        reg,
-    )
-    m.quota_prune_triggered = _make(
-        "gateway_quota_prune_triggered_total",
-        "Quota prune triggered",
-        reg,
-    )
-
-
-def _init_codegen_counters(m: GatewayMetrics, reg: Any) -> None:
-    """Register code-query execution counters and latency."""
-    m.codegen_executions = _make(
-        "gateway_codegen_executions_total",
-        "Code-query executions",
-        reg,
-    )
-    m.codegen_success = _make(
-        "gateway_codegen_success_total",
-        "Code-query successes",
-        reg,
-    )
-    m.codegen_failure = _make(
-        "gateway_codegen_failure_total",
-        "Code-query failures",
-        reg,
-    )
-    m.codegen_timeout = _make(
-        "gateway_codegen_timeout_total",
-        "Code-query timeouts",
-        reg,
-    )
-    m.codegen_input_records = _make(
-        "gateway_codegen_input_records_total",
-        "Code-query input records",
-        reg,
-    )
-    m.codegen_output_records = _make(
-        "gateway_codegen_output_records_total",
-        "Code-query output records",
-        reg,
-    )
-    m.codegen_latency = Histogram()
-
-
-# ---------------------------------------------------------------------------
-# snapshot / reset helpers — parameterized by counter reader fn
-# ---------------------------------------------------------------------------
-
-
-def _gather_cache(m: GatewayMetrics, fn: _CounterFn) -> dict[str, Any]:
-    """Gather cache section metrics.
-
-    Args:
-        m: Metrics instance to read from.
-        fn: Counter reader function (value or reset).
-
-    Returns:
-        Dict of cache metric values.
-    """
-    return {
-        "hits": fn(m.cache_hits),
-        "misses": fn(m.cache_misses),
-        "alias_hits": fn(m.alias_hits),
-    }
-
-
-def _gather_upstream(
-    m: GatewayMetrics,
-    fn: _CounterFn,
-    *,
-    reset: bool,
-) -> dict[str, Any]:
-    """Gather upstream section metrics.
-
-    Args:
-        m: Metrics instance to read from.
-        fn: Counter reader function (value or reset).
-        reset: If True, reset the latency histogram.
-
-    Returns:
-        Dict of upstream metric values including latency.
-    """
-    lat = (
-        m.upstream_latency.reset() if reset else (m.upstream_latency.snapshot())
-    )
-    return {
-        "calls": fn(m.upstream_calls),
-        "errors": fn(m.upstream_errors),
-        "latency": lat,
-    }
-
-
-def _gather_ingest(m: GatewayMetrics, fn: _CounterFn) -> dict[str, Any]:
-    """Gather ingest section metrics.
-
-    Args:
-        m: Metrics instance to read from.
-        fn: Counter reader function (value or reset).
-
-    Returns:
-        Dict of ingest metric values.
-    """
-    return {
-        "oversize_json": fn(m.oversize_json_count),
-        "blob_writes": fn(m.binary_blob_writes),
-        "blob_dedupes": fn(m.binary_blob_dedupes),
-    }
-
-
-def _gather_mapping(
-    m: GatewayMetrics,
-    fn: _CounterFn,
-    *,
-    reset: bool,
-) -> dict[str, Any]:
-    """Gather mapping section metrics.
-
-    Args:
-        m: Metrics instance to read from.
-        fn: Counter reader function (value or reset).
-        reset: If True, reset the latency histogram.
-
-    Returns:
-        Dict of mapping metric values including latency.
-    """
-    lat = m.mapping_latency.reset() if reset else (m.mapping_latency.snapshot())
-    return {
-        "full": fn(m.mapping_full_count),
-        "partial": fn(m.mapping_partial_count),
-        "failed": fn(m.mapping_failed_count),
-        "latency": lat,
+# Snapshot layout: the single source of truth for both counter
+# creation and snapshot/reset gathering.  Leaf strings are
+# GatewayMetrics attribute names (counters or histograms);
+# nested dicts become nested sections in the output.
+_SNAPSHOT_LAYOUT: dict[str, dict[str, Any]] = {
+    "cache": {
+        "hits": "cache_hits",
+        "misses": "cache_misses",
+        "alias_hits": "alias_hits",
+    },
+    "upstream": {
+        "calls": "upstream_calls",
+        "errors": "upstream_errors",
+        "latency": "upstream_latency",
+    },
+    "ingest": {
+        "oversize_json": "oversize_json_count",
+        "blob_writes": "binary_blob_writes",
+        "blob_dedupes": "binary_blob_dedupes",
+    },
+    "mapping": {
+        "full": "mapping_full_count",
+        "partial": "mapping_partial_count",
+        "failed": "mapping_failed_count",
+        "latency": "mapping_latency",
         "stop_reasons": {
-            "none": fn(m.mapping_stop_none),
-            "max_bytes": fn(m.mapping_stop_max_bytes),
-            "max_compute": fn(m.mapping_stop_max_compute),
-            "max_depth": fn(m.mapping_stop_max_depth),
-            "parse_error": fn(m.mapping_stop_parse_error),
+            "none": "mapping_stop_none",
+            "max_bytes": "mapping_stop_max_bytes",
+            "max_compute": "mapping_stop_max_compute",
+            "max_depth": "mapping_stop_max_depth",
+            "parse_error": "mapping_stop_parse_error",
         },
-    }
-
-
-def _gather_cursor(m: GatewayMetrics, fn: _CounterFn) -> dict[str, Any]:
-    """Gather cursor section metrics.
-
-    Args:
-        m: Metrics instance to read from.
-        fn: Counter reader function (value or reset).
-
-    Returns:
-        Dict of cursor metric values.
-    """
-    return {
+    },
+    "cursor": {
         "stale": {
-            "sample_set": fn(m.cursor_stale_sample_set),
-            "map_budget": fn(m.cursor_stale_map_budget),
-            "where_mode": fn(m.cursor_stale_where_mode),
-            "traversal": fn(m.cursor_stale_traversal),
-            "generation": fn(m.cursor_stale_generation),
+            "sample_set": "cursor_stale_sample_set",
+            "map_budget": "cursor_stale_map_budget",
+
+            "traversal": "cursor_stale_traversal",
+            "generation": "cursor_stale_generation",
         },
-        "invalid": fn(m.cursor_invalid),
-        "expired": fn(m.cursor_expired),
-    }
+        "invalid": "cursor_invalid",
+        "expired": "cursor_expired",
+    },
+    "locks": {
+        "timeouts": "advisory_lock_timeouts",
+        "acquired": "advisory_lock_acquired",
+    },
+    "pruning": {
+        "soft_deletes": "prune_soft_deletes",
+        "hard_deletes": "prune_hard_deletes",
+        "bytes_reclaimed": "prune_bytes_reclaimed",
+        "fs_orphans_removed": "prune_fs_orphans_removed",
+    },
+    "quota": {
+        "checks": "quota_checks",
+        "breaches": "quota_breaches",
+        "prune_triggered": "quota_prune_triggered",
+    },
+    "codegen": {
+        "executions": "codegen_executions",
+        "success": "codegen_success",
+        "failure": "codegen_failure",
+        "timeout": "codegen_timeout",
+        "input_records": "codegen_input_records",
+        "output_records": "codegen_output_records",
+        "latency": "codegen_latency",
+    },
+}
+
+# Reason-string → attribute lookups for dynamic inc helpers
+_STOP_REASON_ATTRS: dict[str, str] = {
+    "none": "mapping_stop_none",
+    "max_bytes": "mapping_stop_max_bytes",
+    "max_compute": "mapping_stop_max_compute",
+    "max_depth": "mapping_stop_max_depth",
+    "parse_error": "mapping_stop_parse_error",
+}
+
+_CURSOR_STALE_ATTRS: dict[str, str] = {
+    "sample_set_mismatch": "cursor_stale_sample_set",
+    "map_budget_mismatch": "cursor_stale_map_budget",
+
+    "traversal_version_mismatch": "cursor_stale_traversal",
+    "generation_mismatch": "cursor_stale_generation",
+}
 
 
-def _gather_locks(m: GatewayMetrics, fn: _CounterFn) -> dict[str, Any]:
-    """Gather advisory-lock section metrics.
-
-    Args:
-        m: Metrics instance to read from.
-        fn: Counter reader function (value or reset).
-
-    Returns:
-        Dict of advisory-lock metric values.
-    """
-    return {
-        "timeouts": fn(m.advisory_lock_timeouts),
-        "acquired": fn(m.advisory_lock_acquired),
-    }
+# ------------------------------------------------------------------
+# Helpers
+# ------------------------------------------------------------------
 
 
-def _gather_pruning(m: GatewayMetrics, fn: _CounterFn) -> dict[str, Any]:
-    """Gather pruning section metrics.
-
-    Args:
-        m: Metrics instance to read from.
-        fn: Counter reader function (value or reset).
-
-    Returns:
-        Dict of pruning metric values.
-    """
-    return {
-        "soft_deletes": fn(m.prune_soft_deletes),
-        "hard_deletes": fn(m.prune_hard_deletes),
-        "bytes_reclaimed": fn(m.prune_bytes_reclaimed),
-        "fs_orphans_removed": fn(m.prune_fs_orphans_removed),
-    }
+def _metric_name(attr: str) -> str:
+    """Derive Prometheus-style metric name from attr name."""
+    return f"gateway_{attr.removesuffix('_count')}_total"
 
 
-def _gather_quota(m: GatewayMetrics, fn: _CounterFn) -> dict[str, Any]:
-    """Gather quota section metrics.
-
-    Args:
-        m: Metrics instance to read from.
-        fn: Counter reader function (value or reset).
-
-    Returns:
-        Dict of quota metric values.
-    """
-    return {
-        "checks": fn(m.quota_checks),
-        "breaches": fn(m.quota_breaches),
-        "prune_triggered": fn(m.quota_prune_triggered),
-    }
+def _collect_attrs(
+    node: dict[str, Any],
+) -> list[str]:
+    """Walk layout tree and collect all leaf attr names."""
+    attrs: list[str] = []
+    for value in node.values():
+        if isinstance(value, dict):
+            attrs.extend(_collect_attrs(value))
+        else:
+            attrs.append(value)
+    return attrs
 
 
-def _gather_codegen(
+_CounterFn = Callable[[Counter], int]
+
+
+def _gather_node(
     m: GatewayMetrics,
+    node: dict[str, Any],
     fn: _CounterFn,
     *,
     reset: bool,
 ) -> dict[str, Any]:
-    """Gather code-query section metrics."""
-    lat = m.codegen_latency.reset() if reset else (m.codegen_latency.snapshot())
-    return {
-        "executions": fn(m.codegen_executions),
-        "success": fn(m.codegen_success),
-        "failure": fn(m.codegen_failure),
-        "timeout": fn(m.codegen_timeout),
-        "input_records": fn(m.codegen_input_records),
-        "output_records": fn(m.codegen_output_records),
-        "latency": lat,
-    }
+    """Recursively gather metrics from a layout node."""
+    out: dict[str, Any] = {}
+    for key, value in node.items():
+        if isinstance(value, dict):
+            out[key] = _gather_node(
+                m, value, fn, reset=reset
+            )
+        elif value in _HISTOGRAM_ATTRS:
+            hist: Histogram = getattr(m, value)
+            out[key] = (
+                hist.reset() if reset else hist.snapshot()
+            )
+        else:
+            out[key] = fn(getattr(m, value))
+    return out
 
 
-def _gather_all(
-    m: GatewayMetrics,
-    fn: _CounterFn,
-    *,
-    reset: bool,
-) -> dict[str, Any]:
-    """Collect all metric sections into a single dict.
-
-    Args:
-        m: Metrics instance to read from.
-        fn: Counter reader function (value or reset).
-        reset: If True, reset histogram state after reading.
-
-    Returns:
-        Nested dict keyed by subsystem name.
-    """
-    return {
-        "cache": _gather_cache(m, fn),
-        "upstream": _gather_upstream(m, fn, reset=reset),
-        "ingest": _gather_ingest(m, fn),
-        "mapping": _gather_mapping(m, fn, reset=reset),
-        "cursor": _gather_cursor(m, fn),
-        "locks": _gather_locks(m, fn),
-        "pruning": _gather_pruning(m, fn),
-        "quota": _gather_quota(m, fn),
-        "codegen": _gather_codegen(m, fn, reset=reset),
-    }
-
-
-# ---------------------------------------------------------------------------
+# ------------------------------------------------------------------
 # GatewayMetrics
-# ---------------------------------------------------------------------------
+# ------------------------------------------------------------------
 
 
 class GatewayMetrics:
     """Central metrics registry for the gateway.
 
-    Registers Prometheus counters and custom Histogram objects
-    for every observable subsystem.  Provides ``snapshot()`` and
-    ``reset()`` methods that return all metrics as a nested dict,
-    plus helpers to increment stop-reason and cursor-stale
-    counters by reason string.
+    Registers counters and custom Histogram objects for every
+    observable subsystem.  Provides ``snapshot()`` and
+    ``reset()`` methods that return all metrics as a nested
+    dict, plus helpers to increment stop-reason and
+    cursor-stale counters by reason string.
     """
 
+    # Type annotations for IDE / mypy (populated in __init__)
     cache_hits: Counter
     cache_misses: Counter
     alias_hits: Counter
     upstream_calls: Counter
     upstream_errors: Counter
     upstream_latency: Histogram
-
     oversize_json_count: Counter
     binary_blob_writes: Counter
     binary_blob_dedupes: Counter
-
     mapping_full_count: Counter
     mapping_partial_count: Counter
     mapping_failed_count: Counter
     mapping_latency: Histogram
-
     mapping_stop_none: Counter
     mapping_stop_max_bytes: Counter
     mapping_stop_max_compute: Counter
     mapping_stop_max_depth: Counter
     mapping_stop_parse_error: Counter
-
     cursor_stale_sample_set: Counter
     cursor_stale_map_budget: Counter
-    cursor_stale_where_mode: Counter
+
     cursor_stale_traversal: Counter
     cursor_stale_generation: Counter
     cursor_invalid: Counter
     cursor_expired: Counter
-
     advisory_lock_timeouts: Counter
     advisory_lock_acquired: Counter
-
     prune_soft_deletes: Counter
     prune_hard_deletes: Counter
     prune_bytes_reclaimed: Counter
     prune_fs_orphans_removed: Counter
-
     quota_checks: Counter
     quota_breaches: Counter
     quota_prune_triggered: Counter
-
     codegen_executions: Counter
     codegen_success: Counter
     codegen_failure: Counter
@@ -757,18 +382,18 @@ class GatewayMetrics:
         """Initialize all gateway metric counters.
 
         Args:
-            registry: Ignored (kept for backward compatibility).
+            registry: Ignored (kept for backward
+                compatibility).
         """
-        reg = registry
-        _init_cache_counters(self, reg)
-        _init_ingest_counters(self, reg)
-        _init_mapping_counters(self, reg)
-        _init_mapping_stop_counters(self, reg)
-        _init_cursor_counters(self, reg)
-        _init_lock_counters(self, reg)
-        _init_pruning_counters(self, reg)
-        _init_quota_counters(self, reg)
-        _init_codegen_counters(self, reg)
+        for attr in _collect_attrs(_SNAPSHOT_LAYOUT):
+            if attr in _HISTOGRAM_ATTRS:
+                setattr(self, attr, Histogram())
+            else:
+                setattr(
+                    self,
+                    attr,
+                    Counter(_metric_name(attr), attr),
+                )
 
     def record_stop_reason(self, reason: str) -> None:
         """Increment the counter for a mapping stop reason.
@@ -776,16 +401,9 @@ class GatewayMetrics:
         Args:
             reason: Stop reason key (e.g. ``max_bytes``).
         """
-        counter_map = {
-            "none": self.mapping_stop_none,
-            "max_bytes": self.mapping_stop_max_bytes,
-            "max_compute": self.mapping_stop_max_compute,
-            "max_depth": self.mapping_stop_max_depth,
-            "parse_error": self.mapping_stop_parse_error,
-        }
-        c = counter_map.get(reason)
-        if c is not None:
-            c.inc()
+        attr = _STOP_REASON_ATTRS.get(reason)
+        if attr is not None:
+            getattr(self, attr).inc()
 
     def record_cursor_stale_reason(self, reason: str) -> None:
         """Increment the counter for a cursor stale reason.
@@ -794,16 +412,9 @@ class GatewayMetrics:
             reason: Stale reason key (e.g.
                 ``sample_set_mismatch``).
         """
-        counter_map = {
-            "sample_set_mismatch": self.cursor_stale_sample_set,
-            "map_budget_mismatch": self.cursor_stale_map_budget,
-            "where_mode_mismatch": self.cursor_stale_where_mode,
-            "traversal_version_mismatch": (self.cursor_stale_traversal),
-            "generation_mismatch": (self.cursor_stale_generation),
-        }
-        c = counter_map.get(reason)
-        if c is not None:
-            c.inc()
+        attr = _CURSOR_STALE_ATTRS.get(reason)
+        if attr is not None:
+            getattr(self, attr).inc()
 
     def snapshot(self) -> dict[str, Any]:
         """Return a snapshot of all metrics.
@@ -811,7 +422,12 @@ class GatewayMetrics:
         Returns:
             Nested dict of all subsystem metric values.
         """
-        return _gather_all(self, counter_value, reset=False)
+        return {
+            section: _gather_node(
+                self, layout, counter_value, reset=False
+            )
+            for section, layout in _SNAPSHOT_LAYOUT.items()
+        }
 
     def reset(self) -> dict[str, Any]:
         """Reset all metrics and return pre-reset snapshot.
@@ -820,7 +436,12 @@ class GatewayMetrics:
             Nested dict of all subsystem metric values before
             the reset.
         """
-        return _gather_all(self, counter_reset, reset=True)
+        return {
+            section: _gather_node(
+                self, layout, counter_reset, reset=True
+            )
+            for section, layout in _SNAPSHOT_LAYOUT.items()
+        }
 
 
 # Global singleton

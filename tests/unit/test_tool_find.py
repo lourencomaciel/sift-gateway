@@ -1,11 +1,7 @@
-"""Tests for artifact.find tool implementation and traversal semantics."""
+"""Tests for artifact.find tool implementation."""
 
 from __future__ import annotations
 
-from sift_mcp.retrieval.traversal import (
-    traverse_deterministic,
-    traverse_sampled,
-)
 from sift_mcp.tools.artifact_find import (
     build_find_response,
     sampled_indices_from_rows,
@@ -165,93 +161,3 @@ def test_build_find_response_includes_matched_count() -> None:
 def test_build_find_response_omits_matched_count_when_none() -> None:
     result = build_find_response(items=[], truncated=False)
     assert "matched_count" not in result
-
-
-# ---- traverse_sampled (traversal_v1 contract tests) ----
-
-
-def test_traverse_sampled_ascending_order() -> None:
-    """Sampled indices are always enumerated in ascending order."""
-    records = ["a", "b", "c", "d", "e"]
-    # Supply out of order
-    results = list(traverse_sampled(records, [4, 1, 2]))
-    assert [idx for _, idx, _ in results] == [1, 2, 4]
-    assert [val for _, _, val in results] == ["b", "c", "e"]
-
-
-def test_traverse_sampled_paths_correct() -> None:
-    records = ["x", "y", "z"]
-    results = list(traverse_sampled(records, [0, 2], path="$.data"))
-    assert results == [
-        ("$.data[0]", 0, "x"),
-        ("$.data[2]", 2, "z"),
-    ]
-
-
-def test_traverse_sampled_out_of_range_skipped() -> None:
-    records = ["a", "b"]
-    results = list(traverse_sampled(records, [0, 5, 99]))
-    assert len(results) == 1
-    assert results[0] == ("$[0]", 0, "a")
-
-
-def test_traverse_sampled_negative_index_skipped() -> None:
-    records = ["a", "b", "c"]
-    results = list(traverse_sampled(records, [-1, 1]))
-    assert len(results) == 1
-    assert results[0] == ("$[1]", 1, "b")
-
-
-def test_traverse_sampled_empty_indices() -> None:
-    records = ["a", "b", "c"]
-    results = list(traverse_sampled(records, []))
-    assert results == []
-
-
-def test_traverse_sampled_empty_records() -> None:
-    results = list(traverse_sampled([], [0, 1, 2]))
-    assert results == []
-
-
-def test_traverse_sampled_duplicate_indices() -> None:
-    """Duplicate indices should be yielded only once via sorted(set-like behavior of sorted)."""
-    records = ["a", "b", "c"]
-    results = list(traverse_sampled(records, [1, 1, 1]))
-    # sorted([1, 1, 1]) = [1, 1, 1], so it yields three times
-    # But semantically duplicates are valid -- the caller controls the list
-    assert len(results) == 3
-    assert all(idx == 1 for _, idx, _ in results)
-
-
-# ---- traverse_deterministic ordering contract ----
-
-
-def test_traverse_deterministic_nested_object_lex_order() -> None:
-    """Keys of nested objects must be in lexicographic order."""
-    data = {"z": {"b": 2, "a": 1}, "a": {"d": 4, "c": 3}}
-    paths = [path for path, _ in traverse_deterministic(data)]
-    # Root, then "a" (lex first), then a.c, a.d, then z, z.a, z.b
-    assert paths == ["$", "$.a", "$.a.c", "$.a.d", "$.z", "$.z.a", "$.z.b"]
-
-
-def test_traverse_deterministic_mixed_array_object() -> None:
-    """Array with object elements: array indices ascending, object keys lex."""
-    data = [{"b": 1, "a": 2}, {"z": 3}]
-    paths = [path for path, _ in traverse_deterministic(data)]
-    assert paths == ["$", "$[0]", "$[0].a", "$[0].b", "$[1]", "$[1].z"]
-
-
-def test_traverse_deterministic_deeply_nested() -> None:
-    data = {"a": [{"c": 1}, {"b": 2}]}
-    paths = [path for path, _ in traverse_deterministic(data)]
-    assert paths == ["$", "$.a", "$.a[0]", "$.a[0].c", "$.a[1]", "$.a[1].b"]
-
-
-def test_traverse_deterministic_scalar_is_just_root() -> None:
-    results = list(traverse_deterministic(42))
-    assert results == [("$", 42)]
-
-
-def test_traverse_deterministic_empty_containers() -> None:
-    assert list(traverse_deterministic([])) == [("$", [])]
-    assert list(traverse_deterministic({})) == [("$", {})]

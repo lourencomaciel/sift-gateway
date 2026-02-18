@@ -9,6 +9,10 @@ from pathlib import Path
 from sift_mcp.config.settings import GatewayConfig
 from sift_mcp.mapping.runner import (
     MappingInput,
+    RecordRow,
+    RootInventory,
+    _extract_full_records,
+    _navigate_to_root,
     run_mapping,
     select_json_part,
 )
@@ -471,6 +475,192 @@ def test_schema_distinct_values_handle_float_values(tmp_path: Path) -> None:
     assert spend_field.distinct_values is not None
     assert set(spend_field.distinct_values) == {9.25, 12.5}
     assert spend_field.cardinality == 2
+
+
+def test_full_mapping_populates_record_rows(tmp_path: Path) -> None:
+    """Full mapping populates record_rows from discovered roots."""
+    data = [{"id": 1}, {"id": 2}, {"id": 3}]
+    envelope = {"content": [{"type": "json", "value": data}]}
+    result = run_mapping(
+        MappingInput(
+            artifact_id="a_records",
+            payload_hash_full="p_records",
+            envelope=envelope,
+            config=_config(tmp_path, max_full_map_bytes=10_000_000),
+        )
+    )
+    assert result.map_kind == "full"
+    assert result.record_rows is not None
+    assert len(result.record_rows) == 3
+    assert all(isinstance(r, RecordRow) for r in result.record_rows)
+    assert result.record_rows[0].root_path == "$"
+    assert result.record_rows[0].idx == 0
+    assert result.record_rows[0].record == {"id": 1}
+    assert result.record_rows[2].idx == 2
+    assert result.record_rows[2].record == {"id": 3}
+
+
+def test_partial_mapping_populates_record_rows(tmp_path: Path) -> None:
+    """Partial mapping populates record_rows from sampled records."""
+    data = [{"id": i, "v": "x" * 100} for i in range(100)]
+    envelope = {"content": [{"type": "json", "value": data}]}
+    result = run_mapping(
+        MappingInput(
+            artifact_id="a_prec",
+            payload_hash_full="p_prec",
+            envelope=envelope,
+            config=_config(tmp_path, max_full_map_bytes=100),
+        )
+    )
+    assert result.map_kind == "partial"
+    assert result.record_rows is not None
+    assert len(result.record_rows) > 0
+    # Each record_row should match a sample
+    assert result.samples is not None
+    for row, sample in zip(
+        result.record_rows, result.samples, strict=True
+    ):
+        assert row.root_path == sample.root_path
+        assert row.idx == sample.sample_index
+        assert row.record == sample.record
+
+
+def test_navigate_to_root_top_level() -> None:
+    """_navigate_to_root returns full value for '$' root path."""
+    data = [1, 2, 3]
+    assert _navigate_to_root(data, "$") is data
+
+
+def test_navigate_to_root_nested_path() -> None:
+    """_navigate_to_root navigates JSONPath segments."""
+    data = {"a": {"b": {"c": [1, 2]}}}
+    assert _navigate_to_root(data, "$.a.b.c") == [1, 2]
+
+
+def test_navigate_to_root_missing_key() -> None:
+    """_navigate_to_root returns None for missing keys."""
+    assert _navigate_to_root({"a": 1}, "$.b") is None
+    assert _navigate_to_root({"a": 1}, "$.a.b") is None
+
+
+def test_navigate_to_root_dotted_key() -> None:
+    """_navigate_to_root handles keys containing literal dots."""
+    data = {"a.b": [{"id": 1}]}
+    assert _navigate_to_root(data, "$['a.b']") == [{"id": 1}]
+
+
+def test_extract_full_records_array_root() -> None:
+    """_extract_full_records extracts records from array root."""
+    data = [{"id": 1}, {"id": 2}]
+    roots = [
+        RootInventory(
+            root_key="$",
+            root_path="$",
+            count_estimate=2,
+            root_shape="array",
+            fields_top=None,
+            root_summary=None,
+            inventory_coverage=1.0,
+            root_score=2.0,
+        )
+    ]
+    rows = _extract_full_records(data, roots)
+    assert len(rows) == 2
+    assert rows[0] == RecordRow("$", 0, {"id": 1})
+    assert rows[1] == RecordRow("$", 1, {"id": 2})
+
+
+def test_extract_full_records_nested_object_root() -> None:
+    """_extract_full_records handles nested object roots."""
+    data = {"users": [{"id": 1}], "meta": {"total": 1}}
+    roots = [
+        RootInventory(
+            root_key="users",
+            root_path="$.users",
+            count_estimate=1,
+            root_shape="array",
+            fields_top=None,
+            root_summary=None,
+            inventory_coverage=1.0,
+            root_score=1.0,
+        ),
+        RootInventory(
+            root_key="meta",
+            root_path="$.meta",
+            count_estimate=1,
+            root_shape="object",
+            fields_top=None,
+            root_summary=None,
+            inventory_coverage=1.0,
+            root_score=0.5,
+        ),
+    ]
+    rows = _extract_full_records(data, roots)
+    assert len(rows) == 2
+    assert rows[0] == RecordRow("$.users", 0, {"id": 1})
+    assert rows[1] == RecordRow("$.meta", 0, {"total": 1})
+
+
+def test_extract_full_records_skips_missing_root() -> None:
+    """_extract_full_records skips roots that don't exist in data."""
+    data = {"a": [{"id": 1}]}
+    roots = [
+        RootInventory(
+            root_key="missing",
+            root_path="$.missing",
+            count_estimate=0,
+            root_shape="array",
+            fields_top=None,
+            root_summary=None,
+            inventory_coverage=1.0,
+            root_score=1.0,
+        )
+    ]
+    rows = _extract_full_records(data, roots)
+    assert rows == []
+
+
+def test_extract_full_records_preserves_non_dict_array_elements() -> None:
+    """_extract_full_records materializes all element types."""
+    data = [1, {"id": 2}, "three", {"id": 4}]
+    roots = [
+        RootInventory(
+            root_key="$",
+            root_path="$",
+            count_estimate=4,
+            root_shape="array",
+            fields_top=None,
+            root_summary=None,
+            inventory_coverage=1.0,
+            root_score=4.0,
+        )
+    ]
+    rows = _extract_full_records(data, roots)
+    assert len(rows) == 4
+    assert rows[0] == RecordRow("$", 0, 1)
+    assert rows[1] == RecordRow("$", 1, {"id": 2})
+    assert rows[2] == RecordRow("$", 2, "three")
+    assert rows[3] == RecordRow("$", 3, {"id": 4})
+
+
+def test_extract_full_records_scalar_root() -> None:
+    """_extract_full_records materializes scalar root values."""
+    data = {"count": 42}
+    roots = [
+        RootInventory(
+            root_key="count",
+            root_path="$.count",
+            count_estimate=1,
+            root_shape=None,
+            fields_top=None,
+            root_summary=None,
+            inventory_coverage=1.0,
+            root_score=1.0,
+        )
+    ]
+    rows = _extract_full_records(data, roots)
+    assert len(rows) == 1
+    assert rows[0] == RecordRow("$.count", 0, 42)
 
 
 def test_partial_mapping_resolves_json_encoded_strings_for_schema(

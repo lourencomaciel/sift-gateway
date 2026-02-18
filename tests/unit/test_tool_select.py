@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from sift_mcp.mcp.handlers.artifact_select import _distinct_key
 from sift_mcp.tools.artifact_select import (
     SelectOrderBy,
     _apply_select_sort,
@@ -472,3 +473,37 @@ def test_validate_accepts_bare_field() -> None:
 
 def test_validate_accepts_cast_no_direction() -> None:
     assert validate_select_order_by("to_number(spend)") is None
+
+
+# ---- _distinct_key ----
+
+
+def test_distinct_key_none() -> None:
+    assert _distinct_key(None) == "null"
+
+
+def test_distinct_key_json_object_string() -> None:
+    """SQLite returns JSON objects as strings."""
+    assert _distinct_key('{"b": 2, "a": 1}') == '{"a": 1, "b": 2}'
+
+
+def test_distinct_key_json_array_string() -> None:
+    assert _distinct_key("[1, 2, 3]") == "[1, 2, 3]"
+
+
+def test_distinct_key_bare_scalar_string() -> None:
+    """Bare strings from scalar record columns don't parse as JSON."""
+    key = _distinct_key("alpha")
+    assert key == '"alpha"'
+
+
+def test_distinct_key_int() -> None:
+    assert _distinct_key(42) == "42"
+
+
+def test_distinct_key_float() -> None:
+    assert _distinct_key(3.14) == "3.14"
+
+
+def test_distinct_key_bool() -> None:
+    assert _distinct_key(True) == "true"

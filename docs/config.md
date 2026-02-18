@@ -22,7 +22,6 @@ Derived paths (not directly configurable):
 | `blobs_bin_dir` | `{data_dir}/blobs/bin` |
 | `tmp_dir` | `{data_dir}/tmp` |
 | `logs_dir` | `{data_dir}/logs` |
-| `secrets_path` | `{data_dir}/state/secrets.json` |
 | `config_json_path` | `{data_dir}/state/config.json` |
 | `upstream_secrets_dir` | `{data_dir}/state/upstream_secrets/` |
 
@@ -39,16 +38,9 @@ overridden with `SIFT_MCP_INSTANCES_DIR`.
 | `instance_config_json_path` | `{instance_data_dir}/state/config.json` |
 | `instances_registry_path` | `{instances_root}/registry.json` |
 
-## Database backend
+## Database
 
-| Key | Type | Default | Env var | Description |
-|-----|------|---------|---------|-------------|
-| `db_backend` | enum | `sqlite` | `SIFT_MCP_DB_BACKEND` | `sqlite` or `postgres` |
-
-Sift supports:
-
-- SQLite (default): zero-dependency local backend.
-- PostgreSQL: production/multi-process backend.
+Sift uses SQLite as its database backend.
 
 ## SQLite
 
@@ -66,16 +58,6 @@ Runtime behavior:
 
 - SQLite runs in WAL mode.
 - Advisory lock behavior is emulated with a process-local per-`request_key` lock.
-- SQL dialect adaptation strips `FOR UPDATE SKIP LOCKED` for SQLite.
-
-## Postgres
-
-| Key | Type | Default | Env var | Description |
-|-----|------|---------|---------|-------------|
-| `postgres_dsn` | str | `postgresql://localhost:5432/sift` | `SIFT_MCP_POSTGRES_DSN` | Connection string |
-| `postgres_pool_min` | int | `2` | `SIFT_MCP_POSTGRES_POOL_MIN` | Minimum pool size |
-| `postgres_pool_max` | int | `10` | `SIFT_MCP_POSTGRES_POOL_MAX` | Maximum pool size |
-| `postgres_statement_timeout_ms` | int | `30000` | `SIFT_MCP_POSTGRES_STATEMENT_TIMEOUT_MS` | Statement timeout (ms) |
 
 ## Envelope storage
 
@@ -236,8 +218,6 @@ Those responses are still persisted asynchronously.
 | Key | Type | Default | Env var | Description |
 |-----|------|---------|---------|-------------|
 | `cursor_ttl_minutes` | int | `60` | `SIFT_MCP_CURSOR_TTL_MINUTES` | Cursor TTL |
-| `cursor_secret_max_active_keys` | int | `5` | `SIFT_MCP_CURSOR_SECRET_MAX_ACTIVE_KEYS` | Max active cursor signing keys |
-| `where_canonicalization_mode` | enum | `raw_string` | `SIFT_MCP_WHERE_CANONICALIZATION_MODE` | `raw_string` or `canonical_ast` |
 
 ## Auto-pagination
 

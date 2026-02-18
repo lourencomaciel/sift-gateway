@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from decimal import Decimal
 import hashlib
 from importlib.metadata import packages_distributions
 import re
@@ -11,7 +10,7 @@ import sys
 import time
 from typing import TYPE_CHECKING, Any
 
-from sift_mcp.canon.rfc8785 import canonical_bytes
+from sift_mcp.canon.rfc8785 import canonical_bytes, coerce_floats
 from sift_mcp.codegen.ast_guard import allowed_import_roots
 from sift_mcp.codegen.runtime import (
     CODE_RUNTIME_CONTRACT_VERSION,
@@ -65,23 +64,9 @@ def _hash_text(value: str) -> str:
     return f"sha256:{digest}"
 
 
-def _coerce_floats_to_decimal(value: Any) -> Any:
-    """Recursively coerce float values for canonical hashing."""
-    if isinstance(value, float):
-        return Decimal(str(value))
-    if isinstance(value, dict):
-        return {
-            str(key): _coerce_floats_to_decimal(item)
-            for key, item in value.items()
-        }
-    if isinstance(value, (list, tuple)):
-        return [_coerce_floats_to_decimal(item) for item in value]
-    return value
-
-
 def _hash_json(value: Any) -> str:
     digest = hashlib.sha256(
-        canonical_bytes(_coerce_floats_to_decimal(value))
+        canonical_bytes(coerce_floats(value))
     ).hexdigest()
     return f"sha256:{digest}"
 

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from decimal import Decimal
 import hashlib
 import json
 import os
@@ -12,7 +11,7 @@ import subprocess
 import sys
 from typing import Any
 
-from sift_mcp.canon.rfc8785 import canonical_bytes
+from sift_mcp.canon.rfc8785 import canonical_bytes, coerce_floats
 
 CODE_RUNTIME_CONTRACT_VERSION = "code_runtime_v1"
 
@@ -79,18 +78,6 @@ def _to_json_compatible(value: Any) -> Any:
     return value
 
 
-def _coerce_floats_to_decimal(value: Any) -> Any:
-    """Recursively coerce floats so canonical fallback can serialize."""
-    if isinstance(value, float):
-        return Decimal(str(value))
-    if isinstance(value, dict):
-        return {
-            str(key): _coerce_floats_to_decimal(item)
-            for key, item in value.items()
-        }
-    if isinstance(value, list):
-        return [_coerce_floats_to_decimal(item) for item in value]
-    return value
 
 
 class CodeRuntimeError(RuntimeError):
@@ -150,7 +137,7 @@ def encode_json_bytes(value: Any) -> bytes:
 
         return orjson.dumps(normalized)
     except Exception:
-        return canonical_bytes(_coerce_floats_to_decimal(normalized))
+        return canonical_bytes(coerce_floats(normalized))
 
 
 def decode_json_bytes(raw: bytes) -> Any:

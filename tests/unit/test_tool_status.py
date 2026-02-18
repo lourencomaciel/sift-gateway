@@ -69,16 +69,6 @@ def test_build_status_response_contains_all_budget_fields() -> None:
     )
 
 
-def test_build_status_response_includes_where_canonicalization_mode() -> None:
-    config = _default_config()
-    result = build_status_response(config)
-
-    assert (
-        result["where_canonicalization_mode"]
-        == config.where_canonicalization_mode.value
-    )
-
-
 def test_build_status_response_includes_mapping_mode() -> None:
     config = _default_config()
     result = build_status_response(config)
@@ -131,33 +121,13 @@ def test_build_status_response_with_runtime_uses_provided_health() -> None:
     assert result["fs"] == fs_health
 
 
-def test_build_status_response_with_runtime_includes_cursor_secrets_info() -> (
-    None
-):
-    config = _default_config()
-    secrets_info = {
-        "signing_version": "v2",
-        "active_versions": ["v1", "v2"],
-    }
-    result = build_status_response_with_runtime(
-        config,
-        cursor_secrets_info=secrets_info,
-    )
-    cursor = result["cursor"]
-    assert cursor["cursor_ttl_minutes"] == config.cursor_ttl_minutes
-    assert cursor["secrets_loaded"] is True
-    assert cursor["active_secret_count"] == 2
-
-
-def test_build_status_response_without_cursor_secrets_omits_secret_fields() -> (
-    None
-):
+def test_build_status_response_cursor_has_ttl_only() -> None:
     config = _default_config()
     result = build_status_response_with_runtime(config)
     cursor = result["cursor"]
-    assert cursor["cursor_ttl_minutes"] == config.cursor_ttl_minutes
-    assert "secrets_loaded" not in cursor
-    assert "active_secret_count" not in cursor
+    assert cursor == {
+        "cursor_ttl_minutes": config.cursor_ttl_minutes,
+    }
 
 
 def test_build_status_response_with_runtime_upstreams() -> None:

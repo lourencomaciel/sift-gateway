@@ -1,120 +1,19 @@
-"""Abstract database backends for Postgres and SQLite.
+"""SQLite database backend.
 
-Defines the ``Dialect`` enum for SQL syntax differences and the
-``DatabaseBackend`` protocol that concrete backends implement.
-Provides ``PostgresBackend`` (psycopg connection pool wrapper)
-and ``SqliteBackend`` (single-connection WAL-mode SQLite) as
-the two production implementations.
+Provides ``SqliteBackend`` as the production database backend.
+SQL throughout the codebase uses Postgres-style syntax (``%s``
+placeholders, ``NOW()``, ``= ANY()``) for historical reasons.
+The ``_SqliteConnectionProxy`` transparently rewrites these at
+execution time so callers do not need to know the dialect.
 """
 
 from __future__ import annotations
 
 from collections.abc import Generator
 from contextlib import contextmanager
-from enum import Enum
 from pathlib import Path
 import sqlite3
-from typing import Any, Protocol, runtime_checkable
-
-
-class Dialect(Enum):
-    """SQL dialect identifier with key syntax differences.
-
-    Each member bundles the parameter placeholder style and the
-    ``NOW()`` expression appropriate for that database engine.
-
-    Attributes:
-        POSTGRES: PostgreSQL dialect using ``%s`` params and
-            ``NOW()`` timestamps.
-        SQLITE: SQLite dialect using ``?`` params and
-            ``datetime('now')`` timestamps.
-    """
-
-    POSTGRES = ("POSTGRES", "%s", "NOW()")
-    SQLITE = ("SQLITE", "?", "datetime('now')")
-
-    def __init__(
-        self, dialect_name: str, param_marker: str, now_sql: str
-    ) -> None:
-        """Initialize dialect enum member.
-
-        Args:
-            dialect_name: Human-readable dialect name.
-            param_marker: SQL parameter placeholder string.
-            now_sql: SQL expression for current timestamp.
-        """
-        self._dialect_name = dialect_name
-        self._param_marker = param_marker
-        self._now_sql = now_sql
-
-    @property
-    def param_marker(self) -> str:
-        """The SQL parameter placeholder (e.g. ``%s`` or ``?``)."""
-        return self._param_marker
-
-    @property
-    def now_sql(self) -> str:
-        """The SQL expression for the current timestamp."""
-        return self._now_sql
-
-
-@runtime_checkable
-class DatabaseBackend(Protocol):
-    """Protocol for database backends (Postgres, SQLite, etc.).
-
-    Concrete implementations must expose a ``dialect`` property,
-    a ``connection()`` context manager yielding a DB-API-like
-    connection, and a ``close()`` method for resource cleanup.
-    """
-
-    @property
-    def dialect(self) -> Dialect:
-        """The SQL dialect for this backend."""
-        ...
-
-    def connection(self) -> Any:
-        """Return a context manager that yields a ConnectionLike."""
-        ...
-
-    def close(self) -> None:
-        """Release backend resources."""
-        ...
-
-
-class PostgresBackend:
-    """Wrap a psycopg connection pool as a DatabaseBackend.
-
-    Delegates connection lifecycle to the underlying
-    ``psycopg_pool.ConnectionPool`` and always reports
-    ``Dialect.POSTGRES``.
-    """
-
-    def __init__(self, pool: Any) -> None:
-        """Initialize with a psycopg connection pool.
-
-        Args:
-            pool: A ``psycopg_pool.ConnectionPool`` instance.
-        """
-        self._pool = pool
-
-    @property
-    def dialect(self) -> Dialect:
-        """The SQL dialect for this backend."""
-        return Dialect.POSTGRES
-
-    @contextmanager
-    def connection(self) -> Generator[Any, None, None]:
-        """Yield a connection from the pool.
-
-        Yields:
-            A psycopg connection checked out from the pool.
-        """
-        with self._pool.connection() as conn:
-            yield conn
-
-    def close(self) -> None:
-        """Close the underlying connection pool."""
-        self._pool.close()
+from typing import Any
 
 
 def _register_json_types() -> None:
@@ -237,7 +136,7 @@ class _SqliteConnectionProxy:
 
         adapted = []
         for p in params:
-            # Unwrap psycopg Jsonb wrapper → JSON string
+            # Unwrap Jsonb-like wrappers → JSON string
             if hasattr(p, "obj"):
                 adapted.append(
                     _json.dumps(p.obj, ensure_ascii=False, sort_keys=True)
@@ -279,12 +178,13 @@ class _SqliteConnectionProxy:
 
 
 class SqliteBackend:
-    """SQLite backend with WAL mode for the DatabaseBackend protocol.
+    """SQLite backend with WAL mode.
 
-    Uses a single persistent connection (SQLite serializes writes anyway).
-    WAL mode allows concurrent readers while a write is in progress.
-    JSON columns declared as ``JSON`` in the schema auto-convert between
-    Python dicts/lists and TEXT via registered adapters/converters.
+    Uses a single persistent connection (SQLite serializes writes
+    anyway).  WAL mode allows concurrent readers while a write is
+    in progress.  JSON columns declared as ``JSON`` in the schema
+    auto-convert between Python dicts/lists and TEXT via registered
+    adapters/converters.
     """
 
     def __init__(
@@ -317,18 +217,13 @@ class SqliteBackend:
         self._conn.execute(f"PRAGMA busy_timeout = {self._busy_timeout_ms}")
         self._conn.execute("PRAGMA foreign_keys = ON")
 
-    @property
-    def dialect(self) -> Dialect:
-        """The SQL dialect for this backend."""
-        return Dialect.SQLITE
-
     @contextmanager
     def connection(self) -> Generator[Any, None, None]:
         """Yield a proxy around the persistent SQLite connection.
 
         The proxy auto-rewrites Postgres-style SQL (``%s``,
-        ``NOW()``, ``FOR UPDATE SKIP LOCKED``) so that callers
-        can use a single SQL dialect.
+        ``NOW()``, ``FOR UPDATE SKIP LOCKED``) so that existing
+        SQL strings work without modification.
 
         Yields:
             A ``_SqliteConnectionProxy`` wrapping the shared

@@ -46,16 +46,13 @@ Issues = "https://github.com/lourencomaciel/sift-mcp/issues"
 Changelog = "https://github.com/lourencomaciel/sift-mcp/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
-postgres = [
-    "psycopg[binary,pool]>=3.2.0",
-]
 data-science = [
     "pandas>=2.2.0",
     "numpy>=1.26.0",
     "jmespath>=1.0.1",
 ]
 dev = [
-    "sift-mcp[postgres,data-science]",
+    "sift-mcp[data-science]",
     "pytest>=8.0.0",
     "pytest-asyncio>=0.24.0",
     "pytest-cov>=6.0.0",

@@ -59,7 +59,7 @@ That's it. Sift is now proxying your upstream servers. Responses over 8 KB are a
 1. Sift connects to your configured upstream MCP servers (stdio or HTTP).
 2. Each upstream tool is mirrored as `{prefix}.{tool_name}` with the original schema preserved. No injected fields.
 3. When a tool returns a response under 8 KB (configurable), the raw response passes through to your client unchanged.
-4. When a response exceeds the threshold, Sift stores it durably (SQLite by default, or PostgreSQL), infers the schema, and returns a lightweight **artifact handle** containing the `artifact_id`, discovered schemas, and a usage hint.
+4. When a response exceeds the threshold, Sift stores it durably in SQLite, infers the schema, and returns a lightweight **artifact handle** containing the `artifact_id`, discovered schemas, and a usage hint.
 5. You query the stored artifact using `artifact(action="query", query_kind=...)` with bounded, paginated responses.
 
 ## What You Can Do With Artifacts
@@ -159,11 +159,11 @@ See [SECURITY.md](SECURITY.md) for reporting vulnerabilities.
 
 | Doc | What it covers |
 |---|---|
-| **[Quick Start Guide](docs/quickstart.md)** | Detailed setup: install, init, PostgreSQL, first artifact |
+| **[Quick Start Guide](docs/quickstart.md)** | Detailed setup: install, init, first artifact |
 | **[Configuration Reference](docs/config.md)** | Every setting, env var, and default |
 | **[Recipes & Examples](docs/recipes.md)** | Pagination loops, tool chaining, code queries, search |
 | **[API Contracts](docs/api_contracts.md)** | Response shapes, pagination layers, handle format |
-| **[Deployment Guide](docs/deployment.md)** | Transport modes, PostgreSQL, multi-process, monitoring |
+| **[Deployment Guide](docs/deployment.md)** | Transport modes, multi-process, monitoring |
 | **[Error Reference](docs/errors.md)** | Error codes and troubleshooting |
 | **[Observability](docs/observability.md)** | Structured logging events and metrics |
 | **[Architecture](docs/architecture.md)** | Design specification and invariants |
@@ -189,7 +189,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the full development guide, release w
 
 - Python >= 3.11
 - [pipx](https://pipx.pypa.io/) or [uv](https://docs.astral.sh/uv/)
-- Docker (optional, for PostgreSQL backend)
+- SQLite (bundled with Python, no external setup needed)
 
 ## License
 

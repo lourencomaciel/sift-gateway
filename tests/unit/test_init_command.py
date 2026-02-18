@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import json
 from pathlib import Path
 from unittest.mock import patch
@@ -138,8 +137,6 @@ class TestRunInit:
             json.dumps(
                 {
                     "mcpServers": {"existing": {"command": "existing-cmd"}},
-                    "db_backend": "postgres",
-                    "postgres_dsn": "postgresql://localhost/db",
                 }
             )
         )
@@ -151,8 +148,6 @@ class TestRunInit:
         assert gw_config["mcpServers"]["existing"]["command"] == "existing-cmd"
         # New server added
         assert gw_config["mcpServers"]["new_tool"]["command"] == "new-tool"
-        # Default init path is sqlite unless postgres backend is requested.
-        assert gw_config["db_backend"] == "sqlite"
         assert "postgres_dsn" not in gw_config
 
     def test_empty_source_raises(self, tmp_path: Path) -> None:
@@ -308,203 +303,6 @@ class TestRunRevert:
 
         with pytest.raises(FileNotFoundError, match="no backup found"):
             run_revert(source)
-
-
-# ---------------------------------------------------------------------------
-# Helper for Docker provisioning tests
-# ---------------------------------------------------------------------------
-@dataclass(frozen=True)
-class _FakeDockerResult:
-    dsn: str
-    container_name: str
-    port: int
-    password: str
-    already_running: bool
-
-
-def _source_with_servers(tmp_path: Path) -> Path:
-    source = tmp_path / "config.json"
-    source.write_text(
-        json.dumps(
-            {
-                "mcpServers": {"gh": {"command": "gh"}},
-            }
-        ),
-        encoding="utf-8",
-    )
-    return source
-
-
-class TestInitDockerProvisioning:
-    """Tests for explicit Postgres provisioning paths in run_init."""
-
-    def test_default_sqlite_skips_docker(
-        self, tmp_path: Path, monkeypatch
-    ) -> None:
-        monkeypatch.setenv("SIFT_MCP_POSTGRES_DSN", "postgresql://env@host/db")
-        source = _source_with_servers(tmp_path)
-
-        with patch(
-            "sift_mcp.config.docker_postgres.provision_postgres",
-        ) as mock_prov:
-            summary = run_init(source, data_dir=tmp_path / "gw")
-
-        mock_prov.assert_not_called()
-        gw_config = json.loads(Path(summary["gateway_config_path"]).read_text())
-        assert gw_config["db_backend"] == "sqlite"
-        assert "postgres_dsn" not in gw_config
-        assert "docker_postgres" not in summary
-
-    def test_triggers_docker_only_for_postgres_backend(
-        self, tmp_path: Path, monkeypatch
-    ) -> None:
-        monkeypatch.delenv("SIFT_MCP_POSTGRES_DSN", raising=False)
-        source = _source_with_servers(tmp_path)
-        fake_result = _FakeDockerResult(
-            dsn="postgresql://sift:secret@localhost:5432/sift",
-            container_name="sift-mcp-postgres",
-            port=5432,
-            password="secret",
-            already_running=False,
-        )
-
-        with patch(
-            "sift_mcp.config.docker_postgres.provision_postgres",
-            return_value=fake_result,
-        ) as mock_prov:
-            summary = run_init(
-                source,
-                data_dir=tmp_path / "gw",
-                db_backend="postgres",
-            )
-
-        mock_prov.assert_called_once_with(dry_run=False)
-        gw_config = json.loads(Path(summary["gateway_config_path"]).read_text())
-        assert gw_config["db_backend"] == "postgres"
-        assert gw_config["postgres_dsn"] == fake_result.dsn
-        assert summary["docker_postgres"]["container"] == "sift-mcp-postgres"
-
-    def test_skips_docker_when_cli_dsn_provided(
-        self, tmp_path: Path, monkeypatch
-    ) -> None:
-        monkeypatch.delenv("SIFT_MCP_POSTGRES_DSN", raising=False)
-        source = _source_with_servers(tmp_path)
-
-        with patch(
-            "sift_mcp.config.docker_postgres.provision_postgres",
-        ) as mock_prov:
-            summary = run_init(
-                source,
-                data_dir=tmp_path / "gw",
-                db_backend="postgres",
-                postgres_dsn="postgresql://explicit:pass@host/db",
-            )
-
-        mock_prov.assert_not_called()
-        gw_config = json.loads(Path(summary["gateway_config_path"]).read_text())
-        assert gw_config["postgres_dsn"] == "postgresql://explicit:pass@host/db"
-
-    def test_skips_docker_when_env_var_set(
-        self, tmp_path: Path, monkeypatch
-    ) -> None:
-        monkeypatch.setenv("SIFT_MCP_POSTGRES_DSN", "postgresql://env@host/db")
-        source = _source_with_servers(tmp_path)
-
-        with patch(
-            "sift_mcp.config.docker_postgres.provision_postgres",
-        ) as mock_prov:
-            summary = run_init(
-                source,
-                data_dir=tmp_path / "gw",
-                db_backend="postgres",
-            )
-
-        mock_prov.assert_not_called()
-        gw_config = json.loads(Path(summary["gateway_config_path"]).read_text())
-        assert gw_config["postgres_dsn"] == "postgresql://env@host/db"
-
-    def test_skips_docker_when_dsn_in_existing_config(
-        self, tmp_path: Path, monkeypatch
-    ) -> None:
-        monkeypatch.delenv("SIFT_MCP_POSTGRES_DSN", raising=False)
-        source = _source_with_servers(tmp_path)
-        data_dir = tmp_path / "gw"
-        state_dir = data_dir / "state"
-        state_dir.mkdir(parents=True)
-        (state_dir / "config.json").write_text(
-            json.dumps(
-                {
-                    "postgres_dsn": "postgresql://existing@host/db",
-                }
-            )
-        )
-
-        with patch(
-            "sift_mcp.config.docker_postgres.provision_postgres",
-        ) as mock_prov:
-            summary = run_init(
-                source,
-                data_dir=data_dir,
-                db_backend="postgres",
-            )
-
-        mock_prov.assert_not_called()
-        gw_config = json.loads(Path(summary["gateway_config_path"]).read_text())
-        assert gw_config["postgres_dsn"] == "postgresql://existing@host/db"
-
-    def test_docker_not_found_falls_back_gracefully(
-        self, tmp_path: Path, monkeypatch
-    ) -> None:
-        monkeypatch.delenv("SIFT_MCP_POSTGRES_DSN", raising=False)
-        source = _source_with_servers(tmp_path)
-
-        from sift_mcp.config.docker_postgres import (
-            DockerNotFoundError,
-        )
-
-        with patch(
-            "sift_mcp.config.docker_postgres.provision_postgres",
-            side_effect=DockerNotFoundError("Docker not found"),
-        ):
-            summary = run_init(
-                source,
-                data_dir=tmp_path / "gw",
-                db_backend="postgres",
-            )
-
-        assert "docker_postgres_skipped" in summary
-        gw_config = json.loads(Path(summary["gateway_config_path"]).read_text())
-        assert gw_config["db_backend"] == "postgres"
-        assert "postgres_dsn" not in gw_config
-
-    def test_dry_run_passes_through_to_docker(
-        self, tmp_path: Path, monkeypatch
-    ) -> None:
-        monkeypatch.delenv("SIFT_MCP_POSTGRES_DSN", raising=False)
-        source = _source_with_servers(tmp_path)
-        fake_result = _FakeDockerResult(
-            dsn="postgresql://sift:<generated>@localhost:5432/sift",
-            container_name="sift-mcp-postgres",
-            port=5432,
-            password="<generated>",
-            already_running=False,
-        )
-
-        with patch(
-            "sift_mcp.config.docker_postgres.provision_postgres",
-            return_value=fake_result,
-        ) as mock_prov:
-            summary = run_init(
-                source,
-                data_dir=tmp_path / "gw",
-                db_backend="postgres",
-                dry_run=True,
-            )
-
-        mock_prov.assert_called_once_with(dry_run=True)
-        assert summary["docker_postgres"]["container"] == "sift-mcp-postgres"
-        # Dry run — no files written
-        assert not Path(summary["gateway_config_path"]).exists()
 
 
 # -------------------------------------------------------------------

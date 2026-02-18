@@ -23,7 +23,7 @@ def sqlite_backend(tmp_path: Path) -> SqliteBackend:
         / "migrations_sqlite"
     )
     with backend.connection() as conn:
-        apply_migrations(conn, migrations_dir, param_marker="?")
+        apply_migrations(conn, migrations_dir)
     yield backend
     backend.close()
 

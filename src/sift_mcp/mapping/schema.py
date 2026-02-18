@@ -14,13 +14,17 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from decimal import Decimal
 import json
 import math
 from typing import Any
 
-from sift_mcp.canon.rfc8785 import canonical_bytes
+from sift_mcp.canon.rfc8785 import canonical_bytes, coerce_floats
 from sift_mcp.constants import TRAVERSAL_CONTRACT_VERSION
+from sift_mcp.mapping._helpers import (
+    json_type_name,
+    normalize_path_segment,
+    type_sort_key,
+)
 from sift_mcp.query.jsonpath import JsonPathError, evaluate_jsonpath
 from sift_mcp.util.hashing import sha256_hex
 
@@ -68,55 +72,9 @@ class _PathStats:
     distinct_values: dict[tuple[str, Any], Any]
 
 
-def _json_type_name(value: Any) -> str:
-    """Return a JSON-style type label for a Python value."""
-    if value is None:
-        return "null"
-    if isinstance(value, bool):
-        return "boolean"
-    if isinstance(value, (int, float)):
-        return "number"
-    if isinstance(value, str):
-        return "string"
-    if isinstance(value, list):
-        return "array"
-    if isinstance(value, dict):
-        return "object"
-    return type(value).__name__
-
-
-def _normalize_path_segment(key: str) -> str:
-    """Encode an object key as a canonical JSONPath segment."""
-    import re
-
-    if re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", key):
-        return f".{key}"
-    escaped = (
-        key.replace("\\", "\\\\")
-        .replace("'", "\\'")
-        .replace("\n", "\\n")
-        .replace("\r", "\\r")
-        .replace("\t", "\\t")
-    )
-    return f"['{escaped}']"
-
-
-def _type_sort_key(type_name: str) -> tuple[int, str]:
-    """Sort JSON types in a stable, human-readable order."""
-    preferred_order = {
-        "null": 0,
-        "boolean": 1,
-        "number": 2,
-        "string": 3,
-        "array": 4,
-        "object": 5,
-    }
-    return preferred_order.get(type_name, 99), type_name
-
-
 def _distinct_sort_key(value: Any) -> tuple[int, int, Any]:
     """Sort distinct values deterministically across simple scalar types."""
-    type_name = _json_type_name(value)
+    type_name = json_type_name(value)
     order = {
         "null": 0,
         "boolean": 1,
@@ -145,7 +103,7 @@ def _distinct_sort_key(value: Any) -> tuple[int, int, Any]:
 
 def _distinct_identity_key(value: Any) -> tuple[str, Any] | None:
     """Build a hashable key that preserves scalar type identity."""
-    type_name = _json_type_name(value)
+    type_name = json_type_name(value)
     if type_name == "null":
         return "null", None
     if type_name == "boolean":
@@ -215,7 +173,7 @@ def _walk_value(
         stats[path] = existing
     elif existing.example_value is None:
         existing.example_value = _format_example_value(value)
-    existing.types.add(_json_type_name(value))
+    existing.types.add(json_type_name(value))
     seen_paths.add(path)
 
     if (
@@ -228,7 +186,7 @@ def _walk_value(
 
     if isinstance(value, dict):
         for key in sorted(value.keys()):
-            child_path = f"{path}{_normalize_path_segment(str(key))}"
+            child_path = f"{path}{normalize_path_segment(str(key))}"
             _walk_value(
                 value[key],
                 path=child_path,
@@ -264,7 +222,7 @@ def _build_fields(
     fields: list[SchemaFieldInventory] = []
     for path in sorted(path for path in stats if path != "$"):
         path_stats = stats[path]
-        types = sorted(path_stats.types, key=_type_sort_key)
+        types = sorted(path_stats.types, key=type_sort_key)
         fields.append(
             SchemaFieldInventory(
                 path=path,
@@ -325,23 +283,9 @@ def _schema_hash_payload(schema: SchemaInventory) -> dict[str, Any]:
     }
 
 
-def _coerce_floats_for_canonical_hash(value: Any) -> Any:
-    """Recursively coerce floats to Decimal for canonical hashing."""
-    if isinstance(value, float):
-        return Decimal(str(value))
-    if isinstance(value, dict):
-        return {
-            str(key): _coerce_floats_for_canonical_hash(item)
-            for key, item in value.items()
-        }
-    if isinstance(value, list):
-        return [_coerce_floats_for_canonical_hash(item) for item in value]
-    return value
-
-
 def _with_schema_hash(schema: SchemaInventory) -> SchemaInventory:
     """Return a schema inventory with a deterministic hash attached."""
-    payload = _coerce_floats_for_canonical_hash(_schema_hash_payload(schema))
+    payload = coerce_floats(_schema_hash_payload(schema))
     schema_hash = f"sha256:{sha256_hex(canonical_bytes(payload))}"
     return SchemaInventory(
         root_key=schema.root_key,
@@ -430,7 +374,7 @@ def build_sampled_schema(
             if isinstance(raw_types, list):
                 types = sorted(
                     {str(type_name) for type_name in raw_types},
-                    key=_type_sort_key,
+                    key=type_sort_key,
                 )
             else:
                 types = []

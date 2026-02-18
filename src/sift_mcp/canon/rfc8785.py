@@ -187,6 +187,31 @@ def canonical_text(value: Any) -> str:
     return _serialize(value)
 
 
+def coerce_floats(value: Any) -> Any:
+    """Recursively convert float values to Decimal.
+
+    Walk dicts and lists depth-first, replacing any ``float``
+    value with its ``Decimal`` equivalent so that
+    ``canonical_bytes`` accepts the result.
+
+    Args:
+        value: JSON-compatible Python value.
+
+    Returns:
+        The same structure with floats replaced by Decimals.
+    """
+    if isinstance(value, float):
+        return Decimal(str(value))
+    if isinstance(value, dict):
+        return {
+            str(key): coerce_floats(item)
+            for key, item in value.items()
+        }
+    if isinstance(value, (list, tuple)):
+        return [coerce_floats(item) for item in value]
+    return value
+
+
 def canonical_bytes(value: Any) -> bytes:
     """Return RFC 8785 canonical JSON as UTF-8 bytes.
 

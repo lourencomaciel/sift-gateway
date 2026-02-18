@@ -110,7 +110,6 @@ async def _stub_upstream(
 def _sqlite_config(tmp_path: Path) -> GatewayConfig:
     return GatewayConfig(
         data_dir=tmp_path,
-        db_backend="sqlite",
         mapping_mode="sync",
         max_full_map_bytes=2000,
         passthrough_max_bytes=8192,
@@ -233,7 +232,7 @@ def sqlite_e2e_env(tmp_path, monkeypatch):
     )
     try:
         with backend.connection() as conn:
-            apply_migrations(conn, _sqlite_migrations_dir(), param_marker="?")
+            apply_migrations(conn, _sqlite_migrations_dir())
 
         upstream = _build_upstream()
         server = GatewayServer(
@@ -261,7 +260,7 @@ def sqlite_e2e_paginated_env(tmp_path, monkeypatch):
     )
     try:
         with backend.connection() as conn:
-            apply_migrations(conn, _sqlite_migrations_dir(), param_marker="?")
+            apply_migrations(conn, _sqlite_migrations_dir())
 
         upstream = _build_upstream(
             pagination=_cursor_pagination_config(),

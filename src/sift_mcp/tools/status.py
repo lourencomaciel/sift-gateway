@@ -105,7 +105,6 @@ def build_status_response_with_runtime(
     db_health: dict[str, Any] | None = None,
     fs_health: dict[str, Any] | None = None,
     upstreams: list[dict[str, Any]] | None = None,
-    cursor_secrets_info: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build status payload with runtime health probes.
 
@@ -117,8 +116,6 @@ def build_status_response_with_runtime(
             not probed.
         upstreams: Upstream connectivity dicts from
             ``GatewayServer._status_upstreams(...)``.
-        cursor_secrets_info: Optional cursor-secrets metadata
-            from ``GatewayServer._cursor_secrets_info()``.
 
     Returns:
         Structured status dict containing versions, budgets,
@@ -127,11 +124,6 @@ def build_status_response_with_runtime(
     cursor_section: dict[str, Any] = {
         "cursor_ttl_minutes": config.cursor_ttl_minutes,
     }
-    if cursor_secrets_info is not None:
-        cursor_section["secrets_loaded"] = True
-        active_versions = cursor_secrets_info.get("active_versions")
-        if isinstance(active_versions, list):
-            cursor_section["active_secret_count"] = len(active_versions)
 
     return {
         "type": "gateway_status",
@@ -142,7 +134,6 @@ def build_status_response_with_runtime(
             "cursor_version": CURSOR_VERSION,
             "prng_version": PRNG_VERSION,
         },
-        "where_canonicalization_mode": config.where_canonicalization_mode.value,
         "mapping_mode": config.mapping_mode.value,
         "budgets": {
             "max_items": config.max_items,

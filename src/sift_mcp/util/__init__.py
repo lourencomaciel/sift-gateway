@@ -5,7 +5,6 @@ Re-exports all hashing utilities for convenient access via
 """
 
 from sift_mcp.util.hashing import (
-    advisory_lock_keys,
     binary_hash,
     blob_id,
     map_budget_fingerprint,
@@ -18,7 +17,6 @@ from sift_mcp.util.hashing import (
 )
 
 __all__ = [
-    "advisory_lock_keys",
     "binary_hash",
     "blob_id",
     "map_budget_fingerprint",

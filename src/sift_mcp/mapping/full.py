@@ -8,67 +8,13 @@ type distributions.  Key export is ``run_full_mapping``.
 
 from __future__ import annotations
 
-import re
 from typing import Any
 
+from sift_mcp.mapping._helpers import json_type_name, normalize_path_segment
 from sift_mcp.mapping.runner import RootInventory
-
-_IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 # Maximum number of elements to sample for field type discovery
 _FIELD_SAMPLE_LIMIT = 50
-
-
-def _normalize_path_segment(key: str) -> str:
-    """Normalize a key to canonical JSONPath segment form.
-
-    Simple identifiers use dot notation (e.g. ``.foo``).
-    Others use bracket-quote notation (e.g. ``['my key']``).
-
-    Args:
-        key: Object key string.
-
-    Returns:
-        A JSONPath segment string.
-    """
-    if _IDENT_RE.match(key):
-        return f".{key}"
-    escaped = (
-        key.replace("\\", "\\\\")
-        .replace("'", "\\'")
-        .replace("\n", "\\n")
-        .replace("\r", "\\r")
-        .replace("\t", "\\t")
-    )
-    return f"['{escaped}']"
-
-
-def _json_type_name(value: Any) -> str:
-    """Return a JSON-style type name for a Python value.
-
-    Use "number" for both int and float, matching the JSON
-    spec which has no separate integer type.
-
-    Args:
-        value: Any Python value to classify.
-
-    Returns:
-        One of "null", "boolean", "number", "string",
-        "array", "object", or the Python type name.
-    """
-    if value is None:
-        return "null"
-    if isinstance(value, bool):
-        return "boolean"
-    if isinstance(value, (int, float)):
-        return "number"
-    if isinstance(value, str):
-        return "string"
-    if isinstance(value, list):
-        return "array"
-    if isinstance(value, dict):
-        return "object"
-    return type(value).__name__
 
 
 def _build_fields_top(
@@ -91,7 +37,7 @@ def _build_fields_top(
         if not isinstance(elem, dict):
             continue
         for key, val in elem.items():
-            type_name = _json_type_name(val)
+            type_name = json_type_name(val)
             if key not in field_types:
                 field_types[key] = {}
             field_types[key][type_name] = field_types[key].get(type_name, 0) + 1
@@ -215,7 +161,7 @@ def run_full_mapping(
 
         for key, val in json_value.items():
             if isinstance(val, (list, dict)):
-                path_segment = _normalize_path_segment(key)
+                path_segment = normalize_path_segment(key)
                 root_path = f"${path_segment}"
                 score = _score_root(val)
                 candidates.append((score, key, root_path, val))
@@ -224,7 +170,7 @@ def run_full_mapping(
                 if isinstance(val, dict):
                     for sub_key, sub_val in val.items():
                         if isinstance(sub_val, (list, dict)):
-                            sub_segment = _normalize_path_segment(sub_key)
+                            sub_segment = normalize_path_segment(sub_key)
                             sub_path = f"{root_path}{sub_segment}"
                             sub_score = _score_root(sub_val)
                             sub_sort_key = f"{key}.{sub_key}"

@@ -1,9 +1,8 @@
-"""Re-export cache reuse and advisory lock helpers."""
+"""Re-export cache reuse helpers."""
 
 from sift_mcp.cache.reuse import (
     ReuseResult,
     check_reuse_candidate,
 )
-from sift_mcp.util.hashing import advisory_lock_keys
 
-__all__ = ["ReuseResult", "advisory_lock_keys", "check_reuse_candidate"]
+__all__ = ["ReuseResult", "check_reuse_candidate"]

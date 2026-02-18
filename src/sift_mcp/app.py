@@ -22,48 +22,31 @@ from typing import Any
 
 from sift_mcp.config import load_gateway_config
 from sift_mcp.config.settings import GatewayConfig
-from sift_mcp.db.backend import (
-    DatabaseBackend,
-    PostgresBackend,
-    SqliteBackend,
-)
+from sift_mcp.db.backend import SqliteBackend
 from sift_mcp.db.migrate import apply_migrations
 from sift_mcp.fs.blob_store import BlobStore
 from sift_mcp.lifecycle import CheckResult, run_startup_check
 from sift_mcp.mcp.server import GatewayServer, bootstrap_server
 
 
-def _migrations_dir(db_backend_name: str) -> Path:
-    """Return the migrations directory for the given backend.
-
-    Args:
-        db_backend_name: Database backend identifier
-            (``"sqlite"`` or ``"postgres"``).
+def _migrations_dir() -> Path:
+    """Return the SQLite migrations directory.
 
     Returns:
-        Path to the backend-specific migrations directory.
+        Path to the migrations directory.
     """
-    base = Path(__file__).resolve().parent / "db"
-    if db_backend_name == "sqlite":
-        return base / "migrations_sqlite"
-    return base / "migrations"
+    return Path(__file__).resolve().parent / "db" / "migrations_sqlite"
 
 
-def _create_backend(config: GatewayConfig) -> DatabaseBackend:
-    """Create the database backend matching the configuration.
+def _create_backend(config: GatewayConfig) -> SqliteBackend:
+    """Create the SQLite database backend.
 
     Args:
-        config: Gateway configuration specifying which backend
-            to use and its connection parameters.
+        config: Gateway configuration with SQLite parameters.
 
     Returns:
-        A ``PostgresBackend`` or ``SqliteBackend`` instance.
+        A ``SqliteBackend`` instance.
     """
-    if config.db_backend == "postgres":
-        from sift_mcp.db.conn import create_pool
-
-        pool = create_pool(config)
-        return PostgresBackend(pool=pool)
     return SqliteBackend(
         db_path=config.sqlite_path,
         busy_timeout_ms=config.sqlite_busy_timeout_ms,
@@ -109,11 +92,7 @@ def build_app(
     backend = _create_backend(config)
     try:
         with backend.connection() as conn:
-            apply_migrations(
-                conn,
-                _migrations_dir(config.db_backend),
-                param_marker=backend.dialect.param_marker,
-            )
+            apply_migrations(conn, _migrations_dir())
 
         server = asyncio.run(
             bootstrap_server(

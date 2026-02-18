@@ -86,6 +86,26 @@ class SampleRecord:
 
 
 @dataclass(frozen=True)
+class RecordRow:
+    """Single materialized record for SQL-based filtering.
+
+    Stored in the ``artifact_records`` table during mapping so
+    handlers can query with ``json_extract`` instead of in-memory
+    traversal.
+
+    Attributes:
+        root_path: Canonical JSONPath to the parent root.
+        idx: Zero-based index within the root collection.
+        record: The extracted JSON value (object, array,
+            or scalar).
+    """
+
+    root_path: str
+    idx: int
+    record: Any
+
+
+@dataclass(frozen=True)
 class MappingInput:
     """Immutable input bundle for the mapping pipeline.
 
@@ -150,6 +170,7 @@ class MappingResult:
     map_error: str | None
     samples: list[SampleRecord] | None = None
     schemas: list[SchemaInventory] | None = None
+    record_rows: list[RecordRow] | None = None
 
 
 def _is_json_binary_mime(raw_mime: object) -> bool:
@@ -367,6 +388,67 @@ def _failed_result(
     )
 
 
+def _extract_full_records(
+    json_value: Any,
+    roots: list[RootInventory],
+) -> list[RecordRow]:
+    """Extract all records from a fully-parsed JSON value.
+
+    Navigate to each discovered root and collect its elements
+    as ``RecordRow`` objects for storage in ``artifact_records``.
+    All JSON value types (objects, arrays, scalars) are
+    materialized so that SQL-based handlers can query them.
+
+    Args:
+        json_value: The parsed JSON value that was mapped.
+        roots: Root inventories discovered by full mapping.
+
+    Returns:
+        A list of RecordRow, one per element per root.
+    """
+    rows: list[RecordRow] = []
+    for root in roots:
+        value = _navigate_to_root(json_value, root.root_path)
+        if value is None:
+            continue
+        if isinstance(value, list):
+            for idx, elem in enumerate(value):
+                rows.append(RecordRow(root.root_path, idx, elem))
+        else:
+            rows.append(RecordRow(root.root_path, 0, value))
+    return rows
+
+
+def _navigate_to_root(json_value: Any, root_path: str) -> Any:
+    """Navigate a parsed JSON value to a root by JSONPath.
+
+    Uses ``evaluate_jsonpath`` so that keys containing dots or
+    other special characters (bracket-quoted in the path) are
+    resolved correctly.
+
+    Args:
+        json_value: The top-level parsed JSON value.
+        root_path: Canonical JSONPath string (e.g. ``"$"``,
+            ``"$.users"``, ``"$.data.items"``,
+            ``"$['a.b']"``).
+
+    Returns:
+        The value at the root location, or None if not found.
+    """
+    if root_path == "$":
+        return json_value
+    from sift_mcp.query.jsonpath import (
+        JsonPathError,
+        evaluate_jsonpath,
+    )
+
+    try:
+        results = evaluate_jsonpath(json_value, root_path)
+    except JsonPathError:
+        return None
+    return results[0] if results else None
+
+
 def _run_full_mapping(
     selected: SelectedJsonPart,
     config: GatewayConfig,
@@ -406,6 +488,15 @@ def _run_full_mapping(
             roots=roots,
             payload_hash_full=payload_hash_full,
         )
+        # resolve_json_strings must match what run_full_mapping
+        # does internally so _extract_full_records navigates the
+        # same structure where roots were discovered.
+        from sift_mcp.mapping.json_strings import (
+            resolve_json_strings,
+        )
+
+        resolved_value = resolve_json_strings(selected.value)
+        record_rows = _extract_full_records(resolved_value, roots)
     except Exception as exc:
         return _failed_result(
             map_kind="full",
@@ -422,6 +513,7 @@ def _run_full_mapping(
         prng_version=None,
         map_error=None,
         schemas=schemas,
+        record_rows=record_rows,
     )
 
 
@@ -576,6 +668,10 @@ def _run_partial_mapping(
             if callable(close):
                 close()
 
+    record_rows = [
+        RecordRow(s.root_path, s.sample_index, s.record)
+        for s in samples
+    ]
     return MappingResult(
         map_kind="partial",
         map_status="ready",
@@ -592,6 +688,7 @@ def _run_partial_mapping(
             payload_hash_full=mapping_input.payload_hash_full,
             map_budget_fingerprint=fingerprint,
         ),
+        record_rows=record_rows,
     )
 
 

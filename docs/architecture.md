@@ -8,11 +8,11 @@ Sift is a local, single-tenant MCP proxy that:
 
 1. Discovers tools exposed by upstream MCP servers (stdio or HTTP transport).
 2. Mirrors each tool as `{prefix}.{tool}` with identical schema — no injected fields.
-3. Intercepts every tool call, forwards it upstream, and wraps the result in a **durable artifact envelope** stored to Postgres and the local filesystem.
+3. Intercepts every tool call, forwards it upstream, and wraps the result in a **durable artifact envelope** stored to SQLite and the local filesystem.
 4. Returns the result to the caller: small payloads are returned raw (**passthrough mode**); large payloads return a **handle** with artifact ID, inline schema-first metadata (`mapping` + `schemas`), and a usage hint.
 5. Generates a **deterministic inventory** (full or partial schema mapping) for each artifact's JSON payload.
 6. Provides a consolidated **`artifact`** retrieval tool with
-   actions (`query`, `next_page`) using signed cursor pagination.
+   actions (`query`, `next_page`) using cursor pagination.
    Query behavior is explicit via `query_kind=describe|get|select|search|code`.
    For non-search kinds, `scope` defaults to `all_related`.
 
@@ -33,14 +33,13 @@ DATA_DIR/
   blobs/bin/<ab>/<cd>/<sha256_hex>   # binary blobs (images, oversized JSON, etc.)
   resources/                          # internal resource copies
   state/config.json                   # persisted config
-  state/secrets.json                  # cursor signing secrets
   tmp/                                # atomic write staging
   logs/                               # structured JSON logs
 ```
 
 Binary blobs are content-addressed by `sha256(raw_bytes)`. Writes are atomic: write to `tmp/`, fsync, rename into final path.
 
-### 2.2 Postgres schema
+### 2.2 SQLite schema
 
 Core tables (all PKs include `workspace_id`):
 
@@ -79,7 +78,7 @@ Upstream MCP responses are normalized into a canonical envelope shape:
 - `canonical_args_bytes`: RFC 8785 canonical JSON of stripped/validated args
 - `request_key = sha256(upstream_instance_id | prefix | tool | canonical_args_bytes)`
 - **Reserved arg stripping**: keys matching `_gateway_*` are removed before hashing/forwarding
-- **Stampede lock**: `pg_advisory_lock` derived from `sha256(request_key)` with configurable timeout
+- **Stampede lock**: process-local per-`request_key` advisory lock with configurable timeout
 - **Reuse**: by `request_key` (latest by `created_seq DESC`), gated by schema hash if `strict_schema_reuse`
 
 Reuse control via `_gateway_context.allow_reuse` (boolean):
@@ -121,13 +120,11 @@ Conditional update: `deleted_at IS NULL AND map_status IN (pending, stale) AND g
 
 ## 8. Cursor contract
 
-- **Format**: `cur.<version>.<payload_b64u>.<signature_b64u>`
-- **Signing**: HMAC-SHA256 over RFC 8785 canonical payload bytes
-- **Payload fields**: cursor_version, traversal_contract_version, workspace_id, artifact_id, tool, where_canonicalization_mode, mapper_version, position_state, issued_at, expires_at; retrieval bindings (for example target/jsonpath/select hashes); optional sample_set_hash; and for lineage-scoped queries `scope`, `anchor_artifact_id`, `related_set_hash`
-- **Binding checks on resume**: tool, artifact_id, workspace_id, traversal_contract_version, mapper_version, where_canonicalization_mode (if enabled)
-- **Staleness triggers**: any binding mismatch, sample_set_hash mismatch, `related_set_hash` mismatch, version increments
+- **Format**: `cur1.<payload_b64u>` (unsigned base64url-encoded RFC 8785 canonical JSON)
+- **Payload fields**: artifact_id, tool, position_state, issued_at, expires_at; retrieval bindings (for example target/jsonpath/select hashes); optional sample_set_hash; and for lineage-scoped queries `scope`, `anchor_artifact_id`, `related_set_hash`
+- **Binding checks on resume**: tool, artifact_id
+- **Staleness triggers**: query-parameter binding mismatch, sample_set_hash mismatch, `related_set_hash` mismatch
 - **TTL**: configurable `cursor_ttl_minutes` (default 60); expired cursors raise `CursorExpiredError`
-- **Secret rotation**: multiple active versions; newest signs, all active verify
 
 ## 9. Tool surface
 
@@ -243,7 +240,7 @@ For `query_kind=code`, pagination fields are omitted (`truncated=false`, no curs
 
 ## 11. Pruning
 
-- **Soft delete**: `SKIP LOCKED`, rechecks predicates, sets `deleted_at`, increments generation
+- **Soft delete**: rechecks predicates, sets `deleted_at`, increments generation
 - **Hard delete**: cascades through artifact_roots → artifact_refs → unreferenced payload_blobs → unreferenced binary_blobs → filesystem cleanup
 - **Reconciler**: finds orphan filesystem blobs not referenced in DB
 

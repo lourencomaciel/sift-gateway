@@ -3,7 +3,6 @@ from __future__ import annotations
 import pytest
 
 from sift_mcp.constants import WORKSPACE_ID
-from sift_mcp.db.backend import Dialect
 from sift_mcp.jobs.hard_delete import (
     DELETE_ARTIFACTS_BATCH_SQL,
     DELETE_BLOBS_BATCH_SQL,
@@ -325,54 +324,6 @@ class _SqliteFakeCursor:
         return list(self._rows)
 
 
-def test_run_hard_delete_batch_sqlite_strips_skip_locked() -> None:
-    """Hard delete with SQLite dialect strips SKIP LOCKED from queries."""
-    connection = _SqliteFakeConnection(
-        candidate_rows=[("art_sq1",)],
-        payload_rows=[],
-        blob_rows=[],
-    )
-    metrics = GatewayMetrics()
-    result = run_hard_delete_batch(
-        connection,
-        grace_period_timestamp="2025-01-01T00:00:00Z",
-        batch_size=5,
-        dialect=Dialect.SQLITE,
-        metrics=metrics,
-    )
-    assert result.artifacts_deleted == 1
-    assert connection.committed is True
-    # Verify no executed SQL contains SKIP LOCKED
-    for sql in connection.executed:
-        assert "SKIP LOCKED" not in sql
-
-
-def test_run_hard_delete_batch_sqlite_expands_any_clause() -> None:
-    """Hard delete with SQLite dialect expands ANY() to IN placeholders."""
-    connection = _SqliteFakeConnection(
-        candidate_rows=[("art_a1",), ("art_a2",)],
-        payload_rows=[("pay_1", 200)],
-        blob_rows=[("blob_1", "bin_1", "/tmp/b.bin", 50)],
-    )
-    metrics = GatewayMetrics()
-    result = run_hard_delete_batch(
-        connection,
-        grace_period_timestamp="2025-01-01T00:00:00Z",
-        batch_size=10,
-        dialect=Dialect.SQLITE,
-        remove_fs_blobs=False,
-        metrics=metrics,
-    )
-    assert result.artifacts_deleted == 2
-    assert result.payloads_deleted == 1
-    assert result.binary_blobs_deleted == 1
-    assert connection.committed is True
-    # Verify ANY() was expanded to IN(?, ?) in the delete queries
-    delete_sqls = [s for s in connection.executed if "DELETE" in s.upper()]
-    for sql in delete_sqls:
-        assert "ANY(" not in sql
-
-
 def test_run_hard_delete_batch_sqlite_no_candidates() -> None:
     """Hard delete with SQLite dialect and no candidates produces zero results."""
     connection = _SqliteFakeConnection(
@@ -384,7 +335,6 @@ def test_run_hard_delete_batch_sqlite_no_candidates() -> None:
         connection,
         grace_period_timestamp="2025-01-01T00:00:00Z",
         batch_size=10,
-        dialect=Dialect.SQLITE,
     )
     assert result.artifacts_deleted == 0
     assert result.payloads_deleted == 0

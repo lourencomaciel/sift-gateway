@@ -146,7 +146,10 @@ class _Metrics:
 def test_try_acquire_advisory_lock_true() -> None:
     conn = _LockConnection([True])
     assert try_acquire_advisory_lock(conn, request_key="rk_1") is True
-    assert conn.calls == 1
+    # threading.Lock-based: connection is not used for SQL
+    from sift_mcp.cache.reuse import release_advisory_lock
+
+    release_advisory_lock(conn, request_key="rk_1")
 
 
 def test_acquire_advisory_lock_with_timeout_success(monkeypatch) -> None:
@@ -173,26 +176,24 @@ def test_acquire_advisory_lock_with_timeout_success(monkeypatch) -> None:
 
 
 def test_acquire_advisory_lock_with_timeout_failure(monkeypatch) -> None:
+    from sift_mcp.cache.reuse import release_advisory_lock
+
     conn = _LockConnection([False, False, False])
     metrics = _Metrics()
-    times = iter([0.0, 0.005, 0.010, 0.011])
-    monkeypatch.setattr(
-        "sift_mcp.cache.reuse.time.monotonic", lambda: next(times)
-    )
-    monkeypatch.setattr(
-        "sift_mcp.cache.reuse.time.sleep", lambda _seconds: None
-    )
+    # Hold the lock so acquire_advisory_lock cannot succeed
+    assert try_acquire_advisory_lock(conn, request_key="rk_3") is True
 
     acquired = acquire_advisory_lock(
         conn,
         request_key="rk_3",
-        timeout_ms=10,
+        timeout_ms=0,
         poll_interval_ms=1,
         metrics=metrics,
     )
     assert acquired is False
     assert metrics.advisory_lock_acquired.value == 0
     assert metrics.advisory_lock_timeouts.value == 1
+    release_advisory_lock(conn, request_key="rk_3")
 
 
 # ---- check_reuse_candidate metrics wiring ----
@@ -258,6 +259,8 @@ def test_check_reuse_candidate_increments_cache_miss_on_schema_mismatch() -> (
 
 
 def test_acquire_advisory_lock_async_success(monkeypatch) -> None:
+    from sift_mcp.cache.reuse import release_advisory_lock
+
     conn = _LockConnection([False, False, True])
     metrics = _Metrics()
 
@@ -276,14 +279,19 @@ def test_acquire_advisory_lock_async_success(monkeypatch) -> None:
         )
     )
     assert acquired is True
-    assert conn.calls == 3
     assert metrics.advisory_lock_acquired.value == 1
     assert metrics.advisory_lock_timeouts.value == 0
+    release_advisory_lock(conn, request_key="rk_async_1")
 
 
 def test_acquire_advisory_lock_async_timeout(monkeypatch) -> None:
+    from sift_mcp.cache.reuse import release_advisory_lock
+
     conn = _LockConnection([False])
     metrics = _Metrics()
+
+    # Hold the lock so async acquire cannot succeed
+    assert try_acquire_advisory_lock(conn, request_key="rk_async_2") is True
 
     acquired = asyncio.run(
         acquire_advisory_lock_async(
@@ -297,6 +305,7 @@ def test_acquire_advisory_lock_async_timeout(monkeypatch) -> None:
     assert acquired is False
     assert metrics.advisory_lock_acquired.value == 0
     assert metrics.advisory_lock_timeouts.value == 1
+    release_advisory_lock(conn, request_key="rk_async_2")
 
 
 # ---- SQLite advisory lock tests ----
@@ -370,13 +379,13 @@ def test_try_acquire_advisory_lock_sqlite_different_keys() -> None:
     conn.close()
 
 
-def test_release_advisory_lock_noop_for_postgres() -> None:
-    """release_advisory_lock is a no-op for non-SQLite connections."""
+def test_release_advisory_lock_noop_for_unheld_key() -> None:
+    """release_advisory_lock is a no-op for keys not currently held."""
     from sift_mcp.cache.reuse import release_advisory_lock
 
     conn = _LockConnection([True])
-    # Should not raise
-    release_advisory_lock(conn, request_key="rk_pg")
+    # Should not raise even though key was never acquired
+    release_advisory_lock(conn, request_key="rk_unheld")
 
 
 # ---- SQLite lock contention under concurrent access ----

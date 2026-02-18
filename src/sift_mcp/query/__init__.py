@@ -1,5 +1,13 @@
-"""Re-export JSONPath, select-path, and where-DSL query helpers."""
+"""Re-export JSONPath, select-path, and filter helpers."""
 
+from sift_mcp.query.filters import (
+    Filter,
+    FilterGroup,
+    FilterNot,
+    compile_filter,
+    filter_hash,
+    parse_filter_dict,
+)
 from sift_mcp.query.jsonpath import (
     JsonPathError,
     Segment,
@@ -9,31 +17,23 @@ from sift_mcp.query.jsonpath import (
 )
 from sift_mcp.query.select_paths import (
     canonicalize_select_paths,
-    project_select_paths,
     select_paths_hash,
 )
-from sift_mcp.query.where_dsl import (
-    WhereComputeLimitExceededError,
-    WhereDslError,
-    canonicalize_where_ast,
-    evaluate_where,
-    parse_where_expression,
-)
-from sift_mcp.query.where_hash import where_hash
+from sift_mcp.query.select_sql import compile_select
 
 __all__ = [
+    "Filter",
+    "FilterGroup",
+    "FilterNot",
     "JsonPathError",
     "Segment",
-    "WhereComputeLimitExceededError",
-    "WhereDslError",
     "canonicalize_jsonpath",
     "canonicalize_select_paths",
-    "canonicalize_where_ast",
+    "compile_filter",
+    "compile_select",
     "evaluate_jsonpath",
-    "evaluate_where",
+    "filter_hash",
+    "parse_filter_dict",
     "parse_jsonpath",
-    "parse_where_expression",
-    "project_select_paths",
     "select_paths_hash",
-    "where_hash",
 ]

@@ -1,72 +1,14 @@
-"""Tests for DatabaseBackend protocol and implementations."""
+"""Tests for SqliteBackend implementation."""
 
 from __future__ import annotations
 
 from pathlib import Path
 import sqlite3
-from unittest.mock import MagicMock
 
 import pytest
 
-from sift_mcp.db.backend import (
-    DatabaseBackend,
-    Dialect,
-    PostgresBackend,
-    SqliteBackend,
-)
+from sift_mcp.db.backend import SqliteBackend
 from sift_mcp.db.migrate import apply_migrations, load_migrations
-
-
-class TestDialect:
-    def test_postgres_dialect_values(self):
-        assert Dialect.POSTGRES.param_marker == "%s"
-        assert Dialect.POSTGRES.now_sql == "NOW()"
-        assert Dialect.POSTGRES.name == "POSTGRES"
-
-    def test_sqlite_dialect_values(self):
-        assert Dialect.SQLITE.param_marker == "?"
-        assert Dialect.SQLITE.now_sql == "datetime('now')"
-        assert Dialect.SQLITE.name == "SQLITE"
-
-
-class TestPostgresBackend:
-    def test_satisfies_protocol(self):
-        pool = MagicMock()
-        backend = PostgresBackend(pool=pool)
-        assert isinstance(backend, DatabaseBackend)
-
-    def test_dialect_is_postgres(self):
-        pool = MagicMock()
-        backend = PostgresBackend(pool=pool)
-        assert backend.dialect is Dialect.POSTGRES
-
-    def test_connection_delegates_to_pool(self):
-        pool = MagicMock()
-        backend = PostgresBackend(pool=pool)
-        with backend.connection():
-            pass
-        pool.connection.assert_called_once()
-
-    def test_close_delegates_to_pool(self):
-        pool = MagicMock()
-        backend = PostgresBackend(pool=pool)
-        backend.close()
-        pool.close.assert_called_once()
-
-
-class TestPostgresBackendConnectionInterface:
-    """Verify PostgresBackend.connection() context manager matches pool.connection() interface."""
-
-    def test_connection_context_yields_same_object(self):
-        mock_conn = MagicMock()
-        pool = MagicMock()
-        pool.connection.return_value.__enter__ = MagicMock(
-            return_value=mock_conn
-        )
-        pool.connection.return_value.__exit__ = MagicMock(return_value=False)
-        backend = PostgresBackend(pool=pool)
-        with backend.connection() as conn:
-            assert conn is mock_conn
 
 
 class TestSqliteBackend:
@@ -75,12 +17,6 @@ class TestSqliteBackend:
         db = SqliteBackend(db_path=tmp_path / "test.db")
         yield db
         db.close()
-
-    def test_satisfies_protocol(self, backend: SqliteBackend):
-        assert isinstance(backend, DatabaseBackend)
-
-    def test_dialect_is_sqlite(self, backend: SqliteBackend):
-        assert backend.dialect is Dialect.SQLITE
 
     def test_wal_mode_enabled(self, backend: SqliteBackend):
         with backend.connection() as conn:
@@ -200,7 +136,7 @@ class TestSqliteMigrationIntegration:
             / "migrations_sqlite"
         )
         with backend.connection() as conn:
-            applied = apply_migrations(conn, migrations_dir, param_marker="?")
+            applied = apply_migrations(conn, migrations_dir)
             assert len(applied) >= 2
             yield conn
         backend.close()
@@ -234,9 +170,7 @@ class TestSqliteMigrationIntegration:
             / "db"
             / "migrations_sqlite"
         )
-        applied_again = apply_migrations(
-            migrated_conn, migrations_dir, param_marker="?"
-        )
+        applied_again = apply_migrations(migrated_conn, migrations_dir)
         assert applied_again == []
 
     def test_schema_migrations_recorded(
