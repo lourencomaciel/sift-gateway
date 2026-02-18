@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 import logging
 from typing import Any
 
@@ -165,3 +165,27 @@ def extract_json_target(
         ):
             return resolve_json_strings(part["value"])
     return envelope
+
+
+def touch_retrieval_artifacts(
+    ctx: Any,
+    connection: Any,
+    *,
+    session_id: str,
+    artifact_ids: Sequence[str],
+) -> None:
+    """Touch retrieval timestamp for artifact ids and commit when needed."""
+    touched = False
+    for artifact_id in artifact_ids:
+        touched = (
+            ctx._safe_touch_for_retrieval(
+                connection,
+                session_id=session_id,
+                artifact_id=artifact_id,
+            )
+            or touched
+        )
+    if touched:
+        commit = getattr(connection, "commit", None)
+        if callable(commit):
+            commit()

@@ -257,33 +257,23 @@ class PaginationConfig(BaseModel):
         Raises:
             ValueError: When strategy-specific fields are missing.
         """
-        if self.strategy == "cursor":
-            if not self.cursor_response_path:
-                msg = "cursor strategy requires cursor_response_path"
-                raise ValueError(msg)
-            if not self.cursor_param_name:
-                msg = "cursor strategy requires cursor_param_name"
-                raise ValueError(msg)
-        elif self.strategy == "offset":
-            if not self.offset_param_name:
-                msg = "offset strategy requires offset_param_name"
-                raise ValueError(msg)
-            if not self.page_size_param_name:
-                msg = "offset strategy requires page_size_param_name"
-                raise ValueError(msg)
-            if not self.has_more_response_path:
-                msg = "offset strategy requires has_more_response_path"
-                raise ValueError(msg)
-        elif self.strategy == "page_number":
-            if not self.page_param_name:
-                msg = "page_number strategy requires page_param_name"
-                raise ValueError(msg)
-            if not self.has_more_response_path:
-                msg = "page_number strategy requires has_more_response_path"
-                raise ValueError(msg)
-        elif self.strategy == "param_map":
-            if not self.next_params_response_paths:
-                msg = "param_map strategy requires next_params_response_paths"
+        required_fields_by_strategy: dict[str, tuple[str, ...]] = {
+            "cursor": ("cursor_response_path", "cursor_param_name"),
+            "offset": (
+                "offset_param_name",
+                "page_size_param_name",
+                "has_more_response_path",
+            ),
+            "page_number": ("page_param_name", "has_more_response_path"),
+            "param_map": ("next_params_response_paths",),
+        }
+        for field_name in required_fields_by_strategy.get(
+            self.strategy, ()
+        ):
+            if not getattr(self, field_name):
+                msg = (
+                    f"{self.strategy} strategy requires {field_name}"
+                )
                 raise ValueError(msg)
         return self
 
@@ -948,46 +938,39 @@ def _set_nested_env_value(
     return out_dict
 
 
-def _deep_merge(base: object, override: object) -> object:
-    """Recursively merge override values into a base structure.
+def _merge_dict_values(
+    base: dict[str, object], override: dict[str, object]
+) -> dict[str, object]:
+    """Merge dictionary override values recursively into base."""
+    merged_dict = dict(base)
+    for key, value in override.items():
+        merged_dict[key] = _deep_merge(merged_dict.get(key), value)
+    return merged_dict
 
-    Dicts are merged key-by-key.  Lists are replaced unless
-    the override is a ``_SparseList``, in which case only
-    non-None indexed entries are patched into the base.
 
-    Args:
-        base: Base value (dict, list, or scalar).
-        override: Override value to merge in.
-
-    Returns:
-        Merged result.
-    """
-    if isinstance(base, dict) and isinstance(override, dict):
-        merged_dict = dict(base)
-        for key, value in override.items():
-            if key in merged_dict:
-                merged_dict[key] = _deep_merge(merged_dict[key], value)
-            else:
-                merged_dict[key] = _deep_merge(None, value)
-        return merged_dict
-
-    if isinstance(base, list) and isinstance(override, list):
-        if not isinstance(override, _SparseList):
-            return list(override)
-
-        merged_list = list(base)
-        for index, value in enumerate(override):
-            if value is None:
-                continue
-            if index >= len(merged_list):
-                while len(merged_list) <= index:
-                    merged_list.append(None)
-            merged_list[index] = _deep_merge(merged_list[index], value)
-        return merged_list
-
-    if isinstance(override, _SparseList):
+def _merge_list_values(base: list[object], override: list[object]) -> list[object]:
+    """Merge list override into base, supporting sparse index updates."""
+    if not isinstance(override, _SparseList):
         return list(override)
 
+    merged_list = list(base)
+    for index, value in enumerate(override):
+        if value is None:
+            continue
+        if index >= len(merged_list):
+            merged_list.extend([None] * (index + 1 - len(merged_list)))
+        merged_list[index] = _deep_merge(merged_list[index], value)
+    return merged_list
+
+
+def _deep_merge(base: object, override: object) -> object:
+    """Recursively merge override values into a base structure."""
+    if isinstance(base, dict) and isinstance(override, dict):
+        return _merge_dict_values(base, override)
+    if isinstance(base, list) and isinstance(override, list):
+        return _merge_list_values(base, override)
+    if isinstance(override, _SparseList):
+        return list(override)
     return override
 
 
