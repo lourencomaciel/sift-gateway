@@ -57,6 +57,7 @@ from sift_mcp.pagination.auto import (
 )
 from sift_mcp.pagination.contract import (
     PAGINATION_WARNING_INCOMPLETE_RESULT_SET,
+    RETRIEVAL_STATUS_COMPLETE,
     RETRIEVAL_STATUS_PARTIAL,
     UPSTREAM_PARTIAL_REASON_SIGNAL_INCONCLUSIVE,
     build_upstream_pagination_meta,
@@ -145,6 +146,57 @@ def _json_size_bytes(payload: Any) -> int:
         msg = "arguments must be valid UTF-8 JSON"
         raise ValueError(msg) from exc
     return len(encoded)
+
+
+def _serialized_response_size_bytes(
+    payload: dict[str, Any],
+) -> int | None:
+    """Return serialized size for passthrough decisions."""
+    try:
+        return _json_size_bytes(payload)
+    except ValueError:
+        return None
+
+
+def _should_passthrough_response(
+    *,
+    ctx: GatewayServer,
+    mirrored: MirroredTool,
+    upstream_result: dict[str, Any],
+    pagination_assessment: PaginationAssessment | None,
+    auto_paginated: bool,
+    pagination_warnings: list[dict[str, Any]] | None,
+) -> bool:
+    """Decide whether to return raw upstream response directly."""
+    if not mirrored.upstream.config.passthrough_allowed:
+        return False
+
+    if ctx.config.passthrough_max_bytes <= 0:
+        return False
+
+    if auto_paginated:
+        # Persist merged artifact, but keep handle response when
+        # additional pages were merged by the gateway.
+        return False
+
+    if pagination_warnings:
+        # Keep handle response when pagination diagnostics were generated
+        # so warnings remain visible to callers.
+        return False
+
+    if (
+        pagination_assessment is not None
+        and pagination_assessment.retrieval_status
+        != RETRIEVAL_STATUS_COMPLETE
+    ):
+        # Keep handle contract for any non-complete pagination state
+        # so partial/warning metadata is preserved.
+        return False
+
+    response_size = _serialized_response_size_bytes(upstream_result)
+    if response_size is None:
+        return False
+    return response_size <= ctx.config.passthrough_max_bytes
 
 
 def _truncate_error_text(text: str, max_bytes: int) -> str:
@@ -966,7 +1018,10 @@ async def _auto_paginate_loop(
             started=started,
             timeout=timeout,
         )
-        upstream_result, fetch_error = await _fetch_auto_paginate_upstream_result(
+        (
+            upstream_result,
+            fetch_error,
+        ) = await _fetch_auto_paginate_upstream_result(
             ctx=ctx,
             mirrored=mirrored,
             forwarded_args=upstream_next_args,
@@ -1339,21 +1394,21 @@ async def _maybe_auto_paginate(
     pagination_assessment: PaginationAssessment | None,
     forwarded_args: dict[str, Any],
     binary_refs: list[Any],
-) -> tuple[Envelope, PaginationAssessment | None, list[Any]]:
+) -> tuple[Envelope, PaginationAssessment | None, list[Any], bool]:
     """Run auto-pagination when enabled and applicable."""
     if (
         pagination_assessment is None
         or not pagination_assessment.has_more
         or pagination_assessment.state is None
     ):
-        return envelope, pagination_assessment, binary_refs
+        return envelope, pagination_assessment, binary_refs, False
 
     ap_limits = resolve_auto_paginate_limits(
         ctx.config,
         mirrored.upstream.config,
     )
     if ap_limits.max_pages <= 1:
-        return envelope, pagination_assessment, binary_refs
+        return envelope, pagination_assessment, binary_refs, False
 
     ap_result = await _auto_paginate_loop(
         ctx,
@@ -1373,7 +1428,12 @@ async def _maybe_auto_paginate(
             binary_refs=merged_binary_refs,
         )
     )
-    return merged_envelope, ap_result.assessment, merged_binary_refs
+    return (
+        merged_envelope,
+        ap_result.assessment,
+        merged_binary_refs,
+        ap_result.pages_fetched > 1,
+    )
 
 
 def _run_inline_describe_with_fallback(
@@ -1646,7 +1706,12 @@ async def handle_mirrored_tool(
         mirrored.prefix,
         page_number=page_number,
     )
-    envelope, pagination_assessment, binary_refs = await _maybe_auto_paginate(
+    (
+        envelope,
+        pagination_assessment,
+        binary_refs,
+        auto_paginated,
+    ) = await _maybe_auto_paginate(
         ctx=ctx,
         mirrored=mirrored,
         envelope=envelope,
@@ -1670,6 +1735,16 @@ async def handle_mirrored_tool(
         return persist_error
     assert persist_result is not None
 
+    if _should_passthrough_response(
+        ctx=ctx,
+        mirrored=mirrored,
+        upstream_result=upstream_result,
+        pagination_assessment=pagination_assessment,
+        auto_paginated=auto_paginated,
+        pagination_warnings=persist_result.pagination_warnings,
+    ):
+        return upstream_result
+
     pagination_meta = None
     if pagination_assessment is not None:
         pagination_meta = _pagination_response_meta(
@@ -1677,8 +1752,8 @@ async def handle_mirrored_tool(
             persist_result.handle.artifact_id,
             extra_warnings=persist_result.pagination_warnings,
         )
-    mapping_payload, schema_payload, schema_legend = _schema_payload_from_describe(
-        persist_result.describe
+    mapping_payload, schema_payload, schema_legend = (
+        _schema_payload_from_describe(persist_result.describe)
     )
 
     return gateway_tool_result(

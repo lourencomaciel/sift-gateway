@@ -110,6 +110,7 @@ async def _stub_upstream(
 def _sqlite_config(tmp_path: Path) -> GatewayConfig:
     return GatewayConfig(
         data_dir=tmp_path,
+        passthrough_max_bytes=0,
         max_full_map_bytes=2000,
     )
 

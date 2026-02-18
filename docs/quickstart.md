@@ -241,7 +241,14 @@ After setup:
 
 2. **Call an upstream tool** through Sift
 
-3. **Receive an artifact handle** instead of the full response:
+3. **Receive either raw response or an artifact handle**:
+
+- small responses may be returned directly
+- larger responses (or continuation-required responses) return an artifact
+  handle
+- every mirrored response is still persisted as an artifact
+
+When a handle is returned:
 
 ```json
 {
@@ -252,7 +259,11 @@ After setup:
 }
 ```
 
-4. **Query the artifact:**
+4. **Query the artifact (handle path):**
+
+If your mirrored call returned raw payload, use `query_kind="search"` to find
+the persisted artifact for your session or set
+`SIFT_MCP_PASSTHROUGH_MAX_BYTES=0` to force handle responses.
 
 ```python
 # Get metadata

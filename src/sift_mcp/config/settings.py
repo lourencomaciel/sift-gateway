@@ -267,13 +267,9 @@ class PaginationConfig(BaseModel):
             "page_number": ("page_param_name", "has_more_response_path"),
             "param_map": ("next_params_response_paths",),
         }
-        for field_name in required_fields_by_strategy.get(
-            self.strategy, ()
-        ):
+        for field_name in required_fields_by_strategy.get(self.strategy, ()):
             if not getattr(self, field_name):
-                msg = (
-                    f"{self.strategy} strategy requires {field_name}"
-                )
+                msg = f"{self.strategy} strategy requires {field_name}"
                 raise ValueError(msg)
         return self
 
@@ -297,6 +293,8 @@ class UpstreamConfig(BaseSettings):
         headers: HTTP headers for http transport.
         semantic_salt_headers: Stable header names for identity.
         semantic_salt_env_keys: Stable env keys for identity.
+        passthrough_allowed: Allow small mirrored-tool responses
+            to return raw upstream payloads.
         secret_ref: Reference to an external secret store entry.
         inherit_parent_env: Inherit parent process env vars.
         external_user_id: Stable user identity for upstream
@@ -370,6 +368,14 @@ class UpstreamConfig(BaseSettings):
         description=(
             "Timeout in seconds for auto-pagination "
             "loop (overrides gateway default)."
+        ),
+    )
+
+    passthrough_allowed: bool = Field(
+        True,
+        description=(
+            "When true, allow small mirrored tool responses to be "
+            "returned directly while still being persisted."
         ),
     )
 
@@ -522,9 +528,7 @@ class GatewayConfig(BaseSettings):
 
     @field_validator("envelope_canonical_encoding", mode="before")
     @classmethod
-    def _coerce_legacy_zstd_encoding(
-        cls, value: object
-    ) -> object:
+    def _coerce_legacy_zstd_encoding(cls, value: object) -> object:
         """Accept legacy ``zstd`` config values gracefully.
 
         Existing installations may have ``envelope_canonical_encoding:
@@ -580,6 +584,15 @@ class GatewayConfig(BaseSettings):
     max_bytes_out: int = Field(5_000_000, ge=1)
     max_wildcards: int = Field(10_000, ge=1)
     max_compute_steps: int = Field(1_000_000, ge=1)
+    passthrough_max_bytes: int = Field(
+        8_192,
+        ge=0,
+        description=(
+            "Maximum serialized size in bytes for mirrored-tool passthrough. "
+            "Responses at or under this size may be returned directly while "
+            "still persisted. Set to 0 to disable passthrough."
+        ),
+    )
 
     # --------------- Code query runtime ---------------
     code_query_enabled: bool = Field(True)
@@ -953,7 +966,9 @@ def _merge_dict_values(
     return merged_dict
 
 
-def _merge_list_values(base: list[object], override: list[object]) -> list[object]:
+def _merge_list_values(
+    base: list[object], override: list[object]
+) -> list[object]:
     """Merge list override into base, supporting sparse index updates."""
     if not isinstance(override, _SparseList):
         return list(override)

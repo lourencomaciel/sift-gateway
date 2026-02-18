@@ -63,6 +63,26 @@ def test_code_query_allowed_import_roots_defaults_none(
     assert config.code_query_allowed_import_roots is None
 
 
+def test_passthrough_max_bytes_default(tmp_path: Path) -> None:
+    config = GatewayConfig(data_dir=tmp_path)
+    assert config.passthrough_max_bytes == 8_192
+
+
+def test_passthrough_max_bytes_env_override(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setenv("SIFT_MCP_PASSTHROUGH_MAX_BYTES", "2048")
+    config = load_gateway_config(data_dir_override=str(tmp_path))
+    assert config.passthrough_max_bytes == 2_048
+
+
+def test_passthrough_max_bytes_rejects_negative(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(ValidationError):
+        GatewayConfig(data_dir=tmp_path, passthrough_max_bytes=-1)
+
+
 def test_code_query_allowed_import_roots_env_override(
     tmp_path: Path, monkeypatch
 ) -> None:

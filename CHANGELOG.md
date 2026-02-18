@@ -18,6 +18,7 @@
 - **Breaking:** `query_kind=code` now returns all results without pagination/cursor
 - `query_kind=code` ignores `scope` (always all-related semantics)
 - Documented return normalization for code queries (non-list values auto-wrap to one-item lists)
+- Mirrored tool responses are always persisted; passthrough now controls only whether callers receive raw payloads or gateway handles
 
 ## [0.1.0] - 2025
 

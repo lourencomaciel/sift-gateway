@@ -9,7 +9,7 @@ Sift is a local, single-tenant MCP proxy that:
 1. Discovers tools exposed by upstream MCP servers (stdio or HTTP transport).
 2. Mirrors each tool as `{prefix}.{tool}` with identical schema — no injected fields.
 3. Intercepts every tool call, forwards it upstream, and wraps the result in a **durable artifact envelope** stored to SQLite and the local filesystem.
-4. Returns the result to the caller: small payloads are returned raw (**passthrough mode**); large payloads return a **handle** with artifact ID, inline schema-first metadata (`mapping` + `schemas`), and a usage hint.
+4. Persists every mirrored tool call, then returns either raw upstream payloads (small responses) or a **handle** (larger/continuation responses) with artifact ID, inline schema-first metadata (`mapping` + `schemas`), usage hint, and optional upstream pagination metadata.
 5. Generates a **deterministic inventory** (full or partial schema mapping) for each artifact's JSON payload.
 6. Provides a consolidated **`artifact`** retrieval tool with
    actions (`query`, `next_page`) using cursor pagination.
@@ -251,8 +251,16 @@ For `query_kind=code`, pagination fields are omitted (`truncated=false`, no curs
 
 ## 14. Response model
 
-Mirrored tool calls persist synchronously and return a handle-oriented payload.
-The caller receives:
+Mirrored tool calls persist synchronously.
+
+Return shape:
+
+- small responses may return raw upstream payloads directly
+- larger responses and continuation-required responses return handle payloads
+- raw passthrough responses omit gateway handle metadata (`artifact_id`,
+  `mapping`, `schemas`, `pagination`) even though artifacts are still persisted
+
+When a handle is returned, the caller receives:
 
 - **`artifact_id`** and **request/cache metadata** (`request_key`, `reason`, `artifact_id_origin`).
 - **`mapping`**: inline mapping metadata (`map_kind`, `map_status`, mapper/traversal versions, and determinism linkage).
