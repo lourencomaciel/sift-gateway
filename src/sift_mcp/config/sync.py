@@ -194,100 +194,39 @@ def _externalize_secrets_for_server(
     return entry
 
 
-def run_sync(data_dir: str | Path) -> dict[str, Any]:
-    """Auto-sync newly added MCP servers from the source config.
-
-    Reads the gateway config's ``_gateway_sync`` metadata, checks
-    the original source config for new MCP server entries, imports
-    them into the gateway config, and rewrites the source to
-    contain only the gateway entry.
-
-    Args:
-        data_dir: Root data directory for Sift state.
-
-    Returns:
-        Dict with ``synced`` count and optional ``warning``.
-    """
-    data_dir = Path(data_dir).resolve()
-    config_path = data_dir / STATE_SUBDIR / CONFIG_FILENAME
-
-    gw_config = _load_config(config_path)
-    initial_sync_meta = gw_config.get("_gateway_sync")
-    if not isinstance(initial_sync_meta, dict):
-        return {"synced": 0}
-
+def _resolve_gateway_config_redirect(
+    *,
+    data_dir: Path,
+    config_path: Path,
+    gw_config: dict[str, Any],
+    initial_sync_meta: dict[str, Any],
+) -> tuple[Path, Path, dict[str, Any]]:
+    """Resolve optional metadata redirect to another gateway data dir."""
     gateway_data_dir = data_dir
     configured_data_dir = initial_sync_meta.get("data_dir")
-    if isinstance(configured_data_dir, str):
-        candidate_data_dir = Path(configured_data_dir).expanduser().resolve()
-        candidate_config_path = (
-            candidate_data_dir / STATE_SUBDIR / CONFIG_FILENAME
-        )
-        if candidate_config_path == config_path:
-            gateway_data_dir = candidate_data_dir
-        elif candidate_config_path.is_file():
-            configured_gw_config = _load_config(candidate_config_path)
-            # Only follow redirect when the target config is present and valid.
-            if configured_gw_config:
-                gw_config = configured_gw_config
-                gateway_data_dir = candidate_data_dir
-                config_path = candidate_config_path
+    if not isinstance(configured_data_dir, str):
+        return gateway_data_dir, config_path, gw_config
 
-    # When metadata redirects to another instance config, re-read sync
-    # metadata from that config so source_path and gateway_name stay in sync.
-    sync_meta = gw_config.get("_gateway_sync")
-    if not isinstance(sync_meta, dict):
-        sync_meta = initial_sync_meta
+    candidate_data_dir = Path(configured_data_dir).expanduser().resolve()
+    candidate_config_path = candidate_data_dir / STATE_SUBDIR / CONFIG_FILENAME
+    if candidate_config_path == config_path:
+        return candidate_data_dir, config_path, gw_config
+    if not candidate_config_path.is_file():
+        return gateway_data_dir, config_path, gw_config
 
-    if not sync_meta.get("enabled", False):
-        return {"synced": 0}
+    configured_gw_config = _load_config(candidate_config_path)
+    if not configured_gw_config:
+        return gateway_data_dir, config_path, gw_config
+    return candidate_data_dir, candidate_config_path, configured_gw_config
 
-    source_path_str = sync_meta.get("source_path")
-    if not source_path_str:
-        return {"synced": 0}
 
-    source_path = Path(source_path_str)
-    gateway_name = sync_meta.get("gateway_name", "artifact-gateway")
-
-    # Keep sync metadata present and pinned to the same data dir
-    # used for both source rewrite and gateway config writes.
-    normalized_sync_meta = dict(sync_meta)
-    normalized_sync_meta["data_dir"] = str(gateway_data_dir)
-    gw_config["_gateway_sync"] = normalized_sync_meta
-
-    # Read the source config file
-    if not source_path.exists():
-        warning = f"Sync source file not found: {source_path}"
-        logger.warning(warning)
-        return {"synced": 0, "warning": warning}
-
-    try:
-        source_raw = json.loads(source_path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError) as exc:
-        warning = f"Cannot read sync source: {source_path}: {exc}"
-        logger.warning(warning)
-        return {"synced": 0, "warning": warning}
-
-    if not isinstance(source_raw, dict):
-        warning = f"Sync source is not a JSON object: {source_path}"
-        logger.warning(warning)
-        return {"synced": 0, "warning": warning}
-
-    # Extract servers from source
-    try:
-        source_servers = extract_mcp_servers(source_raw)
-    except ValueError:
-        return {"synced": 0}
-
-    if not source_servers:
-        return {"synced": 0}
-
-    # Get existing gateway servers
-    gw_servers = gw_config.get("mcpServers", {})
-    if not isinstance(gw_servers, dict):
-        gw_servers = {}
-
-    # Find new non-gateway servers not already imported
+def _new_non_gateway_servers(
+    *,
+    source_servers: dict[str, dict[str, Any]],
+    gw_servers: dict[str, dict[str, Any]],
+    gateway_name: str,
+) -> dict[str, dict[str, Any]]:
+    """Return source servers that are new and not the gateway entry."""
     new_servers: dict[str, dict[str, Any]] = {}
     for name, entry in source_servers.items():
         if _is_gateway_entry(name, entry, gateway_name):
@@ -295,24 +234,22 @@ def run_sync(data_dir: str | Path) -> dict[str, Any]:
         if name in gw_servers:
             continue
         new_servers[name] = entry
+    return new_servers
 
-    if not new_servers:
-        return {"synced": 0}
 
-    # Import new servers, externalizing secrets
-    for name, entry in new_servers.items():
-        entry = _externalize_secrets_for_server(gateway_data_dir, name, entry)
-        gw_servers[name] = entry
-
-    gw_config["mcpServers"] = gw_servers
-
-    # Rewrite source to keep only the gateway entry
+def _build_gateway_only_source_config(
+    *,
+    source_raw: dict[str, Any],
+    source_servers: dict[str, dict[str, Any]],
+    gateway_name: str,
+    gateway_data_dir: Path,
+) -> dict[str, Any]:
+    """Build source config that preserves only the gateway entry."""
     is_vscode = "mcpServers" not in source_raw and isinstance(
         source_raw.get("mcp"), dict
     )
     is_zed = isinstance(source_raw.get("context_servers"), dict)
 
-    # Find the gateway entry to preserve
     gw_entry: dict[str, Any] | None = None
     for sname, sconf in source_servers.items():
         if _is_gateway_entry(sname, sconf, gateway_name):
@@ -329,10 +266,9 @@ def run_sync(data_dir: str | Path) -> dict[str, Any]:
 
     new_source = dict(source_raw)
     if is_vscode:
-        new_source["mcp"] = {
-            "servers": {gateway_name: gw_entry},
-        }
-    elif is_zed:
+        new_source["mcp"] = {"servers": {gateway_name: gw_entry}}
+        return new_source
+    if is_zed:
         context_servers = source_raw.get("context_servers", {})
         zed_entry: dict[str, Any] = {
             "source": "custom",
@@ -343,13 +279,141 @@ def run_sync(data_dir: str | Path) -> dict[str, Any]:
             context_servers.get(gateway_name), dict
         ):
             zed_entry = dict(context_servers[gateway_name])
-        new_source["context_servers"] = {
-            gateway_name: zed_entry,
-        }
-    else:
-        new_source["mcpServers"] = {
-            gateway_name: gw_entry,
-        }
+        new_source["context_servers"] = {gateway_name: zed_entry}
+        return new_source
+    new_source["mcpServers"] = {gateway_name: gw_entry}
+    return new_source
+
+
+def _load_sync_context(
+    data_dir: Path,
+) -> (
+    tuple[Path, Path, dict[str, Any], Path, str]
+    | dict[str, Any]
+):
+    """Load gateway config + sync metadata required for run_sync."""
+    config_path = data_dir / STATE_SUBDIR / CONFIG_FILENAME
+    gw_config = _load_config(config_path)
+    initial_sync_meta = gw_config.get("_gateway_sync")
+    if not isinstance(initial_sync_meta, dict):
+        return {"synced": 0}
+
+    gateway_data_dir, config_path, gw_config = (
+        _resolve_gateway_config_redirect(
+            data_dir=data_dir,
+            config_path=config_path,
+            gw_config=gw_config,
+            initial_sync_meta=initial_sync_meta,
+        )
+    )
+    sync_meta = gw_config.get("_gateway_sync")
+    if not isinstance(sync_meta, dict):
+        sync_meta = initial_sync_meta
+    if not sync_meta.get("enabled", False):
+        return {"synced": 0}
+
+    source_path_str = sync_meta.get("source_path")
+    if not source_path_str:
+        return {"synced": 0}
+    source_path = Path(source_path_str)
+    gateway_name = sync_meta.get("gateway_name", "artifact-gateway")
+
+    normalized_sync_meta = dict(sync_meta)
+    normalized_sync_meta["data_dir"] = str(gateway_data_dir)
+    gw_config["_gateway_sync"] = normalized_sync_meta
+    return gateway_data_dir, config_path, gw_config, source_path, gateway_name
+
+
+def _read_sync_source_config(
+    source_path: Path,
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    """Read source JSON config for sync, returning warning payload on failure."""
+    if not source_path.exists():
+        warning = f"Sync source file not found: {source_path}"
+        logger.warning(warning)
+        return None, {"synced": 0, "warning": warning}
+    try:
+        source_raw = json.loads(source_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as exc:
+        warning = f"Cannot read sync source: {source_path}: {exc}"
+        logger.warning(warning)
+        return None, {"synced": 0, "warning": warning}
+    if not isinstance(source_raw, dict):
+        warning = f"Sync source is not a JSON object: {source_path}"
+        logger.warning(warning)
+        return None, {"synced": 0, "warning": warning}
+    return source_raw, None
+
+
+def run_sync(data_dir: str | Path) -> dict[str, Any]:
+    """Auto-sync newly added MCP servers from the source config.
+
+    Reads the gateway config's ``_gateway_sync`` metadata, checks
+    the original source config for new MCP server entries, imports
+    them into the gateway config, and rewrites the source to
+    contain only the gateway entry.
+
+    Args:
+        data_dir: Root data directory for Sift state.
+
+    Returns:
+        Dict with ``synced`` count and optional ``warning``.
+    """
+    data_dir = Path(data_dir).resolve()
+    context = _load_sync_context(data_dir)
+    if isinstance(context, dict):
+        return context
+    (
+        gateway_data_dir,
+        config_path,
+        gw_config,
+        source_path,
+        gateway_name,
+    ) = context
+
+    source_raw, source_error = _read_sync_source_config(source_path)
+    if source_error is not None:
+        return source_error
+    if source_raw is None:
+        return {"synced": 0}
+
+    # Extract servers from source
+    try:
+        source_servers = extract_mcp_servers(source_raw)
+    except ValueError:
+        return {"synced": 0}
+
+    if not source_servers:
+        return {"synced": 0}
+
+    # Get existing gateway servers
+    gw_servers = gw_config.get("mcpServers", {})
+    if not isinstance(gw_servers, dict):
+        gw_servers = {}
+
+    # Find new non-gateway servers not already imported
+    new_servers = _new_non_gateway_servers(
+        source_servers=source_servers,
+        gw_servers=gw_servers,
+        gateway_name=gateway_name,
+    )
+
+    if not new_servers:
+        return {"synced": 0}
+
+    # Import new servers, externalizing secrets
+    for name, entry in new_servers.items():
+        entry = _externalize_secrets_for_server(gateway_data_dir, name, entry)
+        gw_servers[name] = entry
+
+    gw_config["mcpServers"] = gw_servers
+
+    new_source = _build_gateway_only_source_config(
+        source_raw=source_raw,
+        source_servers=source_servers,
+        gateway_name=gateway_name,
+        gateway_data_dir=gateway_data_dir,
+    )
 
     # Persist changes (backup source first for safety)
     backup_path = source_path.with_suffix(source_path.suffix + ".sync-backup")

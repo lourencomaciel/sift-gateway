@@ -9,6 +9,7 @@ JSONPath configuration.  Exports
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -183,6 +184,77 @@ def _has_more_signal(
     return _has_more(json_value, has_more_path)
 
 
+def _next_params_cursor(
+    *,
+    json_value: Any,
+    pagination_config: PaginationConfig,
+    original_args: dict[str, Any],
+) -> dict[str, Any] | None:
+    del original_args
+    cursor_value = _evaluate_path(
+        json_value,
+        pagination_config.cursor_response_path or "",
+    )
+    if cursor_value is None:
+        return None
+    if isinstance(cursor_value, str) and not cursor_value.strip():
+        return None
+    return {pagination_config.cursor_param_name or "after": cursor_value}
+
+
+def _next_params_offset(
+    *,
+    json_value: Any,
+    pagination_config: PaginationConfig,
+    original_args: dict[str, Any],
+) -> dict[str, Any] | None:
+    del json_value
+    param = pagination_config.offset_param_name or "offset"
+    size_param = pagination_config.page_size_param_name or "limit"
+    current_offset = original_args.get(param, 0)
+    if not isinstance(current_offset, int):
+        current_offset = 0
+    page_size = original_args.get(size_param, 0)
+    if not isinstance(page_size, int) or page_size <= 0:
+        return None
+    return {param: current_offset + page_size}
+
+
+def _next_params_page_number(
+    *,
+    json_value: Any,
+    pagination_config: PaginationConfig,
+    original_args: dict[str, Any],
+) -> dict[str, Any] | None:
+    del json_value
+    param = pagination_config.page_param_name or "page"
+    current_page = original_args.get(param, 1)
+    if not isinstance(current_page, int):
+        current_page = 1
+    return {param: current_page + 1}
+
+
+def _next_params_param_map(
+    *,
+    json_value: Any,
+    pagination_config: PaginationConfig,
+    original_args: dict[str, Any],
+) -> dict[str, Any] | None:
+    del original_args
+    raw_map = pagination_config.next_params_response_paths or {}
+    if not raw_map:
+        return None
+    next_params: dict[str, Any] = {}
+    for param_name, response_path in raw_map.items():
+        value = _evaluate_path(json_value, response_path)
+        if value is None:
+            return None
+        if isinstance(value, str) and not value.strip():
+            return None
+        next_params[param_name] = value
+    return next_params
+
+
 def _build_next_params(
     *,
     strategy: str,
@@ -202,56 +274,23 @@ def _build_next_params(
         Dict of next-page arg overrides, or ``None`` when no
         follow-up request can be built.
     """
-    next_params: dict[str, Any] = {}
-
-    if strategy == "cursor":
-        cursor_value = _evaluate_path(
-            json_value,
-            pagination_config.cursor_response_path or "",
-        )
-        if cursor_value is None:
-            return None
-        if isinstance(cursor_value, str) and not cursor_value.strip():
-            return None
-        next_params[pagination_config.cursor_param_name or "after"] = (
-            cursor_value
-        )
-        return next_params
-
-    if strategy == "offset":
-        param = pagination_config.offset_param_name or "offset"
-        size_param = pagination_config.page_size_param_name or "limit"
-        current_offset = original_args.get(param, 0)
-        if not isinstance(current_offset, int):
-            current_offset = 0
-        page_size = original_args.get(size_param, 0)
-        if not isinstance(page_size, int) or page_size <= 0:
-            return None
-        next_params[param] = current_offset + page_size
-        return next_params
-
-    if strategy == "page_number":
-        param = pagination_config.page_param_name or "page"
-        current_page = original_args.get(param, 1)
-        if not isinstance(current_page, int):
-            current_page = 1
-        next_params[param] = current_page + 1
-        return next_params
-
-    if strategy == "param_map":
-        raw_map = pagination_config.next_params_response_paths or {}
-        if not raw_map:
-            return None
-        for param_name, response_path in raw_map.items():
-            value = _evaluate_path(json_value, response_path)
-            if value is None:
-                return None
-            if isinstance(value, str) and not value.strip():
-                return None
-            next_params[param_name] = value
-        return next_params
-
-    return None
+    strategy_builders: dict[
+        str,
+        Callable[..., dict[str, Any] | None],
+    ] = {
+        "cursor": _next_params_cursor,
+        "offset": _next_params_offset,
+        "page_number": _next_params_page_number,
+        "param_map": _next_params_param_map,
+    }
+    builder = strategy_builders.get(strategy)
+    if builder is None:
+        return None
+    return builder(
+        json_value=json_value,
+        pagination_config=pagination_config,
+        original_args=original_args,
+    )
 
 
 def assess_pagination(

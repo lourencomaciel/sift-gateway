@@ -128,6 +128,37 @@ def validate_against_schema(
         List of violation description strings. An empty list
         indicates valid arguments.
     """
+
+    def _is_json_type(value: Any, expected_type: str) -> bool:
+        if expected_type == "string":
+            return isinstance(value, str)
+        if expected_type == "integer":
+            return isinstance(value, int) and not isinstance(value, bool)
+        if expected_type == "number":
+            return (
+                isinstance(value, int | float)
+                and not isinstance(value, bool)
+            )
+        if expected_type == "boolean":
+            return isinstance(value, bool)
+        if expected_type == "object":
+            return isinstance(value, dict)
+        if expected_type == "array":
+            return isinstance(value, list)
+        if expected_type == "null":
+            return value is None
+        return True
+
+    def _schema_types(property_schema: Any) -> list[str]:
+        if not isinstance(property_schema, dict):
+            return []
+        raw_type = property_schema.get("type")
+        if isinstance(raw_type, str):
+            return [raw_type]
+        if isinstance(raw_type, list):
+            return [item for item in raw_type if isinstance(item, str)]
+        return []
+
     # Basic validation - check required properties exist
     required = schema.get("required", [])
     properties = schema.get("properties", {})
@@ -142,5 +173,18 @@ def validate_against_schema(
             f"unknown argument: {key}"
             for key in args
             if properties and key not in properties
+        )
+    for key, value in args.items():
+        property_schema = (
+            properties.get(key) if isinstance(properties, dict) else None
+        )
+        expected_types = _schema_types(property_schema)
+        if not expected_types:
+            continue
+        if any(_is_json_type(value, expected_type) for expected_type in expected_types):
+            continue
+        joined = " | ".join(expected_types)
+        violations.append(
+            f"argument {key} must match type: {joined}"
         )
     return violations

@@ -219,3 +219,23 @@ def test_validate_no_warnings_when_valid() -> None:
     }
     warnings = validate_against_schema({"repo": "test"}, schema)
     assert warnings == []
+
+
+def test_validate_rejects_type_mismatch() -> None:
+    schema = {
+        "type": "object",
+        "properties": {"after": {"type": "string"}},
+    }
+    warnings = validate_against_schema({"after": 100}, schema)
+    assert any("argument after must match type: string" in w for w in warnings)
+
+
+def test_validate_accepts_union_types() -> None:
+    schema = {
+        "type": "object",
+        "properties": {"value": {"type": ["string", "integer"]}},
+    }
+    warnings_int = validate_against_schema({"value": 7}, schema)
+    warnings_str = validate_against_schema({"value": "7"}, schema)
+    assert warnings_int == []
+    assert warnings_str == []

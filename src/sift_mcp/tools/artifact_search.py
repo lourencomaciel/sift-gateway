@@ -205,6 +205,118 @@ def validate_search_args(
     }
 
 
+def _status_condition(status: Any) -> str | None:
+    """Return status SQL condition for validated status filter."""
+    if status == "error":
+        return "a.error_summary IS NOT NULL"
+    if status == "ok":
+        return "a.error_summary IS NULL"
+    return None
+
+
+def _escaped_source_tool_prefix(prefix: str) -> str:
+    """Escape user prefix for a LIKE pattern."""
+    escaped = (
+        prefix.replace("\\", "\\\\")
+        .replace("%", "\\%")
+        .replace("_", "\\_")
+    )
+    return f"{escaped}.%"
+
+
+def _collect_simple_equality_conditions(
+    filters: dict[str, Any],
+) -> tuple[list[str], list[Any]]:
+    """Collect simple equality filter conditions and params."""
+    conditions: list[str] = []
+    params: list[Any] = []
+    simple_eq_filters: tuple[tuple[str, str], ...] = (
+        ("source_tool", "a.source_tool = %s"),
+        ("upstream_instance_id", "a.upstream_instance_id = %s"),
+        ("request_key", "a.request_key = %s"),
+        ("payload_hash_full", "a.payload_hash_full = %s"),
+        ("parent_artifact_id", "a.parent_artifact_id = %s"),
+    )
+    for key, sql_fragment in simple_eq_filters:
+        value = filters.get(key)
+        if not value:
+            continue
+        conditions.append(sql_fragment)
+        params.append(value)
+    return conditions, params
+
+
+def _collect_range_and_time_conditions(
+    filters: dict[str, Any],
+) -> tuple[list[str], list[Any]]:
+    """Collect range/time filter conditions and params."""
+    conditions: list[str] = []
+    params: list[Any] = []
+    range_filters: tuple[tuple[str, str], ...] = (
+        ("created_seq_min", "a.created_seq >= %s"),
+        ("created_seq_max", "a.created_seq <= %s"),
+    )
+    for key, sql_fragment in range_filters:
+        value = filters.get(key)
+        if value is None:
+            continue
+        conditions.append(sql_fragment)
+        params.append(value)
+    timestamp_filters: tuple[tuple[str, str], ...] = (
+        ("created_at_after", "a.created_at >= %s"),
+        ("created_at_before", "a.created_at <= %s"),
+    )
+    for key, sql_fragment in timestamp_filters:
+        value = filters.get(key)
+        if not value:
+            continue
+        conditions.append(sql_fragment)
+        params.append(value)
+    return conditions, params
+
+
+def _collect_search_filter_conditions(
+    filters: dict[str, Any],
+) -> tuple[list[str], list[Any]]:
+    """Build filter WHERE fragments and bound params."""
+    conditions: list[str] = []
+    params: list[Any] = []
+
+    if not filters.get("include_deleted", False):
+        conditions.append("a.deleted_at IS NULL")
+
+    status_condition = _status_condition(filters.get("status"))
+    if status_condition is not None:
+        conditions.append(status_condition)
+
+    source_tool_prefix = filters.get("source_tool_prefix")
+    if source_tool_prefix:
+        conditions.append("a.source_tool LIKE %s")
+        params.append(_escaped_source_tool_prefix(str(source_tool_prefix)))
+
+    eq_conditions, eq_params = _collect_simple_equality_conditions(filters)
+    conditions.extend(eq_conditions)
+    params.extend(eq_params)
+
+    has_binary_refs = filters.get("has_binary_refs")
+    if has_binary_refs is not None:
+        conditions.append(
+            "EXISTS (SELECT 1 FROM payload_blobs pb"
+            " WHERE pb.workspace_id = a.workspace_id"
+            " AND pb.payload_hash_full"
+            " = a.payload_hash_full"
+            " AND pb.contains_binary_refs = %s)"
+        )
+        params.append(has_binary_refs)
+
+    range_conditions, range_params = _collect_range_and_time_conditions(
+        filters
+    )
+    conditions.extend(range_conditions)
+    params.extend(range_params)
+    return conditions, params
+
+
 def build_search_query(
     filters: dict[str, Any],
     order_by: str,
@@ -242,73 +354,8 @@ def build_search_query(
     WHERE a.workspace_id = %s
     """
 
-    conditions: list[str] = []
-
-    if not filters.get("include_deleted", False):
-        conditions.append("a.deleted_at IS NULL")
-
-    status = filters.get("status")
-    if status == "error":
-        conditions.append("a.error_summary IS NOT NULL")
-    elif status == "ok":
-        conditions.append("a.error_summary IS NULL")
-
-    if filters.get("source_tool_prefix"):
-        conditions.append("a.source_tool LIKE %s")
-        # Escape LIKE wildcards to prevent injection
-        escaped = (
-            filters["source_tool_prefix"]
-            .replace("\\", "\\\\")
-            .replace("%", "\\%")
-            .replace("_", "\\_")
-        )
-        params.append(f"{escaped}.%")
-
-    if filters.get("source_tool"):
-        conditions.append("a.source_tool = %s")
-        params.append(filters["source_tool"])
-
-    if filters.get("upstream_instance_id"):
-        conditions.append("a.upstream_instance_id = %s")
-        params.append(filters["upstream_instance_id"])
-
-    if filters.get("request_key"):
-        conditions.append("a.request_key = %s")
-        params.append(filters["request_key"])
-
-    if filters.get("payload_hash_full"):
-        conditions.append("a.payload_hash_full = %s")
-        params.append(filters["payload_hash_full"])
-
-    if filters.get("parent_artifact_id"):
-        conditions.append("a.parent_artifact_id = %s")
-        params.append(filters["parent_artifact_id"])
-
-    if filters.get("has_binary_refs") is not None:
-        conditions.append(
-            "EXISTS (SELECT 1 FROM payload_blobs pb"
-            " WHERE pb.workspace_id = a.workspace_id"
-            " AND pb.payload_hash_full"
-            " = a.payload_hash_full"
-            " AND pb.contains_binary_refs = %s)"
-        )
-        params.append(filters["has_binary_refs"])
-
-    if filters.get("created_seq_min") is not None:
-        conditions.append("a.created_seq >= %s")
-        params.append(filters["created_seq_min"])
-
-    if filters.get("created_seq_max") is not None:
-        conditions.append("a.created_seq <= %s")
-        params.append(filters["created_seq_max"])
-
-    if filters.get("created_at_after"):
-        conditions.append("a.created_at >= %s")
-        params.append(filters["created_at_after"])
-
-    if filters.get("created_at_before"):
-        conditions.append("a.created_at <= %s")
-        params.append(filters["created_at_before"])
+    conditions, filter_params = _collect_search_filter_conditions(filters)
+    params.extend(filter_params)
 
     if conditions:
         base += " AND " + " AND ".join(conditions)
