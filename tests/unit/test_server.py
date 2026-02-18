@@ -16,6 +16,7 @@ from sift_mcp.cursor.payload import CursorStaleError
 from sift_mcp.cursor.sample_set_hash import compute_sample_set_hash
 from sift_mcp.cursor.token import CursorExpiredError
 from sift_mcp.fs.blob_store import BlobStore
+from sift_mcp.mcp.handlers.common import VISIBLE_ARTIFACT_SQL
 from sift_mcp.mcp.server import (
     GatewayServer,
     _check_sample_corruption,
@@ -289,6 +290,19 @@ class _SeqPool:
 
     def connection(self) -> _SeqConnectionContext:
         return _SeqConnectionContext(self._connection)
+
+
+class _CaptureConnection:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, tuple[object, ...] | None]] = []
+
+    def execute(
+        self,
+        query: str,
+        params: tuple[object, ...] | None = None,
+    ) -> _SeqCursor:
+        self.calls.append((" ".join(query.split()), params))
+        return _SeqCursor()
 
 
 def test_register_tools_returns_callable_handlers(tmp_path: Path) -> None:
@@ -844,6 +858,49 @@ def test_artifact_search_db_runtime_returns_items(
     assert conn.committed is False
 
 
+def test_artifact_search_touches_recency_when_not_mocked(
+    tmp_path: Path,
+) -> None:
+    conn = _SeqConnection(
+        [
+            _SeqCursor(
+                all_rows=[
+                    (
+                        "art_1",
+                        1,
+                        "2026-01-01T00:00:00Z",
+                        "2026-01-01T00:00:00Z",
+                        "demo.echo",
+                        "inst_demo",
+                        "ok",
+                        123,
+                        None,
+                        "none",
+                        "pending",
+                    )
+                ]
+            )
+        ]
+    )
+    server = GatewayServer(
+        config=GatewayConfig(data_dir=tmp_path),
+        db_pool=_SeqPool(conn),  # type: ignore[arg-type]
+    )
+
+    response = asyncio.run(
+        server.handle_artifact(
+            {
+                "action": "query",
+                "query_kind": "search",
+                "_gateway_context": {"session_id": "sess_1"},
+                "filters": {},
+            }
+        )
+    )
+    assert response["truncated"] is False
+    assert conn.committed is True
+
+
 def test_artifact_get_db_runtime_returns_envelope_items(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -905,6 +962,107 @@ def test_artifact_get_db_runtime_returns_envelope_items(
     assert response["items"][0]["_locator"]["artifact_id"] == "art_1"
     assert response["items"][0]["value"]["type"] == "mcp_envelope"
     assert conn.committed is False
+
+
+def test_artifact_get_touches_recency_when_not_mocked(
+    tmp_path: Path,
+) -> None:
+    envelope = {
+        "type": "mcp_envelope",
+        "upstream_instance_id": "inst_demo",
+        "upstream_prefix": "demo",
+        "tool": "echo",
+        "status": "ok",
+        "content": [{"type": "json", "value": {"id": 1}}],
+        "error": None,
+        "meta": {"warnings": []},
+    }
+    conn = _SeqConnection(
+        [
+            _SeqCursor(one=(1,)),
+            _SeqCursor(
+                one=(
+                    "art_1",
+                    "payload_hash",
+                    None,
+                    "full",
+                    "ready",
+                    1,
+                    0,
+                    "mbf",
+                    envelope,
+                    "gzip",
+                    b"",
+                    0,
+                    False,
+                )
+            ),
+        ]
+    )
+    server = GatewayServer(
+        config=GatewayConfig(data_dir=tmp_path),
+        db_pool=_SeqPool(conn),  # type: ignore[arg-type]
+    )
+
+    response = asyncio.run(
+        server.handle_artifact(
+            {
+                "action": "query",
+                "query_kind": "get",
+                "scope": "single",
+                "_gateway_context": {"session_id": "sess_1"},
+                "artifact_id": "art_1",
+                "target": "envelope",
+            }
+        )
+    )
+    assert response["target"] == "envelope"
+    assert conn.committed is True
+
+
+def test_visible_artifact_sql_does_not_hide_deleted_rows() -> None:
+    assert "deleted_at IS NULL" not in VISIBLE_ARTIFACT_SQL
+
+
+def test_safe_touch_for_retrieval_writes_session_and_artifact(
+    tmp_path: Path,
+) -> None:
+    server = _server(tmp_path)
+    conn = _CaptureConnection()
+
+    touched = server._safe_touch_for_retrieval(
+        conn,
+        session_id="sess_1",
+        artifact_id="art_1",
+    )
+
+    assert touched is True
+    assert len(conn.calls) == 2
+    assert "INSERT INTO sessions" in conn.calls[0][0]
+    assert conn.calls[0][1] == ("local", "sess_1")
+    assert "UPDATE artifacts" in conn.calls[1][0]
+    assert conn.calls[1][1] == ("local", "art_1")
+
+
+def test_safe_touch_for_retrieval_many_deduplicates_artifacts(
+    tmp_path: Path,
+) -> None:
+    server = _server(tmp_path)
+    conn = _CaptureConnection()
+
+    touched = server._safe_touch_for_retrieval_many(
+        conn,
+        session_id="sess_1",
+        artifact_ids=["art_1", "art_1", "art_2"],
+    )
+
+    assert touched is True
+    update_calls = [
+        call for call in conn.calls if "UPDATE artifacts" in call[0]
+    ]
+    assert len(update_calls) == 2
+    assert update_calls[0][1] == ("local", "art_1")
+    assert update_calls[1][1] == ("local", "art_2")
 
 
 def test_artifact_get_cursor_includes_target_and_jsonpath_binding(

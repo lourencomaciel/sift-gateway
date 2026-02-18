@@ -294,6 +294,21 @@ async def handle_artifact_describe(
                     }
                 )
 
+        touched = False
+        for artifact_id in related_ids:
+            touched = (
+                ctx._safe_touch_for_retrieval(
+                    connection,
+                    session_id=session_id,
+                    artifact_id=artifact_id,
+                )
+                or touched
+            )
+        if touched:
+            commit = getattr(connection, "commit", None)
+            if callable(commit):
+                commit()
+
     roots = build_lineage_root_catalog(root_entries)
     roots_with_schema = [
         root for root in roots if isinstance(root.get("schema"), dict)

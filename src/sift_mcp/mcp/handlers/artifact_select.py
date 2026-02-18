@@ -540,6 +540,21 @@ async def handle_artifact_select(
                         count_row[0] if count_row else 0
                     )
 
+            touched = False
+            for artifact_id in related_ids:
+                touched = (
+                    ctx._safe_touch_for_retrieval(
+                        connection,
+                        session_id=session_id,
+                        artifact_id=artifact_id,
+                    )
+                    or touched
+                )
+            if touched:
+                commit = getattr(connection, "commit", None)
+                if callable(commit):
+                    commit()
+
             return {
                 "count": total_count,
                 "truncated": False,
@@ -675,6 +690,21 @@ async def handle_artifact_select(
                         "projection": projection,
                     }
                 )
+
+        touched = False
+        for artifact_id in related_ids:
+            touched = (
+                ctx._safe_touch_for_retrieval(
+                    connection,
+                    session_id=session_id,
+                    artifact_id=artifact_id,
+                )
+                or touched
+            )
+        if touched:
+            commit = getattr(connection, "commit", None)
+            if callable(commit):
+                commit()
 
     # Deduplicate by projection when distinct is requested.
     use_distinct = arguments.get("distinct") is True

@@ -74,7 +74,6 @@ SELECT 1
 FROM artifacts
 WHERE workspace_id = %s
   AND artifact_id = %s
-  AND deleted_at IS NULL
 LIMIT 1
 """
 

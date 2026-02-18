@@ -653,6 +653,16 @@ async def handle_artifact_code(
                 break
 
         related_ids = sorted(all_related_ids)
+        if related_ids:
+            touched = ctx._safe_touch_for_retrieval_many(
+                connection,
+                session_id=session_id,
+                artifact_ids=related_ids,
+            )
+            if touched:
+                commit = getattr(connection, "commit", None)
+                if callable(commit):
+                    commit()
 
     if schema_obj is None:
         return gateway_error("INTERNAL", "schema resolution failed")

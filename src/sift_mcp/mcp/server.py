@@ -1112,12 +1112,52 @@ class GatewayServer:
         session_id: str,
         artifact_id: str,
         now: dt.datetime | None = None,
-    ) -> None:
-        """Compatibility shim kept as an explicit no-op.
+    ) -> bool:
+        """Best-effort retrieval touch for session and artifact recency.
 
-        Session touch bookkeeping was removed with artifact_refs.
+        Args:
+            connection: Active database connection.
+            session_id: Session performing the retrieval.
+            artifact_id: Retrieved artifact identifier.
+            now: Optional override timestamp for tests.
+
+        Returns:
+            ``True`` when touch SQL was executed, ``False`` when
+            the connection does not expose ``execute``.
         """
-        _ = (connection, session_id, artifact_id, now)
+        from sift_mcp.db.repos.sessions_repo import (
+            UPSERT_SESSION_SQL,
+            upsert_session_params,
+        )
+
+        execute = getattr(connection, "execute", None)
+        if not callable(execute):
+            return False
+
+        execute(UPSERT_SESSION_SQL, upsert_session_params(session_id))
+        if now is None:
+            execute(
+                """
+                UPDATE artifacts
+                SET last_referenced_at = NOW()
+                WHERE workspace_id = %s
+                  AND artifact_id = %s
+                  AND deleted_at IS NULL
+                """,
+                (WORKSPACE_ID, artifact_id),
+            )
+        else:
+            execute(
+                """
+                UPDATE artifacts
+                SET last_referenced_at = %s
+                WHERE workspace_id = %s
+                  AND artifact_id = %s
+                  AND deleted_at IS NULL
+                """,
+                (now, WORKSPACE_ID, artifact_id),
+            )
+        return True
 
     def _safe_touch_for_retrieval_many(
         self,
@@ -1126,9 +1166,24 @@ class GatewayServer:
         session_id: str,
         artifact_ids: Sequence[str],
         now: dt.datetime | None = None,
-    ) -> None:
-        """Compatibility shim kept as an explicit no-op."""
-        _ = (connection, session_id, artifact_ids, now)
+    ) -> bool:
+        """Best-effort retrieval touch for multiple artifacts."""
+        touched = False
+        seen: set[str] = set()
+        for artifact_id in artifact_ids:
+            if artifact_id in seen:
+                continue
+            seen.add(artifact_id)
+            touched = (
+                self._safe_touch_for_retrieval(
+                    connection,
+                    session_id=session_id,
+                    artifact_id=artifact_id,
+                    now=now,
+                )
+                or touched
+            )
+        return touched
 
     def _safe_touch_for_search(
         self,
@@ -1137,9 +1192,14 @@ class GatewayServer:
         session_id: str,
         artifact_ids: Sequence[str],
         now: dt.datetime | None = None,
-    ) -> None:
-        """Compatibility shim kept as an explicit no-op."""
-        _ = (connection, session_id, artifact_ids, now)
+    ) -> bool:
+        """Best-effort search touch for session/artifact recency."""
+        return self._safe_touch_for_retrieval_many(
+            connection,
+            session_id=session_id,
+            artifact_ids=artifact_ids,
+            now=now,
+        )
 
     def _check_sample_corruption(
         self,

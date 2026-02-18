@@ -99,6 +99,20 @@ async def handle_artifact_search(
         mapped_rows = rows_to_dicts(rows, _SEARCH_COLUMNS)
         page_rows = mapped_rows[:limit]
         truncated = len(mapped_rows) > limit
+        touch_ids = [
+            artifact_id
+            for row in page_rows
+            if isinstance((artifact_id := row.get("artifact_id")), str)
+        ]
+        touched = ctx._safe_touch_for_search(
+            connection,
+            session_id=session_id,
+            artifact_ids=touch_ids,
+        )
+        if touched:
+            commit = getattr(connection, "commit", None)
+            if callable(commit):
+                commit()
 
     next_cursor: str | None = None
     if truncated:

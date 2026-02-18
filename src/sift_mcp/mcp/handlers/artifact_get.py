@@ -233,6 +233,21 @@ async def handle_artifact_get(
             except CursorStaleError as exc:
                 return ctx._cursor_error(exc)
 
+        touched = False
+        for artifact_id in related_ids:
+            touched = (
+                ctx._safe_touch_for_retrieval(
+                    connection,
+                    session_id=session_id,
+                    artifact_id=artifact_id,
+                )
+                or touched
+            )
+        if touched:
+            commit = getattr(connection, "commit", None)
+            if callable(commit):
+                commit()
+
         if target == "mapped":
             root_entries: list[dict[str, Any]] = []
             for artifact_row in artifact_rows:
