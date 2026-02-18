@@ -2,7 +2,7 @@
 
 Detect pagination cursors, offsets, page numbers, or arbitrary
 next-parameter maps in upstream tool responses using per-upstream
-JSONPath configuration.  Exports
+configuration and heuristic discovery.  Exports
 ``assess_pagination`` (canonical assessment) and
 ``extract_pagination_state`` (compatibility wrapper).
 """
@@ -24,6 +24,7 @@ from sift_mcp.pagination.contract import (
     RetrievalStatus,
     UpstreamPartialReason,
 )
+from sift_mcp.pagination.discovery import discover_pagination
 from sift_mcp.query.jsonpath import JsonPathError, evaluate_jsonpath
 
 
@@ -296,48 +297,102 @@ def _build_next_params(
 def assess_pagination(
     *,
     json_value: Any,
-    pagination_config: PaginationConfig,
+    pagination_config: PaginationConfig | None,
     original_args: dict[str, Any],
     upstream_prefix: str,
     tool_name: str,
+    upstream_meta: Any | None = None,
     page_number: int = 0,
-) -> PaginationAssessment:
+) -> PaginationAssessment | None:
     """Assess pagination completion and next-page availability.
 
     Args:
         json_value: The JSON content value from the upstream
             response envelope.
-        pagination_config: Per-upstream pagination settings.
+        pagination_config: Optional per-upstream pagination settings.
+            In the MCP gateway path this comes from
+            ``UpstreamConfig.pagination``.  Non-MCP callers (such as
+            a CLI adapter) can pass ``None`` to use discovery-only mode.
         original_args: Original tool call arguments (reserved
             keys already stripped).
         upstream_prefix: Upstream namespace prefix.
         tool_name: Unqualified upstream tool name.
+        upstream_meta: Optional upstream metadata payload for
+            additional discovery signals (e.g. HTTP headers).
         page_number: Zero-based page number of the current
             artifact (0 for the initial call).
 
     Returns:
-        A canonical ``PaginationAssessment``.
+        A canonical ``PaginationAssessment``, or ``None`` when no
+        pagination evidence is available.
     """
-    has_more_signal = _has_more_signal(
-        json_value,
-        pagination_config.has_more_response_path,
-    )
-    next_params = _build_next_params(
-        strategy=pagination_config.strategy,
-        json_value=json_value,
-        pagination_config=pagination_config,
-        original_args=original_args,
-    )
-
-    # Explicit terminal signal from upstream.
-    if has_more_signal is False:
-        return PaginationAssessment(
-            state=None,
-            has_more=False,
-            retrieval_status=RETRIEVAL_STATUS_COMPLETE,
-            partial_reason=None,
-            warning=None,
-            page_number=page_number,
+    has_more_signal: bool | None
+    next_params: dict[str, Any] | None
+    if pagination_config is None:
+        # No configured strategy: use transport-agnostic discovery.
+        discovered = discover_pagination(
+            json_value=json_value,
+            original_args=original_args,
+            upstream_meta=upstream_meta,
+        )
+        has_more_signal = discovered.has_more
+        next_params = discovered.next_params
+        # Explicit terminal signal should always mark completion,
+        # even when no next params can be derived.
+        if has_more_signal is False:
+            return PaginationAssessment(
+                state=None,
+                has_more=False,
+                retrieval_status=RETRIEVAL_STATUS_COMPLETE,
+                partial_reason=None,
+                warning=None,
+                page_number=page_number,
+            )
+        if next_params is None:
+            if has_more_signal is True:
+                return PaginationAssessment(
+                    state=None,
+                    has_more=False,
+                    retrieval_status=RETRIEVAL_STATUS_PARTIAL,
+                    partial_reason=UPSTREAM_PARTIAL_REASON_NEXT_TOKEN_MISSING,
+                    warning=PAGINATION_WARNING_INCOMPLETE_RESULT_SET,
+                    page_number=page_number,
+                )
+            # Keep page-0 behavior conservative (no warnings or
+            # completeness claim when no signal exists at all), but on
+            # follow-up pages always emit an assessment so stale
+            # pagination state is cleared from merged responses.
+            if page_number == 0:
+                return None
+            return PaginationAssessment(
+                state=None,
+                has_more=False,
+                retrieval_status=RETRIEVAL_STATUS_COMPLETE,
+                partial_reason=None,
+                warning=None,
+                page_number=page_number,
+            )
+    else:
+        # MCP-configured strategy path: honor explicit config.
+        has_more_signal = _has_more_signal(
+            json_value,
+            pagination_config.has_more_response_path,
+        )
+        # Explicit terminal signal from configured upstream.
+        if has_more_signal is False:
+            return PaginationAssessment(
+                state=None,
+                has_more=False,
+                retrieval_status=RETRIEVAL_STATUS_COMPLETE,
+                partial_reason=None,
+                warning=None,
+                page_number=page_number,
+            )
+        next_params = _build_next_params(
+            strategy=pagination_config.strategy,
+            json_value=json_value,
+            pagination_config=pagination_config,
+            original_args=original_args,
         )
 
     if next_params is not None:
@@ -363,6 +418,9 @@ def assess_pagination(
     if has_more_signal is True:
         partial_reason = UPSTREAM_PARTIAL_REASON_NEXT_TOKEN_MISSING
 
+    if pagination_config is None:
+        return None
+
     return PaginationAssessment(
         state=None,
         has_more=False,
@@ -376,10 +434,11 @@ def assess_pagination(
 def extract_pagination_state(
     *,
     json_value: Any,
-    pagination_config: PaginationConfig,
+    pagination_config: PaginationConfig | None,
     original_args: dict[str, Any],
     upstream_prefix: str,
     tool_name: str,
+    upstream_meta: Any | None = None,
     page_number: int = 0,
 ) -> PaginationState | None:
     """Extract next-page state from an upstream response.
@@ -392,11 +451,13 @@ def extract_pagination_state(
     Args:
         json_value: The JSON content value from the upstream
             response envelope.
-        pagination_config: Per-upstream pagination settings.
+        pagination_config: Optional per-upstream pagination settings.
         original_args: Original tool call arguments (reserved
             keys already stripped).
         upstream_prefix: Upstream namespace prefix.
         tool_name: Unqualified upstream tool name.
+        upstream_meta: Optional upstream metadata payload for
+            additional discovery signals (e.g. HTTP headers).
         page_number: Zero-based page number of the current
             artifact (0 for the initial call).
 
@@ -404,11 +465,15 @@ def extract_pagination_state(
         A ``PaginationState`` with ``next_params`` populated,
         or ``None`` when a follow-up call cannot be issued.
     """
-    return assess_pagination(
+    assessment = assess_pagination(
         json_value=json_value,
         pagination_config=pagination_config,
         original_args=original_args,
         upstream_prefix=upstream_prefix,
         tool_name=tool_name,
+        upstream_meta=upstream_meta,
         page_number=page_number,
-    ).state
+    )
+    if assessment is None:
+        return None
+    return assessment.state

@@ -332,6 +332,24 @@ def test_offset_strategy_missing_page_size() -> None:
     assert state is None
 
 
+def test_offset_strategy_custom_param_names() -> None:
+    config = PaginationConfig(
+        strategy="offset",
+        offset_param_name="skip",
+        page_size_param_name="count",
+        has_more_response_path="$.has_more",
+    )
+    state = extract_pagination_state(
+        json_value={"items": [1, 2], "has_more": True},
+        pagination_config=config,
+        original_args={"skip": 20, "count": 20},
+        upstream_prefix="api",
+        tool_name="list_items",
+    )
+    assert state is not None
+    assert state.next_params == {"skip": 40}
+
+
 # -- extract_pagination_state: page_number strategy --
 
 
@@ -381,6 +399,23 @@ def test_page_number_strategy_no_more() -> None:
     assert state is None
 
 
+def test_page_number_strategy_custom_param_name() -> None:
+    config = PaginationConfig(
+        strategy="page_number",
+        page_param_name="page_number",
+        has_more_response_path="$.has_more",
+    )
+    state = extract_pagination_state(
+        json_value={"items": [7], "has_more": True},
+        pagination_config=config,
+        original_args={"page_number": 5},
+        upstream_prefix="api",
+        tool_name="list_users",
+    )
+    assert state is not None
+    assert state.next_params == {"page_number": 6}
+
+
 # -- extract_pagination_state: param_map strategy --
 
 
@@ -426,6 +461,23 @@ def test_param_map_strategy_missing_mapped_value_returns_none() -> None:
     }
     state = extract_pagination_state(
         json_value=json_value,
+        pagination_config=_param_map_config(),
+        original_args={},
+        upstream_prefix="api",
+        tool_name="list_events",
+    )
+    assert state is None
+
+
+def test_param_map_strategy_blank_mapped_value_returns_none() -> None:
+    state = extract_pagination_state(
+        json_value={
+            "has_more": True,
+            "next": {
+                "page_token": "tok_2",
+                "checkpoint": "   ",
+            },
+        },
         pagination_config=_param_map_config(),
         original_args={},
         upstream_prefix="api",
@@ -561,3 +613,168 @@ def test_assess_pagination_param_map_complete_on_terminal_signal() -> None:
     assert assessment.warning is None
     assert assessment.has_more is False
     assert assessment.state is None
+
+
+def test_assess_pagination_without_config_discovers_cursor_state() -> None:
+    assessment = assess_pagination(
+        json_value={
+            "result": {
+                "data": [{"id": 1}],
+                "paging": {
+                    "cursors": {"after": "CURSOR_2"},
+                    "next": "https://example.test/items?after=CURSOR_2",
+                },
+            }
+        },
+        pagination_config=None,
+        original_args={"limit": 100},
+        upstream_prefix="api",
+        tool_name="list_items",
+    )
+    assert assessment is not None
+    assert assessment.state is not None
+    assert assessment.state.next_params == {"after": "CURSOR_2"}
+    assert assessment.retrieval_status == "PARTIAL"
+
+
+def test_assess_pagination_without_config_discovers_relative_query_next() -> (
+    None
+):
+    assessment = assess_pagination(
+        json_value={"next": "?after=CURSOR_2&limit=100"},
+        pagination_config=None,
+        original_args={"after": "CURSOR_1", "limit": 100},
+        upstream_prefix="api",
+        tool_name="list_items",
+    )
+    assert assessment is not None
+    assert assessment.state is not None
+    assert assessment.state.next_params == {
+        "after": "CURSOR_2",
+        "limit": 100,
+    }
+    assert assessment.retrieval_status == "PARTIAL"
+
+
+def test_assess_pagination_without_config_no_evidence_returns_none() -> None:
+    assessment = assess_pagination(
+        json_value={"items": [{"id": 1}]},
+        pagination_config=None,
+        original_args={"q": "x"},
+        upstream_prefix="api",
+        tool_name="list_items",
+    )
+    assert assessment is None
+
+
+def test_assess_pagination_without_config_first_page_missing_token() -> None:
+    assessment = assess_pagination(
+        json_value={"has_more": True, "items": [{"id": 1}]},
+        pagination_config=None,
+        original_args={"q": "x"},
+        upstream_prefix="api",
+        tool_name="list_items",
+    )
+    assert assessment is not None
+    assert assessment.state is None
+    assert assessment.has_more is False
+    assert assessment.retrieval_status == "PARTIAL"
+    assert assessment.partial_reason == "NEXT_TOKEN_MISSING"
+    assert assessment.warning == "INCOMPLETE_RESULT_SET"
+
+
+def test_assess_pagination_without_config_followup_no_signal_marks_complete() -> (
+    None
+):
+    assessment = assess_pagination(
+        json_value={"items": [{"id": 2}]},
+        pagination_config=None,
+        original_args={"page": 2, "limit": 100},
+        upstream_prefix="api",
+        tool_name="list_items",
+        page_number=1,
+    )
+    assert assessment is not None
+    assert assessment.state is None
+    assert assessment.has_more is False
+    assert assessment.retrieval_status == "COMPLETE"
+    assert assessment.partial_reason is None
+    assert assessment.warning is None
+
+
+def test_assess_pagination_without_config_respects_terminal_signal() -> None:
+    assessment = assess_pagination(
+        json_value={
+            "pageInfo": {
+                "hasNextPage": False,
+                "endCursor": "CURSOR_LAST_PAGE",
+            }
+        },
+        pagination_config=None,
+        original_args={"after": "CURSOR_PREV"},
+        upstream_prefix="api",
+        tool_name="list_items",
+    )
+    assert assessment is not None
+    assert assessment.state is None
+    assert assessment.has_more is False
+    assert assessment.retrieval_status == "COMPLETE"
+    assert assessment.partial_reason is None
+    assert assessment.warning is None
+
+
+def test_assess_pagination_without_config_empty_next_object_marks_complete() -> (
+    None
+):
+    assessment = assess_pagination(
+        json_value={"next": {}},
+        pagination_config=None,
+        original_args={"page": 2, "limit": 100},
+        upstream_prefix="api",
+        tool_name="list_items",
+    )
+    assert assessment is not None
+    assert assessment.state is None
+    assert assessment.has_more is False
+    assert assessment.retrieval_status == "COMPLETE"
+    assert assessment.partial_reason is None
+    assert assessment.warning is None
+
+
+def test_assess_pagination_without_config_terminal_signal_without_cursor() -> (
+    None
+):
+    assessment = assess_pagination(
+        json_value={"has_more": False, "items": [{"id": 1}]},
+        pagination_config=None,
+        original_args={"page": 2, "limit": 100},
+        upstream_prefix="api",
+        tool_name="list_items",
+    )
+    assert assessment is not None
+    assert assessment.state is None
+    assert assessment.has_more is False
+    assert assessment.retrieval_status == "COMPLETE"
+    assert assessment.partial_reason is None
+    assert assessment.warning is None
+
+
+def test_assess_pagination_with_config_skips_discovery(monkeypatch) -> None:
+    def _fail_discovery(**_kwargs: object) -> None:
+        raise AssertionError("discovery should not run when config exists")
+
+    monkeypatch.setattr(
+        "sift_mcp.pagination.extract.discover_pagination",
+        _fail_discovery,
+    )
+
+    assessment = assess_pagination(
+        json_value={"paging": {"next": None}},
+        pagination_config=_cursor_config(),
+        original_args={"limit": 100},
+        upstream_prefix="meta-ads",
+        tool_name="get_ads",
+    )
+    assert assessment is not None
+    assert assessment.retrieval_status == "COMPLETE"
+    assert assessment.has_more is False

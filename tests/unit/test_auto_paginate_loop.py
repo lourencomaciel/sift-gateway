@@ -5,7 +5,7 @@ from types import SimpleNamespace
 from typing import Any
 
 from sift_mcp.config.settings import PaginationConfig, UpstreamConfig
-from sift_mcp.envelope.model import Envelope, JsonContentPart
+from sift_mcp.envelope.model import Envelope, JsonContentPart, TextContentPart
 from sift_mcp.mcp.handlers.mirrored_tool import (
     _auto_paginate_loop,
     _inject_pagination_state,
@@ -43,6 +43,19 @@ def _mirrored_with_cursor_pagination() -> Any:
             cursor_param_name="after",
             has_more_response_path="$.paging.next",
         ),
+    )
+    return SimpleNamespace(
+        prefix="demo",
+        original_name="echo",
+        upstream=SimpleNamespace(config=cfg),
+    )
+
+
+def _mirrored_without_pagination_config() -> Any:
+    cfg = UpstreamConfig(
+        prefix="demo",
+        transport="stdio",
+        command="/usr/bin/printf",
     )
     return SimpleNamespace(
         prefix="demo",
@@ -114,6 +127,27 @@ class _DummyCtx:
                 content=[
                     JsonContentPart(value=upstream_result["structuredContent"])
                 ],
+            ),
+            [],
+        )
+
+
+class _DummyNonJsonCtx(_DummyCtx):
+    """Dummy context that returns text-only non-JSON follow-up pages."""
+
+    def _envelope_from_upstream_result(
+        self,
+        *,
+        mirrored: Any,
+        upstream_result: dict[str, Any],
+    ) -> tuple[Envelope, list[Any]]:
+        return (
+            Envelope(
+                upstream_instance_id="inst_demo",
+                upstream_prefix=mirrored.prefix,
+                tool=mirrored.original_name,
+                status="ok",
+                content=[TextContentPart(text="no-json-followup")],
             ),
             [],
         )
@@ -198,3 +232,132 @@ def test_auto_paginate_does_not_trim_initial_page_when_over_cap() -> None:
     assert result.total_records == 5000
     assert result.stopped_reason == "max_records"
     assert ctx.calls == []
+
+
+def test_auto_paginate_discovery_terminal_signal_clears_state() -> None:
+    mirrored = _mirrored_without_pagination_config()
+    forwarded_args = {"page": 1, "limit": 2}
+    first_envelope, first_assessment = _initial_page(
+        mirrored,
+        forwarded_args=forwarded_args,
+        page_value={
+            "has_more": True,
+            "items": [{"id": 1}, {"id": 2}],
+        },
+    )
+    assert first_assessment.state is not None
+    assert first_assessment.state.next_params == {"page": 2}
+
+    ctx = _DummyCtx(
+        [
+            {"has_more": False, "items": [{"id": 3}]},
+        ]
+    )
+
+    result = asyncio.run(
+        _auto_paginate_loop(
+            ctx,
+            mirrored,
+            first_envelope=first_envelope,
+            first_assessment=first_assessment,
+            forwarded_args=forwarded_args,
+            max_pages=10,
+            max_records=1000,
+            timeout=30.0,
+        )
+    )
+
+    merged = _extract_json_content(result.envelope)
+    assert isinstance(merged, dict)
+    assert isinstance(merged.get("items"), list)
+    assert len(merged["items"]) == 3
+    assert ctx.calls == [{"page": 2, "limit": 2}]
+    assert result.assessment.has_more is False
+    assert result.assessment.state is None
+    assert result.stopped_reason == "complete"
+    assert "_gateway_pagination" not in result.envelope.meta
+
+
+def test_auto_paginate_discovery_no_signal_followup_clears_state() -> None:
+    mirrored = _mirrored_without_pagination_config()
+    forwarded_args = {"page": 1, "limit": 2}
+    first_envelope, first_assessment = _initial_page(
+        mirrored,
+        forwarded_args=forwarded_args,
+        page_value={
+            "has_more": True,
+            "items": [{"id": 1}, {"id": 2}],
+        },
+    )
+    assert first_assessment.state is not None
+    assert first_assessment.state.next_params == {"page": 2}
+
+    ctx = _DummyCtx(
+        [
+            {"items": [{"id": 3}]},
+        ]
+    )
+
+    result = asyncio.run(
+        _auto_paginate_loop(
+            ctx,
+            mirrored,
+            first_envelope=first_envelope,
+            first_assessment=first_assessment,
+            forwarded_args=forwarded_args,
+            max_pages=10,
+            max_records=1000,
+            timeout=30.0,
+        )
+    )
+
+    merged = _extract_json_content(result.envelope)
+    assert isinstance(merged, dict)
+    assert isinstance(merged.get("items"), list)
+    assert len(merged["items"]) == 3
+    assert ctx.calls == [{"page": 2, "limit": 2}]
+    assert result.assessment.has_more is False
+    assert result.assessment.state is None
+    assert result.stopped_reason == "complete"
+    assert "_gateway_pagination" not in result.envelope.meta
+
+
+def test_auto_paginate_discovery_non_json_followup_clears_state() -> None:
+    mirrored = _mirrored_without_pagination_config()
+    forwarded_args = {"page": 1, "limit": 2}
+    first_envelope, first_assessment = _initial_page(
+        mirrored,
+        forwarded_args=forwarded_args,
+        page_value={
+            "has_more": True,
+            "items": [{"id": 1}, {"id": 2}],
+        },
+    )
+    assert first_assessment.state is not None
+    assert first_assessment.state.next_params == {"page": 2}
+
+    ctx = _DummyNonJsonCtx([{"ignored": True}])
+    result = asyncio.run(
+        _auto_paginate_loop(
+            ctx,
+            mirrored,
+            first_envelope=first_envelope,
+            first_assessment=first_assessment,
+            forwarded_args=forwarded_args,
+            max_pages=10,
+            max_records=1000,
+            timeout=30.0,
+        )
+    )
+
+    merged = _extract_json_content(result.envelope)
+    assert isinstance(merged, dict)
+    assert isinstance(merged.get("items"), list)
+    assert len(merged["items"]) == 2
+    assert ctx.calls == [{"page": 2, "limit": 2}]
+    assert result.assessment.has_more is False
+    assert result.assessment.state is None
+    assert result.assessment.retrieval_status == "PARTIAL"
+    assert result.assessment.partial_reason == "SIGNAL_INCONCLUSIVE"
+    assert result.stopped_reason == "binary_content"
+    assert "_gateway_pagination" not in result.envelope.meta

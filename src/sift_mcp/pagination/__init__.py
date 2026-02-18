@@ -10,6 +10,10 @@ from sift_mcp.pagination.contract import (
     build_retrieval_pagination_meta,
     build_upstream_pagination_meta,
 )
+from sift_mcp.pagination.discovery import (
+    PaginationDiscovery,
+    discover_pagination,
+)
 from sift_mcp.pagination.extract import (
     PaginationAssessment,
     PaginationState,
@@ -25,9 +29,11 @@ __all__ = [
     "UPSTREAM_PARTIAL_REASON_NEXT_TOKEN_MISSING",
     "UPSTREAM_PARTIAL_REASON_SIGNAL_INCONCLUSIVE",
     "PaginationAssessment",
+    "PaginationDiscovery",
     "PaginationState",
     "assess_pagination",
     "build_retrieval_pagination_meta",
     "build_upstream_pagination_meta",
+    "discover_pagination",
     "extract_pagination_state",
 ]

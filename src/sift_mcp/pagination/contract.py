@@ -51,6 +51,97 @@ UpstreamPartialReason = Literal[
 RetrievalPartialReason = Literal["CURSOR_AVAILABLE"]
 
 
+def _extract_cursor_info(
+    next_params: dict[str, Any] | None,
+) -> tuple[str | None, Any]:
+    """Return a single cursor-like key/value from next params."""
+    if not isinstance(next_params, dict) or len(next_params) != 1:
+        return None, None
+    only_item = next(iter(next_params.items()))
+    if not isinstance(only_item[0], str) or not only_item[0]:
+        return None, None
+    return only_item[0], only_item[1]
+
+
+def _build_next_action(artifact_id: str) -> dict[str, Any]:
+    """Build canonical artifact next_page tool action."""
+    return {
+        "tool": NEXT_PAGE_TOOL_NAME,
+        "arguments": {
+            "action": "next_page",
+            "artifact_id": artifact_id,
+        },
+    }
+
+
+def _maybe_limit_hint(original_args: dict[str, Any] | None) -> str | None:
+    """Return limit hint when request included positive integer limit."""
+    limit_value = (
+        original_args.get("limit")
+        if isinstance(original_args, dict)
+        else None
+    )
+    if isinstance(limit_value, int) and limit_value > 0:
+        return f"request used limit={limit_value}, so this page may be truncated"
+    return None
+
+
+def _build_upstream_hint(
+    *,
+    artifact_id: str,
+    retrieval_status: RetrievalStatus,
+    has_next_page: bool,
+    cursor_param: str | None,
+    cursor_value: Any,
+    original_args: dict[str, Any] | None,
+) -> str:
+    """Build a user-facing hint consistent with pagination state."""
+    if has_next_page:
+        hint_parts: list[str] = ["More results are available"]
+        limit_hint = _maybe_limit_hint(original_args)
+        if limit_hint is not None:
+            hint_parts.append(limit_hint)
+        if cursor_param is not None:
+            hint_parts.append(f'next cursor is {cursor_param}="{cursor_value}"')
+            hint_parts.append(
+                "continue with "
+                f'artifact(action="next_page", artifact_id="{artifact_id}") '
+                "or re-call the mirrored tool with that cursor"
+            )
+        else:
+            hint_parts.append(
+                "call "
+                f'artifact(action="next_page", artifact_id="{artifact_id}") '
+                "to fetch the next page"
+            )
+        return ". ".join(hint_parts) + "."
+
+    if retrieval_status == RETRIEVAL_STATUS_PARTIAL:
+        return (
+            "Result set may be incomplete. More pages might exist, "
+            "but a next-page action could not be generated."
+        )
+    return "No additional pages are available."
+
+
+def _warning_items(
+    *,
+    warning: str | None,
+    extra_warnings: list[dict[str, Any]] | None,
+) -> list[dict[str, Any]]:
+    """Build warnings list preserving backward-compatible primary warning."""
+    warning_items: list[dict[str, Any]] = []
+    if isinstance(warning, str) and warning:
+        warning_items.append({"code": warning})
+    if isinstance(extra_warnings, list):
+        warning_items.extend(
+            warning_item
+            for warning_item in extra_warnings
+            if isinstance(warning_item, dict)
+        )
+    return warning_items
+
+
 def build_upstream_pagination_meta(
     *,
     artifact_id: str,
@@ -88,57 +179,16 @@ def build_upstream_pagination_meta(
         Pagination metadata dict with canonical and compatibility
         fields.
     """
-    next_action: dict[str, Any] | None = None
-    hint: str
-    cursor_param: str | None = None
-    cursor_value: Any = None
-    if isinstance(next_params, dict) and len(next_params) == 1:
-        only_item = next(iter(next_params.items()))
-        if isinstance(only_item[0], str) and only_item[0]:
-            cursor_param = only_item[0]
-            cursor_value = only_item[1]
-
-    if has_next_page:
-        next_action = {
-            "tool": NEXT_PAGE_TOOL_NAME,
-            "arguments": {
-                "action": "next_page",
-                "artifact_id": artifact_id,
-            },
-        }
-        hint_parts: list[str] = ["More results are available"]
-        limit_value = (
-            original_args.get("limit")
-            if isinstance(original_args, dict)
-            else None
-        )
-        if isinstance(limit_value, int) and limit_value > 0:
-            hint_parts.append(
-                f"request used limit={limit_value}, so this page may be truncated"
-            )
-        if cursor_param is not None:
-            hint_parts.append(
-                f'next cursor is {cursor_param}="{cursor_value}"'
-            )
-            hint_parts.append(
-                "continue with "
-                f'artifact(action="next_page", artifact_id="{artifact_id}") '
-                "or re-call the mirrored tool with that cursor"
-            )
-        else:
-            hint_parts.append(
-                "call "
-                f'artifact(action="next_page", artifact_id="{artifact_id}") '
-                "to fetch the next page"
-            )
-        hint = ". ".join(hint_parts) + "."
-    elif retrieval_status == RETRIEVAL_STATUS_PARTIAL:
-        hint = (
-            "Result set may be incomplete. More pages might exist, "
-            "but a next-page action could not be generated."
-        )
-    else:
-        hint = "No additional pages are available."
+    cursor_param, cursor_value = _extract_cursor_info(next_params)
+    next_action = _build_next_action(artifact_id) if has_next_page else None
+    hint = _build_upstream_hint(
+        artifact_id=artifact_id,
+        retrieval_status=retrieval_status,
+        has_next_page=has_next_page,
+        cursor_param=cursor_param,
+        cursor_value=cursor_value,
+        original_args=original_args,
+    )
 
     meta: dict[str, Any] = {
         "layer": PAGINATION_LAYER_UPSTREAM,
@@ -158,15 +208,10 @@ def build_upstream_pagination_meta(
             meta["next_cursor_param"] = cursor_param
             meta["next_cursor"] = cursor_value
 
-    warnings_list: list[dict[str, Any]] = []
-    if isinstance(warning, str) and warning:
-        warnings_list.append({"code": warning})
-    if isinstance(extra_warnings, list):
-        warnings_list.extend(
-            warning_item
-            for warning_item in extra_warnings
-            if isinstance(warning_item, dict)
-        )
+    warnings_list = _warning_items(
+        warning=warning,
+        extra_warnings=extra_warnings,
+    )
     if warnings_list:
         meta["warnings"] = warnings_list
     return meta
