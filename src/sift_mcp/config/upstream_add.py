@@ -214,6 +214,55 @@ def _validate_secret_shapes(name: str, entry: dict[str, Any]) -> None:
         raise ValueError(msg)
 
 
+def _resolve_data_dir(data_dir: Path | None) -> Path:
+    """Resolve effective data directory from argument/env/default."""
+    if data_dir is not None:
+        return data_dir
+    env_dir = os.environ.get("SIFT_MCP_DATA_DIR")
+    return Path(env_dir if env_dir else DEFAULT_DATA_DIR).resolve()
+
+
+def _normalize_servers_input(
+    servers: dict[str, dict[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    """Accept wrapped snippets and normalize to bare server map."""
+    is_wrapped = "mcpServers" in servers or (
+        isinstance(servers.get("mcp"), dict) and "servers" in servers["mcp"]
+    )
+    if is_wrapped:
+        return extract_mcp_servers(servers)
+    return servers
+
+
+def _validate_servers_for_add(servers: dict[str, dict[str, Any]]) -> None:
+    """Validate server entries before any write side effects."""
+    for name, entry in servers.items():
+        if not isinstance(entry, dict):
+            msg = f"server '{name}' config must be a JSON object"
+            raise ValueError(msg)
+        _validate_prefix(name)
+        _infer_transport(name, entry)
+        _validate_transport_values(name, entry)
+        _validate_gateway_block(name, entry)
+        _validate_secret_shapes(name, entry)
+
+
+def _partition_added_and_skipped(
+    *,
+    servers: dict[str, dict[str, Any]],
+    existing_servers: dict[str, Any],
+) -> tuple[list[str], list[str]]:
+    """Partition requested servers into addable and already-existing."""
+    added: list[str] = []
+    skipped: list[str] = []
+    for name in servers:
+        if name in existing_servers:
+            skipped.append(name)
+            continue
+        added.append(name)
+    return added, skipped
+
+
 def run_upstream_add(
     servers: dict[str, dict[str, Any]],
     *,
@@ -243,33 +292,14 @@ def run_upstream_add(
             ``command``/``url``, has both, or has an invalid
             name).
     """
-    if data_dir is None:
-        env_dir = os.environ.get("SIFT_MCP_DATA_DIR")
-        data_dir = Path(env_dir if env_dir else DEFAULT_DATA_DIR).resolve()
-
-    # Accept wrapped formats: {"mcpServers": {...}} or
-    # {"mcp": {"servers": {...}}}. Falls back to treating the
-    # input as a bare server map.
-    is_wrapped = "mcpServers" in servers or (
-        isinstance(servers.get("mcp"), dict) and "servers" in servers["mcp"]
-    )
-    if is_wrapped:
-        servers = extract_mcp_servers(servers)
+    data_dir = _resolve_data_dir(data_dir)
+    servers = _normalize_servers_input(servers)
 
     if not servers:
         msg = "no servers provided in snippet"
         raise ValueError(msg)
 
-    # Validate all entries before making any changes
-    for name, entry in servers.items():
-        if not isinstance(entry, dict):
-            msg = f"server '{name}' config must be a JSON object"
-            raise ValueError(msg)
-        _validate_prefix(name)
-        _infer_transport(name, entry)
-        _validate_transport_values(name, entry)
-        _validate_gateway_block(name, entry)
-        _validate_secret_shapes(name, entry)
+    _validate_servers_for_add(servers)
 
     # Compute config path; only create dirs when writing
     config_path = data_dir / STATE_SUBDIR / CONFIG_FILENAME
@@ -279,15 +309,10 @@ def run_upstream_add(
     if not isinstance(existing_servers, dict):
         existing_servers = {}
 
-    # Partition into addable vs already-existing
-    added: list[str] = []
-    skipped: list[str] = []
-
-    for name in servers:
-        if name in existing_servers:
-            skipped.append(name)
-            continue
-        added.append(name)
+    added, skipped = _partition_added_and_skipped(
+        servers=servers,
+        existing_servers=existing_servers,
+    )
 
     if not dry_run:
         _ensure_gateway_config_dir(data_dir)
