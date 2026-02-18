@@ -328,7 +328,7 @@ class TestRunUpstreamAdd:
             "gh": {
                 "command": "npx",
                 "args": [],
-                "_gateway": {"strict_schema_reuse": False},
+                "_gateway": {"passthrough_allowed": False},
             },
         }
 

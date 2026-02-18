@@ -72,7 +72,7 @@ class LogEvents:
     """Standard log event name constants for the gateway.
 
     Groups event names by subsystem (startup, request, artifact,
-    mapping, cursor, pruning, advisory lock, quota) to ensure
+    mapping, cursor, pruning, quota) to ensure
     consistent structured log keys across all modules.
     """
 
@@ -85,8 +85,6 @@ class LogEvents:
     # Request processing
     REQUEST_RECEIVED = "gateway.request.received"
     REQUEST_KEY_COMPUTED = "gateway.request.key_computed"
-    REUSE_HIT = "gateway.reuse.hit"
-    REUSE_MISS = "gateway.reuse.miss"
 
     # Artifact creation
     ARTIFACT_CREATED = "gateway.artifact.created"
@@ -140,10 +138,6 @@ class LogEvents:
     AUTO_PAGINATION_BINARY_CONTENT_STOP = (
         "gateway.auto_pagination.binary_content_stop"
     )
-
-    # Advisory lock
-    ADVISORY_LOCK_ACQUIRED = "gateway.lock.acquired"
-    ADVISORY_LOCK_TIMEOUT = "gateway.lock.timeout"
 
     # Quota
     QUOTA_CHECK = "gateway.quota.check"

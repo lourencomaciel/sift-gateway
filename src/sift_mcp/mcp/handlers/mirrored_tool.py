@@ -1,9 +1,9 @@
 """Handle invocations of mirrored upstream tools.
 
 Orchestrate the full lifecycle for a proxied tool call: validate
-gateway context, check the deduplication cache, enforce storage
-quotas, call the upstream, persist the artifact envelope, and
-trigger mapping.  Exports ``handle_mirrored_tool``.
+gateway context, enforce storage quotas, call the upstream,
+persist the artifact envelope, and trigger mapping.  Exports
+``handle_mirrored_tool``.
 """
 
 from __future__ import annotations
@@ -19,11 +19,6 @@ from typing import TYPE_CHECKING, Any
 from sift_mcp.artifacts.create import (
     CreateArtifactInput,
     persist_artifact,
-)
-from sift_mcp.cache.reuse import (
-    ReuseResult,
-    acquire_advisory_lock_async,
-    release_advisory_lock,
 )
 from sift_mcp.codegen.ast_guard import (
     ALLOWED_STDLIB_IMPORTS,
@@ -64,13 +59,11 @@ from sift_mcp.pagination.auto import (
 from sift_mcp.pagination.contract import (
     PAGINATION_WARNING_INCOMPLETE_RESULT_SET,
     RETRIEVAL_STATUS_PARTIAL,
-    UPSTREAM_PARTIAL_REASON_MORE_PAGES_AVAILABLE,
     UPSTREAM_PARTIAL_REASON_SIGNAL_INCONCLUSIVE,
     build_upstream_pagination_meta,
 )
 from sift_mcp.pagination.extract import (
     PaginationAssessment,
-    PaginationState,
     assess_pagination,
 )
 from sift_mcp.request_identity import compute_request_identity
@@ -78,7 +71,6 @@ from sift_mcp.schema_compact import (
     SCHEMA_LEGEND,
     compact_schema_payload,
 )
-from sift_mcp.sessions import upsert_artifact_ref, upsert_session
 from sift_mcp.tools.artifact_describe import (
     FETCH_DESCRIBE_SQL,
     FETCH_SCHEMA_ROOTS_SQL,
@@ -115,28 +107,6 @@ def _extract_session_id(context: dict[str, Any] | None) -> str | None:
     if isinstance(session_id, str) and session_id:
         return session_id
     return None
-
-
-def _extract_allow_reuse(
-    context: dict[str, Any] | None,
-) -> bool:
-    """Read the ``allow_reuse`` flag from the gateway context.
-
-    Args:
-        context: Gateway context dict, or ``None``.
-
-    Returns:
-        ``True`` when the caller opts into dedup reuse,
-        ``False`` otherwise (the default).
-    """
-    if context is None:
-        return False
-    raw = context.get("allow_reuse", False)
-    if isinstance(raw, bool):
-        return raw
-    if isinstance(raw, str):
-        return raw.lower() in ("true", "1", "yes")
-    return bool(raw)
 
 
 def _json_size_bytes(payload: Any) -> int:
@@ -220,24 +190,6 @@ _SCHEMA_FIELD_COLUMNS = [
 ]
 
 _logger = get_logger(component="mcp.handlers")
-
-_CACHED_PAGINATION_COLUMNS = [
-    "chain_seq",
-    "envelope",
-    "payload_hash_full",
-    "envelope_canonical_encoding",
-    "envelope_canonical_bytes",
-]
-
-_FETCH_CACHED_PAGINATION_SQL = """
-SELECT a.chain_seq, pb.envelope, a.payload_hash_full,
-       pb.envelope_canonical_encoding,
-       pb.envelope_canonical_bytes
-FROM artifacts a
-JOIN payload_blobs pb ON pb.workspace_id = a.workspace_id
-    AND pb.payload_hash_full = a.payload_hash_full
-WHERE a.workspace_id = %s AND a.artifact_id = %s
-"""
 
 
 def _retain_primary_schema_if_unique(
@@ -605,142 +557,6 @@ def _pagination_response_meta(
     return base
 
 
-def _cached_pagination_meta_for_reuse(
-    connection: Any,
-    *,
-    artifact_id: str,
-    mirrored: MirroredTool,
-    forwarded_args: dict[str, Any],
-) -> dict[str, Any] | None:
-    """Rebuild pagination metadata for a reused cached artifact.
-
-    Args:
-        connection: Active database connection.
-        artifact_id: Reused artifact ID.
-        mirrored: Mirrored tool descriptor.
-        forwarded_args: Forwarded upstream arguments for this request.
-
-    Returns:
-        Pagination metadata dict, or ``None`` when pagination is not
-        configured or cannot be reconstructed.
-    """
-    pagination_config = mirrored.upstream.config.pagination
-    if pagination_config is None:
-        return None
-
-    row = row_to_dict(
-        connection.execute(
-            _FETCH_CACHED_PAGINATION_SQL,
-            (WORKSPACE_ID, artifact_id),
-        ).fetchone(),
-        _CACHED_PAGINATION_COLUMNS,
-    )
-    if row is None:
-        return None
-
-    page_number_raw = row.get("chain_seq")
-    page_number = (
-        page_number_raw
-        if isinstance(page_number_raw, int) and page_number_raw >= 0
-        else 0
-    )
-
-    def _load_envelope_dict() -> dict[str, Any] | None:
-        envelope_raw = row.get("envelope")
-        envelope_dict: dict[str, Any] | None = None
-        if isinstance(envelope_raw, dict):
-            envelope_dict = envelope_raw
-        elif isinstance(envelope_raw, str):
-            try:
-                decoded = json.loads(envelope_raw)
-            except (json.JSONDecodeError, ValueError):
-                return None
-            if isinstance(decoded, dict):
-                envelope_dict = decoded
-        if envelope_dict is not None:
-            return envelope_dict
-
-        canonical_bytes_raw = row.get("envelope_canonical_bytes")
-        if canonical_bytes_raw is None:
-            return None
-        from sift_mcp.storage.payload_store import reconstruct_envelope
-
-        try:
-            return reconstruct_envelope(
-                compressed_bytes=bytes(canonical_bytes_raw),
-                encoding=str(row.get("envelope_canonical_encoding", "none")),
-                expected_hash=str(row.get("payload_hash_full", "")),
-            )
-        except ValueError:
-            return None
-
-    envelope_dict = _load_envelope_dict()
-    if envelope_dict is None:
-        return None
-
-    meta = envelope_dict.get("meta")
-    if isinstance(meta, dict):
-        pagination_raw = meta.get("_gateway_pagination")
-        if isinstance(pagination_raw, dict):
-            try:
-                stored_state = PaginationState.from_dict(pagination_raw)
-            except (TypeError, ValueError, KeyError):
-                stored_state = None
-            if stored_state is not None:
-                assessment = PaginationAssessment(
-                    state=stored_state,
-                    has_more=True,
-                    retrieval_status=RETRIEVAL_STATUS_PARTIAL,
-                    partial_reason=UPSTREAM_PARTIAL_REASON_MORE_PAGES_AVAILABLE,
-                    warning=PAGINATION_WARNING_INCOMPLETE_RESULT_SET,
-                    page_number=stored_state.page_number,
-                )
-                return _pagination_response_meta(assessment, artifact_id)
-
-    if envelope_dict.get("status") == "error":
-        assessment = PaginationAssessment(
-            state=None,
-            has_more=False,
-            retrieval_status=RETRIEVAL_STATUS_PARTIAL,
-            partial_reason=UPSTREAM_PARTIAL_REASON_SIGNAL_INCONCLUSIVE,
-            warning=PAGINATION_WARNING_INCOMPLETE_RESULT_SET,
-            page_number=page_number,
-        )
-        return _pagination_response_meta(assessment, artifact_id)
-
-    json_value = None
-    content = envelope_dict.get("content")
-    if isinstance(content, list):
-        for part in content:
-            if (
-                isinstance(part, dict)
-                and part.get("type") == "json"
-                and "value" in part
-            ):
-                json_value = part["value"]
-                break
-    if json_value is None:
-        assessment = PaginationAssessment(
-            state=None,
-            has_more=False,
-            retrieval_status=RETRIEVAL_STATUS_PARTIAL,
-            partial_reason=UPSTREAM_PARTIAL_REASON_SIGNAL_INCONCLUSIVE,
-            warning=PAGINATION_WARNING_INCOMPLETE_RESULT_SET,
-            page_number=page_number,
-        )
-        return _pagination_response_meta(assessment, artifact_id)
-
-    assessment = assess_pagination(
-        json_value=json_value,
-        pagination_config=pagination_config,
-        original_args=forwarded_args,
-        upstream_prefix=mirrored.prefix,
-        tool_name=mirrored.original_name,
-        page_number=page_number,
-    )
-    return _pagination_response_meta(assessment, artifact_id)
-
-
 async def _persist_async(
     ctx: GatewayServer,
     input_data: CreateArtifactInput,
@@ -1067,9 +883,8 @@ async def handle_mirrored_tool(
     """Handle a mirrored upstream tool invocation.
 
     Orchestrates the full lifecycle: validate context, check
-    the deduplication cache, enforce storage quotas, call the
-    upstream, persist the artifact envelope, and trigger
-    mapping.
+    storage quotas, call the upstream, persist the artifact
+    envelope, and trigger mapping.
 
     Args:
         ctx: Gateway server with DB pool, blob store, config,
@@ -1081,7 +896,7 @@ async def handle_mirrored_tool(
 
     Returns:
         A gateway tool result dict with ``artifact_id`` and
-        cache metadata, or a gateway error dict on failure.
+        request metadata, or a gateway error dict on failure.
     """
     # Pre-flight health gate: refuse artifact creation when
     # gateway is unhealthy. Probe before refusing -- the failure
@@ -1108,8 +923,6 @@ async def handle_mirrored_tool(
             "INVALID_ARGUMENT",
             "missing _gateway_context.session_id",
         )
-
-    allow_reuse = _extract_allow_reuse(context)
     parent_artifact_id = arguments.get("_gateway_parent_artifact_id")
     if parent_artifact_id is not None and not isinstance(
         parent_artifact_id, str
@@ -1178,146 +991,17 @@ async def handle_mirrored_tool(
             envelope=envelope,
             parent_artifact_id=parent_artifact_id,
             chain_seq=chain_seq,
-            allow_reuse=allow_reuse,
         )
 
-    reuse = ReuseResult(reused=False)
-    cache_reason = "reuse_disabled" if not allow_reuse else "cache_miss"
+    cache_reason = "fresh"
     pagination_assessment: PaginationAssessment | None = None
     if ctx.db_pool is None:
         return gateway_error(
             "NOT_IMPLEMENTED",
             "schema-first responses require database persistence",
         )
-    # Phase 1: Cache check in a short-lived connection.
-    # The advisory lock is transaction-scoped and released when this
-    # connection closes, so there is a small window for duplicate
-    # upstream calls.  This is an acceptable trade-off: pool starvation
-    # from holding a connection during a 30 s upstream call is far worse
-    # than an occasional redundant call (persist handles the race via
-    # unique artifact IDs).
-    if allow_reuse:
-        try:
-            with ctx.db_pool.connection() as connection:
-                acquired = await acquire_advisory_lock_async(
-                    connection,
-                    request_key=identity.request_key,
-                    timeout_ms=ctx.config.advisory_lock_timeout_ms,
-                    metrics=ctx.metrics,
-                )
-                if not acquired:
-                    return gateway_error(
-                        "RESOURCE_BUSY",
-                        "advisory lock acquisition timed out",
-                        details={
-                            "timeout_ms": (ctx.config.advisory_lock_timeout_ms),
-                        },
-                    )
-                try:
-                    reuse = ctx._check_reuse_on_connection(
-                        connection,
-                        request_key=identity.request_key,
-                        expected_schema_hash=mirrored.upstream_tool.schema_hash,
-                        strict_schema_reuse=mirrored.upstream.config.strict_schema_reuse,
-                    )
-                    if reuse.reused and reuse.artifact_id is not None:
-                        ref_attached = False
-                        try:
-                            upsert_session(connection, session_id)
-                            upsert_artifact_ref(
-                                connection,
-                                session_id,
-                                reuse.artifact_id,
-                            )
-                            connection.commit()
-                            ref_attached = True
-                        except _DB_CONNECTIVITY_ERRORS:
-                            raise
-                        except Exception:
-                            get_logger(component="mcp.handlers").warning(
-                                "artifact_ref upsert on cache hit failed",
-                                exc_info=True,
-                            )
-                            cache_reason = "artifact_ref_attach_failed"
-                        if ref_attached:
-                            desc, hint = _fetch_inline_describe(
-                                connection,
-                                reuse.artifact_id,
-                                code_query_packages=code_query_packages,
-                            )
-                            if _describe_has_ready_schema(desc):
-                                ctx._increment_metric("cache_hits")
-                                cache_reason = (
-                                    reuse.reason or "request_key_match"
-                                )
-                                (
-                                    mapping_payload,
-                                    schema_payload,
-                                    schema_legend,
-                                ) = _schema_payload_from_describe(desc)
-                                pagination_meta = None
-                                try:
-                                    pagination_meta = (
-                                        _cached_pagination_meta_for_reuse(
-                                            connection,
-                                            artifact_id=reuse.artifact_id,
-                                            mirrored=mirrored,
-                                            forwarded_args=forwarded_args,
-                                        )
-                                    )
-                                except Exception:
-                                    get_logger(
-                                        component="mcp.handlers"
-                                    ).warning(
-                                        "cached pagination rebuild failed "
-                                        "(best-effort)",
-                                        exc_info=True,
-                                    )
-                                return gateway_tool_result(
-                                    artifact_id=reuse.artifact_id,
-                                    cache_meta={
-                                        "reused": True,
-                                        "reason": cache_reason,
-                                        "request_key": identity.request_key,
-                                        "artifact_id_origin": "cache",
-                                        "allow_reuse": True,
-                                    },
-                                    mapping=mapping_payload,
-                                    schemas=schema_payload,
-                                    schema_legend=schema_legend,
-                                    usage_hint=hint,
-                                    pagination=pagination_meta,
-                                )
-                            cache_reason = "cache_schema_unavailable"
-                        ctx._increment_metric("cache_misses")
-                        reuse = ReuseResult(
-                            reused=False,
-                            reason=cache_reason,
-                        )
-                    else:
-                        if reuse.reason is not None:
-                            cache_reason = reuse.reason
-                        ctx._increment_metric("cache_misses")
-                finally:
-                    release_advisory_lock(
-                        connection,
-                        request_key=identity.request_key,
-                    )
-        except _DB_CONNECTIVITY_ERRORS:
-            ctx.db_ok = False
-            return gateway_error(
-                "INTERNAL",
-                "cache check failed; gateway marked unhealthy",
-            )
-        except Exception:
-            get_logger(component="mcp.handlers").warning(
-                "cache check failed (best-effort)",
-                exc_info=True,
-            )
-    else:
-        cache_reason = "reuse_disabled"
 
-    # Phase 1.5: Quota enforcement preflight.
+    # Phase 1: Quota enforcement preflight.
     # Rejecting here avoids invoking side-effecting upstream tools when
     # the workspace is already over hard quota and cannot be cleared.
     # Uses a separate connection (prune needs its own transaction).
@@ -1611,11 +1295,9 @@ async def handle_mirrored_tool(
     return gateway_tool_result(
         artifact_id=handle.artifact_id,
         cache_meta={
-            "reused": False,
             "reason": cache_reason,
             "request_key": identity.request_key,
             "artifact_id_origin": "fresh",
-            "allow_reuse": allow_reuse,
         },
         mapping=mapping_payload,
         schemas=schema_payload,

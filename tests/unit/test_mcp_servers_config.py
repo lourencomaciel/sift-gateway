@@ -205,9 +205,7 @@ class TestToUpstreamConfigs:
                     "command": "gh",
                     "_gateway": {
                         "semantic_salt_env_keys": ["GITHUB_ORG"],
-                        "strict_schema_reuse": False,
                         "passthrough_allowed": False,
-                        "dedupe_exclusions": ["$.meta.timestamp"],
                         "pagination": {
                             "strategy": "cursor",
                             "cursor_response_path": "$.paging.cursors.after",
@@ -220,9 +218,7 @@ class TestToUpstreamConfigs:
         )
         c = configs[0]
         assert c["semantic_salt_env_keys"] == ["GITHUB_ORG"]
-        assert c["strict_schema_reuse"] is False
         assert c["passthrough_allowed"] is False
-        assert c["dedupe_exclusions"] == ["$.meta.timestamp"]
         assert c["pagination"]["strategy"] == "cursor"
 
     def test_gateway_extensions_invalid_type_raises(self) -> None:
@@ -276,7 +272,7 @@ class TestToUpstreamConfigs:
         configs = to_upstream_configs({"gh": {"command": "gh"}})
         c = configs[0]
         assert "semantic_salt_env_keys" not in c
-        assert "strict_schema_reuse" not in c
+        assert "pagination" not in c
 
     def test_multiple_servers_preserved(self) -> None:
         configs = to_upstream_configs(
@@ -388,7 +384,7 @@ class TestLoadGatewayConfigMcpServers:
                             "command": "gh",
                             "_gateway": {
                                 "semantic_salt_env_keys": ["GITHUB_ORG"],
-                                "strict_schema_reuse": False,
+                                "passthrough_allowed": False,
                                 "pagination": {
                                     "strategy": "cursor",
                                     "cursor_response_path": (
@@ -405,7 +401,7 @@ class TestLoadGatewayConfigMcpServers:
         config = load_gateway_config(data_dir_override=str(tmp_path))
         gh = config.upstreams[0]
         assert gh.semantic_salt_env_keys == ["GITHUB_ORG"]
-        assert gh.strict_schema_reuse is False
+        assert gh.passthrough_allowed is False
         assert gh.pagination is not None
         assert gh.pagination.strategy == "cursor"
         assert gh.pagination.cursor_param_name == "after"

@@ -36,7 +36,7 @@ def test_gateway_tool_result_with_schema_payload_and_hint() -> None:
     schema_legend = {"field": {"p": "path"}}
     response = gateway_tool_result(
         artifact_id="art_3",
-        cache_meta={"reused": False},
+        cache_meta={"reason": "fresh"},
         mapping=mapping,
         schemas=schemas,
         schema_legend=schema_legend,
@@ -48,7 +48,7 @@ def test_gateway_tool_result_with_schema_payload_and_hint() -> None:
     assert response["schemas"] is schemas
     assert response["schema_legend"] is schema_legend
     assert response["usage_hint"] == "Use artifact.get to retrieve."
-    assert response["meta"] == {"cache": {"reused": False}}
+    assert response["meta"] == {"cache": {"reason": "fresh"}}
 
 
 def test_gateway_tool_result_with_canonical_pagination() -> None:
