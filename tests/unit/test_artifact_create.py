@@ -293,6 +293,8 @@ def test_build_artifact_row_contains_required_fields(tmp_path: Path) -> None:
         "map_kind",
         "map_status",
         "mapper_version",
+        "kind",
+        "derivation",
         "index_status",
         "error_summary",
     }

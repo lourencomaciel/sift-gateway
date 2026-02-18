@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from unittest.mock import MagicMock
 
 from sift_mcp.mcp.resolve_refs import (
@@ -84,8 +85,8 @@ _VALID_ART_ID = "art_a1b2c3d4e5f67890a1b2c3d4e5f67890"
 def _mock_connection_for_artifact(
     *,
     envelope: dict | None = None,
-    canonical_bytes: bytes | None = None,
     canonical_encoding: str = "none",
+    payload_fs_path: str | None = None,
     payload_hash: str = "fakehash",
     deleted_at: object = None,
     mapped_part_index: int | None = 0,
@@ -105,8 +106,7 @@ def _mock_connection_for_artifact(
         None,  # map_budget_fingerprint
         envelope,  # envelope (JSONB)
         canonical_encoding,  # envelope_canonical_encoding
-        canonical_bytes,  # envelope_canonical_bytes
-        None,  # envelope_canonical_bytes_len
+        payload_fs_path,  # payload_fs_path
         contains_binary_refs,  # contains_binary_refs
     )
 
@@ -178,7 +178,6 @@ def test_resolve_multiple_refs() -> None:
                 envelope_a,
                 "none",
                 None,
-                None,
                 False,
             )
         else:
@@ -193,7 +192,6 @@ def test_resolve_multiple_refs() -> None:
                 None,
                 envelope_b,
                 "none",
-                None,
                 None,
                 False,
             )
@@ -304,16 +302,34 @@ def test_resolve_binary_with_json_part_succeeds() -> None:
     assert result["data"] == payload
 
 
-def test_resolve_missing_canonical_bytes() -> None:
+def test_resolve_missing_payload_file_path() -> None:
     conn = _mock_connection_for_artifact(
         envelope=None,
-        canonical_bytes=None,
+        payload_fs_path=None,
     )
     args = {"data": _VALID_ART_ID}
     result = resolve_artifact_refs(conn, args)
     assert isinstance(result, ResolveError)
     assert result.code == "INTERNAL"
-    assert "missing canonical bytes" in result.message
+    assert "missing payload file path" in result.message
+
+
+def test_resolve_missing_payload_file_returns_resolve_error(
+    tmp_path: Path,
+) -> None:
+    conn = _mock_connection_for_artifact(
+        envelope=None,
+        payload_fs_path="aa/bb/missing.zst",
+    )
+    args = {"data": _VALID_ART_ID}
+    result = resolve_artifact_refs(
+        conn,
+        args,
+        blobs_payload_dir=tmp_path,
+    )
+    assert isinstance(result, ResolveError)
+    assert result.code == "INTERNAL"
+    assert "envelope reconstruction failed" in result.message
 
 
 # ---------------------------------------------------------------------------

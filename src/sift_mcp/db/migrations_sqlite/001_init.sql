@@ -39,8 +39,7 @@ CREATE TABLE IF NOT EXISTS payload_blobs (
     envelope_canonical_encoding TEXT NOT NULL CHECK (
         envelope_canonical_encoding IN ('zstd', 'gzip', 'none')
     ),
-    envelope_canonical_bytes BLOB NOT NULL,
-    envelope_canonical_bytes_len INTEGER NOT NULL CHECK (envelope_canonical_bytes_len >= 0),
+    payload_fs_path TEXT NOT NULL,
     canonicalizer_version TEXT NOT NULL,
     payload_json_bytes INTEGER NOT NULL CHECK (payload_json_bytes >= 0),
     payload_binary_bytes_total INTEGER NOT NULL CHECK (payload_binary_bytes_total >= 0),
@@ -98,6 +97,10 @@ CREATE TABLE IF NOT EXISTS artifacts (
     map_backend_id TEXT NULL,
     prng_version TEXT NULL,
     map_error TEXT NULL,
+    kind TEXT NOT NULL DEFAULT 'data' CHECK (
+        kind IN ('data', 'derived_query', 'derived_codegen')
+    ),
+    derivation TEXT NULL,
     upstream_tool_schema_hash TEXT NULL,
     request_args_hash TEXT NULL,
     request_args_prefix TEXT NULL,
@@ -106,6 +109,15 @@ CREATE TABLE IF NOT EXISTS artifacts (
         index_status IN ('off', 'pending', 'ready', 'partial', 'failed')
     ),
     error_summary TEXT NULL,
+    CHECK (
+        (kind = 'data' AND derivation IS NULL)
+        OR (
+            kind IN ('derived_query', 'derived_codegen')
+            AND derivation IS NOT NULL
+            AND parent_artifact_id IS NOT NULL
+            AND json_valid(derivation)
+        )
+    ),
     PRIMARY KEY (workspace_id, artifact_id),
     FOREIGN KEY (workspace_id, session_id)
         REFERENCES sessions (workspace_id, session_id)
@@ -149,6 +161,77 @@ CREATE INDEX IF NOT EXISTS idx_artifacts_session_id
 
 CREATE INDEX IF NOT EXISTS idx_artifacts_payload_hash
     ON artifacts (workspace_id, payload_hash_full);
+
+CREATE INDEX IF NOT EXISTS idx_artifacts_kind
+    ON artifacts (workspace_id, kind);
+
+CREATE INDEX IF NOT EXISTS idx_artifacts_parent_created_seq
+    ON artifacts (workspace_id, parent_artifact_id, created_seq DESC);
+
+CREATE INDEX IF NOT EXISTS idx_artifacts_parent_kind_created_seq
+    ON artifacts (
+        workspace_id,
+        parent_artifact_id,
+        kind,
+        created_seq DESC
+    );
+
+CREATE TABLE IF NOT EXISTS artifact_lineage_edges (
+    workspace_id TEXT NOT NULL,
+    child_artifact_id TEXT NOT NULL,
+    parent_artifact_id TEXT NOT NULL,
+    ord INTEGER NOT NULL CHECK (ord >= 0),
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (workspace_id, child_artifact_id, parent_artifact_id),
+    FOREIGN KEY (workspace_id, child_artifact_id)
+        REFERENCES artifacts (workspace_id, artifact_id)
+        ON DELETE CASCADE,
+    FOREIGN KEY (workspace_id, parent_artifact_id)
+        REFERENCES artifacts (workspace_id, artifact_id)
+        ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_artifact_lineage_edges_parent
+    ON artifact_lineage_edges (
+        workspace_id,
+        parent_artifact_id,
+        child_artifact_id
+    );
+
+CREATE INDEX IF NOT EXISTS idx_artifact_lineage_edges_child_ord
+    ON artifact_lineage_edges (workspace_id, child_artifact_id, ord);
+
+CREATE VIRTUAL TABLE IF NOT EXISTS artifacts_fts USING fts5(
+    artifact_id UNINDEXED,
+    source_tool,
+    kind,
+    field_names,
+    sample_values
+);
+
+CREATE TRIGGER IF NOT EXISTS artifacts_fts_ai
+AFTER INSERT ON artifacts
+BEGIN
+    INSERT INTO artifacts_fts (
+        artifact_id, source_tool, kind, field_names, sample_values
+    ) VALUES (
+        NEW.artifact_id, NEW.source_tool, NEW.kind, '', ''
+    );
+END;
+
+CREATE TRIGGER IF NOT EXISTS artifacts_fts_au
+AFTER UPDATE OF source_tool, kind ON artifacts
+BEGIN
+    UPDATE artifacts_fts
+    SET source_tool = NEW.source_tool, kind = NEW.kind
+    WHERE artifact_id = NEW.artifact_id;
+END;
+
+CREATE TRIGGER IF NOT EXISTS artifacts_fts_ad
+BEFORE DELETE ON artifacts
+BEGIN
+    DELETE FROM artifacts_fts WHERE artifact_id = OLD.artifact_id;
+END;
 
 CREATE TABLE IF NOT EXISTS artifact_roots (
     workspace_id TEXT NOT NULL,

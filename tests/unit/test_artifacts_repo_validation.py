@@ -9,6 +9,7 @@ def _valid_row() -> dict[str, object]:
     return {
         "workspace_id": "local",
         "artifact_id": "art_1234",
+        "kind": "data",
         "map_kind": "none",
         "map_status": "pending",
         "index_status": "off",
@@ -33,4 +34,43 @@ def test_artifacts_repo_validation_rejects_negative_size() -> None:
     row = _valid_row()
     row["payload_total_bytes"] = -1
     with pytest.raises(ValueError, match="non-negative"):
+        validate_artifact_row(row)
+
+
+def test_artifacts_repo_validation_accepts_valid_kind() -> None:
+    row = _valid_row()
+    row["kind"] = "derived_codegen"
+    row["parent_artifact_id"] = "art_parent"
+    row["derivation"] = '{"query_kind":"code","artifact_ids":["art_parent"],"expression":{"code_hash":"sha256:x"}}'
+    validate_artifact_row(row)
+
+
+def test_artifacts_repo_validation_rejects_invalid_kind() -> None:
+    row = _valid_row()
+    row["kind"] = "invalid"
+    with pytest.raises(ValueError, match="kind"):
+        validate_artifact_row(row)
+
+
+def test_artifacts_repo_validation_rejects_data_with_derivation() -> None:
+    row = _valid_row()
+    row["derivation"] = '{"query_kind":"select"}'
+    with pytest.raises(ValueError, match="must not set derivation"):
+        validate_artifact_row(row)
+
+
+def test_artifacts_repo_validation_rejects_derived_without_parent() -> None:
+    row = _valid_row()
+    row["kind"] = "derived_query"
+    row["derivation"] = '{"query_kind":"select","artifact_ids":["art_p"]}'
+    with pytest.raises(ValueError, match="parent_artifact_id"):
+        validate_artifact_row(row)
+
+
+def test_artifacts_repo_validation_rejects_derived_bad_derivation_json() -> None:
+    row = _valid_row()
+    row["kind"] = "derived_query"
+    row["parent_artifact_id"] = "art_parent"
+    row["derivation"] = "not-json"
+    with pytest.raises(ValueError, match="valid JSON"):
         validate_artifact_row(row)

@@ -126,18 +126,16 @@ class TestSqliteSmoke:
             conn.execute(
                 """INSERT INTO payload_blobs (
                     workspace_id, payload_hash_full, envelope,
-                    envelope_canonical_encoding, envelope_canonical_bytes,
-                    envelope_canonical_bytes_len, canonicalizer_version,
+                    envelope_canonical_encoding, payload_fs_path, canonicalizer_version,
                     payload_json_bytes, payload_binary_bytes_total,
                     payload_total_bytes
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     "local",
                     "ph-json",
                     {"key": "value", "nested": [1, 2]},
                     "none",
-                    b"data",
-                    4,
+                    "aa/bb/ph-json.zst",
                     "v1",
                     4,
                     0,
@@ -164,12 +162,11 @@ class TestSqliteSmoke:
             conn.execute(
                 """INSERT INTO payload_blobs (
                     workspace_id, payload_hash_full,
-                    envelope_canonical_encoding, envelope_canonical_bytes,
-                    envelope_canonical_bytes_len, canonicalizer_version,
+                    envelope_canonical_encoding, payload_fs_path, canonicalizer_version,
                     payload_json_bytes, payload_binary_bytes_total,
                     payload_total_bytes
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                ("local", "ph-seq", "none", b"data", 4, "v1", 4, 0, 4),
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                ("local", "ph-seq", "none", "aa/bb/ph-seq.zst", "v1", 4, 0, 4),
             )
             for i in range(3):
                 conn.execute(

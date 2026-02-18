@@ -12,6 +12,7 @@ from sift_mcp.config.settings import (
     PaginationConfig,
     UpstreamConfig,
 )
+from sift_mcp.constants import BLOBS_PAYLOAD_SUBDIR
 from sift_mcp.cursor.payload import CursorStaleError
 from sift_mcp.cursor.sample_set_hash import compute_sample_set_hash
 from sift_mcp.cursor.token import CursorExpiredError
@@ -166,6 +167,19 @@ def _patch_schema_ready_describe(monkeypatch) -> None:
     monkeypatch.setattr(
         "sift_mcp.mcp.handlers.mirrored_tool._fetch_inline_describe",
         _schema_ready_inline_describe,
+    )
+
+
+@pytest.fixture(autouse=True)
+def _stub_derived_artifact_persistence(monkeypatch) -> None:
+    """Keep generic server tests focused on query behavior, not persistence internals."""
+    monkeypatch.setattr(
+        "sift_mcp.mcp.handlers.artifact_select._persist_select_derived_artifact",
+        lambda **_kwargs: ("art_derived_select", None),
+    )
+    monkeypatch.setattr(
+        "sift_mcp.mcp.handlers.artifact_code._persist_code_derived_artifact",
+        lambda **_kwargs: ("art_derived_code", None),
     )
 
 
@@ -596,6 +610,61 @@ def test_handle_mirrored_tool_rejects_schema_violations(tmp_path: Path) -> None:
     assert response["type"] == "gateway_error"
     assert response["code"] == "INVALID_ARGUMENT"
     assert "violations" in response["details"]
+
+
+def test_handle_mirrored_tool_rejects_non_string_cursor_argument(
+    tmp_path: Path,
+) -> None:
+    server = GatewayServer(
+        config=GatewayConfig(data_dir=tmp_path),
+        upstreams=[_upstream_with_pagination()],
+    )
+    mirrored = server.mirrored_tools["demo.echo"]
+    response = asyncio.run(
+        server.handle_mirrored_tool(
+            mirrored,
+            {
+                "_gateway_context": {"session_id": "sess_1"},
+                "message": "hello",
+                "after": 100,
+            },
+        )
+    )
+    assert response["type"] == "gateway_error"
+    assert response["code"] == "INVALID_ARGUMENT"
+    assert response["message"] == (
+        'pagination cursor "after" must be a non-empty string'
+    )
+    assert response["details"]["cursor_param"] == "after"
+    assert response["details"]["received_type"] == "int"
+
+
+def test_handle_mirrored_tool_rejects_placeholder_cursor_argument(
+    tmp_path: Path,
+) -> None:
+    server = GatewayServer(
+        config=GatewayConfig(data_dir=tmp_path),
+        upstreams=[_upstream_with_pagination()],
+    )
+    mirrored = server.mirrored_tools["demo.echo"]
+    response = asyncio.run(
+        server.handle_mirrored_tool(
+            mirrored,
+            {
+                "_gateway_context": {"session_id": "sess_1"},
+                "message": "hello",
+                "after": "last_cursor",
+            },
+        )
+    )
+    assert response["type"] == "gateway_error"
+    assert response["code"] == "INVALID_ARGUMENT"
+    assert response["message"] == (
+        'pagination cursor "after" appears to be a placeholder value'
+    )
+    assert response["details"]["cursor_param"] == "after"
+    assert response["details"]["cursor_value"] == "last_cursor"
+    assert "pagination.next_cursor" in response["details"]["hint"]
 
 
 def test_handle_mirrored_tool_rejects_invalid_chain_seq(tmp_path: Path) -> None:
@@ -1868,6 +1937,14 @@ def test_artifact_next_page_uses_canonical_envelope_when_jsonb_missing(
         "meta": {"_gateway_pagination": state.to_dict()},
     }
     prepared = prepare_payload(envelope)
+    payload_rel = (
+        Path(prepared.payload_hash[:2])
+        / prepared.payload_hash[2:4]
+        / f"{prepared.payload_hash}.zst"
+    )
+    payload_path = tmp_path / BLOBS_PAYLOAD_SUBDIR / payload_rel
+    payload_path.parent.mkdir(parents=True, exist_ok=True)
+    payload_path.write_bytes(prepared.compressed_bytes)
     conn = _SeqConnection(
         [
             _SeqCursor(one=(1,)),
@@ -1878,7 +1955,7 @@ def test_artifact_next_page_uses_canonical_envelope_when_jsonb_missing(
                     prepared.payload_hash,
                     None,
                     prepared.encoding,
-                    prepared.compressed_bytes,
+                    payload_rel.as_posix(),
                 )
             ),
         ]

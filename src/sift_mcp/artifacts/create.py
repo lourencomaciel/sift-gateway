@@ -12,6 +12,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import datetime as dt
 import json
+from pathlib import Path
 import secrets
 from typing import Any
 
@@ -21,6 +22,7 @@ from sift_mcp.config.settings import GatewayConfig
 from sift_mcp.constants import (
     ARTIFACT_ID_PREFIX,
     CANONICALIZER_VERSION,
+    KIND_DATA,
     MAPPER_VERSION,
     WORKSPACE_ID,
 )
@@ -30,6 +32,10 @@ from sift_mcp.db.protocols import (
     safe_rollback,
 )
 from sift_mcp.db.repos.artifacts_repo import validate_artifact_row
+from sift_mcp.db.repos.lineage_repo import (
+    INSERT_LINEAGE_EDGE_SQL,
+    lineage_edge_params,
+)
 from sift_mcp.db.repos.payloads_repo import (
     INSERT_PAYLOAD_BLOB_SQL,
     payload_blob_params,
@@ -44,7 +50,7 @@ from sift_mcp.envelope.model import (
     Envelope,
     JsonContentPart,
 )
-from sift_mcp.fs.blob_store import BinaryRef
+from sift_mcp.fs.blob_store import BinaryRef, _atomic_write_bytes
 from sift_mcp.obs.logging import LogEvents, get_logger
 from sift_mcp.util.hashing import sha256_hex
 
@@ -97,6 +103,7 @@ class ArtifactHandle:
     index_status: str
     status: str  # "ok" | "error"
     error_summary: str | None
+    kind: str = KIND_DATA
 
 
 @dataclass(frozen=True)
@@ -131,6 +138,8 @@ class CreateArtifactInput:
     envelope: Envelope
     parent_artifact_id: str | None = None
     chain_seq: int | None = None
+    kind: str = KIND_DATA
+    derivation: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -272,6 +281,8 @@ def build_artifact_row(
         "map_kind": "none",
         "map_status": "pending",
         "mapper_version": MAPPER_VERSION,
+        "kind": input_data.kind,
+        "derivation": input_data.derivation,
         "index_status": "off",
         "error_summary": error_summary,
     }
@@ -289,10 +300,13 @@ INSERT INTO artifacts (
     payload_json_bytes, payload_binary_bytes_total, payload_total_bytes,
     last_referenced_at, generation,
     parent_artifact_id, chain_seq,
-    map_kind, map_status, mapper_version, index_status, error_summary
+    map_kind, map_status, mapper_version,
+    kind, derivation,
+    index_status, error_summary
 ) VALUES (
     %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+    %s, %s, %s
 )
 RETURNING created_seq
 """
@@ -345,6 +359,8 @@ def _artifact_insert_params(
         row["map_kind"],
         row["map_status"],
         row["mapper_version"],
+        row["kind"],
+        row["derivation"],
         row["index_status"],
         row["error_summary"],
     )
@@ -370,6 +386,25 @@ def _created_seq_from_row(
     if isinstance(raw, str) and raw.isdigit():
         return int(raw)
     return None
+
+
+def _insert_primary_lineage_edge(
+    *,
+    connection: ConnectionLike,
+    artifact_id: str,
+    parent_artifact_id: Any,
+) -> None:
+    """Insert a parent->child lineage edge when parent is present."""
+    if not isinstance(parent_artifact_id, str) or not parent_artifact_id:
+        return
+    connection.execute(
+        INSERT_LINEAGE_EDGE_SQL,
+        lineage_edge_params(
+            child_artifact_id=artifact_id,
+            parent_artifact_id=parent_artifact_id,
+            ord=0,
+        ),
+    )
 
 
 def persist_artifact(
@@ -430,6 +465,12 @@ def persist_artifact(
         payload_total_bytes=payload_total_bytes,
     )
     validate_artifact_row(row)
+    payload_rel_path = (
+        Path(payload_hash[:2]) / payload_hash[2:4] / f"{payload_hash}.zst"
+    )
+    payload_abs_path = config.blobs_payload_dir / payload_rel_path
+    if not payload_abs_path.exists():
+        _atomic_write_bytes(payload_abs_path, compressed.data)
 
     try:
         connection.execute(
@@ -438,8 +479,7 @@ def persist_artifact(
                 payload_hash_full=payload_hash,
                 envelope=jsonb_value,
                 encoding=compressed.encoding,
-                canonical_bytes=compressed.data,
-                canonical_len=compressed.uncompressed_len,
+                payload_fs_path=payload_rel_path.as_posix(),
                 canonicalizer_version=CANONICALIZER_VERSION,
                 payload_json_bytes=payload_json_bytes,
                 payload_binary_bytes_total=payload_binary_bytes_total,
@@ -454,6 +494,11 @@ def persist_artifact(
             INSERT_ARTIFACT_SQL,
             _artifact_insert_params(row),
         ).fetchone()
+        _insert_primary_lineage_edge(
+            connection=connection,
+            artifact_id=artifact_id,
+            parent_artifact_id=row["parent_artifact_id"],
+        )
 
         for ref in binary_refs or []:
             connection.execute(
@@ -527,4 +572,5 @@ def persist_artifact(
         index_status=row["index_status"],
         status=input_data.envelope.status,
         error_summary=row["error_summary"],
+        kind=str(row["kind"]),
     )

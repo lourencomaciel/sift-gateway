@@ -358,10 +358,18 @@ def test_full_pipeline_normalize_oversize_store_reconstruct(tmp_path) -> None:
     assert prepared.payload_hash == expected_hash
 
     # Step 4: Reconstruct and verify
+    payload_fs_path = (
+        f"{prepared.payload_hash[:2]}/{prepared.payload_hash[2:4]}/"
+        f"{prepared.payload_hash}.zst"
+    )
+    payload_file = tmp_path / "payload" / payload_fs_path
+    payload_file.parent.mkdir(parents=True, exist_ok=True)
+    payload_file.write_bytes(prepared.compressed_bytes)
     reconstructed = reconstruct_envelope(
-        prepared.compressed_bytes,
-        prepared.encoding,
-        prepared.payload_hash,
+        payload_fs_path=payload_fs_path,
+        blobs_payload_dir=tmp_path / "payload",
+        encoding=prepared.encoding,
+        expected_hash=prepared.payload_hash,
     )
     assert reconstructed["tool"] == "run"
     assert reconstructed["status"] == "ok"
@@ -394,10 +402,18 @@ def test_full_pipeline_small_content_no_oversize(tmp_path) -> None:
 
     envelope_dict = envelope.to_dict()
     prepared = prepare_payload(envelope_dict)
+    payload_fs_path = (
+        f"{prepared.payload_hash[:2]}/{prepared.payload_hash[2:4]}/"
+        f"{prepared.payload_hash}.zst"
+    )
+    payload_file = tmp_path / "payload" / payload_fs_path
+    payload_file.parent.mkdir(parents=True, exist_ok=True)
+    payload_file.write_bytes(prepared.compressed_bytes)
     reconstructed = reconstruct_envelope(
-        prepared.compressed_bytes,
-        prepared.encoding,
-        prepared.payload_hash,
+        payload_fs_path=payload_fs_path,
+        blobs_payload_dir=tmp_path / "payload",
+        encoding=prepared.encoding,
+        expected_hash=prepared.payload_hash,
     )
 
     assert reconstructed["content"][0]["type"] == "json"

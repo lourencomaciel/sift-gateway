@@ -6,6 +6,8 @@ import asyncio
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from sift_mcp.codegen.runtime import (
     CodeRuntimeError,
     CodeRuntimeMemoryLimitError,
@@ -171,9 +173,16 @@ def _artifact_row(
         "mbf",
         envelope,
         "none",
-        b"",
-        0,
+        None,
         False,
+    )
+
+
+@pytest.fixture(autouse=True)
+def _mock_derived_persistence(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "sift_mcp.mcp.handlers.artifact_code._persist_code_derived_artifact",
+        lambda **_kwargs: ("art_derived", None),
     )
 
 
@@ -1042,6 +1051,10 @@ def test_code_query_multi_artifact_passes_artifacts_payload(
     assert "schemas" in captured
     assert "data" not in captured
     assert sorted(captured["artifacts"].keys()) == ["art_1", "art_2"]
+    assert any(
+        warning.get("code") == "OVERLAPPING_INPUT_DATASETS"
+        for warning in response.get("warnings", [])
+    )
 
 
 def test_code_query_multi_artifact_supports_per_artifact_root_paths(

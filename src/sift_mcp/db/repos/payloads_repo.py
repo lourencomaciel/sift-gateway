@@ -10,15 +10,14 @@ INSERT INTO payload_blobs (
     payload_hash_full,
     envelope,
     envelope_canonical_encoding,
-    envelope_canonical_bytes,
-    envelope_canonical_bytes_len,
+    payload_fs_path,
     canonicalizer_version,
     payload_json_bytes,
     payload_binary_bytes_total,
     payload_total_bytes,
     contains_binary_refs
 ) VALUES (
-    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
 )
 ON CONFLICT (workspace_id, payload_hash_full) DO NOTHING
 """
@@ -29,8 +28,7 @@ def payload_blob_params(
     payload_hash_full: str,
     envelope: dict[str, object] | None,
     encoding: str,
-    canonical_bytes: bytes,
-    canonical_len: int,
+    payload_fs_path: str,
     canonicalizer_version: str,
     payload_json_bytes: int,
     payload_binary_bytes_total: int,
@@ -43,8 +41,7 @@ def payload_blob_params(
         payload_hash_full: Full SHA-256 payload hash.
         envelope: Envelope dict or None.
         encoding: Canonical encoding name.
-        canonical_bytes: Canonical byte representation.
-        canonical_len: Length of canonical bytes.
+        payload_fs_path: Relative filesystem path to payload bytes.
         canonicalizer_version: Canonicalizer version string.
         payload_json_bytes: Size of JSON content in bytes.
         payload_binary_bytes_total: Total binary ref bytes.
@@ -59,8 +56,7 @@ def payload_blob_params(
         payload_hash_full,
         envelope,
         encoding,
-        canonical_bytes,
-        canonical_len,
+        payload_fs_path,
         canonicalizer_version,
         payload_json_bytes,
         payload_binary_bytes_total,
