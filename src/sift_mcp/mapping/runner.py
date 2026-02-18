@@ -14,7 +14,8 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 import json
-from typing import Any, BinaryIO
+import tempfile
+from typing import Any, BinaryIO, cast
 
 from sift_mcp.config.settings import GatewayConfig
 from sift_mcp.mapping.schema import (
@@ -22,6 +23,8 @@ from sift_mcp.mapping.schema import (
     build_exact_schema,
     build_sampled_schema,
 )
+
+_PARTIAL_MAP_SPOOL_MAX_MEMORY_BYTES = 8 * 1024 * 1024
 
 
 @dataclass(frozen=True)
@@ -211,8 +214,7 @@ def _score_json_part(
     value = part.get("value")
     if value is None:
         return None
-    serialized = json.dumps(value, separators=(",", ":"), sort_keys=True)
-    byte_size = len(serialized.encode("utf-8"))
+    byte_size = _json_size_bytes(value)
     return SelectedJsonPart(
         part_index=i,
         byte_size=byte_size,
@@ -288,13 +290,24 @@ def _score_text_part(
             value=parsed,
         )
 
-    serialized = json.dumps(parsed, separators=(",", ":"), sort_keys=True)
-    byte_size = len(serialized.encode("utf-8"))
+    byte_size = _json_size_bytes(parsed)
     return SelectedJsonPart(
         part_index=i,
         byte_size=byte_size,
         value=parsed,
     )
+
+
+def _json_size_bytes(value: Any) -> int:
+    """Compute UTF-8 JSON size without building one giant string."""
+    encoder = json.JSONEncoder(
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    size = 0
+    for chunk in encoder.iterencode(value):
+        size += len(chunk.encode("utf-8"))
+    return size
 
 
 def select_json_part(
@@ -574,8 +587,6 @@ def _open_partial_stream(
         A tuple of (stream, should_close) on success, or a
         failed MappingResult on error.
     """
-    import io
-
     from sift_mcp.constants import PRNG_VERSION
     from sift_mcp.mapping.json_strings import resolve_json_strings
 
@@ -615,10 +626,22 @@ def _open_partial_stream(
             ),
         )
     normalized_value = resolve_json_strings(value)
-    serialized_bytes = json.dumps(
-        normalized_value, separators=(",", ":"), sort_keys=True
-    ).encode("utf-8")
-    return io.BytesIO(serialized_bytes), False
+    spool = tempfile.SpooledTemporaryFile(  # noqa: SIM115
+        mode="w+b",
+        max_size=_PARTIAL_MAP_SPOOL_MAX_MEMORY_BYTES,
+    )
+    try:
+        encoder = json.JSONEncoder(
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+        for chunk in encoder.iterencode(normalized_value):
+            spool.write(chunk.encode("utf-8"))
+        spool.seek(0)
+        return cast(BinaryIO, spool), True
+    except Exception:
+        spool.close()
+        raise
 
 
 def _run_partial_mapping(
@@ -721,6 +744,18 @@ def run_mapping(
 
     binary_hash = selected.binary_hash
     byte_size = selected.byte_size
+    if (
+        binary_hash is None
+        and byte_size > config.max_in_memory_mapping_bytes
+    ):
+        return _failed_result(
+            map_kind="partial",
+            mapped_part_index=selected.part_index,
+            map_error=(
+                "selected JSON part exceeds max_in_memory_mapping_bytes "
+                f"({byte_size} > {config.max_in_memory_mapping_bytes})"
+            ),
+        )
     use_partial = (
         binary_hash is not None or byte_size > config.max_full_map_bytes
     )

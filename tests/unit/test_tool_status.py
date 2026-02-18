@@ -49,6 +49,7 @@ def test_build_status_response_contains_all_budget_fields() -> None:
         "max_compute_steps",
         "max_json_part_parse_bytes",
         "max_full_map_bytes",
+        "max_in_memory_mapping_bytes",
         "max_bytes_read_partial_map",
         "max_compute_steps_partial_map",
         "max_depth_partial_map",
@@ -64,6 +65,10 @@ def test_build_status_response_contains_all_budget_fields() -> None:
     assert budgets["max_bytes_out"] == config.max_bytes_out
     assert budgets["max_wildcards"] == config.max_wildcards
     assert budgets["max_compute_steps"] == config.max_compute_steps
+    assert (
+        budgets["max_in_memory_mapping_bytes"]
+        == config.max_in_memory_mapping_bytes
+    )
     assert (
         budgets["artifact_search_max_limit"] == config.artifact_search_max_limit
     )

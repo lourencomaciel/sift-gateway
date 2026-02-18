@@ -15,7 +15,6 @@ from sift_mcp.config.settings import (
 from sift_mcp.cursor.payload import CursorStaleError
 from sift_mcp.cursor.sample_set_hash import compute_sample_set_hash
 from sift_mcp.cursor.token import CursorExpiredError
-from sift_mcp.fs.blob_store import BlobStore
 from sift_mcp.mcp.handlers.common import VISIBLE_ARTIFACT_SQL
 from sift_mcp.mcp.server import (
     GatewayServer,
@@ -2094,10 +2093,10 @@ def test_handle_mirrored_tool_returns_internal_when_fs_unhealthy(
     assert "filesystem" in response["message"]
 
 
-def test_handle_mirrored_tool_returns_internal_on_quota_check_connectivity_failure(
+def test_handle_mirrored_tool_returns_internal_on_ref_resolution_connectivity_failure(
     tmp_path: Path,
 ) -> None:
-    """When quota preflight hits OperationalError, return INTERNAL and mark db_ok=False."""
+    """When ref resolution checkout fails, return INTERNAL and mark db_ok=False."""
     import sqlite3
 
     class _FailPool:
@@ -2122,7 +2121,7 @@ def test_handle_mirrored_tool_returns_internal_on_quota_check_connectivity_failu
     )
     assert response["type"] == "gateway_error"
     assert response["code"] == "INTERNAL"
-    assert "unhealthy" in response["message"]
+    assert "artifact ref resolution failed" in response["message"].lower()
     assert server.db_ok is False
 
 
@@ -2507,21 +2506,15 @@ def test_handle_mirrored_tool_triggers_mapping_on_single_connection(
 
 
 # ---------------------------------------------------------------------------
-# Quota enforcement: Phase 2.5
+# Quota preflight removed
 # ---------------------------------------------------------------------------
 
 
-def test_handle_mirrored_tool_quota_exceeded_returns_error(
+def test_handle_mirrored_tool_does_not_run_quota_preflight(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
-    """When quota enforcement says space_cleared=False, return QUOTA_EXCEEDED."""
-    from sift_mcp.jobs.quota import (
-        QuotaBreaches,
-        QuotaEnforcementResult,
-        StorageUsage,
-    )
-
+    """Mirrored calls proceed without quota preflight blocking."""
     server = GatewayServer(
         config=GatewayConfig(data_dir=tmp_path),
         upstreams=[_upstream()],
@@ -2529,6 +2522,7 @@ def test_handle_mirrored_tool_quota_exceeded_returns_error(
         metrics=GatewayMetrics(),
     )
     mirrored = server.mirrored_tools["demo.echo"]
+    quota_called = False
 
     async def _fake_call(_instance, _tool_name, _arguments):
         return {
@@ -2539,262 +2533,21 @@ def test_handle_mirrored_tool_quota_exceeded_returns_error(
         }
 
     monkeypatch.setattr("sift_mcp.mcp.server.call_upstream_tool", _fake_call)
-
-    _breaches = QuotaBreaches(
-        binary_blob_exceeded=False,
-        payload_total_exceeded=False,
-        total_storage_exceeded=True,
-    )
-    _usage = StorageUsage(
-        binary_blob_bytes=0, payload_total_bytes=0, total_storage_bytes=999
-    )
+    # The handler no longer imports quota preflight helpers. If someone
+    # injects one, it must not be consulted on request flow.
+    def _forbidden_quota(*_args, **_kwargs):
+        nonlocal quota_called
+        quota_called = True
+        raise AssertionError("quota preflight should not run")
 
     monkeypatch.setattr(
         "sift_mcp.mcp.handlers.mirrored_tool.enforce_quota",
-        lambda *a, **kw: QuotaEnforcementResult(
-            usage_before=_usage,
-            usage_after=_usage,
-            breaches_before=_breaches,
-            breaches_after=_breaches,
-            pruned=True,
-            soft_deleted_count=0,
-            hard_deleted_count=0,
-            bytes_reclaimed=0,
-            space_cleared=False,
-        ),
-    )
-
-    response = asyncio.run(
-        server.handle_mirrored_tool(
-            mirrored,
-            {
-                "_gateway_context": {
-                    "session_id": "sess_1",
-                },
-                "message": "hello",
-            },
-        )
-    )
-    assert response["type"] == "gateway_error"
-    assert response["code"] == "QUOTA_EXCEEDED"
-    assert "quota" in response["message"].lower()
-    assert response["details"]["exceeded_caps"] == ["max_total_storage_bytes"]
-    assert (
-        response["details"]["max_total_storage_bytes"]
-        == server.config.max_total_storage_bytes
-    )
-
-
-def test_handle_mirrored_tool_quota_exceeded_reports_specific_caps(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
-    """Quota rejection reports only the cap(s) that are still exceeded."""
-    from sift_mcp.jobs.quota import (
-        QuotaBreaches,
-        QuotaEnforcementResult,
-        StorageUsage,
-    )
-
-    server = GatewayServer(
-        config=GatewayConfig(data_dir=tmp_path),
-        upstreams=[_upstream()],
-        db_pool=_FakePool(None),  # type: ignore[arg-type]
-        metrics=GatewayMetrics(),
-    )
-    mirrored = server.mirrored_tools["demo.echo"]
-
-    async def _fake_call(_instance, _tool_name, _arguments):
-        return {
-            "content": [{"type": "text", "text": "ok"}],
-            "structuredContent": {"ok": True},
-            "isError": False,
-            "meta": {},
-        }
-
-    monkeypatch.setattr("sift_mcp.mcp.server.call_upstream_tool", _fake_call)
-
-    _breaches = QuotaBreaches(
-        binary_blob_exceeded=True,
-        payload_total_exceeded=True,
-        total_storage_exceeded=False,
-    )
-    _usage = StorageUsage(
-        binary_blob_bytes=999, payload_total_bytes=999, total_storage_bytes=100
-    )
-
-    monkeypatch.setattr(
-        "sift_mcp.mcp.handlers.mirrored_tool.enforce_quota",
-        lambda *a, **kw: QuotaEnforcementResult(
-            usage_before=_usage,
-            usage_after=_usage,
-            breaches_before=_breaches,
-            breaches_after=_breaches,
-            pruned=True,
-            soft_deleted_count=0,
-            hard_deleted_count=0,
-            bytes_reclaimed=0,
-            space_cleared=False,
-        ),
-    )
-
-    response = asyncio.run(
-        server.handle_mirrored_tool(
-            mirrored,
-            {
-                "_gateway_context": {
-                    "session_id": "sess_1",
-                },
-                "message": "hello",
-            },
-        )
-    )
-    assert response["type"] == "gateway_error"
-    assert response["code"] == "QUOTA_EXCEEDED"
-    assert response["details"]["exceeded_caps"] == [
-        "max_binary_blob_bytes",
-        "max_payload_total_bytes",
-    ]
-    assert (
-        response["details"]["max_binary_blob_bytes"]
-        == server.config.max_binary_blob_bytes
-    )
-    assert (
-        response["details"]["max_payload_total_bytes"]
-        == server.config.max_payload_total_bytes
-    )
-    assert "max_total_storage_bytes" not in response["details"]
-
-
-def test_handle_mirrored_tool_quota_exceeded_skips_upstream_call(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
-    """Quota rejection is decided before calling upstream tools."""
-    from sift_mcp.jobs.quota import (
-        QuotaBreaches,
-        QuotaEnforcementResult,
-        StorageUsage,
-    )
-
-    server = GatewayServer(
-        config=GatewayConfig(data_dir=tmp_path),
-        upstreams=[_upstream()],
-        db_pool=_FakePool(None),  # type: ignore[arg-type]
-        metrics=GatewayMetrics(),
-    )
-    mirrored = server.mirrored_tools["demo.echo"]
-
-    upstream_called = False
-
-    async def _fake_call(_instance, _tool_name, _arguments):
-        nonlocal upstream_called
-        upstream_called = True
-        return {
-            "content": [{"type": "text", "text": "ok"}],
-            "structuredContent": {"ok": True},
-            "isError": False,
-            "meta": {},
-        }
-
-    monkeypatch.setattr("sift_mcp.mcp.server.call_upstream_tool", _fake_call)
-
-    _breaches = QuotaBreaches(
-        binary_blob_exceeded=False,
-        payload_total_exceeded=False,
-        total_storage_exceeded=True,
-    )
-    _usage = StorageUsage(
-        binary_blob_bytes=0, payload_total_bytes=0, total_storage_bytes=999
-    )
-
-    monkeypatch.setattr(
-        "sift_mcp.mcp.handlers.mirrored_tool.enforce_quota",
-        lambda *a, **kw: QuotaEnforcementResult(
-            usage_before=_usage,
-            usage_after=_usage,
-            breaches_before=_breaches,
-            breaches_after=_breaches,
-            pruned=True,
-            soft_deleted_count=0,
-            hard_deleted_count=0,
-            bytes_reclaimed=0,
-            space_cleared=False,
-        ),
-    )
-
-    response = asyncio.run(
-        server.handle_mirrored_tool(
-            mirrored,
-            {
-                "_gateway_context": {
-                    "session_id": "sess_1",
-                },
-                "message": "hello",
-            },
-        )
-    )
-    assert response["type"] == "gateway_error"
-    assert response["code"] == "QUOTA_EXCEEDED"
-    assert upstream_called is False
-
-
-def test_handle_mirrored_tool_quota_ok_proceeds_to_persist(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
-    """When quota enforcement says space_cleared=True, proceed to persist."""
-    from sift_mcp.jobs.quota import (
-        QuotaBreaches,
-        QuotaEnforcementResult,
-        StorageUsage,
-    )
-
-    server = GatewayServer(
-        config=GatewayConfig(data_dir=tmp_path),
-        upstreams=[_upstream()],
-        db_pool=_FakePool(None),  # type: ignore[arg-type]
-        metrics=GatewayMetrics(),
-    )
-    mirrored = server.mirrored_tools["demo.echo"]
-
-    async def _fake_call(_instance, _tool_name, _arguments):
-        return {
-            "content": [{"type": "text", "text": "ok"}],
-            "structuredContent": {"ok": True},
-            "isError": False,
-            "meta": {},
-        }
-
-    monkeypatch.setattr("sift_mcp.mcp.server.call_upstream_tool", _fake_call)
-
-    _usage = StorageUsage(
-        binary_blob_bytes=0, payload_total_bytes=0, total_storage_bytes=100
-    )
-    _no_breach = QuotaBreaches(False, False, False)
-    captured_quota_kwargs: dict[str, object] = {}
-
-    def _fake_enforce_quota(*a, **kw):
-        captured_quota_kwargs.update(kw)
-        return QuotaEnforcementResult(
-            usage_before=_usage,
-            usage_after=None,
-            breaches_before=_no_breach,
-            breaches_after=None,
-            pruned=False,
-            soft_deleted_count=0,
-            hard_deleted_count=0,
-            bytes_reclaimed=0,
-            space_cleared=True,
-        )
-
-    monkeypatch.setattr(
-        "sift_mcp.mcp.handlers.mirrored_tool.enforce_quota",
-        _fake_enforce_quota,
+        _forbidden_quota,
+        raising=False,
     )
 
     _fake_handle = ArtifactHandle(
-        artifact_id="art_quota_ok",
+        artifact_id="art_no_quota_preflight",
         created_seq=1,
         generation=1,
         session_id="sess_1",
@@ -2812,7 +2565,6 @@ def test_handle_mirrored_tool_quota_ok_proceeds_to_persist(
         status="ok",
         error_summary=None,
     )
-
     monkeypatch.setattr(
         "sift_mcp.mcp.handlers.mirrored_tool.persist_artifact",
         lambda **_kw: _fake_handle,
@@ -2828,326 +2580,14 @@ def test_handle_mirrored_tool_quota_ok_proceeds_to_persist(
         server.handle_mirrored_tool(
             mirrored,
             {
-                "_gateway_context": {
-                    "session_id": "sess_1",
-                },
+                "_gateway_context": {"session_id": "sess_1"},
                 "message": "hello",
             },
         )
     )
     assert response["type"] == "gateway_tool_result"
-    assert response["artifact_id"] == "art_quota_ok"
-    assert captured_quota_kwargs["remove_fs_blobs"] is False
-    assert captured_quota_kwargs["blobs_root"] is None
-
-
-def test_handle_mirrored_tool_quota_passes_blob_store_root(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
-    """Quota preflight should pass blob-store root when FS blobs are enabled."""
-    from sift_mcp.jobs.quota import (
-        QuotaBreaches,
-        QuotaEnforcementResult,
-        StorageUsage,
-    )
-
-    config = GatewayConfig(data_dir=tmp_path)
-    server = GatewayServer(
-        config=config,
-        upstreams=[_upstream()],
-        db_pool=_FakePool(None),  # type: ignore[arg-type]
-        metrics=GatewayMetrics(),
-        blob_store=BlobStore(config.blobs_bin_dir),
-    )
-    mirrored = server.mirrored_tools["demo.echo"]
-
-    async def _fake_call(_instance, _tool_name, _arguments):
-        return {
-            "content": [{"type": "text", "text": "ok"}],
-            "structuredContent": {"ok": True},
-            "isError": False,
-            "meta": {},
-        }
-
-    monkeypatch.setattr("sift_mcp.mcp.server.call_upstream_tool", _fake_call)
-
-    _usage = StorageUsage(
-        binary_blob_bytes=0, payload_total_bytes=0, total_storage_bytes=100
-    )
-    _no_breach = QuotaBreaches(False, False, False)
-    captured_quota_kwargs: dict[str, object] = {}
-
-    def _fake_enforce_quota(*a, **kw):
-        captured_quota_kwargs.update(kw)
-        return QuotaEnforcementResult(
-            usage_before=_usage,
-            usage_after=None,
-            breaches_before=_no_breach,
-            breaches_after=None,
-            pruned=False,
-            soft_deleted_count=0,
-            hard_deleted_count=0,
-            bytes_reclaimed=0,
-            space_cleared=True,
-        )
-
-    monkeypatch.setattr(
-        "sift_mcp.mcp.handlers.mirrored_tool.enforce_quota",
-        _fake_enforce_quota,
-    )
-
-    _fake_handle = ArtifactHandle(
-        artifact_id="art_quota_blob_root",
-        created_seq=1,
-        generation=1,
-        session_id="sess_1",
-        source_tool="demo.echo",
-        upstream_instance_id="demo",
-        request_key="rk_1",
-        payload_hash_full="h_1",
-        payload_json_bytes=10,
-        payload_binary_bytes_total=0,
-        payload_total_bytes=10,
-        contains_binary_refs=False,
-        map_kind="none",
-        map_status="pending",
-        index_status="pending",
-        status="ok",
-        error_summary=None,
-    )
-
-    monkeypatch.setattr(
-        "sift_mcp.mcp.handlers.mirrored_tool.persist_artifact",
-        lambda **_kw: _fake_handle,
-    )
-    monkeypatch.setattr(
-        server,
-        "_run_mapping_inline",
-        lambda *_args, **_kwargs: True,
-    )
-    _patch_schema_ready_describe(monkeypatch)
-
-    response = asyncio.run(
-        server.handle_mirrored_tool(
-            mirrored,
-            {
-                "_gateway_context": {
-                    "session_id": "sess_1",
-                },
-                "message": "hello",
-            },
-        )
-    )
-    assert response["type"] == "gateway_tool_result"
-    assert response["artifact_id"] == "art_quota_blob_root"
-    assert captured_quota_kwargs["remove_fs_blobs"] is True
-    assert captured_quota_kwargs["blobs_root"] == config.blobs_bin_dir
-
-
-def test_handle_mirrored_tool_quota_check_fails_closed_on_generic_error(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
-    """Non-connectivity quota errors fail closed without marking db unhealthy."""
-    server = GatewayServer(
-        config=GatewayConfig(data_dir=tmp_path),
-        upstreams=[_upstream()],
-        db_pool=_FakePool(None),  # type: ignore[arg-type]
-        metrics=GatewayMetrics(),
-    )
-    mirrored = server.mirrored_tools["demo.echo"]
-    upstream_called = False
-    persist_called = False
-
-    async def _fake_call(_instance, _tool_name, _arguments):
-        nonlocal upstream_called
-        upstream_called = True
-        return {
-            "content": [{"type": "text", "text": "ok"}],
-            "structuredContent": {"ok": True},
-            "isError": False,
-            "meta": {},
-        }
-
-    monkeypatch.setattr("sift_mcp.mcp.server.call_upstream_tool", _fake_call)
-
-    def _exploding_quota(*a, **kw):
-        raise RuntimeError("quota check exploded")
-
-    monkeypatch.setattr(
-        "sift_mcp.mcp.handlers.mirrored_tool.enforce_quota",
-        _exploding_quota,
-    )
-
-    def _unexpected_persist(*_args, **_kwargs):
-        nonlocal persist_called
-        persist_called = True
-        raise AssertionError("persist_artifact should not be called")
-
-    monkeypatch.setattr(
-        "sift_mcp.mcp.handlers.mirrored_tool.persist_artifact",
-        _unexpected_persist,
-    )
-
-    response = asyncio.run(
-        server.handle_mirrored_tool(
-            mirrored,
-            {
-                "_gateway_context": {
-                    "session_id": "sess_1",
-                },
-                "message": "hello",
-            },
-        )
-    )
-    assert response["type"] == "gateway_error"
-    assert response["code"] == "INTERNAL"
-    assert "quota" in response["message"].lower()
-    assert upstream_called is False
-    assert persist_called is False
-    assert server.db_ok is True
-
-
-def test_handle_mirrored_tool_quota_check_marks_unhealthy_on_connectivity_error(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
-    """OperationalError during quota check marks db_ok=False and returns INTERNAL."""
-    import sqlite3
-
-    class _FailOnSecondPool:
-        """First connection succeeds (probe), second fails (quota check)."""
-
-        _call_count = 0
-
-        def connection(self):
-            self._call_count += 1
-            if self._call_count == 1:
-                # Probe succeeds
-                return _FakeConnectionContext(None)
-            raise sqlite3.OperationalError("connection refused")
-
-    server = GatewayServer(
-        config=GatewayConfig(data_dir=tmp_path),
-        upstreams=[_upstream()],
-        db_pool=_FailOnSecondPool(),  # type: ignore[arg-type]
-        metrics=GatewayMetrics(),
-    )
-    mirrored = server.mirrored_tools["demo.echo"]
-
-    async def _fake_call(_instance, _tool_name, _arguments):
-        return {
-            "content": [{"type": "text", "text": "ok"}],
-            "structuredContent": {"ok": True},
-            "isError": False,
-            "meta": {},
-        }
-
-    monkeypatch.setattr("sift_mcp.mcp.server.call_upstream_tool", _fake_call)
-
-    response = asyncio.run(
-        server.handle_mirrored_tool(
-            mirrored,
-            {
-                "_gateway_context": {
-                    "session_id": "sess_1",
-                },
-                "message": "hello",
-            },
-        )
-    )
-    assert response["type"] == "gateway_error"
-    assert response["code"] == "INTERNAL"
-    assert (
-        "quota" in response["message"].lower()
-        or "unhealthy" in response["message"].lower()
-    )
-    assert server.db_ok is False
-
-
-def test_handle_mirrored_tool_skips_quota_when_disabled(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
-    """When quota_enforcement_enabled=False, quota check is skipped entirely."""
-    enforce_called = False
-
-    def _track_enforce(*a, **kw):
-        nonlocal enforce_called
-        enforce_called = True
-
-    monkeypatch.setattr(
-        "sift_mcp.mcp.handlers.mirrored_tool.enforce_quota",
-        _track_enforce,
-    )
-
-    server = GatewayServer(
-        config=GatewayConfig(
-            data_dir=tmp_path,
-            quota_enforcement_enabled=False,
-        ),
-        upstreams=[_upstream()],
-        db_pool=_FakePool(None),  # type: ignore[arg-type]
-        metrics=GatewayMetrics(),
-    )
-    mirrored = server.mirrored_tools["demo.echo"]
-
-    async def _fake_call(_instance, _tool_name, _arguments):
-        return {
-            "content": [{"type": "text", "text": "ok"}],
-            "structuredContent": {"ok": True},
-            "isError": False,
-            "meta": {},
-        }
-
-    monkeypatch.setattr("sift_mcp.mcp.server.call_upstream_tool", _fake_call)
-
-    _fake_handle = ArtifactHandle(
-        artifact_id="art_no_quota",
-        created_seq=1,
-        generation=1,
-        session_id="sess_1",
-        source_tool="demo.echo",
-        upstream_instance_id="demo",
-        request_key="rk_1",
-        payload_hash_full="h_1",
-        payload_json_bytes=10,
-        payload_binary_bytes_total=0,
-        payload_total_bytes=10,
-        contains_binary_refs=False,
-        map_kind="none",
-        map_status="pending",
-        index_status="pending",
-        status="ok",
-        error_summary=None,
-    )
-
-    monkeypatch.setattr(
-        "sift_mcp.mcp.handlers.mirrored_tool.persist_artifact",
-        lambda **_kw: _fake_handle,
-    )
-    monkeypatch.setattr(
-        server,
-        "_run_mapping_inline",
-        lambda *_args, **_kwargs: True,
-    )
-    _patch_schema_ready_describe(monkeypatch)
-
-    response = asyncio.run(
-        server.handle_mirrored_tool(
-            mirrored,
-            {
-                "_gateway_context": {
-                    "session_id": "sess_1",
-                },
-                "message": "hello",
-            },
-        )
-    )
-    assert response["type"] == "gateway_tool_result"
-    assert response["artifact_id"] == "art_no_quota"
-    assert enforce_called is False
+    assert response["artifact_id"] == "art_no_quota_preflight"
+    assert quota_called is False
 
 
 def test_artifact_select_includes_total_matched(

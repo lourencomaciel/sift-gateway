@@ -1,9 +1,8 @@
 """Handle invocations of mirrored upstream tools.
 
 Orchestrate the full lifecycle for a proxied tool call: validate
-gateway context, enforce storage quotas, call the upstream,
-persist the artifact envelope, and trigger mapping.  Exports
-``handle_mirrored_tool``.
+gateway context, call the upstream, persist the artifact envelope,
+and trigger mapping.  Exports ``handle_mirrored_tool``.
 """
 
 from __future__ import annotations
@@ -33,7 +32,6 @@ from sift_mcp.envelope.responses import (
     gateway_error,
     gateway_tool_result,
 )
-from sift_mcp.jobs.quota import QuotaBreaches, enforce_quota
 from sift_mcp.mcp.handlers.common import (
     row_to_dict,
     rows_to_dicts,
@@ -843,9 +841,9 @@ async def handle_mirrored_tool(
 ) -> dict[str, Any]:
     """Handle a mirrored upstream tool invocation.
 
-    Orchestrates the full lifecycle: validate context, check
-    storage quotas, call the upstream, persist the artifact
-    envelope, and trigger mapping.
+    Orchestrates the full lifecycle: validate context, call
+    the upstream, persist the artifact envelope, and trigger
+    mapping.
 
     Args:
         ctx: Gateway server with DB pool, blob store, config,
@@ -962,80 +960,7 @@ async def handle_mirrored_tool(
             "schema-first responses require database persistence",
         )
 
-    # Phase 1: Quota enforcement preflight.
-    # Rejecting here avoids invoking side-effecting upstream tools when
-    # the workspace is already over hard quota and cannot be cleared.
-    # Uses a separate connection (prune needs its own transaction).
-    # Non-connectivity errors fail closed but do not mark DB unhealthy.
-    quota_ok = True
-    quota_breaches: QuotaBreaches | None = None
-    if ctx.config.quota_enforcement_enabled:
-        try:
-            blobs_root = (
-                ctx.blob_store.blobs_bin_dir
-                if ctx.blob_store is not None
-                else None
-            )
-            with ctx.db_pool.connection() as quota_conn:
-                quota_result = enforce_quota(
-                    quota_conn,
-                    max_binary_blob_bytes=ctx.config.max_binary_blob_bytes,
-                    max_payload_total_bytes=ctx.config.max_payload_total_bytes,
-                    max_total_storage_bytes=ctx.config.max_total_storage_bytes,
-                    prune_batch_size=ctx.config.quota_prune_batch_size,
-                    max_prune_rounds=ctx.config.quota_max_prune_rounds,
-                    hard_delete_grace_seconds=ctx.config.quota_hard_delete_grace_seconds,
-                    remove_fs_blobs=ctx.blob_store is not None,
-                    blobs_root=blobs_root,
-                    metrics=ctx.metrics,
-                )
-                quota_breaches = (
-                    quota_result.breaches_after or quota_result.breaches_before
-                )
-                if not quota_result.space_cleared:
-                    quota_ok = False
-        except _DB_CONNECTIVITY_ERRORS:
-            ctx.db_ok = False
-            return gateway_error(
-                "INTERNAL",
-                "quota check failed; gateway marked unhealthy",
-            )
-        except Exception:
-            return gateway_error(
-                "INTERNAL",
-                "quota check failed; refusing to create artifact",
-            )
-
-    if not quota_ok:
-        quota_details: dict[str, Any] = {"exceeded_caps": []}
-        if quota_breaches is not None and quota_breaches.binary_blob_exceeded:
-            quota_details["max_binary_blob_bytes"] = (
-                ctx.config.max_binary_blob_bytes
-            )
-            quota_details["exceeded_caps"].append("max_binary_blob_bytes")
-        if quota_breaches is not None and quota_breaches.payload_total_exceeded:
-            quota_details["max_payload_total_bytes"] = (
-                ctx.config.max_payload_total_bytes
-            )
-            quota_details["exceeded_caps"].append("max_payload_total_bytes")
-        if quota_breaches is not None and quota_breaches.total_storage_exceeded:
-            quota_details["max_total_storage_bytes"] = (
-                ctx.config.max_total_storage_bytes
-            )
-            quota_details["exceeded_caps"].append("max_total_storage_bytes")
-        if not quota_details["exceeded_caps"]:
-            quota_details["max_total_storage_bytes"] = (
-                ctx.config.max_total_storage_bytes
-            )
-            quota_details["exceeded_caps"].append("max_total_storage_bytes")
-        return gateway_error(
-            "QUOTA_EXCEEDED",
-            "workspace storage quota exceeded;"
-            " prune could not free enough space",
-            details=quota_details,
-        )
-
-    # Phase 1.75: Resolve artifact refs in forwarded args.
+    # Phase 1: Resolve artifact refs in forwarded args.
     # Uses a short-lived connection; resolved args are only
     # sent upstream — identity / cache / storage use the
     # original pointer-containing forwarded_args.
