@@ -83,6 +83,7 @@ Runtime behavior:
 | Key | Type | Default | Env var | Description |
 |-----|------|---------|---------|-------------|
 | `max_full_map_bytes` | int | `10000000` | `SIFT_MCP_MAX_FULL_MAP_BYTES` | Max envelope bytes for full mapping |
+| `max_in_memory_mapping_bytes` | int | `derived from memory capacity (clamped to 50MB-512MB)` | `SIFT_MCP_MAX_IN_MEMORY_MAPPING_BYTES` | Max inline JSON bytes allowed for in-memory mapping path |
 | `max_root_discovery_k` | int | `3` | `SIFT_MCP_MAX_ROOT_DISCOVERY_K` | Max discovered root arrays |
 
 ## Partial mapping budgets

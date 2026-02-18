@@ -188,6 +188,29 @@ def test_large_json_triggers_partial_mapping(tmp_path: Path) -> None:
     assert result.schemas[0].mode == "sampled"
 
 
+def test_run_mapping_fails_when_in_memory_budget_exceeded(
+    tmp_path: Path,
+) -> None:
+    data = [{"id": i, "v": "x" * 200} for i in range(200)]
+    envelope = {"content": [{"type": "json", "value": data}]}
+    result = run_mapping(
+        MappingInput(
+            artifact_id="a_mem_guard",
+            payload_hash_full="p_mem_guard",
+            envelope=envelope,
+            config=_config(
+                tmp_path,
+                max_full_map_bytes=100,
+                max_in_memory_mapping_bytes=5_000,
+            ),
+        )
+    )
+    assert result.map_kind == "partial"
+    assert result.map_status == "failed"
+    assert result.map_error is not None
+    assert "max_in_memory_mapping_bytes" in result.map_error
+
+
 def test_select_json_part_binary_ref_json_mime() -> None:
     """select_json_part recognizes binary_ref with application/json mime."""
     envelope = {

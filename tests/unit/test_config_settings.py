@@ -23,6 +23,39 @@ def test_gateway_config_derived_paths(tmp_path: Path) -> None:
     assert config.blobs_bin_dir == tmp_path / "blobs" / "bin"
 
 
+def test_max_in_memory_mapping_bytes_derived_from_capacity(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setattr(
+        "sift_mcp.config.settings._detect_memory_capacity_bytes",
+        lambda: 2_000_000_000,
+    )
+    config = GatewayConfig(data_dir=tmp_path)
+    assert config.max_in_memory_mapping_bytes == 125_000_000
+
+
+def test_max_in_memory_mapping_bytes_clamped_to_floor(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setattr(
+        "sift_mcp.config.settings._detect_memory_capacity_bytes",
+        lambda: 400_000_000,
+    )
+    config = GatewayConfig(data_dir=tmp_path)
+    assert config.max_in_memory_mapping_bytes == 50_000_000
+
+
+def test_max_in_memory_mapping_bytes_clamped_to_ceiling(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setattr(
+        "sift_mcp.config.settings._detect_memory_capacity_bytes",
+        lambda: 20_000_000_000,
+    )
+    config = GatewayConfig(data_dir=tmp_path)
+    assert config.max_in_memory_mapping_bytes == 512_000_000
+
+
 def test_code_query_allowed_import_roots_defaults_none(
     tmp_path: Path,
 ) -> None:
