@@ -174,9 +174,7 @@ You can also manually configure Sift by creating an instance config such as `~/.
       "_gateway": {
         "secret_ref": "github",
         "semantic_salt_env_keys": ["GITHUB_ORG"],
-        "strict_schema_reuse": true,
-        "passthrough_allowed": true,
-        "dedupe_exclusions": ["$.timestamp"]
+        "passthrough_allowed": true
       }
     },
     "remote": {

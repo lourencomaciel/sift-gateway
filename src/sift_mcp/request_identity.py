@@ -2,10 +2,8 @@
 
 Combines upstream instance identity, prefix, tool name, and
 RFC 8785 canonical arguments into a deterministic request key.
-Also provides a dedupe hash that optionally excludes specified
-JSON paths for reuse lookups.  Exports ``RequestIdentity`` as
-a frozen dataclass and the ``compute_request_identity`` and
-``compute_dedupe_hash`` helper functions.
+Exports ``RequestIdentity`` as a frozen dataclass and the
+``compute_request_identity`` helper function.
 """
 
 from __future__ import annotations
@@ -13,7 +11,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from sift_mcp.canon.decimal_json import loads_decimal
 from sift_mcp.canon.rfc8785 import canonical_bytes, coerce_floats
 from sift_mcp.util.hashing import request_key as compute_request_key
 from sift_mcp.util.hashing import sha256_hex
@@ -100,37 +97,3 @@ def compute_request_identity(
         tool_name=tool_name,
         canonical_args=canonical_args,
     )
-
-
-def compute_dedupe_hash(
-    canonical_args: bytes,
-    *,
-    exclusion_paths: list[str] | None = None,
-) -> str:
-    """Compute dedupe hash with optional JSONPath exclusions.
-
-    Used for reuse lookup only; does NOT define storage
-    identity.
-
-    Args:
-        canonical_args: RFC 8785 canonical arg bytes.
-        exclusion_paths: Optional list of top-level key paths
-            (e.g. ``$.key``) to exclude before hashing.
-
-    Returns:
-        SHA-256 hex digest of the (possibly filtered)
-        canonical args.
-    """
-    if not exclusion_paths:
-        return sha256_hex(canonical_args)
-
-    # Parse the canonical args, remove excluded paths, re-canonicalize
-    # Use loads_decimal to preserve Decimal values (no Python float drift)
-    args_obj = loads_decimal(canonical_args)
-    for path in exclusion_paths:
-        # Simple top-level key exclusion for now
-        # Path format: $.key or just key
-        key = path.lstrip("$").lstrip(".")
-        args_obj.pop(key, None)
-
-    return sha256_hex(canonical_bytes(args_obj))

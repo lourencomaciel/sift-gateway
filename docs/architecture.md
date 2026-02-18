@@ -72,19 +72,12 @@ Upstream MCP responses are normalized into a canonical envelope shape:
 - **Payload hash**: `payload_hash_full = sha256(uncompressed_canonical_bytes)`
 - **Compression**: canonical bytes stored with `zstd` (default), `gzip`, or `none`
 
-## 5. Request identity and caching
+## 5. Request identity
 
 - `upstream_instance_id`: semantic identity of the upstream (excludes secrets)
 - `canonical_args_bytes`: RFC 8785 canonical JSON of stripped/validated args
 - `request_key = sha256(upstream_instance_id | prefix | tool | canonical_args_bytes)`
 - **Reserved arg stripping**: keys matching `_gateway_*` are removed before hashing/forwarding
-- **Stampede lock**: process-local per-`request_key` advisory lock with configurable timeout
-- **Reuse**: by `request_key` (latest by `created_seq DESC`), gated by schema hash if `strict_schema_reuse`
-
-Reuse control via `_gateway_context.allow_reuse` (boolean):
-
-- `false` (default): every upstream call is fresh — no request-key dedup
-- `true`: opt-in to request-key dedup; advisory lock + reuse check active
 
 ## 6. Mapping system
 
@@ -234,9 +227,9 @@ For `query_kind=code`, pagination fields are omitted (`truncated=false`, no curs
 - **Creation**: touches `artifacts.last_referenced_at`
 - **Retrieval/describe**: touches if not deleted; else returns GONE
 - **Search**: does NOT touch `last_referenced_at` (only session/artifact_refs)
-- **Cache reuse invariant**: a reused handle MUST be attached to the caller
-  session (`artifact_refs`) before returning. Returned handles are immediately
-  retrievable in that session.
+- **Handle attachment invariant**: created handles MUST be attached to the
+  caller session (`artifact_refs`) before returning. Returned handles are
+  immediately retrievable in that session.
 
 ## 11. Pruning
 
@@ -247,7 +240,7 @@ For `query_kind=code`, pagination fields are omitted (`truncated=false`, no curs
 ## 12. Observability
 
 - **Logging**: structlog JSON with correlation fields (session_id, artifact_id, request_key, payload_hash_full)
-- **Metrics**: cache hits, alias hits, upstream calls, oversize JSON count, partial map stop_reason distribution, cursor stale reasons, advisory lock timeouts
+- **Metrics**: alias hits, upstream calls, oversize JSON count, partial map stop_reason distribution, cursor stale reasons
 - **Determinism debug**: map_budget_fingerprint, map_backend_id, prng_version, sample_set_hash logged on cursor issue/verify
 
 ## 13. Version constants
@@ -268,7 +261,7 @@ The gateway uses a two-tier response model based on payload size:
 | Payload size | Mode | LLM sees | Storage | Mapping |
 |---|---|---|---|---|
 | < `passthrough_max_bytes` (default 8192) | **passthrough** | Raw upstream result (transparent) | Async, best-effort | Skipped |
-| >= `passthrough_max_bytes` | **handle-only** | `artifact_id` + cache metadata + `mapping` + `schemas` + usage hint | Sync | Yes |
+| >= `passthrough_max_bytes` | **handle-only** | `artifact_id` + metadata + `mapping` + `schemas` + usage hint | Sync | Yes |
 
 ### 14.1 Passthrough mode
 
@@ -283,9 +276,7 @@ When the normalized envelope payload is smaller than `passthrough_max_bytes`, th
 
 Payloads at or above the passthrough threshold follow the handle-only path: the envelope is stored synchronously, the mapping pipeline runs (full or partial depending on payload size), and the caller receives a response containing:
 
-- **`artifact_id`** and **cache metadata** (reuse status, request key).
-- cache metadata includes `reused`, `request_key`, `reason`,
-  `artifact_id_origin` (`cache|fresh`), and `allow_reuse` (boolean).
+- **`artifact_id`** and **request/cache metadata** (`request_key`, `reason`, `artifact_id_origin`).
 - **`mapping`**: inline mapping metadata (`map_kind`, `map_status`, mapper/traversal versions, and determinism linkage).
 - **`schemas`**: inline compact schema list (legend-driven key aliases) with per-field type/required/nullable counts, observed-count defaults, compact example values, sampled `distinct_values` (max 10), sampled `cardinality`, and determinism hashes.
   - Compaction rule: if exactly one schema root has the highest `coverage.observed_records`, only that primary schema is returned.
@@ -324,7 +315,7 @@ Nested values (inside dicts or lists) are never inspected.
 
 For each detected reference:
 
-1. Fetch the artifact envelope (reuses `FETCH_ARTIFACT_SQL`).
+1. Fetch the artifact envelope (uses `FETCH_ARTIFACT_SQL`).
 2. Validate: not deleted, not binary-only.
 3. Extract JSON target via `extract_json_target`.
 4. If JSONPath query present: evaluate via `evaluate_jsonpath`.
@@ -333,10 +324,10 @@ For each detected reference:
    - Multiple matches → return the list.
 5. Substitute the resolved value into the argument dict.
 
-### 15.3 Caching invariant
+### 15.3 Request identity invariant
 
 Request identity hashes use the pre-resolution arguments (pointer
-strings). Same reference string = same cache key, regardless of
+strings). Same reference string = same request key, regardless of
 the artifact's current content.
 
 ### 15.4 DB-less mode

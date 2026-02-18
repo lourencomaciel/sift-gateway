@@ -63,7 +63,7 @@ def build_app(
 
     Either provide *config* directly or let it be loaded via
     *data_dir_override*.  If *startup_report* is provided it is
-    reused; otherwise ``run_startup_check`` is called.
+    used directly; otherwise ``run_startup_check`` is called.
 
     Args:
         data_dir_override: Optional filesystem path overriding

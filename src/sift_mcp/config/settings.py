@@ -245,9 +245,7 @@ class UpstreamConfig(BaseSettings):
         headers: HTTP headers for http transport.
         semantic_salt_headers: Stable header names for identity.
         semantic_salt_env_keys: Stable env keys for identity.
-        strict_schema_reuse: Require schema hash match for reuse.
         passthrough_allowed: Allow small-result passthrough.
-        dedupe_exclusions: JSONPath exclusions for dedupe hash.
         secret_ref: Reference to an external secret store entry.
         inherit_parent_env: Inherit parent process env vars.
         external_user_id: Stable user identity for upstream
@@ -292,15 +290,8 @@ class UpstreamConfig(BaseSettings):
     )
 
     # Tool-level configuration
-    strict_schema_reuse: bool = Field(
-        True, description="Require schema hash match for reuse (§11.2)"
-    )
     passthrough_allowed: bool = Field(
         True, description="Allow passthrough for small results (§ passthrough)"
-    )
-    dedupe_exclusions: list[str] = Field(
-        default_factory=list,
-        description="JSONPath subset exclusions for dedupe hash (§7.2)",
     )
 
     # Pagination
@@ -609,9 +600,6 @@ class GatewayConfig(BaseSettings):
         description="Timeout in seconds for auto-pagination loop.",
     )
 
-    # --------------- Advisory lock (§9.1) ---------------
-    advisory_lock_timeout_ms: int = Field(5000, ge=100)
-
     # --------------- Derived paths ---------------
     @property
     def state_dir(self) -> Path:
@@ -703,7 +691,6 @@ _JSON_DECODE_TOP_LEVEL_FIELDS = {
 }
 _JSON_DECODE_UPSTREAM_FIELDS = {
     "args",
-    "dedupe_exclusions",
     "env",
     "headers",
     "pagination",

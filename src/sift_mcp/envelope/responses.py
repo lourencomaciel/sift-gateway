@@ -40,7 +40,7 @@ def gateway_tool_result(
 
     Args:
         artifact_id: Unique artifact identifier.
-        cache_meta: Cache metadata dict (reused, reason, etc.).
+        cache_meta: Cache/request metadata dict.
         mapping: Mapping metadata for this artifact.
         schemas: Canonical schema list (one entry per root path).
         schema_legend: Optional compact-schema legend describing
