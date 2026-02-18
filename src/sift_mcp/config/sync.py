@@ -36,25 +36,6 @@ def _suppress_os_error() -> Iterator[None]:
 logger = logging.getLogger(__name__)
 
 
-def _refresh_instance_registry(source_path: Path, data_dir: Path) -> None:
-    """Best-effort registry refresh for source -> data_dir mapping."""
-    config_path = data_dir / STATE_SUBDIR / CONFIG_FILENAME
-    if not config_path.is_file():
-        return
-    try:
-        from sift_mcp.config.instances import upsert_instance
-
-        upsert_instance(
-            source_path=source_path,
-            data_dir=data_dir,
-        )
-    except OSError as exc:
-        logger.warning(
-            "sync completed but failed to update instance registry: %s",
-            exc,
-        )
-
-
 def _is_sift_command(command: str) -> bool:
     """Return whether a command string invokes ``sift-mcp``."""
     command_name = Path(command).name.lower()
@@ -316,7 +297,6 @@ def run_sync(data_dir: str | Path) -> dict[str, Any]:
         new_servers[name] = entry
 
     if not new_servers:
-        _refresh_instance_registry(source_path, gateway_data_dir)
         return {"synced": 0}
 
     # Import new servers, externalizing secrets
@@ -378,6 +358,5 @@ def run_sync(data_dir: str | Path) -> dict[str, Any]:
     config_path.parent.mkdir(parents=True, exist_ok=True)
     _write_json(config_path, gw_config)
     _write_json(source_path, new_source)
-    _refresh_instance_registry(source_path, gateway_data_dir)
 
     return {"synced": len(new_servers)}

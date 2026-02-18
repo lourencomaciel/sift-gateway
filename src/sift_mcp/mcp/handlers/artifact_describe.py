@@ -234,14 +234,6 @@ async def handle_artifact_describe(
         if anchor_row is None:
             return gateway_error("NOT_FOUND", "artifact not found")
         if anchor_row.get("deleted_at") is not None:
-            ctx._safe_touch_for_retrieval(
-                connection,
-                session_id=session_id,
-                artifact_id=anchor_artifact_id,
-            )
-            commit = getattr(connection, "commit", None)
-            if callable(commit):
-                commit()
             return gateway_error("GONE", "artifact has been deleted")
 
         root_entries: list[dict[str, Any]] = []
@@ -302,14 +294,20 @@ async def handle_artifact_describe(
                     }
                 )
 
-        ctx._safe_touch_for_retrieval_many(
-            connection,
-            session_id=session_id,
-            artifact_ids=related_ids,
-        )
-        commit = getattr(connection, "commit", None)
-        if callable(commit):
-            commit()
+        touched = False
+        for artifact_id in related_ids:
+            touched = (
+                ctx._safe_touch_for_retrieval(
+                    connection,
+                    session_id=session_id,
+                    artifact_id=artifact_id,
+                )
+                or touched
+            )
+        if touched:
+            commit = getattr(connection, "commit", None)
+            if callable(commit):
+                commit()
 
     roots = build_lineage_root_catalog(root_entries)
     roots_with_schema = [

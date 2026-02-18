@@ -15,7 +15,7 @@ Typical usage example::
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 import datetime as dt
 import importlib.util
@@ -57,7 +57,6 @@ from sift_mcp.mapping.runner import MappingInput
 from sift_mcp.mapping.worker import (
     WorkerContext,
     run_mapping_worker,
-    should_run_mapping,
 )
 from sift_mcp.mcp.mirror import (
     MirroredTool,
@@ -72,11 +71,6 @@ from sift_mcp.mcp.upstream import (
 from sift_mcp.mcp.upstream_errors import classify_upstream_exception
 from sift_mcp.obs.logging import LogEvents, get_logger
 from sift_mcp.obs.metrics import GatewayMetrics, get_metrics
-from sift_mcp.sessions import (
-    touch_for_retrieval,
-    touch_for_retrieval_many,
-    touch_for_search,
-)
 from sift_mcp.tools.usage_hint import PAGINATION_COMPLETENESS_RULE
 
 _GENERIC_ARGS_SCHEMA: dict[str, Any] = {
@@ -153,7 +147,7 @@ _BUILTIN_TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
                     "describe: mapping roots summary; "
                     "get: retrieve envelope/mapped values; "
                     "select: projection/filter over records; "
-                    "search: session artifact listing; "
+                    "search: workspace artifact listing; "
                     "code: execute generated Python against a mapped root."
                 ),
             },
@@ -637,8 +631,6 @@ class GatewayServer:
     upstream_errors: dict[str, str] = field(default_factory=dict)
     upstream_runtime: dict[str, dict[str, Any]] = field(default_factory=dict)
     mirrored_tools: dict[str, MirroredTool] = field(default_factory=dict)
-    _mapping_tasks: set[asyncio.Task[None]] = field(default_factory=set)
-
     def __post_init__(self) -> None:  # noqa: D105
         if not self.mirrored_tools and self.upstreams:
             self.mirrored_tools = build_mirrored_tools(self.upstreams)
@@ -1109,7 +1101,7 @@ class GatewayServer:
 
         row = connection.execute(
             VISIBLE_ARTIFACT_SQL,
-            (WORKSPACE_ID, session_id, artifact_id),
+            (WORKSPACE_ID, artifact_id),
         ).fetchone()
         return row is not None
 
@@ -1119,50 +1111,105 @@ class GatewayServer:
         *,
         session_id: str,
         artifact_id: str,
-    ) -> None:
-        """Record a retrieval touch if the connection supports it.
+        now: dt.datetime | None = None,
+    ) -> bool:
+        """Best-effort retrieval touch for session and artifact recency.
 
         Args:
             connection: Active database connection.
             session_id: Session performing the retrieval.
-            artifact_id: Artifact being retrieved.
+            artifact_id: Retrieved artifact identifier.
+            now: Optional override timestamp for tests.
+
+        Returns:
+            ``True`` when touch SQL was executed, ``False`` when
+            the connection does not expose ``execute``.
         """
-        if callable(getattr(connection, "cursor", None)):
-            touch_for_retrieval(connection, session_id, artifact_id)
+        from sift_mcp.db.repos.sessions_repo import (
+            UPSERT_SESSION_SQL,
+            upsert_session_params,
+        )
+
+        execute = getattr(connection, "execute", None)
+        if not callable(execute):
+            return False
+
+        execute(UPSERT_SESSION_SQL, upsert_session_params(session_id))
+        if now is None:
+            execute(
+                """
+                UPDATE artifacts
+                SET last_referenced_at = NOW()
+                WHERE workspace_id = %s
+                  AND artifact_id = %s
+                  AND deleted_at IS NULL
+                """,
+                (WORKSPACE_ID, artifact_id),
+            )
+        else:
+            execute(
+                """
+                UPDATE artifacts
+                SET last_referenced_at = %s
+                WHERE workspace_id = %s
+                  AND artifact_id = %s
+                  AND deleted_at IS NULL
+                """,
+                (now, WORKSPACE_ID, artifact_id),
+            )
+        return True
 
     def _safe_touch_for_retrieval_many(
         self,
         connection: Any,
         *,
         session_id: str,
-        artifact_ids: list[str],
-    ) -> None:
-        """Record retrieval touches for many artifacts.
-
-        Args:
-            connection: Active database connection.
-            session_id: Session performing the retrieval.
-            artifact_ids: Retrieved artifact identifiers.
-        """
-        if callable(getattr(connection, "cursor", None)):
-            touch_for_retrieval_many(connection, session_id, artifact_ids)
+        artifact_ids: Sequence[str],
+        now: dt.datetime | None = None,
+    ) -> bool:
+        """Best-effort retrieval touch for multiple artifacts."""
+        touched = False
+        seen: set[str] = set()
+        for artifact_id in artifact_ids:
+            if artifact_id in seen:
+                continue
+            seen.add(artifact_id)
+            touched = (
+                self._safe_touch_for_retrieval(
+                    connection,
+                    session_id=session_id,
+                    artifact_id=artifact_id,
+                    now=now,
+                )
+                or touched
+            )
+        return touched
 
     def _safe_touch_for_search(
         self,
         connection: Any,
         *,
         session_id: str,
-        artifact_ids: list[str],
-    ) -> None:
-        """Record a search touch if the connection supports it.
+        artifact_ids: Sequence[str],
+        now: dt.datetime | None = None,
+    ) -> bool:
+        """Best-effort search touch for session activity only.
 
-        Args:
-            connection: Active database connection.
-            session_id: Session performing the search.
-            artifact_ids: Artifacts returned in the results.
+        Search should not alter artifact recency because
+        ``last_referenced_at`` is used for LRU/retention and
+        search ordering.
         """
-        if callable(getattr(connection, "cursor", None)):
-            touch_for_search(connection, session_id, artifact_ids)
+        from sift_mcp.db.repos.sessions_repo import (
+            UPSERT_SESSION_SQL,
+            upsert_session_params,
+        )
+
+        execute = getattr(connection, "execute", None)
+        if not callable(execute):
+            return False
+        execute(UPSERT_SESSION_SQL, upsert_session_params(session_id))
+        _ = (artifact_ids, now)
+        return True
 
     def _check_sample_corruption(
         self,
@@ -1263,128 +1310,18 @@ class GatewayServer:
             metrics=self.metrics,
         )
 
-    async def _run_mapping_background(
-        self,
-        *,
-        handle: ArtifactHandle,
-        envelope: Envelope,
-    ) -> None:
-        """Run the mapping worker in a background thread.
-
-        Opens a fresh database connection from the pool and
-        executes the mapping worker via asyncio.to_thread.
-
-        Args:
-            handle: Artifact handle with metadata.
-            envelope: Normalized envelope to map.
-        """
-        if self.db_pool is None:
-            return
-
-        worker_ctx = WorkerContext(
-            artifact_id=handle.artifact_id,
-            generation=handle.generation,
-            map_status=handle.map_status,
-        )
-        mapping_input = self._mapping_input_for_artifact(
-            artifact_id=handle.artifact_id,
-            payload_hash_full=handle.payload_hash_full,
-            envelope=envelope,
-        )
-
-        def _execute() -> None:
-            if self.db_pool is None:
-                return
-            with self.db_pool.connection() as connection:
-                run_mapping_worker(
-                    connection,
-                    worker_ctx=worker_ctx,
-                    mapping_input=mapping_input,
-                    metrics=self.metrics,
-                )
-
-        await asyncio.to_thread(_execute)
-
-    def _consume_mapping_task(self, task: asyncio.Task[None]) -> None:
-        """Handle completion of a background mapping task.
-
-        Removes the task from the pending set and logs any
-        exception that occurred during execution.
-
-        Args:
-            task: Completed asyncio task to consume.
-        """
-        self._mapping_tasks.discard(task)
-        try:
-            task.result()
-        except Exception:
-            log = get_logger(component="mcp.server")
-            log.error(
-                LogEvents.MAPPING_FAILED,
-                exc_info=task.exception(),
-            )
-
-    def _schedule_background_mapping(
-        self,
-        *,
-        handle: ArtifactHandle,
-        envelope: Envelope,
-    ) -> None:
-        """Schedule a mapping worker as a background asyncio task.
-
-        Args:
-            handle: Artifact handle with metadata.
-            envelope: Normalized envelope to map.
-        """
-        task = asyncio.create_task(
-            self._run_mapping_background(handle=handle, envelope=envelope)
-        )
-        self._mapping_tasks.add(task)
-        task.add_done_callback(self._consume_mapping_task)
-
     async def drain_mapping_tasks(self, *, timeout: float = 30.0) -> int:
-        """Await all pending background mapping tasks.
+        """No-op retained for shutdown compatibility.
 
         Args:
             timeout: Maximum seconds to wait for tasks to
                 complete. Defaults to 30.
 
         Returns:
-            Number of tasks still pending after the timeout.
+            Always ``0``.
         """
-        pending = set(self._mapping_tasks)
-        if not pending:
-            return 0
-        _done, still_pending = await asyncio.wait(pending, timeout=timeout)
-        return len(still_pending)
-
-    def _trigger_mapping_for_artifact(
-        self,
-        connection: Any,
-        *,
-        handle: ArtifactHandle,
-        envelope: Envelope,
-    ) -> None:
-        """Trigger mapping for an artifact based on configured mode.
-
-        Runs inline for sync/hybrid modes or schedules a
-        background task for async mode.  No-ops if the
-        artifact's map_status does not require mapping.
-
-        Args:
-            connection: Active database connection.
-            handle: Artifact handle with metadata.
-            envelope: Normalized envelope to map.
-        """
-        if not should_run_mapping(handle.map_status):
-            return
-        mode = self.config.mapping_mode.value
-        if mode in {"sync", "hybrid"}:
-            self._run_mapping_inline(
-                connection, handle=handle, envelope=envelope
-            )
-            return
-        self._schedule_background_mapping(handle=handle, envelope=envelope)
+        _ = timeout
+        return 0
 
     # -- Envelope transformation --
 
@@ -1679,103 +1616,6 @@ class GatewayServer:
         )
 
         return await _handle(self, arguments)
-
-    # Convenience wrappers — keep integration callers and
-    # direct handler tests working without action injection.
-
-    async def handle_artifact_search(
-        self, arguments: dict[str, Any]
-    ) -> dict[str, Any]:
-        """Delegate directly to the legacy search handler."""
-        from sift_mcp.mcp.handlers.artifact_search import (
-            handle_artifact_search as _search,
-        )
-
-        return await _search(self, arguments)
-
-    async def handle_artifact_get(
-        self, arguments: dict[str, Any]
-    ) -> dict[str, Any]:
-        """Delegate directly to the legacy get handler."""
-        from sift_mcp.mcp.handlers.artifact_get import (
-            handle_artifact_get as _get,
-        )
-
-        return await _get(self, arguments)
-
-    async def handle_artifact_select(
-        self, arguments: dict[str, Any]
-    ) -> dict[str, Any]:
-        """Delegate directly to the legacy select handler."""
-        from sift_mcp.mcp.handlers.artifact_select import (
-            handle_artifact_select as _select,
-        )
-
-        return await _select(self, arguments)
-
-    async def handle_artifact_code(
-        self, arguments: dict[str, Any]
-    ) -> dict[str, Any]:
-        """Delegate directly to the code-query handler."""
-        from sift_mcp.mcp.handlers.artifact_code import (
-            handle_artifact_code as _code,
-        )
-
-        return await _code(self, arguments)
-
-    async def handle_artifact_describe(
-        self, arguments: dict[str, Any]
-    ) -> dict[str, Any]:
-        """Delegate directly to the legacy describe handler."""
-        from sift_mcp.mcp.handlers.artifact_describe import (
-            handle_artifact_describe as _describe,
-        )
-
-        return await _describe(self, arguments)
-
-    async def handle_artifact_next_page(
-        self, arguments: dict[str, Any]
-    ) -> dict[str, Any]:
-        """Delegate directly to the next_page handler."""
-        from sift_mcp.mcp.handlers.artifact_next_page import (
-            handle_artifact_next_page as _next_page,
-        )
-
-        return await _next_page(self, arguments)
-
-    async def handle_artifact_find(
-        self, arguments: dict[str, Any]
-    ) -> dict[str, Any]:
-        """Legacy wrapper — delegates to the original find handler.
-
-        ``find`` is superseded by query select-mode with ``where``, but
-        the original handler accepts different required params
-        (no ``root_path`` / ``select_paths``), so we call it
-        directly rather than routing through consolidated query
-        dispatch.
-        """
-        from sift_mcp.mcp.handlers.artifact_find import (
-            handle_artifact_find as _find,
-        )
-
-        return await _find(self, arguments)
-
-    async def handle_artifact_chain_pages(
-        self, arguments: dict[str, Any]
-    ) -> dict[str, Any]:
-        """Legacy wrapper — delegates to the original handler.
-
-        The translation-to-search approach has too many contract
-        mismatches (limit cap, cursor tool name, touch semantics,
-        filter passthrough). Delegating directly preserves all
-        original behavior.
-        """
-        from sift_mcp.mcp.handlers.artifact_chain_pages import (
-            handle_artifact_chain_pages as _chain_pages,
-        )
-
-        return await _chain_pages(self, arguments)
-
 
 async def bootstrap_server(
     config: GatewayConfig,

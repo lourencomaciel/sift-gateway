@@ -557,45 +557,6 @@ def _pagination_response_meta(
     return base
 
 
-async def _persist_async(
-    ctx: GatewayServer,
-    input_data: CreateArtifactInput,
-    envelope: Envelope,
-    binary_refs: list[Any] | None = None,
-) -> None:
-    """Persist an artifact asynchronously on a best-effort basis.
-
-    Used for passthrough-eligible responses where the raw
-    upstream result is returned immediately.  Failures are
-    logged but do not propagate.
-
-    Args:
-        ctx: Gateway server providing DB pool and helpers.
-        input_data: Pre-built artifact creation input.
-        envelope: The envelope to persist.
-        binary_refs: Optional ``BinaryRef`` objects from
-            oversize replacement to insert into
-            ``binary_blobs``.
-    """
-    try:
-        if ctx.db_pool is None:
-            return
-        with ctx.db_pool.connection() as connection:
-            binary_hashes = ctx._binary_hashes_from_envelope(envelope)
-            persist_artifact(
-                connection=connection,
-                config=ctx.config,
-                input_data=input_data,
-                binary_hashes=binary_hashes,
-                binary_refs=binary_refs,
-            )
-    except Exception:
-        get_logger(component="mcp.handlers").warning(
-            "persist_artifact failed (best-effort)",
-            exc_info=True,
-        )
-
-
 async def _auto_paginate_loop(
     ctx: GatewayServer,
     mirrored: MirroredTool,

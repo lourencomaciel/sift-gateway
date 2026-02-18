@@ -84,25 +84,25 @@ def test_load_gateway_config_reads_state_config(tmp_path: Path) -> None:
     state_dir = tmp_path / "state"
     state_dir.mkdir(parents=True, exist_ok=True)
     (state_dir / "config.json").write_text(
-        json.dumps({"passthrough_max_bytes": 16384}),
+        json.dumps({"max_items": 777}),
         encoding="utf-8",
     )
 
     config = load_gateway_config(data_dir_override=str(tmp_path))
-    assert config.passthrough_max_bytes == 16384
+    assert config.max_items == 777
 
 
 def test_env_overrides_state_config(tmp_path: Path, monkeypatch) -> None:
     state_dir = tmp_path / "state"
     state_dir.mkdir(parents=True, exist_ok=True)
     (state_dir / "config.json").write_text(
-        json.dumps({"passthrough_max_bytes": 16384}),
+        json.dumps({"max_items": 777}),
         encoding="utf-8",
     )
-    monkeypatch.setenv("SIFT_MCP_PASSTHROUGH_MAX_BYTES", "32768")
+    monkeypatch.setenv("SIFT_MCP_MAX_ITEMS", "888")
 
     config = load_gateway_config(data_dir_override=str(tmp_path))
-    assert config.passthrough_max_bytes == 32768
+    assert config.max_items == 888
 
 
 def test_nested_env_overrides_state_config(tmp_path: Path, monkeypatch) -> None:

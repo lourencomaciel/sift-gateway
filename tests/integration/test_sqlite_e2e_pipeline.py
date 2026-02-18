@@ -110,9 +110,7 @@ async def _stub_upstream(
 def _sqlite_config(tmp_path: Path) -> GatewayConfig:
     return GatewayConfig(
         data_dir=tmp_path,
-        mapping_mode="sync",
         max_full_map_bytes=2000,
-        passthrough_max_bytes=8192,
     )
 
 
@@ -160,7 +158,6 @@ def _build_upstream(
             command="/bin/echo",
             pagination=pagination,
             auto_paginate_max_pages=auto_paginate_max_pages,
-            passthrough_allowed=False,
         ),
         instance_id="upstream_sqlite_e2e",
         tools=tools,

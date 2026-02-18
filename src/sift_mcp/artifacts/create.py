@@ -297,15 +297,6 @@ INSERT INTO artifacts (
 RETURNING created_seq
 """
 
-UPSERT_ARTIFACT_REF_SQL = """
-INSERT INTO artifact_refs (
-    workspace_id, session_id, artifact_id,
-    first_seen_at, last_seen_at)
-VALUES (%s, %s, %s, NOW(), NOW())
-ON CONFLICT (workspace_id, session_id, artifact_id)
-DO UPDATE SET last_seen_at = EXCLUDED.last_seen_at
-"""
-
 INSERT_PAYLOAD_BINARY_REF_SQL = """
 INSERT INTO payload_binary_refs (workspace_id, payload_hash_full, binary_hash)
 VALUES (%s, %s, %s)
@@ -463,10 +454,6 @@ def persist_artifact(
             INSERT_ARTIFACT_SQL,
             _artifact_insert_params(row),
         ).fetchone()
-        connection.execute(
-            UPSERT_ARTIFACT_REF_SQL,
-            (WORKSPACE_ID, input_data.session_id, artifact_id),
-        )
 
         for ref in binary_refs or []:
             connection.execute(

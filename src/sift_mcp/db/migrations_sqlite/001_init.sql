@@ -50,19 +50,6 @@ CREATE TABLE IF NOT EXISTS payload_blobs (
     PRIMARY KEY (workspace_id, payload_hash_full)
 );
 
-CREATE TABLE IF NOT EXISTS payload_hash_aliases (
-    workspace_id TEXT NOT NULL,
-    payload_hash_dedupe TEXT NOT NULL,
-    payload_hash_full TEXT NOT NULL,
-    upstream_instance_id TEXT NOT NULL,
-    tool TEXT NOT NULL,
-    created_at TEXT NOT NULL DEFAULT (datetime('now')),
-    PRIMARY KEY (workspace_id, payload_hash_dedupe, payload_hash_full),
-    FOREIGN KEY (workspace_id, payload_hash_full)
-        REFERENCES payload_blobs (workspace_id, payload_hash_full)
-        ON DELETE CASCADE
-);
-
 CREATE TABLE IF NOT EXISTS payload_binary_refs (
     workspace_id TEXT NOT NULL,
     payload_hash_full TEXT NOT NULL,
@@ -162,24 +149,6 @@ CREATE INDEX IF NOT EXISTS idx_artifacts_session_id
 
 CREATE INDEX IF NOT EXISTS idx_artifacts_payload_hash
     ON artifacts (workspace_id, payload_hash_full);
-
-CREATE TABLE IF NOT EXISTS artifact_refs (
-    workspace_id TEXT NOT NULL,
-    session_id TEXT NOT NULL,
-    artifact_id TEXT NOT NULL,
-    first_seen_at TEXT NOT NULL DEFAULT (datetime('now')),
-    last_seen_at TEXT NOT NULL DEFAULT (datetime('now')),
-    PRIMARY KEY (workspace_id, session_id, artifact_id),
-    FOREIGN KEY (workspace_id, session_id)
-        REFERENCES sessions (workspace_id, session_id)
-        ON DELETE CASCADE,
-    FOREIGN KEY (workspace_id, artifact_id)
-        REFERENCES artifacts (workspace_id, artifact_id)
-        ON DELETE CASCADE
-);
-
-CREATE INDEX IF NOT EXISTS idx_artifact_refs_last_seen
-    ON artifact_refs (workspace_id, session_id, last_seen_at DESC);
 
 CREATE TABLE IF NOT EXISTS artifact_roots (
     workspace_id TEXT NOT NULL,

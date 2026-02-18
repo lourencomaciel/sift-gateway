@@ -16,6 +16,7 @@ from sift_mcp.cursor.payload import CursorStaleError
 from sift_mcp.cursor.sample_set_hash import compute_sample_set_hash
 from sift_mcp.cursor.token import CursorExpiredError
 from sift_mcp.fs.blob_store import BlobStore
+from sift_mcp.mcp.handlers.common import VISIBLE_ARTIFACT_SQL
 from sift_mcp.mcp.server import (
     GatewayServer,
     _check_sample_corruption,
@@ -291,6 +292,19 @@ class _SeqPool:
         return _SeqConnectionContext(self._connection)
 
 
+class _CaptureConnection:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, tuple[object, ...] | None]] = []
+
+    def execute(
+        self,
+        query: str,
+        params: tuple[object, ...] | None = None,
+    ) -> _SeqCursor:
+        self.calls.append((" ".join(query.split()), params))
+        return _SeqCursor()
+
+
 def test_register_tools_returns_callable_handlers(tmp_path: Path) -> None:
     server = _server(tmp_path)
     tools = server.register_tools()
@@ -310,7 +324,6 @@ def test_status_handler_returns_status_payload(tmp_path: Path) -> None:
     # FS probes the actual filesystem; data_dir (tmp_path) exists
     # but state_dir and blobs_bin_dir do not
     assert response["fs"]["ok"] is False
-    assert response["mapping_mode"] == server.config.mapping_mode.value
 
 
 def test_status_handler_probes_db_live(tmp_path: Path) -> None:
@@ -682,7 +695,7 @@ def test_handle_mirrored_tool_rejects_non_utf8_json_arguments(
 def test_handle_mirrored_tool_requires_db_for_schema_first_response(
     tmp_path: Path, monkeypatch
 ) -> None:
-    config = GatewayConfig(data_dir=tmp_path, passthrough_max_bytes=0)
+    config = GatewayConfig(data_dir=tmp_path)
     server = GatewayServer(config=config, upstreams=[_upstream()])
     mirrored = server.mirrored_tools["demo.echo"]
 
@@ -713,7 +726,7 @@ def test_handle_mirrored_tool_without_db_returns_not_implemented(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
-    config = GatewayConfig(data_dir=tmp_path, passthrough_max_bytes=0)
+    config = GatewayConfig(data_dir=tmp_path)
     server = GatewayServer(
         config=config,
         upstreams=[_upstream_with_pagination()],
@@ -757,7 +770,6 @@ def test_handle_mirrored_tool_sets_stable_upstream_error_code(
         config=GatewayConfig(
             data_dir=tmp_path,
             quota_enforcement_enabled=False,
-            passthrough_max_bytes=0,
         ),
         upstreams=[_upstream()],
         db_pool=_FakePool(None),  # type: ignore[arg-type]
@@ -795,120 +807,6 @@ def test_handle_mirrored_tool_sets_stable_upstream_error_code(
         server.upstream_runtime["demo"]["last_error_code"]
         == "UPSTREAM_DNS_FAILURE"
     )
-
-
-def test_handle_mirrored_tool_runs_inline_mapping_in_sync_mode(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
-    server = GatewayServer(
-        config=GatewayConfig(
-            data_dir=tmp_path, mapping_mode="sync", passthrough_max_bytes=0
-        ),
-        upstreams=[_upstream()],
-        db_pool=_FakePool((True,)),  # type: ignore[arg-type]
-        metrics=GatewayMetrics(),
-    )
-    mirrored = server.mirrored_tools["demo.echo"]
-
-    async def _fake_call(_instance, _tool_name, _arguments):
-        return {
-            "content": [{"type": "text", "text": "ok"}],
-            "structuredContent": {"ok": True},
-            "isError": False,
-            "meta": {},
-        }
-
-    inline_calls: list[str] = []
-    scheduled_calls: list[str] = []
-
-    monkeypatch.setattr("sift_mcp.mcp.server.call_upstream_tool", _fake_call)
-    monkeypatch.setattr(
-        "sift_mcp.mcp.handlers.mirrored_tool.persist_artifact",
-        lambda **_kwargs: _persisted_handle(),
-    )
-    monkeypatch.setattr(
-        server,
-        "_run_mapping_inline",
-        lambda *_args, **kwargs: (
-            inline_calls.append(kwargs["handle"].artifact_id) or True
-        ),
-    )
-    monkeypatch.setattr(
-        server,
-        "_schedule_background_mapping",
-        lambda **kwargs: scheduled_calls.append(kwargs["handle"].artifact_id),
-    )
-    _patch_schema_ready_describe(monkeypatch)
-
-    response = asyncio.run(
-        server.handle_mirrored_tool(
-            mirrored,
-            {"_gateway_context": {"session_id": "sess_1"}, "message": "hello"},
-        )
-    )
-
-    assert response["type"] == "gateway_tool_result"
-    assert inline_calls == ["art_new"]
-    assert scheduled_calls == []
-    assert counter_value(server.metrics.upstream_calls) == 1
-
-
-def test_handle_mirrored_tool_runs_inline_mapping_in_async_mode(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
-    server = GatewayServer(
-        config=GatewayConfig(
-            data_dir=tmp_path, mapping_mode="async", passthrough_max_bytes=0
-        ),
-        upstreams=[_upstream()],
-        db_pool=_FakePool((True,)),  # type: ignore[arg-type]
-        metrics=GatewayMetrics(),
-    )
-    mirrored = server.mirrored_tools["demo.echo"]
-
-    async def _fake_call(_instance, _tool_name, _arguments):
-        return {
-            "content": [{"type": "text", "text": "ok"}],
-            "structuredContent": {"ok": True},
-            "isError": False,
-            "meta": {},
-        }
-
-    inline_calls: list[str] = []
-    scheduled_calls: list[str] = []
-
-    monkeypatch.setattr("sift_mcp.mcp.server.call_upstream_tool", _fake_call)
-    monkeypatch.setattr(
-        "sift_mcp.mcp.handlers.mirrored_tool.persist_artifact",
-        lambda **_kwargs: _persisted_handle(),
-    )
-    monkeypatch.setattr(
-        server,
-        "_run_mapping_inline",
-        lambda *_args, **kwargs: (
-            inline_calls.append(kwargs["handle"].artifact_id) or True
-        ),
-    )
-    monkeypatch.setattr(
-        server,
-        "_schedule_background_mapping",
-        lambda **kwargs: scheduled_calls.append(kwargs["handle"].artifact_id),
-    )
-    _patch_schema_ready_describe(monkeypatch)
-
-    response = asyncio.run(
-        server.handle_mirrored_tool(
-            mirrored,
-            {"_gateway_context": {"session_id": "sess_1"}, "message": "hello"},
-        )
-    )
-
-    assert response["type"] == "gateway_tool_result"
-    assert inline_calls == ["art_new"]
-    assert scheduled_calls == []
-    assert counter_value(server.metrics.upstream_calls) == 1
 
 
 def test_artifact_search_db_runtime_returns_items(
@@ -957,6 +855,49 @@ def test_artifact_search_db_runtime_returns_items(
     assert response["pagination"]["layer"] == "artifact_retrieval"
     assert response["pagination"]["retrieval_status"] == "COMPLETE"
     assert response["items"][0]["artifact_id"] == "art_1"
+    assert conn.committed is False
+
+
+def test_artifact_search_touches_session_when_not_mocked(
+    tmp_path: Path,
+) -> None:
+    conn = _SeqConnection(
+        [
+            _SeqCursor(
+                all_rows=[
+                    (
+                        "art_1",
+                        1,
+                        "2026-01-01T00:00:00Z",
+                        "2026-01-01T00:00:00Z",
+                        "demo.echo",
+                        "inst_demo",
+                        "ok",
+                        123,
+                        None,
+                        "none",
+                        "pending",
+                    )
+                ]
+            )
+        ]
+    )
+    server = GatewayServer(
+        config=GatewayConfig(data_dir=tmp_path),
+        db_pool=_SeqPool(conn),  # type: ignore[arg-type]
+    )
+
+    response = asyncio.run(
+        server.handle_artifact(
+            {
+                "action": "query",
+                "query_kind": "search",
+                "_gateway_context": {"session_id": "sess_1"},
+                "filters": {},
+            }
+        )
+    )
+    assert response["truncated"] is False
     assert conn.committed is True
 
 
@@ -1020,7 +961,126 @@ def test_artifact_get_db_runtime_returns_envelope_items(
     assert response["pagination"]["retrieval_status"] == "COMPLETE"
     assert response["items"][0]["_locator"]["artifact_id"] == "art_1"
     assert response["items"][0]["value"]["type"] == "mcp_envelope"
+    assert conn.committed is False
+
+
+def test_artifact_get_touches_recency_when_not_mocked(
+    tmp_path: Path,
+) -> None:
+    envelope = {
+        "type": "mcp_envelope",
+        "upstream_instance_id": "inst_demo",
+        "upstream_prefix": "demo",
+        "tool": "echo",
+        "status": "ok",
+        "content": [{"type": "json", "value": {"id": 1}}],
+        "error": None,
+        "meta": {"warnings": []},
+    }
+    conn = _SeqConnection(
+        [
+            _SeqCursor(one=(1,)),
+            _SeqCursor(
+                one=(
+                    "art_1",
+                    "payload_hash",
+                    None,
+                    "full",
+                    "ready",
+                    1,
+                    0,
+                    "mbf",
+                    envelope,
+                    "gzip",
+                    b"",
+                    0,
+                    False,
+                )
+            ),
+        ]
+    )
+    server = GatewayServer(
+        config=GatewayConfig(data_dir=tmp_path),
+        db_pool=_SeqPool(conn),  # type: ignore[arg-type]
+    )
+
+    response = asyncio.run(
+        server.handle_artifact(
+            {
+                "action": "query",
+                "query_kind": "get",
+                "scope": "single",
+                "_gateway_context": {"session_id": "sess_1"},
+                "artifact_id": "art_1",
+                "target": "envelope",
+            }
+        )
+    )
+    assert response["target"] == "envelope"
     assert conn.committed is True
+
+
+def test_visible_artifact_sql_does_not_hide_deleted_rows() -> None:
+    assert "deleted_at IS NULL" not in VISIBLE_ARTIFACT_SQL
+
+
+def test_safe_touch_for_retrieval_writes_session_and_artifact(
+    tmp_path: Path,
+) -> None:
+    server = _server(tmp_path)
+    conn = _CaptureConnection()
+
+    touched = server._safe_touch_for_retrieval(
+        conn,
+        session_id="sess_1",
+        artifact_id="art_1",
+    )
+
+    assert touched is True
+    assert len(conn.calls) == 2
+    assert "INSERT INTO sessions" in conn.calls[0][0]
+    assert conn.calls[0][1] == ("local", "sess_1")
+    assert "UPDATE artifacts" in conn.calls[1][0]
+    assert conn.calls[1][1] == ("local", "art_1")
+
+
+def test_safe_touch_for_retrieval_many_deduplicates_artifacts(
+    tmp_path: Path,
+) -> None:
+    server = _server(tmp_path)
+    conn = _CaptureConnection()
+
+    touched = server._safe_touch_for_retrieval_many(
+        conn,
+        session_id="sess_1",
+        artifact_ids=["art_1", "art_1", "art_2"],
+    )
+
+    assert touched is True
+    update_calls = [
+        call for call in conn.calls if "UPDATE artifacts" in call[0]
+    ]
+    assert len(update_calls) == 2
+    assert update_calls[0][1] == ("local", "art_1")
+    assert update_calls[1][1] == ("local", "art_2")
+
+
+def test_safe_touch_for_search_updates_session_only(
+    tmp_path: Path,
+) -> None:
+    server = _server(tmp_path)
+    conn = _CaptureConnection()
+
+    touched = server._safe_touch_for_search(
+        conn,
+        session_id="sess_1",
+        artifact_ids=["art_1", "art_2"],
+    )
+
+    assert touched is True
+    assert len(conn.calls) == 1
+    assert "INSERT INTO sessions" in conn.calls[0][0]
+    assert conn.calls[0][1] == ("local", "sess_1")
 
 
 def test_artifact_get_cursor_includes_target_and_jsonpath_binding(
@@ -1943,7 +2003,7 @@ def test_handle_mirrored_tool_recovers_db_ok_on_successful_probe(
 ) -> None:
     """When db_ok=False but DB probe succeeds, recover and proceed normally."""
     server = GatewayServer(
-        config=GatewayConfig(data_dir=tmp_path, passthrough_max_bytes=0),
+        config=GatewayConfig(data_dir=tmp_path),
         upstreams=[_upstream()],
         db_pool=_FakePool(None),  # type: ignore[arg-type]  # probe SELECT 1 succeeds
         db_ok=False,
@@ -2087,7 +2147,6 @@ def test_handle_mirrored_tool_returns_internal_on_db_persist_failure(
         config=GatewayConfig(
             data_dir=tmp_path,
             quota_enforcement_enabled=False,
-            passthrough_max_bytes=0,
         ),
         upstreams=[_upstream()],
         db_pool=_FailPool(),  # type: ignore[arg-type]
@@ -2131,7 +2190,7 @@ def test_handle_mirrored_tool_keeps_db_ok_on_integrity_error(
     import sqlite3
 
     server = GatewayServer(
-        config=GatewayConfig(data_dir=tmp_path, passthrough_max_bytes=0),
+        config=GatewayConfig(data_dir=tmp_path),
         upstreams=[_upstream()],
         db_pool=_FakePool(None),  # type: ignore[arg-type]
         metrics=GatewayMetrics(),
@@ -2180,7 +2239,7 @@ def test_handle_mirrored_tool_returns_internal_on_non_db_persist_failure(
 ) -> None:
     """When persist_artifact raises a non-DB error, return INTERNAL but keep db_ok=True."""
     server = GatewayServer(
-        config=GatewayConfig(data_dir=tmp_path, passthrough_max_bytes=0),
+        config=GatewayConfig(data_dir=tmp_path),
         upstreams=[_upstream()],
         db_pool=_FakePool(None),  # type: ignore[arg-type]
         metrics=GatewayMetrics(),
@@ -2231,7 +2290,7 @@ def test_handle_mirrored_tool_falls_back_when_inline_describe_errors(
 ) -> None:
     """Inline describe failures should degrade to a minimal describe payload."""
     server = GatewayServer(
-        config=GatewayConfig(data_dir=tmp_path, passthrough_max_bytes=0),
+        config=GatewayConfig(data_dir=tmp_path),
         upstreams=[_upstream()],
         db_pool=_FakePool(None),  # type: ignore[arg-type]
         metrics=GatewayMetrics(),
@@ -2289,7 +2348,7 @@ def test_handle_mirrored_tool_returns_internal_when_mapping_fails(
 ) -> None:
     """When inline mapping does not complete, return INTERNAL."""
     server = GatewayServer(
-        config=GatewayConfig(data_dir=tmp_path, passthrough_max_bytes=0),
+        config=GatewayConfig(data_dir=tmp_path),
         upstreams=[_upstream()],
         db_pool=_FakePool(None),  # type: ignore[arg-type]
         metrics=GatewayMetrics(),
@@ -2377,7 +2436,6 @@ def test_handle_mirrored_tool_triggers_mapping_on_single_connection(
         config=GatewayConfig(
             data_dir=tmp_path,
             quota_enforcement_enabled=False,
-            passthrough_max_bytes=0,
         ),
         upstreams=[_upstream()],
         db_pool=_TwoCheckoutPool(),  # type: ignore[arg-type]
@@ -2693,7 +2751,7 @@ def test_handle_mirrored_tool_quota_ok_proceeds_to_persist(
     )
 
     server = GatewayServer(
-        config=GatewayConfig(data_dir=tmp_path, passthrough_max_bytes=0),
+        config=GatewayConfig(data_dir=tmp_path),
         upstreams=[_upstream()],
         db_pool=_FakePool(None),  # type: ignore[arg-type]
         metrics=GatewayMetrics(),
@@ -2794,7 +2852,7 @@ def test_handle_mirrored_tool_quota_passes_blob_store_root(
         StorageUsage,
     )
 
-    config = GatewayConfig(data_dir=tmp_path, passthrough_max_bytes=0)
+    config = GatewayConfig(data_dir=tmp_path)
     server = GatewayServer(
         config=config,
         upstreams=[_upstream()],
@@ -2971,7 +3029,7 @@ def test_handle_mirrored_tool_quota_check_marks_unhealthy_on_connectivity_error(
             raise sqlite3.OperationalError("connection refused")
 
     server = GatewayServer(
-        config=GatewayConfig(data_dir=tmp_path, passthrough_max_bytes=0),
+        config=GatewayConfig(data_dir=tmp_path),
         upstreams=[_upstream()],
         db_pool=_FailOnSecondPool(),  # type: ignore[arg-type]
         metrics=GatewayMetrics(),
@@ -3028,7 +3086,6 @@ def test_handle_mirrored_tool_skips_quota_when_disabled(
         config=GatewayConfig(
             data_dir=tmp_path,
             quota_enforcement_enabled=False,
-            passthrough_max_bytes=0,
         ),
         upstreams=[_upstream()],
         db_pool=_FakePool(None),  # type: ignore[arg-type]
