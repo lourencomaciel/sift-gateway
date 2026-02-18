@@ -306,6 +306,25 @@ _BUILTIN_TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
     },
 }
 
+_CURSOR_STALE_REASON_PATTERNS: tuple[tuple[str, str], ...] = (
+    ("sample_set_hash mismatch", "sample_set_mismatch"),
+    ("related_set_hash mismatch", "related_set_mismatch"),
+    ("map_budget_fingerprint mismatch", "map_budget_mismatch"),
+    ("traversal_contract_version mismatch", "traversal_version_mismatch"),
+    ("artifact_generation mismatch", "generation_mismatch"),
+    ("tool mismatch", "tool_mismatch"),
+    ("artifact binding mismatch", "artifact_binding_mismatch"),
+    ("workspace binding mismatch", "workspace_binding_mismatch"),
+    ("mapper_version mismatch", "mapper_version_mismatch"),
+    ("target mismatch", "target_mismatch"),
+    ("normalized_jsonpath mismatch", "jsonpath_mismatch"),
+    ("select_paths_hash mismatch", "select_paths_mismatch"),
+    ("where_hash mismatch", "where_hash_mismatch"),
+    ("root_path_filter mismatch", "root_path_filter_mismatch"),
+    ("root_path mismatch", "root_path_mismatch"),
+    ("scope mismatch", "scope_mismatch"),
+)
+
 
 def _not_implemented(tool_name: str) -> dict[str, Any]:
     """Return a NOT_IMPLEMENTED gateway error for a tool.
@@ -871,41 +890,11 @@ class GatewayServer:
         Args:
             message: CursorStaleError message string.
         """
-        reason: str | None = None
-        if "sample_set_hash mismatch" in message:
-            reason = "sample_set_mismatch"
-        elif "related_set_hash mismatch" in message:
-            reason = "related_set_mismatch"
-        elif "map_budget_fingerprint mismatch" in message:
-            reason = "map_budget_mismatch"
-        elif "traversal_contract_version mismatch" in message:
-            reason = "traversal_version_mismatch"
-        elif "artifact_generation mismatch" in message:
-            reason = "generation_mismatch"
-        elif "tool mismatch" in message:
-            reason = "tool_mismatch"
-        elif "artifact binding mismatch" in message:
-            reason = "artifact_binding_mismatch"
-        elif "workspace binding mismatch" in message:
-            reason = "workspace_binding_mismatch"
-        elif "mapper_version mismatch" in message:
-            reason = "mapper_version_mismatch"
-        elif "target mismatch" in message:
-            reason = "target_mismatch"
-        elif "normalized_jsonpath mismatch" in message:
-            reason = "jsonpath_mismatch"
-        elif "select_paths_hash mismatch" in message:
-            reason = "select_paths_mismatch"
-        elif "where_hash mismatch" in message:
-            reason = "where_hash_mismatch"
-        elif "root_path_filter mismatch" in message:
-            reason = "root_path_filter_mismatch"
-        elif "root_path mismatch" in message:
-            reason = "root_path_mismatch"
-        elif "scope mismatch" in message:
-            reason = "scope_mismatch"
-        else:
-            reason = "unknown"
+        reason = "unknown"
+        for pattern, pattern_reason in _CURSOR_STALE_REASON_PATTERNS:
+            if pattern in message:
+                reason = pattern_reason
+                break
         log = get_logger(component="mcp.server")
         log.info(LogEvents.CURSOR_STALE, reason=reason, detail=message)
         recorder = getattr(self.metrics, "record_cursor_stale_reason", None)

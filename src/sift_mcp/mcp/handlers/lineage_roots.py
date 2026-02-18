@@ -58,6 +58,81 @@ class AllRelatedRootCandidates:
     missing_root_artifacts: list[str]
 
 
+@dataclass(frozen=True)
+class SingleRootCandidate:
+    """Resolved single-artifact candidate state for a specific root path."""
+
+    related_ids: list[str]
+    candidate_rows: list[CandidateRow]
+    missing_root_artifacts: list[str]
+    anchor_meta: dict[str, Any] | None
+
+
+def resolve_single_root_candidate(
+    connection: Any,
+    *,
+    anchor_artifact_id: str,
+    root_path: str,
+) -> SingleRootCandidate | dict[str, Any]:
+    """Resolve a single-artifact candidate row for select scope=single."""
+    anchor_meta = row_to_dict(
+        connection.execute(
+            FETCH_ARTIFACT_META_SQL,
+            (WORKSPACE_ID, anchor_artifact_id),
+        ).fetchone(),
+        ARTIFACT_META_COLUMNS,
+    )
+    if anchor_meta is None:
+        return gateway_error("NOT_FOUND", "artifact not found")
+    if anchor_meta.get("deleted_at") is not None:
+        return gateway_error("GONE", "artifact has been deleted")
+    if anchor_meta.get("map_status") != "ready":
+        return gateway_error(
+            "INVALID_ARGUMENT",
+            "artifact mapping is not ready",
+        )
+
+    related_ids = [anchor_artifact_id]
+    root_row = row_to_dict(
+        connection.execute(
+            FETCH_ROOT_SQL,
+            (WORKSPACE_ID, anchor_artifact_id, root_path),
+        ).fetchone(),
+        _SELECT_ROOT_COLUMNS,
+    )
+    schema_root = row_to_dict(
+        connection.execute(
+            FETCH_SCHEMA_ROOT_BY_PATH_SQL,
+            (WORKSPACE_ID, anchor_artifact_id, root_path),
+        ).fetchone(),
+        _SCHEMA_ROOT_COLUMNS,
+    )
+    if root_row is None or schema_root is None:
+        missing_root_artifacts = [anchor_artifact_id]
+        return gateway_error(
+            "NOT_FOUND",
+            "root_path not found",
+            details={
+                "root_path": root_path,
+                "skipped_artifacts": len(missing_root_artifacts),
+                "artifact_ids": missing_root_artifacts,
+            },
+        )
+    return SingleRootCandidate(
+        related_ids=related_ids,
+        candidate_rows=[
+            (
+                anchor_artifact_id,
+                anchor_meta,
+                root_row,
+                schema_root,
+            )
+        ],
+        missing_root_artifacts=[],
+        anchor_meta=anchor_meta,
+    )
+
+
 def resolve_all_related_root_candidates(
     connection: Any,
     *,

@@ -36,6 +36,7 @@ from sift_mcp.mcp.handlers.common import (
     row_to_dict,
     rows_to_dicts,
 )
+from sift_mcp.mcp.handlers.schema_payload import build_schema_payload
 from sift_mcp.mcp.mirror import (
     MirroredTool,
     extract_gateway_context,
@@ -298,67 +299,12 @@ def _fetch_inline_describe(
                 ).fetchall(),
                 _SCHEMA_FIELD_COLUMNS,
             )
-            fields: list[dict[str, Any]] = []
-            for field in field_rows:
-                raw_types = field.get("types")
-                types = (
-                    [str(item) for item in raw_types]
-                    if isinstance(raw_types, list)
-                    else []
-                )
-                observed_count_raw = field.get("observed_count")
-                observed_count = (
-                    int(observed_count_raw)
-                    if isinstance(observed_count_raw, int)
-                    else 0
-                )
-                fields.append(
-                    {
-                        "path": field.get("field_path"),
-                        "types": types,
-                        "nullable": bool(field.get("nullable")),
-                        "required": bool(field.get("required")),
-                        "observed_count": observed_count,
-                        "example_value": (
-                            str(field.get("example_value"))
-                            if isinstance(field.get("example_value"), str)
-                            else None
-                        ),
-                    }
-                )
-                distinct_values = field.get("distinct_values")
-                if isinstance(distinct_values, list):
-                    fields[-1]["distinct_values"] = list(distinct_values)
-                cardinality = field.get("cardinality")
-                if isinstance(cardinality, int):
-                    fields[-1]["cardinality"] = cardinality
-            observed_records_raw = schema_root.get("observed_records")
-            observed_records = (
-                int(observed_records_raw)
-                if isinstance(observed_records_raw, int)
-                else 0
-            )
             schemas.append(
-                {
-                    "version": schema_root.get("schema_version"),
-                    "schema_hash": schema_root.get("schema_hash"),
-                    "root_path": schema_root.get("root_path"),
-                    "mode": schema_root.get("mode"),
-                    "coverage": {
-                        "completeness": schema_root.get("completeness"),
-                        "observed_records": observed_records,
-                    },
-                    "fields": fields,
-                    "determinism": {
-                        "dataset_hash": schema_root.get("dataset_hash"),
-                        "traversal_contract_version": schema_root.get(
-                            "traversal_contract_version"
-                        ),
-                        "map_budget_fingerprint": schema_root.get(
-                            "map_budget_fingerprint"
-                        ),
-                    },
-                }
+                build_schema_payload(
+                    schema_root=schema_root,
+                    field_rows=field_rows,
+                    include_null_example_value=True,
+                )
             )
         describe = build_describe_response(
             artifact_row,

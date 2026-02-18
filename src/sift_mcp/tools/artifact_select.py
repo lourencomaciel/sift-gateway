@@ -24,6 +24,10 @@ from typing import Any, Literal
 from sift_mcp.pagination.contract import (
     build_retrieval_pagination_meta,
 )
+from sift_mcp.tools._validation import (
+    require_artifact_id,
+    require_gateway_session,
+)
 
 # Search-mode order_by values (no spaces, no parentheses).
 _SEARCH_ORDER_BY_VALUES = frozenset(
@@ -229,15 +233,13 @@ def validate_select_args(arguments: dict[str, Any]) -> dict[str, Any] | None:
     Returns:
         Error dict on validation failure, ``None`` when valid.
     """
-    ctx = arguments.get("_gateway_context")
-    if not isinstance(ctx, dict) or not ctx.get("session_id"):
-        return {
-            "code": "INVALID_ARGUMENT",
-            "message": "missing _gateway_context.session_id",
-        }
+    session_err = require_gateway_session(arguments)
+    if session_err is not None:
+        return session_err
 
-    if not arguments.get("artifact_id"):
-        return {"code": "INVALID_ARGUMENT", "message": "missing artifact_id"}
+    artifact_err = require_artifact_id(arguments)
+    if artifact_err is not None:
+        return artifact_err
 
     has_cursor = isinstance(arguments.get("cursor"), str) and bool(
         arguments["cursor"]

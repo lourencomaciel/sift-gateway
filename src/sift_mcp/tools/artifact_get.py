@@ -18,6 +18,11 @@ from __future__ import annotations
 
 from typing import Any
 
+from sift_mcp.tools._validation import (
+    require_artifact_id,
+    require_gateway_session,
+)
+
 
 def validate_get_args(arguments: dict[str, Any]) -> dict[str, Any] | None:
     """Validate ``artifact.get`` arguments.
@@ -29,16 +34,13 @@ def validate_get_args(arguments: dict[str, Any]) -> dict[str, Any] | None:
     Returns:
         Error dict on validation failure, ``None`` when valid.
     """
-    ctx = arguments.get("_gateway_context")
-    if not isinstance(ctx, dict) or not ctx.get("session_id"):
-        return {
-            "code": "INVALID_ARGUMENT",
-            "message": "missing _gateway_context.session_id",
-        }
+    session_err = require_gateway_session(arguments)
+    if session_err is not None:
+        return session_err
 
-    artifact_id = arguments.get("artifact_id")
-    if not artifact_id:
-        return {"code": "INVALID_ARGUMENT", "message": "missing artifact_id"}
+    artifact_err = require_artifact_id(arguments)
+    if artifact_err is not None:
+        return artifact_err
 
     target = arguments.get("target", "envelope")
     if target not in ("envelope", "mapped"):
