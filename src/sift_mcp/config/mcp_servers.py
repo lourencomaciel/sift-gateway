@@ -93,41 +93,66 @@ def _extract_zed_context_servers(
     return normalized
 
 
+def _normalize_zed_url_entry(
+    name: str,
+    entry: dict[str, Any],
+) -> dict[str, Any]:
+    """Normalize URL-based Zed entry."""
+    url = entry.get("url")
+    if not isinstance(url, str):
+        msg = f"zed context server '{name}' url must be a string"
+        raise ValueError(msg)
+
+    result: dict[str, Any] = {"url": url}
+    headers = entry.get("headers")
+    if headers is not None:
+        result["headers"] = headers
+    return result
+
+
+def _normalize_zed_string_command_entry(entry: dict[str, Any]) -> dict[str, Any]:
+    """Normalize command-string Zed entry."""
+    command = entry["command"]
+    assert isinstance(command, str)
+    result: dict[str, Any] = {"command": command}
+    if "args" in entry:
+        result["args"] = entry["args"]
+    if "env" in entry:
+        result["env"] = entry["env"]
+    return result
+
+
+def _normalize_zed_command_object_entry(
+    name: str,
+    command: dict[str, Any],
+) -> dict[str, Any]:
+    """Normalize command-object Zed entry."""
+    path = command.get("path")
+    if not isinstance(path, str):
+        msg = f"zed context server '{name}' command.path must be a string"
+        raise ValueError(msg)
+
+    result: dict[str, Any] = {"command": path}
+    if "args" in command:
+        result["args"] = command["args"]
+    if "env" in command:
+        result["env"] = command["env"]
+    return result
+
+
 def _normalize_zed_server_entry(
     name: str, entry: dict[str, Any]
 ) -> dict[str, Any]:
     """Convert a single Zed server entry to mcpServers-compatible shape."""
     if "url" in entry:
-        if not isinstance(entry["url"], str):
-            msg = f"zed context server '{name}' url must be a string"
-            raise ValueError(msg)
-        result: dict[str, Any] = {"url": entry["url"]}
-        headers = entry.get("headers")
-        if headers is not None:
-            result["headers"] = headers
-        return result
+        return _normalize_zed_url_entry(name, entry)
 
     cmd = entry.get("command")
     if isinstance(cmd, str):
-        result = {"command": cmd}
-        if "args" in entry:
-            result["args"] = entry["args"]
-        if "env" in entry:
-            result["env"] = entry["env"]
-        return result
+        return _normalize_zed_string_command_entry(entry)
 
     if isinstance(cmd, dict):
-        path = cmd.get("path")
-        if not isinstance(path, str):
-            msg = f"zed context server '{name}' command.path must be a string"
-            raise ValueError(msg)
-
-        result = {"command": path}
-        if "args" in cmd:
-            result["args"] = cmd["args"]
-        if "env" in cmd:
-            result["env"] = cmd["env"]
-        return result
+        return _normalize_zed_command_object_entry(name, cmd)
 
     msg = (
         f"zed context server '{name}' must define either "

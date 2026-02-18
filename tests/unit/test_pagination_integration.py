@@ -69,6 +69,111 @@ def test_inject_no_pagination_config() -> None:
     assert assessment is None
 
 
+def test_inject_discovery_without_pagination_config() -> None:
+    config = _no_pagination_config()
+    env = _envelope(
+        {
+            "result": {
+                "data": [{"id": "1"}],
+                "paging": {
+                    "cursors": {"after": "CURSOR_2"},
+                    "next": "https://example.test/items?after=CURSOR_2",
+                },
+            }
+        }
+    )
+    result_env, assessment = _inject_pagination_state(
+        env, config, {"limit": 100}, "demo"
+    )
+    assert assessment is not None
+    assert assessment.state is not None
+    assert assessment.state.next_params == {"after": "CURSOR_2"}
+    assert result_env is not env
+    assert result_env.meta["_gateway_pagination"] == assessment.state.to_dict()
+
+
+def test_inject_discovery_from_header_pagination_without_config() -> None:
+    config = _no_pagination_config()
+    env = _envelope({"items": [{"id": "1"}]})
+    env = dataclasses.replace(
+        env,
+        meta={
+            "warnings": [],
+            "upstream_meta": {
+                "headers": {
+                    "Link": (
+                        "<https://api.example.test/items?limit=100&after=CUR_2>; "
+                        'rel="next"'
+                    )
+                }
+            },
+        },
+    )
+    result_env, assessment = _inject_pagination_state(
+        env,
+        config,
+        {"limit": 100, "after": "CUR_1"},
+        "demo",
+    )
+    assert assessment is not None
+    assert assessment.state is not None
+    assert assessment.state.next_params == {
+        "limit": 100,
+        "after": "CUR_2",
+    }
+    assert result_env is not env
+
+
+def test_inject_discovery_non_advancing_next_url_skips_injection() -> None:
+    config = _no_pagination_config()
+    env = _envelope(
+        {
+            "next": "https://api.example.test/items/page/2?limit=100",
+            "items": [{"id": "1"}],
+        }
+    )
+    result_env, assessment = _inject_pagination_state(
+        env, config, {"limit": 100}, "demo"
+    )
+    assert result_env is env
+    assert assessment is not None
+    assert assessment.state is None
+    assert assessment.has_more is False
+    assert assessment.retrieval_status == "PARTIAL"
+    assert assessment.partial_reason == "NEXT_TOKEN_MISSING"
+
+
+def test_inject_discovery_from_header_next_url_key_without_config() -> None:
+    config = _no_pagination_config()
+    env = _envelope({"items": [{"id": "1"}]})
+    env = dataclasses.replace(
+        env,
+        meta={
+            "warnings": [],
+            "upstream_meta": {
+                "headers": {
+                    "x-next-url": (
+                        "https://api.example.test/items?offset=200&limit=100"
+                    )
+                }
+            },
+        },
+    )
+    result_env, assessment = _inject_pagination_state(
+        env,
+        config,
+        {"offset": 100, "limit": 100},
+        "demo",
+    )
+    assert assessment is not None
+    assert assessment.state is not None
+    assert assessment.state.next_params == {
+        "offset": 200,
+        "limit": 100,
+    }
+    assert result_env is not env
+
+
 def test_inject_error_envelope_skipped() -> None:
     config = _meta_ads_config()
     env = _envelope(
@@ -99,6 +204,27 @@ def test_inject_no_json_content() -> None:
     )
     assert result_env is env
     assert assessment is not None
+    assert assessment.retrieval_status == "PARTIAL"
+    assert assessment.partial_reason == "SIGNAL_INCONCLUSIVE"
+
+
+def test_inject_no_json_content_discovery_followup_clears_state() -> None:
+    config = _no_pagination_config()
+    env = Envelope(
+        upstream_instance_id="inst_test",
+        upstream_prefix="demo",
+        tool="get_ads",
+        status="ok",
+        content=[TextContentPart(text="plain text")],
+        meta={"warnings": []},
+    )
+    result_env, assessment = _inject_pagination_state(
+        env, config, {"page": 2, "limit": 100}, "demo", page_number=1
+    )
+    assert result_env is env
+    assert assessment is not None
+    assert assessment.state is None
+    assert assessment.has_more is False
     assert assessment.retrieval_status == "PARTIAL"
     assert assessment.partial_reason == "SIGNAL_INCONCLUSIVE"
 
@@ -226,7 +352,7 @@ def test_pagination_response_meta_shape() -> None:
     assert meta["next_cursor"] == "ABC"
     assert "art_123" in meta["hint"]
     assert "limit=100" in meta["hint"]
-    assert "after=\"ABC\"" in meta["hint"]
+    assert 'after="ABC"' in meta["hint"]
     assert "next_page" in meta["hint"]
     assert "retrieval_status == COMPLETE" in meta["hint"]
 

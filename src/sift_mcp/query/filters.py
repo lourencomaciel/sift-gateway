@@ -143,75 +143,116 @@ def _compile_group(group: FilterGroup) -> tuple[str, list[Any]]:
     return joiner.join(parts), params
 
 
+def _compile_comparison_predicate(
+    *,
+    path: str,
+    op: str,
+    value: Any,
+) -> tuple[str, list[Any]]:
+    """Compile comparison operators including SQL NULL semantics."""
+    # SQL NULL semantics: = NULL is always NULL (falsy).
+    # Use IS NULL / IS NOT NULL for correct null matching.
+    if value is None:
+        if op == "eq":
+            return "json_extract(record, ?) IS NULL", [path]
+        if op == "ne":
+            return "json_extract(record, ?) IS NOT NULL", [path]
+        msg = f"NULL value not supported for operator {op!r}"
+        raise ValueError(msg)
+
+    sql_op = _COMPARISON_OPS[op]
+    return (
+        f"json_extract(record, ?) {sql_op} ?",
+        [path, _sql_value(value)],
+    )
+
+
+def _compile_in_predicate(
+    *,
+    path: str,
+    values: Any,
+) -> tuple[str, list[Any]]:
+    """Compile IN list membership."""
+    if not isinstance(values, (list, tuple)):
+        msg = "'in' operator requires a list value"
+        raise ValueError(msg)
+    if not values:
+        return "0", []
+    placeholders = ", ".join("?" for _ in values)
+    return (
+        f"json_extract(record, ?) IN ({placeholders})",
+        [path, *[_sql_value(v) for v in values]],
+    )
+
+
+def _compile_contains_predicate(
+    *,
+    path: str,
+    value: Any,
+) -> tuple[str, list[Any]]:
+    """Compile escaped substring match."""
+    escaped = (
+        str(value)
+        .replace("\\", "\\\\")
+        .replace("%", "\\%")
+        .replace("_", "\\_")
+    )
+    return (
+        "CAST(json_extract(record, ?) AS TEXT)"
+        " LIKE '%' || ? || '%' ESCAPE '\\'",
+        [path, escaped],
+    )
+
+
+def _compile_array_contains_predicate(
+    *,
+    path: str,
+    value: Any,
+) -> tuple[str, list[Any]]:
+    """Compile guarded array membership predicate."""
+    # Guard: only iterate when the target is a JSON array;
+    # non-array values (scalars, objects) are treated as
+    # non-matches instead of raising OperationalError.
+    return (
+        "(json_type(record, ?) = 'array'"
+        " AND EXISTS (SELECT 1 FROM json_each("
+        "json_extract(record, ?)) WHERE value = ?))",
+        [path, path, _sql_value(value)],
+    )
+
+
 def _compile_predicate(f: Filter) -> tuple[str, list[Any]]:
     """Compile a single filter predicate to SQL."""
-    op = f.op
-    path = f.path
-
-    if op in _COMPARISON_OPS:
-        # SQL NULL semantics: = NULL is always NULL (falsy).
-        # Use IS NULL / IS NOT NULL for correct null matching.
-        if f.value is None:
-            if op == "eq":
-                return "json_extract(record, ?) IS NULL", [path]
-            if op == "ne":
-                return (
-                    "json_extract(record, ?) IS NOT NULL",
-                    [path],
-                )
-            msg = (
-                f"NULL value not supported for"
-                f" operator {op!r}"
-            )
-            raise ValueError(msg)
-        sql_op = _COMPARISON_OPS[op]
-        return (
-            f"json_extract(record, ?) {sql_op} ?",
-            [path, _sql_value(f.value)],
+    if f.op in _COMPARISON_OPS:
+        return _compile_comparison_predicate(
+            path=f.path,
+            op=f.op,
+            value=f.value,
         )
 
-    if op == "in":
-        values = f.value
-        if not isinstance(values, (list, tuple)):
-            msg = "'in' operator requires a list value"
-            raise ValueError(msg)
-        if not values:
-            return "0", []
-        placeholders = ", ".join("?" for _ in values)
-        return (
-            f"json_extract(record, ?) IN ({placeholders})",
-            [path, *[_sql_value(v) for v in values]],
+    if f.op == "in":
+        return _compile_in_predicate(
+            path=f.path,
+            values=f.value,
         )
 
-    if op == "contains":
-        escaped = (
-            str(f.value)
-            .replace("\\", "\\\\")
-            .replace("%", "\\%")
-            .replace("_", "\\_")
-        )
-        return (
-            "CAST(json_extract(record, ?) AS TEXT)"
-            " LIKE '%' || ? || '%' ESCAPE '\\'",
-            [path, escaped],
+    if f.op == "contains":
+        return _compile_contains_predicate(
+            path=f.path,
+            value=f.value,
         )
 
-    if op == "array_contains":
-        # Guard: only iterate when the target is a JSON array;
-        # non-array values (scalars, objects) are treated as
-        # non-matches instead of raising OperationalError.
-        return (
-            "(json_type(record, ?) = 'array'"
-            " AND EXISTS (SELECT 1 FROM json_each("
-            "json_extract(record, ?)) WHERE value = ?))",
-            [path, path, _sql_value(f.value)],
+    if f.op == "array_contains":
+        return _compile_array_contains_predicate(
+            path=f.path,
+            value=f.value,
         )
 
-    if op == "exists":
-        return "json_type(record, ?) IS NOT NULL", [path]
+    if f.op == "exists":
+        return "json_type(record, ?) IS NOT NULL", [f.path]
 
     # not_exists
-    return "json_type(record, ?) IS NULL", [path]
+    return "json_type(record, ?) IS NULL", [f.path]
 
 
 def _sql_value(value: Any) -> Any:
