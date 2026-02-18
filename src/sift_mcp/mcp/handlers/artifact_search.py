@@ -31,6 +31,7 @@ _SEARCH_COLUMNS = [
     "map_kind",
     "map_status",
     "chain_seq",
+    "kind",
 ]
 
 
@@ -91,6 +92,11 @@ async def handle_artifact_search(
         filters,
         order_by,
         limit,
+        query=(
+            str(parsed.get("query"))
+            if isinstance(parsed.get("query"), str)
+            else None
+        ),
         offset=offset,
     )
 
@@ -145,6 +151,7 @@ async def handle_artifact_search(
                 "map_kind": row["map_kind"],
                 "map_status": row["map_status"],
                 "chain_seq": row.get("chain_seq"),
+                "kind": row.get("kind"),
             }
             for row in page_rows
         ],

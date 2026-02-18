@@ -6,6 +6,8 @@ import asyncio
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from sift_mcp.config.settings import GatewayConfig
 from sift_mcp.mcp.server import GatewayServer
 from sift_mcp.query.select_paths import select_paths_hash
@@ -128,6 +130,14 @@ def _schema_root_row(
         "sha256:dataset_items",
         "traversal_v1",
         "mbf",
+    )
+
+
+@pytest.fixture(autouse=True)
+def _stub_select_derived_persistence(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "sift_mcp.mcp.handlers.artifact_select._persist_select_derived_artifact",
+        lambda **_kwargs: ("art_derived_select", None),
     )
 
 

@@ -261,10 +261,18 @@ _BUILTIN_TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
             "filters": {
                 "type": "object",
                 "description": (
-                    "[query_kind=search] source_tool, status, "
+                    "[query_kind=search] source_tool, kind, status, "
                     "parent_artifact_id, etc."
                 ),
                 "additionalProperties": True,
+            },
+            "query": {
+                "type": "string",
+                "description": (
+                    "[query_kind=search] Optional full-text search query "
+                    "against source_tool, kind, field names, and sample "
+                    "values."
+                ),
             },
             "order_by": {
                 "type": "string",

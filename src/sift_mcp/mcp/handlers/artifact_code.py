@@ -11,6 +11,7 @@ import sys
 import time
 from typing import TYPE_CHECKING, Any, cast
 
+from sift_mcp.artifacts.derive import create_derived_artifact
 from sift_mcp.canon.rfc8785 import canonical_bytes, coerce_floats
 from sift_mcp.codegen.ast_guard import allowed_import_roots
 from sift_mcp.codegen.runtime import (
@@ -23,7 +24,11 @@ from sift_mcp.codegen.runtime import (
     encode_json_bytes,
     execute_code_in_subprocess,
 )
-from sift_mcp.constants import TRAVERSAL_CONTRACT_VERSION, WORKSPACE_ID
+from sift_mcp.constants import (
+    KIND_DERIVED_CODEGEN,
+    TRAVERSAL_CONTRACT_VERSION,
+    WORKSPACE_ID,
+)
 from sift_mcp.envelope.responses import gateway_error
 from sift_mcp.mcp.handlers.common import (
     ENVELOPE_COLUMNS,
@@ -59,6 +64,21 @@ _SCHEMA_FIELD_COLUMNS = [
 ]
 
 _logger = get_logger(component="artifact.codegen")
+
+FETCH_ARTIFACT_MAP_STATUS_SQL = """
+SELECT map_status
+FROM artifacts
+WHERE workspace_id = %s AND artifact_id = %s
+"""
+
+SOFT_DELETE_ARTIFACT_SQL = """
+UPDATE artifacts
+SET deleted_at = datetime('now'),
+    generation = generation + 1
+WHERE workspace_id = %s
+  AND artifact_id = %s
+  AND deleted_at IS NULL
+"""
 
 
 def _hash_text(value: str) -> str:
@@ -417,20 +437,23 @@ def _load_code_schema_for_requested_artifact(
 
 def _reconstruct_code_envelope(
     artifact_row: dict[str, Any],
+    *,
+    blobs_payload_dir: Any,
 ) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
-    """Resolve envelope payload from inline JSONB or canonical bytes."""
+    """Resolve envelope payload from inline JSONB or payload file."""
     envelope_value = artifact_row.get("envelope")
-    canonical_bytes_raw = artifact_row.get("envelope_canonical_bytes")
+    payload_fs_path = artifact_row.get("payload_fs_path")
     if isinstance(envelope_value, dict) and "content" in envelope_value:
         return envelope_value, None
-    if canonical_bytes_raw is None:
+    if not isinstance(payload_fs_path, str) or not payload_fs_path:
         return None, gateway_error(
             "INTERNAL",
-            "missing canonical bytes for artifact",
+            "missing payload file path for artifact",
         )
     try:
         envelope = reconstruct_envelope(
-            compressed_bytes=bytes(canonical_bytes_raw),
+            payload_fs_path=payload_fs_path,
+            blobs_payload_dir=blobs_payload_dir,
             encoding=str(artifact_row.get("envelope_canonical_encoding", "none")),
             expected_hash=str(artifact_row.get("payload_hash_full", "")),
         )
@@ -515,7 +538,10 @@ def _collect_envelope_candidate_records(
     )
     if artifact_row is None:
         return False, None
-    envelope, envelope_err = _reconstruct_code_envelope(artifact_row)
+    envelope, envelope_err = _reconstruct_code_envelope(
+        artifact_row,
+        blobs_payload_dir=ctx.config.blobs_payload_dir,
+    )
     if envelope_err is not None:
         return False, envelope_err
     if envelope is None:
@@ -777,6 +803,49 @@ def _append_sampled_warning(state: _CodeCollectionState) -> None:
             "code": "SAMPLED_MAPPING_USED",
             "sampled_only": True,
             "artifact_ids": sorted(state.sampled_artifacts),
+        }
+    )
+
+
+def _append_overlapping_dataset_warning(
+    *,
+    state: _CodeCollectionState,
+    request: _CodeRequest,
+) -> None:
+    """Warn when requested artifacts resolve to identical dataset hashes."""
+    if len(request.requested_artifact_ids) <= 1:
+        return
+    grouped: dict[str, list[str]] = {}
+    for artifact_id in request.requested_artifact_ids:
+        schema = state.schema_by_artifact.get(artifact_id)
+        if not isinstance(schema, dict):
+            continue
+        determinism = schema.get("determinism")
+        if not isinstance(determinism, dict):
+            continue
+        dataset_hash = determinism.get("dataset_hash")
+        if not isinstance(dataset_hash, str) or not dataset_hash:
+            continue
+        grouped.setdefault(dataset_hash, []).append(artifact_id)
+
+    overlaps = [
+        {
+            "dataset_hash": dataset_hash,
+            "artifact_ids": artifact_ids,
+        }
+        for dataset_hash, artifact_ids in grouped.items()
+        if len(artifact_ids) > 1
+    ]
+    if not overlaps:
+        return
+    state.warnings.append(
+        {
+            "code": "OVERLAPPING_INPUT_DATASETS",
+            "message": (
+                "Requested artifacts share dataset_hash values and may "
+                "represent duplicate pages."
+            ),
+            "overlaps": overlaps,
         }
     )
 
@@ -1115,6 +1184,123 @@ def _with_locator(record: Any, locator: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _soft_delete_derived_artifact(
+    *,
+    ctx: GatewayServer,
+    artifact_id: str,
+) -> None:
+    """Best-effort cleanup for failed derived persistence flows."""
+    if ctx.db_pool is None:
+        return
+    try:
+        with ctx.db_pool.connection() as cleanup_conn:
+            cleanup_conn.execute(
+                SOFT_DELETE_ARTIFACT_SQL,
+                (WORKSPACE_ID, artifact_id),
+            )
+            cleanup_conn.commit()
+    except Exception:
+        return
+
+
+def _persist_code_derived_artifact(
+    *,
+    ctx: GatewayServer,
+    request: _CodeRequest,
+    normalized_items: list[Any],
+) -> tuple[str | None, dict[str, Any] | None]:
+    """Persist and map derived code output with strict success semantics."""
+    if ctx.db_pool is None:
+        return None, gateway_error(
+            "DERIVED_PERSISTENCE_FAILED",
+            "derived artifact persistence requires database backend",
+            details={"stage": "db_pool_missing"},
+        )
+
+    derivation_expression: dict[str, Any] = {
+        "artifact_ids": request.requested_artifact_ids,
+        "root_paths": request.requested_root_paths,
+        "root_path": request.root_path,
+        "code_hash": request.code_hash,
+        "params_hash": request.params_hash,
+    }
+
+    stage = "create"
+    derived_artifact_id: str | None = None
+    map_status: str | None = None
+    try:
+        with ctx.db_pool.connection() as connection:
+            created = create_derived_artifact(
+                connection=connection,
+                config=ctx.config,
+                parent_artifact_ids=request.requested_artifact_ids,
+                result_data=normalized_items,
+                derivation_expression=derivation_expression,
+                kind=KIND_DERIVED_CODEGEN,
+                query_kind="code",
+            )
+            derived_artifact_id = created.handle.artifact_id
+
+            stage = "mapping"
+            mapped = ctx._run_mapping_inline(
+                connection,
+                handle=created.handle,
+                envelope=created.envelope,
+            )
+            if not mapped:
+                _soft_delete_derived_artifact(
+                    ctx=ctx, artifact_id=created.handle.artifact_id
+                )
+                return None, gateway_error(
+                    "DERIVED_PERSISTENCE_FAILED",
+                    "derived artifact persistence failed",
+                    details={
+                        "stage": stage,
+                        "artifact_id": created.handle.artifact_id,
+                    },
+                )
+
+            stage = "verify_ready"
+            status_row = connection.execute(
+                FETCH_ARTIFACT_MAP_STATUS_SQL,
+                (WORKSPACE_ID, created.handle.artifact_id),
+            ).fetchone()
+            map_status = (
+                str(status_row[0])
+                if status_row is not None and status_row[0] is not None
+                else None
+            )
+            if map_status != "ready":
+                _soft_delete_derived_artifact(
+                    ctx=ctx, artifact_id=created.handle.artifact_id
+                )
+                return None, gateway_error(
+                    "DERIVED_PERSISTENCE_FAILED",
+                    "derived artifact mapping did not reach ready status",
+                    details={
+                        "stage": stage,
+                        "artifact_id": created.handle.artifact_id,
+                        "map_status": map_status,
+                    },
+                )
+            return created.handle.artifact_id, None
+    except Exception as exc:
+        if derived_artifact_id is not None:
+            _soft_delete_derived_artifact(
+                ctx=ctx, artifact_id=derived_artifact_id
+            )
+        return None, gateway_error(
+            "DERIVED_PERSISTENCE_FAILED",
+            "derived artifact persistence failed",
+            details={
+                "stage": stage,
+                "error_type": type(exc).__name__,
+                "artifact_id": derived_artifact_id,
+                "map_status": map_status,
+            },
+        )
+
+
 async def handle_artifact_code(
     ctx: GatewayServer,
     arguments: dict[str, Any],
@@ -1158,6 +1344,7 @@ async def handle_artifact_code(
     if state.schema_obj is None:
         return gateway_error("INTERNAL", "schema resolution failed")
 
+    _append_overlapping_dataset_warning(state=state, request=request)
     _append_sampled_warning(state)
     max_input_records = ctx.config.code_query_max_input_records
     max_input_bytes = ctx.config.code_query_max_input_bytes
@@ -1222,6 +1409,14 @@ async def handle_artifact_code(
         state=state,
         determinism=_build_code_determinism(request=request, state=state),
     )
+    derived_artifact_id, persist_err = _persist_code_derived_artifact(
+        ctx=ctx,
+        request=request,
+        normalized_items=normalized_items,
+    )
+    if persist_err is not None:
+        return persist_err
+    response["derived_artifact_id"] = derived_artifact_id
 
     _logger.info(
         LogEvents.CODEGEN_COMPLETED,

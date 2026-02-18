@@ -119,6 +119,8 @@ def _fetch_and_extract(
     connection: Any,
     artifact_id: str,
     jsonpath: str | None = None,
+    *,
+    blobs_payload_dir: Any | None = None,
 ) -> Any | ResolveError:
     """Fetch an artifact envelope and extract its payload value.
 
@@ -135,6 +137,7 @@ def _fetch_and_extract(
         artifact_id: The artifact ID to resolve.
         jsonpath: Optional JSONPath query to evaluate against
             the extracted value.
+        blobs_payload_dir: Root directory for payload blob files.
 
     Returns:
         The extracted JSON/text value on success, or a
@@ -165,24 +168,33 @@ def _fetch_and_extract(
             ),
         )
 
-    # Reconstruct the envelope from stored bytes.
+    # Reconstruct the envelope from stored JSONB or payload file.
     envelope_value = row.get("envelope")
-    canonical_bytes_raw = row.get("envelope_canonical_bytes")
+    payload_fs_path = row.get("payload_fs_path")
 
     if isinstance(envelope_value, dict) and "content" in envelope_value:
         envelope = envelope_value
-    elif canonical_bytes_raw is None:
+    elif not isinstance(payload_fs_path, str) or not payload_fs_path:
         return ResolveError(
             code="INTERNAL",
             message=(
                 f"artifact ref {artifact_id} could not be resolved:"
-                " missing canonical bytes"
+                " missing payload file path"
             ),
         )
     else:
+        if blobs_payload_dir is None:
+            return ResolveError(
+                code="INTERNAL",
+                message=(
+                    f"artifact ref {artifact_id} could not be resolved:"
+                    " payload root unavailable"
+                ),
+            )
         try:
             envelope = reconstruct_envelope(
-                compressed_bytes=bytes(canonical_bytes_raw),
+                payload_fs_path=payload_fs_path,
+                blobs_payload_dir=blobs_payload_dir,
                 encoding=str(row.get("envelope_canonical_encoding", "none")),
                 expected_hash=str(row.get("payload_hash_full", "")),
             )
@@ -257,6 +269,8 @@ def _fetch_and_extract(
 def resolve_artifact_refs(
     connection: Any,
     args: dict[str, Any],
+    *,
+    blobs_payload_dir: Any | None = None,
 ) -> dict[str, Any] | ResolveError:
     """Resolve top-level artifact ID references in tool arguments.
 
@@ -272,6 +286,7 @@ def resolve_artifact_refs(
         connection: Active database connection.
         args: Forwarded tool arguments (reserved keys already
             stripped).
+        blobs_payload_dir: Root directory for payload blob files.
 
     Returns:
         A new dict with artifact references replaced by their
@@ -291,7 +306,10 @@ def resolve_artifact_refs(
     resolved = dict(args)
     for key, parsed in refs.items():
         result = _fetch_and_extract(
-            connection, parsed.artifact_id, parsed.jsonpath
+            connection,
+            parsed.artifact_id,
+            parsed.jsonpath,
+            blobs_payload_dir=blobs_payload_dir,
         )
         if isinstance(result, ResolveError):
             return result

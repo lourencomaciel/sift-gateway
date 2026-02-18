@@ -112,6 +112,7 @@ class TestSchemaTablesExist:
         "payload_blobs",
         "payload_binary_refs",
         "artifacts",
+        "artifact_lineage_edges",
         "artifact_roots",
         "artifact_samples",
     ]
@@ -137,6 +138,7 @@ class TestPrimaryKeysIncludeWorkspaceId:
         "payload_blobs",
         "payload_binary_refs",
         "artifacts",
+        "artifact_lineage_edges",
         "artifact_roots",
         "artifact_samples",
     ]
@@ -193,6 +195,12 @@ class TestForeignKeysExist:
 
     def test_artifact_roots_fk_to_artifacts(self) -> None:
         assert "references artifacts (workspace_id, artifact_id)" in self.sql
+
+    def test_artifact_lineage_edges_fks_to_artifacts(self) -> None:
+        assert (
+            "references artifacts (workspace_id, artifact_id) on delete cascade"
+            in self.sql
+        )
 
     def test_artifact_samples_fk_to_artifact_roots(self) -> None:
         assert (
@@ -256,6 +264,8 @@ class TestArtifactsColumnsComplete:
         "request_args_hash",
         "request_args_prefix",
         "mapped_part_index",
+        "kind",
+        "derivation",
         "index_status",
         "error_summary",
     ]
@@ -308,6 +318,21 @@ class TestOrderingIndexesExist:
     def test_idx_artifacts_request_args_hash(self) -> None:
         assert "idx_artifacts_request_args_hash" in self.all_sql
 
+    def test_idx_artifacts_kind(self) -> None:
+        assert "idx_artifacts_kind" in self.all_sql
+
+    def test_idx_artifacts_parent_created_seq(self) -> None:
+        assert "idx_artifacts_parent_created_seq" in self.all_sql
+
+    def test_idx_artifacts_parent_kind_created_seq(self) -> None:
+        assert "idx_artifacts_parent_kind_created_seq" in self.all_sql
+
+    def test_idx_artifact_lineage_edges_parent(self) -> None:
+        assert "idx_artifact_lineage_edges_parent" in self.all_sql
+
+    def test_idx_artifact_lineage_edges_child_ord(self) -> None:
+        assert "idx_artifact_lineage_edges_child_ord" in self.all_sql
+
 
 class TestCheckConstraints:
     """CHECK constraints exist for enum-like columns."""
@@ -336,6 +361,11 @@ class TestCheckConstraints:
 
     def test_mapped_part_index_non_negative(self) -> None:
         assert "mapped_part_index >= 0" in self.sql
+
+    def test_kind_derivation_cross_field_check(self) -> None:
+        assert "kind = 'data' and derivation is null" in self.sql
+        assert "parent_artifact_id is not null" in self.sql
+        assert "json_valid(derivation)" in self.sql
 
 
 class TestArtifactSamplesTable:
@@ -366,6 +396,33 @@ class TestArtifactSamplesTable:
 
     def test_root_path_index(self) -> None:
         assert "idx_artifact_samples_root_path" in self.sql
+
+
+class TestPayloadBlobStorageColumns:
+    """payload_blobs stores payload file paths (not canonical bytes)."""
+
+    def test_payload_blobs_has_payload_fs_path(self) -> None:
+        sql = _read_sql("001_init.sql").lower()
+        assert "payload_fs_path text not null" in sql
+
+    def test_payload_blobs_does_not_include_canonical_blob_columns(self) -> None:
+        sql = _read_sql("001_init.sql").lower()
+        assert "envelope_canonical_bytes" not in sql
+        assert "envelope_canonical_bytes_len" not in sql
+
+
+class TestArtifactsFtsSchema:
+    """FTS table and sync triggers are defined in bootstrap schema."""
+
+    def test_artifacts_fts_table_exists(self) -> None:
+        sql = _normalize(_read_sql("001_init.sql")).lower()
+        assert "create virtual table if not exists artifacts_fts using fts5" in sql
+
+    def test_artifacts_fts_triggers_exist(self) -> None:
+        sql = _normalize(_read_sql("001_init.sql")).lower()
+        assert "create trigger if not exists artifacts_fts_ai" in sql
+        assert "create trigger if not exists artifacts_fts_au" in sql
+        assert "create trigger if not exists artifacts_fts_ad" in sql
 
 
 class TestArtifactRecordsTable:

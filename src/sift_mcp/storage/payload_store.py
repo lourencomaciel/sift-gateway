@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
+from pathlib import Path
 from typing import Any
 
 from sift_mcp.canon import (
@@ -200,14 +201,17 @@ def prepare_payload(
 
 
 def reconstruct_envelope(
-    compressed_bytes: bytes,
+    *,
+    payload_fs_path: str,
+    blobs_payload_dir: Path,
     encoding: str,
     expected_hash: str,
 ) -> dict[str, Any]:
     """Decompress canonical bytes and verify integrity.
 
     Args:
-        compressed_bytes: Compressed payload data.
+        payload_fs_path: Relative payload path in the payload blob store.
+        blobs_payload_dir: Root payload blob store directory.
         encoding: Compression encoding name (e.g. ``gzip``).
         expected_hash: SHA-256 hex digest of the uncompressed
             canonical bytes.
@@ -219,6 +223,17 @@ def reconstruct_envelope(
         ValueError: If integrity check fails or payload is not
             valid JSON.
     """
+    payload_root = blobs_payload_dir.resolve()
+    payload_path = (blobs_payload_dir / payload_fs_path).resolve()
+    try:
+        payload_path.relative_to(payload_root)
+    except ValueError as exc:
+        raise ValueError("payload path escapes payload root") from exc
+
+    try:
+        compressed_bytes = payload_path.read_bytes()
+    except OSError as exc:
+        raise ValueError("payload file read failed") from exc
     decompressed = decompress_bytes(compressed_bytes, encoding)
     actual_hash = sha256_hex(decompressed)
     if actual_hash != expected_hash:

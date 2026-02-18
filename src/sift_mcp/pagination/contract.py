@@ -60,6 +60,9 @@ def build_upstream_pagination_meta(
     partial_reason: UpstreamPartialReason | None,
     warning: str | None,
     has_next_page: bool,
+    next_params: dict[str, Any] | None = None,
+    original_args: dict[str, Any] | None = None,
+    extra_warnings: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Build canonical upstream pagination metadata.
 
@@ -74,6 +77,12 @@ def build_upstream_pagination_meta(
         warning: Optional warning code for incomplete results.
         has_next_page: Whether ``artifact.next_page`` can fetch
             the next page from this artifact.
+        next_params: Optional next-call params extracted from
+            upstream pagination state.
+        original_args: Original mirrored-tool args used for this
+            page. Used only for hint enrichment.
+        extra_warnings: Additional structured warnings to expose
+            alongside the legacy single warning code.
 
     Returns:
         Pagination metadata dict with canonical and compatibility
@@ -81,6 +90,14 @@ def build_upstream_pagination_meta(
     """
     next_action: dict[str, Any] | None = None
     hint: str
+    cursor_param: str | None = None
+    cursor_value: Any = None
+    if isinstance(next_params, dict) and len(next_params) == 1:
+        only_item = next(iter(next_params.items()))
+        if isinstance(only_item[0], str) and only_item[0]:
+            cursor_param = only_item[0]
+            cursor_value = only_item[1]
+
     if has_next_page:
         next_action = {
             "tool": NEXT_PAGE_TOOL_NAME,
@@ -89,12 +106,32 @@ def build_upstream_pagination_meta(
                 "artifact_id": artifact_id,
             },
         }
-        hint = (
-            "More results are available. Call "
-            'artifact(action="next_page", '
-            f'artifact_id="{artifact_id}") '
-            "to fetch the next page."
+        hint_parts: list[str] = ["More results are available"]
+        limit_value = (
+            original_args.get("limit")
+            if isinstance(original_args, dict)
+            else None
         )
+        if isinstance(limit_value, int) and limit_value > 0:
+            hint_parts.append(
+                f"request used limit={limit_value}, so this page may be truncated"
+            )
+        if cursor_param is not None:
+            hint_parts.append(
+                f'next cursor is {cursor_param}="{cursor_value}"'
+            )
+            hint_parts.append(
+                "continue with "
+                f'artifact(action="next_page", artifact_id="{artifact_id}") '
+                "or re-call the mirrored tool with that cursor"
+            )
+        else:
+            hint_parts.append(
+                "call "
+                f'artifact(action="next_page", artifact_id="{artifact_id}") '
+                "to fetch the next page"
+            )
+        hint = ". ".join(hint_parts) + "."
     elif retrieval_status == RETRIEVAL_STATUS_PARTIAL:
         hint = (
             "Result set may be incomplete. More pages might exist, "
@@ -103,7 +140,7 @@ def build_upstream_pagination_meta(
     else:
         hint = "No additional pages are available."
 
-    return {
+    meta: dict[str, Any] = {
         "layer": PAGINATION_LAYER_UPSTREAM,
         "retrieval_status": retrieval_status,
         "partial_reason": partial_reason,
@@ -115,6 +152,24 @@ def build_upstream_pagination_meta(
         "has_next_page": has_next_page,
         "hint": hint,
     }
+    if has_next_page and isinstance(next_params, dict):
+        meta["next_params"] = next_params
+        if cursor_param is not None:
+            meta["next_cursor_param"] = cursor_param
+            meta["next_cursor"] = cursor_value
+
+    warnings_list: list[dict[str, Any]] = []
+    if isinstance(warning, str) and warning:
+        warnings_list.append({"code": warning})
+    if isinstance(extra_warnings, list):
+        warnings_list.extend(
+            warning_item
+            for warning_item in extra_warnings
+            if isinstance(warning_item, dict)
+        )
+    if warnings_list:
+        meta["warnings"] = warnings_list
+    return meta
 
 
 def build_retrieval_pagination_meta(

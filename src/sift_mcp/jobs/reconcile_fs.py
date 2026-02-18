@@ -34,12 +34,20 @@ class ReconcileResult:
     missing_files: list[str]  # DB references without files
     orphan_bytes: int
     removed_count: int  # only if remove=True
+    payload_orphan_files: list[str] | None = None
+    payload_missing_files: list[str] | None = None
 
 
 # SQL to get all known blob paths
 FETCH_ALL_BLOB_PATHS_SQL = """
 SELECT binary_hash, fs_path, byte_count
 FROM binary_blobs
+WHERE workspace_id = %s
+"""
+
+FETCH_ALL_PAYLOAD_PATHS_SQL = """
+SELECT payload_hash_full, payload_fs_path
+FROM payload_blobs
 WHERE workspace_id = %s
 """
 
@@ -67,6 +75,23 @@ def scan_blob_directory(blobs_bin_dir: Path) -> dict[str, Path]:
                 if blob_file.is_file():
                     found[blob_file.name] = blob_file
 
+    return found
+
+
+def scan_payload_directory(blobs_payload_dir: Path) -> set[str]:
+    """Scan the blobs/payload tree for relative payload paths."""
+    found: set[str] = set()
+    if not blobs_payload_dir.exists():
+        return found
+    for level1 in sorted(blobs_payload_dir.iterdir()):
+        if not level1.is_dir() or len(level1.name) != 2:
+            continue
+        for level2 in sorted(level1.iterdir()):
+            if not level2.is_dir() or len(level2.name) != 2:
+                continue
+            for payload_file in sorted(level2.iterdir()):
+                if payload_file.is_file():
+                    found.add(f"{level1.name}/{level2.name}/{payload_file.name}")
     return found
 
 
@@ -154,6 +179,7 @@ def run_reconcile(
     connection: Any,
     *,
     blobs_bin_dir: Path,
+    blobs_payload_dir: Path | None = None,
     remove: bool = False,
     metrics: Any | None = None,
     logger: Any | None = None,
@@ -165,7 +191,8 @@ def run_reconcile(
 
     Args:
         connection: Database connection for querying blob rows.
-        blobs_bin_dir: Root directory of the blob store.
+        blobs_bin_dir: Root directory of the binary blob store.
+        blobs_payload_dir: Root directory of the payload blob store.
         remove: If True, unlink orphan files from disk.
         metrics: Optional GatewayMetrics for counter updates.
         logger: Optional structured logger override.
@@ -194,22 +221,50 @@ def run_reconcile(
     for path in orphan_paths:
         with contextlib.suppress(OSError):
             orphan_bytes += path.stat().st_size
+
+    payload_orphan_paths: list[Path] = []
+    payload_missing_paths: list[str] = []
+    if blobs_payload_dir is not None:
+        payload_rows = connection.execute(
+            FETCH_ALL_PAYLOAD_PATHS_SQL,
+            (WORKSPACE_ID,),
+        ).fetchall()
+        db_payload_paths: set[str] = set()
+        for row in payload_rows:
+            if len(row) < 2:
+                continue
+            payload_fs_path = row[1]
+            if isinstance(payload_fs_path, str) and payload_fs_path:
+                db_payload_paths.add(payload_fs_path)
+        fs_payload_paths = scan_payload_directory(blobs_payload_dir)
+        payload_orphan_paths = [
+            blobs_payload_dir / rel
+            for rel in sorted(fs_payload_paths - db_payload_paths)
+        ]
+        payload_missing_paths = sorted(db_payload_paths - fs_payload_paths)
+        for path in payload_orphan_paths:
+            with contextlib.suppress(OSError):
+                orphan_bytes += path.stat().st_size
+
     log = logger or get_logger(component="jobs.reconcile_fs")
     removed_count = 0
-    if remove and orphan_paths:
-        removed_count = remove_orphan_files(orphan_paths)
+    all_orphans = list(orphan_paths) + payload_orphan_paths
+    if remove and all_orphans:
+        removed_count = remove_orphan_files(all_orphans)
         _increment_metric(metrics, "prune_fs_orphans_removed", removed_count)
     log.info(
         LogEvents.PRUNE_FS_RECONCILE,
-        orphan_count=len(orphan_paths),
-        missing_count=len(missing_hashes),
+        orphan_count=len(all_orphans),
+        missing_count=len(missing_hashes) + len(payload_missing_paths),
         orphan_bytes=orphan_bytes,
         removed_count=removed_count,
         remove_mode=remove,
     )
     return ReconcileResult(
-        orphan_files=[str(p) for p in orphan_paths],
+        orphan_files=[str(p) for p in all_orphans],
         missing_files=missing_hashes,
         orphan_bytes=orphan_bytes,
         removed_count=removed_count,
+        payload_orphan_files=[str(p) for p in payload_orphan_paths],
+        payload_missing_files=payload_missing_paths,
     )

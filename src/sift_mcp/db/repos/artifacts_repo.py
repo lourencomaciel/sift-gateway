@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+import json
 from typing import Any
 
 from sift_mcp.constants import ARTIFACT_ID_PREFIX, WORKSPACE_ID
@@ -10,6 +11,7 @@ from sift_mcp.constants import ARTIFACT_ID_PREFIX, WORKSPACE_ID
 _VALID_MAP_KINDS = {"none", "full", "partial"}
 _VALID_MAP_STATUS = {"pending", "ready", "failed", "stale"}
 _VALID_INDEX_STATUS = {"off", "pending", "ready", "partial", "failed"}
+_VALID_KINDS = {"data", "derived_query", "derived_codegen"}
 
 
 def validate_artifact_row(row: Mapping[str, Any]) -> None:
@@ -42,6 +44,33 @@ def validate_artifact_row(row: Mapping[str, Any]) -> None:
     if map_status not in _VALID_MAP_STATUS:
         msg = f"invalid map_status: {map_status}"
         raise ValueError(msg)
+
+    kind = row.get("kind", "data")
+    if kind not in _VALID_KINDS:
+        msg = f"invalid kind: {kind}"
+        raise ValueError(msg)
+
+    derivation = row.get("derivation")
+    parent_artifact_id = row.get("parent_artifact_id")
+    if kind == "data":
+        if derivation is not None:
+            msg = "data artifacts must not set derivation"
+            raise ValueError(msg)
+    else:
+        if not isinstance(parent_artifact_id, str) or not parent_artifact_id:
+            msg = "derived artifacts require parent_artifact_id"
+            raise ValueError(msg)
+        if not isinstance(derivation, str) or not derivation:
+            msg = "derived artifacts require derivation"
+            raise ValueError(msg)
+        try:
+            parsed_derivation = json.loads(derivation)
+        except (json.JSONDecodeError, ValueError):
+            msg = "derived artifact derivation must be valid JSON"
+            raise ValueError(msg) from None
+        if not isinstance(parsed_derivation, dict):
+            msg = "derived artifact derivation must be a JSON object"
+            raise ValueError(msg)
 
     index_status = row.get("index_status", "off")
     if index_status not in _VALID_INDEX_STATUS:

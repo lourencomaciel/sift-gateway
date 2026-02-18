@@ -58,7 +58,7 @@ SELECT a.artifact_id, a.payload_hash_full, a.deleted_at,
        a.map_kind, a.map_status, a.generation,
        a.mapped_part_index, a.map_budget_fingerprint,
        pb.envelope, pb.envelope_canonical_encoding,
-       pb.envelope_canonical_bytes, pb.envelope_canonical_bytes_len,
+       pb.payload_fs_path,
        pb.contains_binary_refs
 FROM artifacts a
 JOIN payload_blobs pb ON pb.workspace_id = a.workspace_id

@@ -49,7 +49,8 @@ def test_resolve_related_artifacts_maps_rows_and_binds_params() -> None:
     assert "related(artifact_id)" in conn.query
     assert conn.params is not None
     assert conn.params[0] == "local"
-    assert conn.params[1] == "art_root"
+    assert conn.params[1] == "local"
+    assert conn.params[2] == "art_root"
 
 
 def test_compute_related_set_hash_is_order_independent() -> None:

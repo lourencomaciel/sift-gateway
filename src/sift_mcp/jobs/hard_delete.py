@@ -14,7 +14,11 @@ import os
 from pathlib import Path
 from typing import Any
 
-from sift_mcp.constants import WORKSPACE_ID
+from sift_mcp.constants import (
+    BLOBS_PAYLOAD_SUBDIR,
+    DEFAULT_DATA_DIR,
+    WORKSPACE_ID,
+)
 from sift_mcp.db.protocols import increment_metric, safe_rollback
 from sift_mcp.obs.logging import LogEvents, get_logger
 
@@ -59,7 +63,7 @@ WHERE workspace_id = %s AND artifact_id = ANY(%s)
 
 # Step 3: Find unreferenced payloads
 FIND_UNREFERENCED_PAYLOADS_SQL = """
-SELECT pb.payload_hash_full, pb.payload_total_bytes
+SELECT pb.payload_hash_full, pb.payload_total_bytes, pb.payload_fs_path
 FROM payload_blobs pb
 WHERE pb.workspace_id = %s
   AND NOT EXISTS (
@@ -153,6 +157,16 @@ def _remove_blob_file_with_root(
         return False
 
 
+def _resolve_payloads_root(payloads_root: Path | None) -> Path:
+    """Resolve payload root used for payload file deletion."""
+    if payloads_root is not None:
+        return payloads_root.resolve(strict=False)
+    data_dir = Path(
+        os.environ.get("SIFT_MCP_DATA_DIR", DEFAULT_DATA_DIR)
+    ).expanduser()
+    return (data_dir / BLOBS_PAYLOAD_SUBDIR).resolve(strict=False)
+
+
 def run_hard_delete_batch(
     connection: Any,
     *,
@@ -160,6 +174,7 @@ def run_hard_delete_batch(
     batch_size: int = 50,
     remove_fs_blobs: bool = True,
     blobs_root: Path | None = None,
+    payloads_root: Path | None = None,
     metrics: Any | None = None,
     logger: Any | None = None,
 ) -> HardDeleteResult:
@@ -178,6 +193,8 @@ def run_hard_delete_batch(
             from the filesystem after commit.
         blobs_root: Optional root directory used to constrain
             filesystem blob deletion paths.
+        payloads_root: Optional payload root directory used to
+            constrain payload file deletion paths.
         metrics: Optional GatewayMetrics for counter updates.
         logger: Optional structured logger override.
 
@@ -186,6 +203,7 @@ def run_hard_delete_batch(
         bytes.
     """
     log = logger or get_logger(component="jobs.hard_delete")
+    resolved_payloads_root = _resolve_payloads_root(payloads_root)
     try:
         candidate_rows = connection.execute(
             FIND_HARD_DELETE_CANDIDATES_SQL,
@@ -212,17 +230,26 @@ def run_hard_delete_batch(
             (WORKSPACE_ID,),
         ).fetchall()
         payload_hashes = []
+        payload_paths_to_remove: list[str] = []
         payload_bytes_reclaimed = 0
         for row in payload_rows:
-            if len(row) < 2:
+            if len(row) < 3:
                 continue
             payload_hash_full = row[0]
             payload_total_bytes = row[1]
+            payload_fs_path = row[2]
             if not isinstance(payload_hash_full, str):
                 continue
             payload_hashes.append(payload_hash_full)
             if isinstance(payload_total_bytes, int) and payload_total_bytes > 0:
                 payload_bytes_reclaimed += payload_total_bytes
+            if remove_fs_blobs and isinstance(payload_fs_path, str):
+                payload_path = Path(payload_fs_path)
+                if not payload_path.is_absolute():
+                    payload_path = (
+                        resolved_payloads_root / payload_path
+                    ).resolve(strict=False)
+                payload_paths_to_remove.append(str(payload_path))
         if payload_hashes:
             connection.execute(
                 DELETE_PAYLOADS_BATCH_SQL,
@@ -262,6 +289,12 @@ def run_hard_delete_batch(
         connection.commit()
 
         # Remove FS blobs AFTER commit so a rollback doesn't orphan files
+        for fs_path in payload_paths_to_remove:
+            if _remove_blob_file_with_root(
+                fs_path,
+                blobs_root=resolved_payloads_root,
+            ):
+                fs_blobs_removed += 1
         for fs_path in fs_paths_to_remove:
             if _remove_blob_file_with_root(fs_path, blobs_root=blobs_root):
                 fs_blobs_removed += 1

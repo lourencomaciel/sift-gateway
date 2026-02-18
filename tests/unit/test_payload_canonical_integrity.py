@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from decimal import Decimal
 import hashlib
+from pathlib import Path
 
 import pytest
 
@@ -23,6 +24,19 @@ from sift_mcp.storage.payload_store import (
     reconstruct_envelope,
 )
 from sift_mcp.util.hashing import payload_hash_full
+
+
+def _write_payload_bytes(
+    *,
+    root: Path,
+    payload_hash: str,
+    compressed_bytes: bytes,
+) -> str:
+    rel = f"{payload_hash[:2]}/{payload_hash[2:4]}/{payload_hash}.zst"
+    full = root / rel
+    full.parent.mkdir(parents=True, exist_ok=True)
+    full.write_bytes(compressed_bytes)
+    return rel
 
 
 def _sample_envelope() -> dict:
@@ -183,51 +197,93 @@ def test_prepare_payload_none_encoding() -> None:
 # ---- reconstruct_envelope ----
 
 
-def test_reconstruct_envelope_roundtrip() -> None:
+def test_reconstruct_envelope_roundtrip(tmp_path: Path) -> None:
     env = _sample_envelope()
     prepared = prepare_payload(env)
+    payload_fs_path = _write_payload_bytes(
+        root=tmp_path,
+        payload_hash=prepared.payload_hash,
+        compressed_bytes=prepared.compressed_bytes,
+    )
     reconstructed = reconstruct_envelope(
-        prepared.compressed_bytes,
-        prepared.encoding,
-        prepared.payload_hash,
+        payload_fs_path=payload_fs_path,
+        blobs_payload_dir=tmp_path,
+        encoding=prepared.encoding,
+        expected_hash=prepared.payload_hash,
     )
     assert reconstructed["type"] == "mcp_envelope"
     assert reconstructed["tool"] == "list_repos"
     assert reconstructed["status"] == "ok"
 
 
-def test_reconstruct_envelope_verifies_hash() -> None:
+def test_reconstruct_envelope_verifies_hash(tmp_path: Path) -> None:
     env = _sample_envelope()
     prepared = prepare_payload(env)
+    payload_fs_path = _write_payload_bytes(
+        root=tmp_path,
+        payload_hash=prepared.payload_hash,
+        compressed_bytes=prepared.compressed_bytes,
+    )
     with pytest.raises(ValueError, match="integrity"):
         reconstruct_envelope(
-            prepared.compressed_bytes,
-            prepared.encoding,
-            "0000000000000000000000000000000000000000000000000000000000000000",
+            payload_fs_path=payload_fs_path,
+            blobs_payload_dir=tmp_path,
+            encoding=prepared.encoding,
+            expected_hash="0000000000000000000000000000000000000000000000000000000000000000",
         )
 
 
-def test_reconstruct_envelope_rejects_invalid_json_payload() -> None:
+def test_reconstruct_envelope_missing_file_raises_value_error(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(ValueError, match="payload file read failed"):
+        reconstruct_envelope(
+            payload_fs_path="aa/bb/missing.zst",
+            blobs_payload_dir=tmp_path,
+            encoding="none",
+            expected_hash="0" * 64,
+        )
+
+
+def test_reconstruct_envelope_rejects_invalid_json_payload(
+    tmp_path: Path,
+) -> None:
     raw = b"this is not json"
     compressed = compress_bytes(raw, "none")
     expected_hash = hashlib.sha256(raw).hexdigest()
+    payload_fs_path = _write_payload_bytes(
+        root=tmp_path,
+        payload_hash=expected_hash,
+        compressed_bytes=compressed.data,
+    )
     with pytest.raises(ValueError, match="valid JSON"):
         reconstruct_envelope(
-            compressed.data, compressed.encoding, expected_hash
+            payload_fs_path=payload_fs_path,
+            blobs_payload_dir=tmp_path,
+            encoding=compressed.encoding,
+            expected_hash=expected_hash,
         )
 
 
-def test_reconstruct_envelope_rejects_non_object_json() -> None:
+def test_reconstruct_envelope_rejects_non_object_json(tmp_path: Path) -> None:
     raw = b'["not","an","object"]'
     compressed = compress_bytes(raw, "none")
     expected_hash = hashlib.sha256(raw).hexdigest()
+    payload_fs_path = _write_payload_bytes(
+        root=tmp_path,
+        payload_hash=expected_hash,
+        compressed_bytes=compressed.data,
+    )
     with pytest.raises(ValueError, match="JSON object"):
         reconstruct_envelope(
-            compressed.data, compressed.encoding, expected_hash
+            payload_fs_path=payload_fs_path,
+            blobs_payload_dir=tmp_path,
+            encoding=compressed.encoding,
+            expected_hash=expected_hash,
         )
 
 
-def test_reconstruct_envelope_all_encodings() -> None:
+def test_reconstruct_envelope_all_encodings(tmp_path: Path) -> None:
     """Verify reconstruct works for both encoding modes."""
     env = _sample_envelope()
     for enc in (
@@ -235,10 +291,16 @@ def test_reconstruct_envelope_all_encodings() -> None:
         CanonicalEncoding.none,
     ):
         prepared = prepare_payload(env, encoding=enc)
+        payload_fs_path = _write_payload_bytes(
+            root=tmp_path,
+            payload_hash=prepared.payload_hash,
+            compressed_bytes=prepared.compressed_bytes,
+        )
         reconstructed = reconstruct_envelope(
-            prepared.compressed_bytes,
-            prepared.encoding,
-            prepared.payload_hash,
+            payload_fs_path=payload_fs_path,
+            blobs_payload_dir=tmp_path,
+            encoding=prepared.encoding,
+            expected_hash=prepared.payload_hash,
         )
         assert reconstructed["tool"] == "list_repos"
 
@@ -264,14 +326,20 @@ def _envelope_with_decimal() -> dict:
     }
 
 
-def test_prepare_and_reconstruct_preserves_decimal() -> None:
+def test_prepare_and_reconstruct_preserves_decimal(tmp_path: Path) -> None:
     """Decimal values survive prepare -> reconstruct without float drift."""
     env = _envelope_with_decimal()
     prepared = prepare_payload(env)
+    payload_fs_path = _write_payload_bytes(
+        root=tmp_path,
+        payload_hash=prepared.payload_hash,
+        compressed_bytes=prepared.compressed_bytes,
+    )
     reconstructed = reconstruct_envelope(
-        prepared.compressed_bytes,
-        prepared.encoding,
-        prepared.payload_hash,
+        payload_fs_path=payload_fs_path,
+        blobs_payload_dir=tmp_path,
+        encoding=prepared.encoding,
+        expected_hash=prepared.payload_hash,
     )
     # The reconstructed value should be Decimal, not float
     price = reconstructed["content"][0]["value"]["price"]
@@ -290,7 +358,7 @@ def test_payload_hash_is_sha256_of_canonical_uncompressed() -> None:
     assert result.payload_hash == payload_hash_full(uncompressed)
 
 
-def test_compression_integrity_verified_in_prepare() -> None:
+def test_compression_integrity_verified_in_prepare(tmp_path: Path) -> None:
     """prepare_payload verifies decompress(compress(x)) == x."""
     env = _sample_envelope()
     # This implicitly tests the integrity check inside prepare_payload
@@ -299,11 +367,17 @@ def test_compression_integrity_verified_in_prepare() -> None:
         CanonicalEncoding.none,
     ):
         result = prepare_payload(env, encoding=enc)
+        payload_fs_path = _write_payload_bytes(
+            root=tmp_path,
+            payload_hash=result.payload_hash,
+            compressed_bytes=result.compressed_bytes,
+        )
         # Verify we can reconstruct successfully
         reconstructed = reconstruct_envelope(
-            result.compressed_bytes,
-            result.encoding,
-            result.payload_hash,
+            payload_fs_path=payload_fs_path,
+            blobs_payload_dir=tmp_path,
+            encoding=result.encoding,
+            expected_hash=result.payload_hash,
         )
         assert reconstructed["tool"] == "list_repos"
 
