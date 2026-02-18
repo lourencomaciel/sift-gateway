@@ -30,7 +30,6 @@ _GATEWAY_EXTENSION_FIELDS = frozenset(
     {
         "semantic_salt_headers",
         "semantic_salt_env_keys",
-        "passthrough_allowed",
         "pagination",
         "auto_paginate_max_pages",
         "auto_paginate_max_records",

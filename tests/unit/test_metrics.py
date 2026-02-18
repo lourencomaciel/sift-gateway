@@ -16,7 +16,7 @@ from sift_mcp.obs.metrics import (
 
 def test_counter_increment_and_value() -> None:
     m = GatewayMetrics()
-    c = m.cache_hits
+    c = m.upstream_calls
     assert counter_value(c) == 0
     c.inc()
     assert counter_value(c) == 1
@@ -26,7 +26,7 @@ def test_counter_increment_and_value() -> None:
 
 def test_counter_reset_returns_previous_value() -> None:
     m = GatewayMetrics()
-    c = m.cache_hits
+    c = m.upstream_calls
     c.inc(10)
     val = counter_reset(c)
     assert val == 10
@@ -35,7 +35,7 @@ def test_counter_reset_returns_previous_value() -> None:
 
 def test_counter_reset_when_zero() -> None:
     m = GatewayMetrics()
-    c = m.cache_hits
+    c = m.upstream_calls
     val = counter_reset(c)
     assert val == 0
     assert counter_value(c) == 0
@@ -123,14 +123,13 @@ def test_gateway_metrics_record_cursor_stale_reason_unknown_ignored() -> None:
 
 def test_gateway_metrics_snapshot_returns_complete_dict() -> None:
     m = GatewayMetrics()
-    m.cache_hits.inc(3)
+    m.upstream_calls.inc(3)
     m.upstream_calls.inc(1)
     m.prune_soft_deletes.inc(5)
 
     snap = m.snapshot()
 
     # Check all top-level keys exist
-    assert "cache" in snap
     assert "upstream" in snap
     assert "ingest" in snap
     assert "mapping" in snap
@@ -140,8 +139,7 @@ def test_gateway_metrics_snapshot_returns_complete_dict() -> None:
     assert "codegen" in snap
 
     # Check specific values
-    assert snap["cache"]["hits"] == 3
-    assert snap["upstream"]["calls"] == 1
+    assert snap["upstream"]["calls"] == 4
     assert snap["pruning"]["soft_deletes"] == 5
 
     # Check nested structures
@@ -155,7 +153,7 @@ def test_gateway_metrics_snapshot_returns_complete_dict() -> None:
 def test_counter_thread_safety() -> None:
     """Test that concurrent increments produce correct total."""
     m = GatewayMetrics()
-    c = m.cache_hits
+    c = m.upstream_calls
     num_threads = 10
     increments_per_thread = 1000
 
@@ -224,8 +222,7 @@ def test_get_metrics_thread_safe_singleton_creation(
 def test_gateway_metrics_reset_returns_snapshot_and_clears() -> None:
     """GatewayMetrics.reset() should return a snapshot and zero all counters."""
     m = GatewayMetrics()
-    m.cache_hits.inc(5)
-    m.upstream_calls.inc(2)
+    m.upstream_calls.inc(7)
     m.upstream_latency.observe(100.0)
     m.prune_soft_deletes.inc(3)
     m.mapping_full_count.inc(1)
@@ -236,8 +233,7 @@ def test_gateway_metrics_reset_returns_snapshot_and_clears() -> None:
     snap = m.reset()
 
     # Verify the snapshot captured the values
-    assert snap["cache"]["hits"] == 5
-    assert snap["upstream"]["calls"] == 2
+    assert snap["upstream"]["calls"] == 7
     assert snap["upstream"]["latency"]["count"] == 1.0
     assert snap["upstream"]["latency"]["sum"] == 100.0
     assert snap["pruning"]["soft_deletes"] == 3
@@ -248,7 +244,6 @@ def test_gateway_metrics_reset_returns_snapshot_and_clears() -> None:
 
     # Verify all counters are zeroed after reset
     post_snap = m.snapshot()
-    assert post_snap["cache"]["hits"] == 0
     assert post_snap["upstream"]["calls"] == 0
     assert post_snap["upstream"]["latency"]["count"] == 0
     assert post_snap["pruning"]["soft_deletes"] == 0
@@ -270,5 +265,5 @@ def test_gateway_metrics_reset_empty_is_safe() -> None:
     """GatewayMetrics.reset() on a fresh instance should not raise."""
     m = GatewayMetrics()
     snap = m.reset()
-    assert snap["cache"]["hits"] == 0
+    assert snap["upstream"]["calls"] == 0
     assert snap["upstream"]["latency"]["count"] == 0

@@ -69,13 +69,6 @@ def test_build_status_response_contains_all_budget_fields() -> None:
     )
 
 
-def test_build_status_response_includes_mapping_mode() -> None:
-    config = _default_config()
-    result = build_status_response(config)
-
-    assert result["mapping_mode"] == config.mapping_mode.value
-
-
 def test_build_status_response_includes_storage_caps() -> None:
     config = _default_config()
     result = build_status_response(config)

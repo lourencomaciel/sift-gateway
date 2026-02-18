@@ -24,11 +24,6 @@ from pathlib import Path
 import shutil
 from typing import Any
 
-from sift_mcp.config.instances import (
-    instance_id_for_source,
-    resolve_instance_data_dir,
-    upsert_instance,
-)
 from sift_mcp.config.mcp_servers import (
     extract_mcp_servers,
     read_config_file,
@@ -36,6 +31,7 @@ from sift_mcp.config.mcp_servers import (
 from sift_mcp.config.upstream_secrets import write_secret
 from sift_mcp.constants import (
     CONFIG_FILENAME,
+    DEFAULT_DATA_DIR,
     STATE_SUBDIR,
 )
 
@@ -179,8 +175,7 @@ def run_init(
         source_path: Path to the source config file
             (e.g., claude_desktop_config.json).
         data_dir: Gateway data directory. Defaults to
-            a managed per-source instance directory under
-            ``~/.sift-mcp/instances/<instance_id>``.
+            ``.sift-mcp`` in the current working directory.
         gateway_name: Name for the gateway entry in the
             rewritten source file.
         gateway_url: Optional URL for the gateway entry.
@@ -191,14 +186,13 @@ def run_init(
 
     Returns:
         Summary dict with keys: servers_migrated, backup_path,
-        source_path, gateway_config_path, instance_id.
+        source_path, gateway_config_path.
     """
     source_path = source_path.expanduser().resolve()
     if data_dir is None:
-        data_dir = resolve_instance_data_dir(source_path)
+        data_dir = Path(DEFAULT_DATA_DIR).expanduser().resolve()
     else:
         data_dir = data_dir.expanduser().resolve()
-    instance_id = instance_id_for_source(source_path)
 
     # 1. Read and validate source file
     source_raw = read_config_file(source_path)
@@ -244,7 +238,6 @@ def run_init(
         "source_path": str(source_path),
         "gateway_name": gateway_name,
         "data_dir": str(data_dir),
-        "instance_id": instance_id,
     }
 
     # 3. Prepare rewritten source file
@@ -286,7 +279,6 @@ def run_init(
 
     summary: dict[str, Any] = {
         "servers_migrated": server_names,
-        "instance_id": instance_id,
         "data_dir": str(data_dir),
         "backup_path": str(backup_path),
         "source_path": str(source_path),
@@ -300,12 +292,6 @@ def run_init(
     shutil.copy2(source_path, backup_path)
     _write_json(gateway_config_path, new_gateway_config)
     _write_json(source_path, new_source)
-    try:
-        upsert_instance(source_path=source_path, data_dir=data_dir)
-    except OSError as exc:
-        summary["instance_registry_warning"] = (
-            f"migration completed but failed to update instance registry: {exc}"
-        )
 
     return summary
 
@@ -352,10 +338,6 @@ def print_init_summary(
     print(f"{prefix}Backup:         {summary['backup_path']}")
     print(f"{prefix}Gateway config: {summary['gateway_config_path']}")
     print(f"{prefix}Source updated:  {summary['source_path']}")
-    registry_warning = summary.get("instance_registry_warning")
-    if isinstance(registry_warning, str):
-        print(f"{prefix}Warning:        {registry_warning}")
-
     if not dry_run:
         print()
         print(

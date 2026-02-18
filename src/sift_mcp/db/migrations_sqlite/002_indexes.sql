@@ -7,8 +7,6 @@ CREATE INDEX IF NOT EXISTS idx_payload_blobs_created_at
     ON payload_blobs (workspace_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_payload_blobs_total_bytes
     ON payload_blobs (workspace_id, payload_total_bytes);
-CREATE INDEX IF NOT EXISTS idx_payload_hash_aliases_dedupe_created
-    ON payload_hash_aliases (workspace_id, payload_hash_dedupe, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_payload_binary_refs_binary_hash
     ON payload_binary_refs (workspace_id, binary_hash);
 CREATE INDEX IF NOT EXISTS idx_payload_binary_refs_created_at
