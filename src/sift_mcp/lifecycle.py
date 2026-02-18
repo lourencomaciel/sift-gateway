@@ -61,6 +61,7 @@ def ensure_data_dirs(config: GatewayConfig) -> list[Path]:
         config.state_dir,
         config.resources_dir,
         config.blobs_bin_dir,
+        config.blobs_payload_dir,
         config.tmp_dir,
         config.logs_dir,
     ]
@@ -150,6 +151,45 @@ def _check_db(config: GatewayConfig) -> tuple[bool, list[str]]:
     try:
         with sqlite3.connect(str(config.sqlite_path)) as conn:
             conn.execute("SELECT 1")
+            table_rows = conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()
+            table_names = {
+                row[0] for row in table_rows if row and isinstance(row[0], str)
+            }
+            core_tables = {"artifacts", "payload_blobs"}
+
+            # Fresh bootstrap: migrations haven't run yet.
+            if not (table_names & core_tables):
+                return True, details
+
+            if not core_tables.issubset(table_names):
+                details.append(
+                    "Database schema is outdated or incomplete. "
+                    "Delete state/gateway.db and re-run 'sift-mcp init'."
+                )
+                return False, details
+
+            required_v2_tables = {"artifacts_fts", "artifact_lineage_edges"}
+            missing_v2_tables = sorted(required_v2_tables - table_names)
+            if missing_v2_tables:
+                details.append(
+                    "Database schema is outdated. "
+                    "Delete state/gateway.db and re-run 'sift-mcp init'."
+                )
+                return False, details
+
+            try:
+                conn.execute("SELECT kind, derivation FROM artifacts LIMIT 0")
+                conn.execute(
+                    "SELECT payload_fs_path FROM payload_blobs LIMIT 0"
+                )
+            except sqlite3.OperationalError:
+                details.append(
+                    "Database schema is outdated. "
+                    "Delete state/gateway.db and re-run 'sift-mcp init'."
+                )
+                return False, details
     except Exception as exc:
         details.append(f"SQLite check failed: {exc}")
         return False, details

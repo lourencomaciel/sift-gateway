@@ -26,13 +26,13 @@ _PAGINATION_COLUMNS = [
     "payload_hash_full",
     "envelope",
     "envelope_canonical_encoding",
-    "envelope_canonical_bytes",
+    "payload_fs_path",
 ]
 
 FETCH_ENVELOPE_META_SQL = """
 SELECT a.artifact_id, a.deleted_at, a.payload_hash_full,
        pb.envelope, pb.envelope_canonical_encoding,
-       pb.envelope_canonical_bytes
+       pb.payload_fs_path
 FROM artifacts a
 JOIN payload_blobs pb ON pb.workspace_id = a.workspace_id
     AND pb.payload_hash_full = a.payload_hash_full
@@ -80,11 +80,14 @@ def _extract_pagination_state(
         return None
 
 
-def _extract_envelope_dict(row: dict[str, Any]) -> dict[str, Any] | None:
+def _extract_envelope_dict(
+    row: dict[str, Any], *, blobs_payload_dir: Any
+) -> dict[str, Any] | None:
     """Load an envelope dict from JSONB or canonical bytes.
 
     Args:
         row: Database row containing envelope storage fields.
+        blobs_payload_dir: Root directory for payload blob files.
 
     Returns:
         Envelope dict, or ``None`` when loading fails.
@@ -101,12 +104,13 @@ def _extract_envelope_dict(row: dict[str, Any]) -> dict[str, Any] | None:
             return decoded
         return None
 
-    canonical_bytes_raw = row.get("envelope_canonical_bytes")
-    if canonical_bytes_raw is None:
+    payload_fs_path = row.get("payload_fs_path")
+    if not isinstance(payload_fs_path, str) or not payload_fs_path:
         return None
     try:
         return reconstruct_envelope(
-            compressed_bytes=bytes(canonical_bytes_raw),
+            payload_fs_path=payload_fs_path,
+            blobs_payload_dir=blobs_payload_dir,
             encoding=str(row.get("envelope_canonical_encoding", "none")),
             expected_hash=str(row.get("payload_hash_full", "")),
         )
@@ -181,7 +185,9 @@ async def handle_artifact_next_page(
     if row.get("deleted_at") is not None:
         return gateway_error("GONE", "artifact has been deleted")
 
-    envelope_dict = _extract_envelope_dict(row)
+    envelope_dict = _extract_envelope_dict(
+        row, blobs_payload_dir=ctx.config.blobs_payload_dir
+    )
     state = _extract_pagination_state(envelope_dict)
     if state is None:
         return gateway_error(

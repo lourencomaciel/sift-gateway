@@ -393,7 +393,10 @@ def _collect_get_envelope_items(
         artifact_id = artifact_row.get("artifact_id")
         if not isinstance(artifact_id, str):
             continue
-        envelope, envelope_err = _reconstruct_artifact_envelope(artifact_row)
+        envelope, envelope_err = _reconstruct_artifact_envelope(
+            artifact_row,
+            blobs_payload_dir=ctx.config.blobs_payload_dir,
+        )
         if envelope_err is not None:
             return [], envelope_err
         if envelope is None:
@@ -503,20 +506,23 @@ def _build_mapped_get_response_from_rows(
 
 def _reconstruct_artifact_envelope(
     artifact_row: dict[str, Any],
+    *,
+    blobs_payload_dir: Any,
 ) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
-    """Get envelope dict from row (inline JSONB or canonical bytes)."""
+    """Get envelope dict from row (inline JSONB or payload file)."""
     envelope_value = artifact_row.get("envelope")
-    canonical_bytes_raw = artifact_row.get("envelope_canonical_bytes")
+    payload_fs_path = artifact_row.get("payload_fs_path")
     if isinstance(envelope_value, dict) and "content" in envelope_value:
         return envelope_value, None
-    if canonical_bytes_raw is None:
+    if not isinstance(payload_fs_path, str) or not payload_fs_path:
         return None, gateway_error(
             "INTERNAL",
-            "missing canonical bytes for artifact",
+            "missing payload file path for artifact",
         )
     try:
         envelope = reconstruct_envelope(
-            compressed_bytes=bytes(canonical_bytes_raw),
+            payload_fs_path=payload_fs_path,
+            blobs_payload_dir=blobs_payload_dir,
             encoding=str(
                 artifact_row.get("envelope_canonical_encoding", "none")
             ),

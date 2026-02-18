@@ -123,8 +123,7 @@ ENVELOPE_COLUMNS = [
     "map_budget_fingerprint",
     "envelope",
     "envelope_canonical_encoding",
-    "envelope_canonical_bytes",
-    "envelope_canonical_bytes_len",
+    "payload_fs_path",
     "contains_binary_refs",
 ]
 

@@ -197,7 +197,7 @@ def test_pagination_response_meta_shape() -> None:
         state=PaginationState(
             upstream_prefix="meta-ads",
             tool_name="get_ads",
-            original_args={},
+            original_args={"limit": 100},
             next_params={"after": "ABC"},
             page_number=0,
         ),
@@ -218,9 +218,15 @@ def test_pagination_response_meta_shape() -> None:
         "artifact_id": "art_123",
     }
     assert meta["warning"] == "INCOMPLETE_RESULT_SET"
+    assert meta["warnings"] == [{"code": "INCOMPLETE_RESULT_SET"}]
     assert meta["has_next_page"] is True
     assert meta["page_number"] == 0
+    assert meta["next_params"] == {"after": "ABC"}
+    assert meta["next_cursor_param"] == "after"
+    assert meta["next_cursor"] == "ABC"
     assert "art_123" in meta["hint"]
+    assert "limit=100" in meta["hint"]
+    assert "after=\"ABC\"" in meta["hint"]
     assert "next_page" in meta["hint"]
     assert "retrieval_status == COMPLETE" in meta["hint"]
 
@@ -241,8 +247,43 @@ def test_pagination_response_meta_complete_page() -> None:
     assert meta["has_more"] is False
     assert meta["next_action"] is None
     assert meta["warning"] is None
+    assert "warnings" not in meta
     assert meta["has_next_page"] is False
     assert meta["page_number"] == 3
+
+
+def test_pagination_response_meta_merges_extra_warnings() -> None:
+    assessment = PaginationAssessment(
+        state=PaginationState(
+            upstream_prefix="meta-ads",
+            tool_name="get_ads",
+            original_args={},
+            next_params={"after": "NEXT"},
+            page_number=1,
+        ),
+        has_more=True,
+        retrieval_status="PARTIAL",
+        partial_reason="MORE_PAGES_AVAILABLE",
+        warning="INCOMPLETE_RESULT_SET",
+        page_number=1,
+    )
+    meta = _pagination_response_meta(
+        assessment,
+        "art_123",
+        extra_warnings=[
+            {
+                "code": "PAGINATION_DUPLICATE_PAGE",
+                "previous_artifact_id": "art_prev",
+            }
+        ],
+    )
+    assert meta["warnings"] == [
+        {"code": "INCOMPLETE_RESULT_SET"},
+        {
+            "code": "PAGINATION_DUPLICATE_PAGE",
+            "previous_artifact_id": "art_prev",
+        },
+    ]
 
 
 # -- gateway_tool_result with pagination --

@@ -659,6 +659,11 @@ class GatewayConfig(BaseSettings):
         return self.data_dir / "blobs" / "bin"
 
     @property
+    def blobs_payload_dir(self) -> Path:
+        """The payload blob store directory."""
+        return self.data_dir / "blobs" / "payload"
+
+    @property
     def tmp_dir(self) -> Path:
         """The temporary scratch directory."""
         return self.data_dir / "tmp"

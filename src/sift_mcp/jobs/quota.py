@@ -333,6 +333,7 @@ def enforce_quota(
     hard_delete_grace_seconds: int = 0,
     remove_fs_blobs: bool = True,
     blobs_root: Path | None = None,
+    payloads_root: Path | None = None,
     metrics: Any | None = None,
     logger: Any | None = None,
 ) -> QuotaEnforcementResult:
@@ -353,6 +354,8 @@ def enforce_quota(
         remove_fs_blobs: If True, unlink orphaned blob files.
         blobs_root: Optional root directory used to constrain
             filesystem blob deletion paths.
+        payloads_root: Optional root directory used to constrain
+            payload file deletion paths.
         metrics: Optional GatewayMetrics for counter updates.
         logger: Optional structured logger override.
 
@@ -433,6 +436,7 @@ def enforce_quota(
                 batch_size=prune_batch_size,
                 remove_fs_blobs=remove_fs_blobs,
                 blobs_root=blobs_root,
+                payloads_root=payloads_root,
                 metrics=metrics,
                 logger=log,
             )

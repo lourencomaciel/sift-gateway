@@ -190,32 +190,203 @@ _SCHEMA_FIELD_COLUMNS = [
 
 _logger = get_logger(component="mcp.handlers")
 
+_FETCH_PREVIOUS_PAGE_SQL = """
+SELECT artifact_id, payload_hash_full
+FROM artifacts
+WHERE workspace_id = %s
+  AND session_id = %s
+  AND source_tool = %s
+  AND deleted_at IS NULL
+  AND created_seq < %s
+ORDER BY created_seq DESC
+LIMIT 1
+"""
 
-def _retain_primary_schema_if_unique(
+_PLACEHOLDER_CURSOR_VALUES = frozenset(
+    {
+        "cursor",
+        "last_cursor",
+        "next_cursor",
+        "after_cursor",
+        "<cursor>",
+        "{cursor}",
+        "your_cursor",
+        "insert_cursor_here",
+    }
+)
+
+
+def _is_placeholder_cursor_value(value: str) -> bool:
+    """Return True when cursor value looks like a literal placeholder."""
+    normalized = value.strip().lower()
+    if normalized in _PLACEHOLDER_CURSOR_VALUES:
+        return True
+    collapsed = normalized.replace("-", "_").replace(" ", "_")
+    return collapsed in _PLACEHOLDER_CURSOR_VALUES
+
+
+def _validate_cursor_argument(
+    *,
+    forwarded_args: dict[str, Any],
+    pagination_config: Any,
+) -> dict[str, Any] | None:
+    """Validate caller-supplied cursor argument for cursor pagination."""
+    if pagination_config is None:
+        return None
+    if getattr(pagination_config, "strategy", None) != "cursor":
+        return None
+    cursor_param_name = getattr(
+        pagination_config, "cursor_param_name", None
+    ) or "after"
+    if cursor_param_name not in forwarded_args:
+        return None
+    cursor_value = forwarded_args.get(cursor_param_name)
+    if isinstance(cursor_value, str) and cursor_value.strip():
+        if _is_placeholder_cursor_value(cursor_value):
+            return gateway_error(
+                "INVALID_ARGUMENT",
+                (
+                    f'pagination cursor "{cursor_param_name}" appears to be '
+                    "a placeholder value"
+                ),
+                details={
+                    "cursor_param": cursor_param_name,
+                    "cursor_value": cursor_value,
+                    "hint": (
+                        "Extract the real cursor from the previous response "
+                        "pagination.next_cursor (or pagination.next_params) "
+                        "before retrying."
+                    ),
+                },
+            )
+        return None
+    return gateway_error(
+        "INVALID_ARGUMENT",
+        f'pagination cursor "{cursor_param_name}" must be a non-empty string',
+        details={
+            "cursor_param": cursor_param_name,
+            "received_type": type(cursor_value).__name__,
+        },
+    )
+
+
+def _detect_duplicate_page_warning(
+    *,
+    connection: Any,
+    artifact_id: str,
+    payload_hash_full: str,
+    created_seq: int | None,
+    session_id: str,
+    source_tool: str,
+    forwarded_args: dict[str, Any],
+    pagination_config: Any,
+) -> dict[str, Any] | None:
+    """Detect likely repeated first-page retrieval during cursor pagination."""
+    if pagination_config is None:
+        return None
+    if getattr(pagination_config, "strategy", None) != "cursor":
+        return None
+    if not isinstance(created_seq, int) or created_seq <= 0:
+        return None
+    cursor_param_name = getattr(
+        pagination_config, "cursor_param_name", None
+    ) or "after"
+    cursor_value = forwarded_args.get(cursor_param_name)
+    if not (isinstance(cursor_value, str) and cursor_value.strip()):
+        return None
+    previous_row = connection.execute(
+        _FETCH_PREVIOUS_PAGE_SQL,
+        (
+            WORKSPACE_ID,
+            session_id,
+            source_tool,
+            created_seq,
+        ),
+    ).fetchone()
+    if not isinstance(previous_row, tuple) or len(previous_row) < 2:
+        return None
+    previous_artifact_id = previous_row[0]
+    previous_hash = previous_row[1]
+    if not isinstance(previous_artifact_id, str):
+        return None
+    if not isinstance(previous_hash, str):
+        return None
+    if previous_artifact_id == artifact_id:
+        return None
+    if previous_hash != payload_hash_full:
+        return None
+    return {
+        "code": "PAGINATION_DUPLICATE_PAGE",
+        "message": (
+            "Current page payload matches the previous page for this tool. "
+            "The cursor may be invalid or ignored by the upstream."
+        ),
+        "cursor_param": cursor_param_name,
+        "cursor_value": cursor_value,
+        "previous_artifact_id": previous_artifact_id,
+        "payload_hash": f"sha256:{payload_hash_full}",
+    }
+
+
+def _is_descendant_root_path(
+    parent_root_path: str,
+    candidate_root_path: str,
+) -> bool:
+    """Return True when candidate is a strict descendant of parent."""
+    if parent_root_path == candidate_root_path:
+        return False
+    if parent_root_path == "$":
+        return candidate_root_path.startswith(("$.", "$["))
+    if not candidate_root_path.startswith(parent_root_path):
+        return False
+    suffix = candidate_root_path[len(parent_root_path) : len(parent_root_path) + 1]
+    return suffix in {".", "["}
+
+
+def _select_leaf_schema_roots(
     schemas: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    """Keep only the primary schema when coverage leader is unique.
-
-    Primary is selected by ``coverage.observed_records``. If multiple
-    schemas tie for highest observed count, returns all schemas.
-    """
-    if len(schemas) <= 1:
-        return schemas
-
-    def _observed(schema: dict[str, Any]) -> int:
-        coverage = schema.get("coverage")
-        if isinstance(coverage, dict):
-            raw = coverage.get("observed_records")
-            if isinstance(raw, int):
-                return raw
-        return 0
-
-    scores = [_observed(schema) for schema in schemas]
-    max_score = max(scores)
-    leaders = [idx for idx, score in enumerate(scores) if score == max_score]
-    if len(leaders) != 1:
-        return schemas
-    return [schemas[leaders[0]]]
+    """Keep leaf roots only; drop exact duplicates and parent roots."""
+    deduped: list[dict[str, Any]] = []
+    seen: set[tuple[str, str, str]] = set()
+    for schema in schemas:
+        root_path = schema.get("root_path")
+        schema_hash = schema.get("schema_hash")
+        determinism = schema.get("determinism")
+        dataset_hash = (
+            determinism.get("dataset_hash")
+            if isinstance(determinism, dict)
+            else None
+        )
+        key = (
+            str(root_path) if isinstance(root_path, str) else "",
+            str(schema_hash) if isinstance(schema_hash, str) else "",
+            str(dataset_hash) if isinstance(dataset_hash, str) else "",
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(schema)
+    root_paths = [
+        schema.get("root_path") if isinstance(schema.get("root_path"), str) else None
+        for schema in deduped
+    ]
+    leaves: list[dict[str, Any]] = []
+    for index, schema in enumerate(deduped):
+        root_path = root_paths[index]
+        if not isinstance(root_path, str):
+            leaves.append(schema)
+            continue
+        has_child = any(
+            isinstance(candidate, str)
+            and _is_descendant_root_path(root_path, candidate)
+            for i, candidate in enumerate(root_paths)
+            if i != index
+        )
+        if has_child:
+            continue
+        leaves.append(schema)
+    return leaves
 
 
 def _available_code_query_packages(
@@ -309,7 +480,7 @@ def _fetch_inline_describe(
         describe = build_describe_response(
             artifact_row,
             [],
-            schemas=_retain_primary_schema_if_unique(schemas),
+            schemas=_select_leaf_schema_roots(schemas),
         )
     except Exception:
         get_logger(component="mcp.handlers").warning(
@@ -474,12 +645,16 @@ def _inject_pagination_state(
 def _pagination_response_meta(
     assessment: PaginationAssessment,
     artifact_id: str,
+    *,
+    extra_warnings: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Build pagination metadata for a gateway tool response.
 
     Args:
         assessment: Canonical pagination assessment.
         artifact_id: The artifact ID for this page.
+        extra_warnings: Additional structured warnings to expose
+            in the pagination payload.
 
     Returns:
         Dict with pagination info for the LLM.
@@ -494,6 +669,13 @@ def _pagination_response_meta(
         partial_reason=assessment.partial_reason,
         warning=assessment.warning,
         has_next_page=has_next_page,
+        next_params=(
+            assessment.state.next_params if assessment.state is not None else None
+        ),
+        original_args=(
+            assessment.state.original_args if assessment.state is not None else None
+        ),
+        extra_warnings=extra_warnings,
     )
     hint = base.get("hint")
     if isinstance(hint, str):
@@ -584,7 +766,11 @@ async def _auto_paginate_loop(
 
             try:
                 with ctx.db_pool.connection() as resolve_conn:
-                    resolved = resolve_artifact_refs(resolve_conn, next_args)
+                    resolved = resolve_artifact_refs(
+                        resolve_conn,
+                        next_args,
+                        blobs_payload_dir=ctx.config.blobs_payload_dir,
+                    )
                     if isinstance(resolved, ResolveError):
                         log.warning(
                             LogEvents.AUTO_PAGINATION_REF_RESOLUTION_ERROR,
@@ -874,6 +1060,12 @@ async def handle_mirrored_tool(
             "arguments failed upstream schema validation",
             details={"violations": violations},
         )
+    cursor_arg_err = _validate_cursor_argument(
+        forwarded_args=forwarded_args,
+        pagination_config=mirrored.upstream.config.pagination,
+    )
+    if cursor_arg_err is not None:
+        return cursor_arg_err
 
     identity = compute_request_identity(
         upstream_instance_id=mirrored.upstream.instance_id,
@@ -900,6 +1092,7 @@ async def handle_mirrored_tool(
 
     cache_reason = "fresh"
     pagination_assessment: PaginationAssessment | None = None
+    pagination_warnings: list[dict[str, Any]] = []
     if ctx.db_pool is None:
         return gateway_error(
             "NOT_IMPLEMENTED",
@@ -921,7 +1114,11 @@ async def handle_mirrored_tool(
     upstream_args = forwarded_args
     try:
         with ctx.db_pool.connection() as resolve_conn:
-            resolved = resolve_artifact_refs(resolve_conn, forwarded_args)
+            resolved = resolve_artifact_refs(
+                resolve_conn,
+                forwarded_args,
+                blobs_payload_dir=ctx.config.blobs_payload_dir,
+            )
             if isinstance(resolved, ResolveError):
                 return gateway_error(resolved.code, resolved.message)
             upstream_args = resolved
@@ -1092,6 +1289,26 @@ async def handle_mirrored_tool(
                     map_status=map_status,
                     has_schemas=has_schemas,
                 )
+            if pagination_assessment is not None:
+                try:
+                    duplicate_warning = _detect_duplicate_page_warning(
+                        connection=connection,
+                        artifact_id=handle.artifact_id,
+                        payload_hash_full=handle.payload_hash_full,
+                        created_seq=handle.created_seq,
+                        session_id=session_id,
+                        source_tool=handle.source_tool,
+                        forwarded_args=forwarded_args,
+                        pagination_config=mirrored.upstream.config.pagination,
+                    )
+                    if duplicate_warning is not None:
+                        pagination_warnings.append(duplicate_warning)
+                except Exception:
+                    _logger.warning(
+                        "duplicate-page pagination check failed",
+                        artifact_id=handle.artifact_id,
+                        exc_info=True,
+                    )
     except _DB_CONNECTIVITY_ERRORS:
         ctx.db_ok = False
         return gateway_error(
@@ -1118,7 +1335,9 @@ async def handle_mirrored_tool(
     pagination_assessment_for_response = pagination_assessment
     if pagination_assessment_for_response is not None:
         pagination_meta = _pagination_response_meta(
-            pagination_assessment_for_response, handle.artifact_id
+            pagination_assessment_for_response,
+            handle.artifact_id,
+            extra_warnings=pagination_warnings,
         )
     mapping_payload, schema_payload, schema_legend = (
         _schema_payload_from_describe(desc)

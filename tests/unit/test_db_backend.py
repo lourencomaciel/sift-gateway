@@ -191,11 +191,11 @@ class TestSqliteMigrationIntegration:
         migrated_conn.execute(
             """INSERT INTO payload_blobs (
                 workspace_id, payload_hash_full, envelope_canonical_encoding,
-                envelope_canonical_bytes, envelope_canonical_bytes_len,
+                payload_fs_path,
                 canonicalizer_version, payload_json_bytes,
                 payload_binary_bytes_total, payload_total_bytes
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            ("test", "ph1", "none", b"data", 4, "v1", 4, 0, 4),
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            ("test", "ph1", "none", "aa/bb/ph1.zst", "v1", 4, 0, 4),
         )
         migrated_conn.execute(
             """INSERT INTO artifacts (

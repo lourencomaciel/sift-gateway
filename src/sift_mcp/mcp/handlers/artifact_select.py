@@ -7,7 +7,8 @@ from dataclasses import dataclass, field
 import json
 from typing import TYPE_CHECKING, Any, cast
 
-from sift_mcp.constants import WORKSPACE_ID
+from sift_mcp.artifacts.derive import create_derived_artifact
+from sift_mcp.constants import KIND_DERIVED_QUERY, WORKSPACE_ID
 from sift_mcp.cursor.payload import CursorStaleError
 from sift_mcp.cursor.sample_set_hash import (
     SampleSetHashBindingError,
@@ -46,6 +47,21 @@ from sift_mcp.retrieval.response import apply_output_budgets
 
 if TYPE_CHECKING:
     from sift_mcp.mcp.server import GatewayServer
+
+FETCH_ARTIFACT_MAP_STATUS_SQL = """
+SELECT map_status
+FROM artifacts
+WHERE workspace_id = %s AND artifact_id = %s
+"""
+
+SOFT_DELETE_ARTIFACT_SQL = """
+UPDATE artifacts
+SET deleted_at = datetime('now'),
+    generation = generation + 1
+WHERE workspace_id = %s
+  AND artifact_id = %s
+  AND deleted_at IS NULL
+"""
 
 def _distinct_key(raw: Any) -> str:
     """Produce a canonical dedup key for a projected value.
@@ -869,7 +885,9 @@ def _run_select_query_phase(
                 session_id=query_state.session_id,
                 artifact_ids=candidates.related_ids,
             )
-            return None, _build_count_only_response(total_count)
+            count_response = _build_count_only_response(total_count)
+            count_response["_derived_parent_ids"] = candidates.related_ids
+            return None, count_response
 
         items, sampling_state, collect_err = _collect_candidate_items(
             ctx=ctx,
@@ -993,6 +1011,127 @@ def _build_select_paginated_response(
         response["warnings"] = phase.warnings
     return response, None
 
+
+def _soft_delete_derived_artifact(
+    *,
+    ctx: GatewayServer,
+    artifact_id: str,
+) -> None:
+    """Best-effort cleanup for failed derived persistence flows."""
+    if ctx.db_pool is None:
+        return
+    try:
+        with ctx.db_pool.connection() as cleanup_conn:
+            cleanup_conn.execute(
+                SOFT_DELETE_ARTIFACT_SQL,
+                (WORKSPACE_ID, artifact_id),
+            )
+            cleanup_conn.commit()
+    except Exception:
+        return
+
+
+def _persist_select_derived_artifact(
+    *,
+    ctx: GatewayServer,
+    parent_artifact_ids: list[str],
+    arguments: dict[str, Any],
+    result_data: dict[str, Any] | list[Any],
+) -> tuple[str | None, dict[str, Any] | None]:
+    """Persist and map derived select output with strict success semantics."""
+    if ctx.db_pool is None:
+        return None, gateway_error(
+            "DERIVED_PERSISTENCE_FAILED",
+            "derived artifact persistence requires database backend",
+            details={"stage": "db_pool_missing"},
+        )
+
+    derivation_expression: dict[str, Any] = {
+        "root_path": arguments.get("root_path"),
+        "select_paths": arguments.get("select_paths"),
+        "where": arguments.get("where"),
+        "distinct": arguments.get("distinct") is True,
+        "order_by": arguments.get("order_by"),
+        "count_only": arguments.get("count_only") is True,
+        "scope": arguments.get("scope"),
+    }
+
+    stage = "create"
+    derived_artifact_id: str | None = None
+    map_status: str | None = None
+    try:
+        with ctx.db_pool.connection() as connection:
+            created = create_derived_artifact(
+                connection=connection,
+                config=ctx.config,
+                parent_artifact_ids=parent_artifact_ids,
+                result_data=result_data,
+                derivation_expression=derivation_expression,
+                kind=KIND_DERIVED_QUERY,
+                query_kind="select",
+            )
+            derived_artifact_id = created.handle.artifact_id
+
+            stage = "mapping"
+            mapped = ctx._run_mapping_inline(
+                connection,
+                handle=created.handle,
+                envelope=created.envelope,
+            )
+            if not mapped:
+                _soft_delete_derived_artifact(
+                    ctx=ctx, artifact_id=created.handle.artifact_id
+                )
+                return None, gateway_error(
+                    "DERIVED_PERSISTENCE_FAILED",
+                    "derived artifact persistence failed",
+                    details={
+                        "stage": stage,
+                        "artifact_id": created.handle.artifact_id,
+                    },
+                )
+
+            stage = "verify_ready"
+            status_row = connection.execute(
+                FETCH_ARTIFACT_MAP_STATUS_SQL,
+                (WORKSPACE_ID, created.handle.artifact_id),
+            ).fetchone()
+            map_status = (
+                str(status_row[0])
+                if status_row is not None and status_row[0] is not None
+                else None
+            )
+            if map_status != "ready":
+                _soft_delete_derived_artifact(
+                    ctx=ctx, artifact_id=created.handle.artifact_id
+                )
+                return None, gateway_error(
+                    "DERIVED_PERSISTENCE_FAILED",
+                    "derived artifact mapping did not reach ready status",
+                    details={
+                        "stage": stage,
+                        "artifact_id": created.handle.artifact_id,
+                        "map_status": map_status,
+                    },
+                )
+            return created.handle.artifact_id, None
+    except Exception as exc:
+        if derived_artifact_id is not None:
+            _soft_delete_derived_artifact(
+                ctx=ctx, artifact_id=derived_artifact_id
+            )
+        return None, gateway_error(
+            "DERIVED_PERSISTENCE_FAILED",
+            "derived artifact persistence failed",
+            details={
+                "stage": stage,
+                "error_type": type(exc).__name__,
+                "artifact_id": derived_artifact_id,
+                "map_status": map_status,
+            },
+        )
+
+
 async def handle_artifact_select(
     ctx: GatewayServer,
     arguments: dict[str, Any],
@@ -1055,6 +1194,30 @@ async def handle_artifact_select(
         bindings=bindings,
     )
     if immediate_response is not None:
+        if (
+            arguments.get("count_only") is True
+            and isinstance(immediate_response, dict)
+        ):
+            raw_parent_ids = immediate_response.pop(
+                "_derived_parent_ids",
+                [query_state.anchor_artifact_id],
+            )
+            parent_artifact_ids = [
+                artifact_id
+                for artifact_id in raw_parent_ids
+                if isinstance(artifact_id, str)
+            ] if isinstance(raw_parent_ids, list) else [
+                query_state.anchor_artifact_id
+            ]
+            derived_artifact_id, persist_err = _persist_select_derived_artifact(
+                ctx=ctx,
+                parent_artifact_ids=parent_artifact_ids,
+                arguments=arguments,
+                result_data={"count": immediate_response.get("count", 0)},
+            )
+            if persist_err is not None:
+                return persist_err
+            immediate_response["derived_artifact_id"] = derived_artifact_id
         return immediate_response
     phase = cast(_SelectQueryPhaseResult, phase)
 
@@ -1071,4 +1234,15 @@ async def handle_artifact_select(
     )
     if response_err is not None:
         return response_err
-    return cast(dict[str, Any], response)
+    response = cast(dict[str, Any], response)
+
+    derived_artifact_id, persist_err = _persist_select_derived_artifact(
+        ctx=ctx,
+        parent_artifact_ids=phase.candidates.related_ids,
+        arguments=arguments,
+        result_data=cast(list[Any], response.get("items", [])),
+    )
+    if persist_err is not None:
+        return persist_err
+    response["derived_artifact_id"] = derived_artifact_id
+    return response

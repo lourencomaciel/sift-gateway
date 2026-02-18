@@ -11,6 +11,7 @@ record latency/outcome metrics.  Key exports are
 from __future__ import annotations
 
 from collections import defaultdict
+from contextlib import suppress
 from dataclasses import dataclass
 import json
 import time
@@ -195,6 +196,95 @@ DO UPDATE SET
     distinct_values = EXCLUDED.distinct_values,
     cardinality = EXCLUDED.cardinality
 """
+
+UPDATE_ARTIFACTS_FTS_SQL = """
+UPDATE artifacts_fts
+SET field_names = %s, sample_values = %s
+WHERE artifact_id = %s
+"""
+
+_FTS_TEXT_MAX_CHARS = 8_192
+
+
+def _fts_token(value: Any) -> str | None:
+    """Normalize a schema value into a searchable FTS token."""
+    if value is None:
+        return None
+    if isinstance(value, str):
+        token = value.strip()
+        return token or None
+    if isinstance(value, (int, float, bool)):
+        return str(value)
+    try:
+        token = json.dumps(
+            value, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        )
+    except (TypeError, ValueError):
+        return None
+    token = token.strip()
+    return token or None
+
+
+def _join_fts_tokens(tokens: list[str]) -> str:
+    """Join FTS tokens with a fixed max byte footprint."""
+    if not tokens:
+        return ""
+    joined = " ".join(tokens)
+    if len(joined) <= _FTS_TEXT_MAX_CHARS:
+        return joined
+    return joined[:_FTS_TEXT_MAX_CHARS]
+
+
+def _update_fts_fields(
+    connection: ConnectionLike,
+    *,
+    artifact_id: str,
+    schemas: list[SchemaInventory] | None,
+) -> None:
+    """Enrich FTS row with mapped field names and sample values."""
+    if not schemas:
+        connection.execute(
+            UPDATE_ARTIFACTS_FTS_SQL,
+            ("", "", artifact_id),
+        )
+        return
+
+    field_tokens: list[str] = []
+    sample_tokens: list[str] = []
+    seen_fields: set[str] = set()
+    seen_samples: set[str] = set()
+
+    for schema in schemas:
+        for field in schema.fields:
+            token = _fts_token(field.path)
+            if token is not None and token not in seen_fields:
+                seen_fields.add(token)
+                field_tokens.append(token)
+
+            example_token = _fts_token(field.example_value)
+            if example_token is not None and example_token not in seen_samples:
+                seen_samples.add(example_token)
+                sample_tokens.append(example_token)
+
+            distinct_values = field.distinct_values
+            if isinstance(distinct_values, list):
+                for value in distinct_values:
+                    distinct_token = _fts_token(value)
+                    if (
+                        distinct_token is not None
+                        and distinct_token not in seen_samples
+                    ):
+                        seen_samples.add(distinct_token)
+                        sample_tokens.append(distinct_token)
+
+    connection.execute(
+        UPDATE_ARTIFACTS_FTS_SQL,
+        (
+            _join_fts_tokens(field_tokens),
+            _join_fts_tokens(sample_tokens),
+            artifact_id,
+        ),
+    )
 
 
 def should_run_mapping(map_status: str) -> bool:
@@ -517,6 +607,13 @@ def persist_mapping_result(
                     field=field,
                 ),
             )
+
+    with suppress(Exception):
+        _update_fts_fields(
+            connection,
+            artifact_id=worker_ctx.artifact_id,
+            schemas=result.schemas,
+        )
 
     connection.commit()
     return True

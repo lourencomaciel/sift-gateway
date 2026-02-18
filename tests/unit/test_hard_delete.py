@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 import pytest
 
 from sift_mcp.constants import WORKSPACE_ID
@@ -113,7 +114,7 @@ def test_run_hard_delete_batch_removes_records_and_fs_blobs(tmp_path) -> None:
 
     connection = _FakeConnection(
         candidate_rows=[("art_1", "payload_a"), ("art_2", "payload_b")],
-        payload_rows=[("payload_orphan", 100)],
+        payload_rows=[("payload_orphan", 100, "aa/bb/payload_orphan.zst")],
         blob_rows=[
             ("hash_1", "bin_1", str(blob_one), 30),
             ("hash_2", "bin_2", str(blob_two), 40),
@@ -143,6 +144,37 @@ def test_run_hard_delete_batch_removes_records_and_fs_blobs(tmp_path) -> None:
     assert counter_value(metrics.prune_fs_orphans_removed) == 2
 
 
+def test_run_hard_delete_batch_uses_default_payload_root(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    data_dir = tmp_path / "data"
+    payload_rel = Path("aa/bb/payload_orphan.zst")
+    payload_path = data_dir / "blobs" / "payload" / payload_rel
+    payload_path.parent.mkdir(parents=True, exist_ok=True)
+    payload_path.write_bytes(b"payload")
+    monkeypatch.setenv("SIFT_MCP_DATA_DIR", str(data_dir))
+
+    connection = _FakeConnection(
+        candidate_rows=[("art_1", "payload_orphan")],
+        payload_rows=[("payload_orphan", 7, payload_rel.as_posix())],
+        blob_rows=[],
+    )
+
+    result = run_hard_delete_batch(
+        connection,
+        grace_period_timestamp="2025-01-01T00:00:00Z",
+        batch_size=10,
+        remove_fs_blobs=True,
+    )
+
+    assert result.artifacts_deleted == 1
+    assert result.payloads_deleted == 1
+    assert result.binary_blobs_deleted == 0
+    assert result.fs_blobs_removed == 1
+    assert not payload_path.exists()
+
+
 def test_run_hard_delete_batch_constrains_fs_deletes_to_blobs_root(
     tmp_path,
 ) -> None:
@@ -155,7 +187,7 @@ def test_run_hard_delete_batch_constrains_fs_deletes_to_blobs_root(
 
     connection = _FakeConnection(
         candidate_rows=[("art_1", "payload_a"), ("art_2", "payload_b")],
-        payload_rows=[("payload_orphan", 100)],
+        payload_rows=[("payload_orphan", 100, "aa/bb/payload_orphan.zst")],
         blob_rows=[
             ("hash_1", "bin_1", str(allowed_blob), 30),
             ("hash_2", "bin_2", str(outside_blob), 40),

@@ -33,6 +33,7 @@ def test_artifact_handle_is_frozen_dataclass() -> None:
         index_status="off",
         status="ok",
         error_summary=None,
+        kind="data",
     )
     assert dataclasses.is_dataclass(handle)
     assert handle.artifact_id == "art_abc"

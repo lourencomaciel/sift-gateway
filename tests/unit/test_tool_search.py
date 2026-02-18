@@ -90,6 +90,7 @@ def test_build_search_query_applies_filters() -> None:
     assert "a.request_key = %s" in sql
     assert "a.payload_hash_full = %s" in sql
     assert "a.parent_artifact_id = %s" in sql
+    assert "artifact_lineage_edges ale" in sql
     assert "a.error_summary IS NOT NULL" in sql
     assert "github.search" in params
     assert "up_1" in params

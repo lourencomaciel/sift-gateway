@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
+from sift_mcp.config.settings import PaginationConfig
 from sift_mcp.mcp.handlers.mirrored_tool import (
+    _detect_duplicate_page_warning,
     _fetch_inline_describe,
     _minimal_describe,
 )
@@ -192,10 +194,11 @@ def test_fetch_inline_describe_cache_hit_with_schema_paths() -> None:
     )
     desc, hint = _fetch_inline_describe(conn, "art_cached")
     assert desc["roots"] == []
-    assert len(desc["schemas"]) == 1
+    assert len(desc["schemas"]) == 2
     assert desc["schemas"][0]["root_path"] == "$.result.data"
+    assert desc["schemas"][1]["root_path"] == "$.result.paging"
     assert "100 records" in hint
-    assert "Also available" not in hint
+    assert "Also available" in hint
 
 
 def test_fetch_inline_describe_keeps_all_schemas_when_primary_not_unique() -> (
@@ -296,3 +299,173 @@ def test_fetch_inline_describe_includes_schemas() -> None:
     assert len(desc["schemas"]) == 1
     assert desc["schemas"][0]["root_path"] == "$.result.data"
     assert desc["roots"] == []
+
+
+def test_detect_duplicate_page_warning_emits_warning() -> None:
+    conn = MagicMock()
+    cursor = MagicMock()
+    cursor.fetchone.return_value = ("art_prev", "hash_same")
+    conn.execute.return_value = cursor
+    warning = _detect_duplicate_page_warning(
+        connection=conn,
+        artifact_id="art_new",
+        payload_hash_full="hash_same",
+        created_seq=11,
+        session_id="sess_1",
+        source_tool="meta-ads.get_insights",
+        forwarded_args={"after": "CURSOR_2"},
+        pagination_config=PaginationConfig(
+            strategy="cursor",
+            cursor_response_path="$.paging.cursors.after",
+            cursor_param_name="after",
+            has_more_response_path="$.paging.next",
+        ),
+    )
+    assert warning is not None
+    assert warning["code"] == "PAGINATION_DUPLICATE_PAGE"
+    assert warning["previous_artifact_id"] == "art_prev"
+    assert warning["cursor_param"] == "after"
+    assert warning["cursor_value"] == "CURSOR_2"
+
+
+def test_detect_duplicate_page_warning_skips_when_hash_differs() -> None:
+    conn = MagicMock()
+    cursor = MagicMock()
+    cursor.fetchone.return_value = ("art_prev", "hash_prev")
+    conn.execute.return_value = cursor
+    warning = _detect_duplicate_page_warning(
+        connection=conn,
+        artifact_id="art_new",
+        payload_hash_full="hash_current",
+        created_seq=11,
+        session_id="sess_1",
+        source_tool="meta-ads.get_insights",
+        forwarded_args={"after": "CURSOR_2"},
+        pagination_config=PaginationConfig(
+            strategy="cursor",
+            cursor_response_path="$.paging.cursors.after",
+            cursor_param_name="after",
+            has_more_response_path="$.paging.next",
+        ),
+    )
+    assert warning is None
+
+
+def test_fetch_inline_describe_dedupes_exact_duplicate_schema_roots() -> None:
+    artifact_row = (
+        "art_dup",
+        "full",
+        "complete",
+        "v1",
+        None,
+        None,
+        None,
+        0,
+        None,
+        2,
+    )
+    schema_root_rows = [
+        (
+            "rk1",
+            "$.result.data",
+            "schema_v1",
+            "sha256:one",
+            "exact",
+            "complete",
+            100,
+            "sha256:dataset_one",
+            "traversal_v1",
+            None,
+        ),
+        (
+            "rk1_dup",
+            "$.result.data",
+            "schema_v1",
+            "sha256:one",
+            "exact",
+            "complete",
+            100,
+            "sha256:dataset_one",
+            "traversal_v1",
+            None,
+        ),
+    ]
+    schema_fields = {
+        "rk1": [("$.id", ["string"], False, True, 100, "1")],
+        "rk1_dup": [("$.id", ["string"], False, True, 100, "1")],
+    }
+    conn = _mock_connection(
+        artifact_row=artifact_row,
+        schema_root_rows=schema_root_rows,
+        schema_field_rows_by_root_key=schema_fields,
+    )
+    desc, _ = _fetch_inline_describe(conn, "art_dup")
+    assert len(desc["schemas"]) == 1
+    assert desc["schemas"][0]["root_path"] == "$.result.data"
+
+
+def test_fetch_inline_describe_drops_parent_root_when_children_exist() -> None:
+    artifact_row = (
+        "art_parent",
+        "full",
+        "complete",
+        "v1",
+        None,
+        None,
+        None,
+        0,
+        None,
+        2,
+    )
+    schema_root_rows = [
+        (
+            "rk_parent",
+            "$.result",
+            "schema_v1",
+            "sha256:parent",
+            "exact",
+            "complete",
+            1,
+            "sha256:dataset",
+            "traversal_v1",
+            None,
+        ),
+        (
+            "rk_data",
+            "$.result.data",
+            "schema_v1",
+            "sha256:data",
+            "exact",
+            "complete",
+            100,
+            "sha256:dataset",
+            "traversal_v1",
+            None,
+        ),
+        (
+            "rk_paging",
+            "$.result.paging",
+            "schema_v1",
+            "sha256:paging",
+            "exact",
+            "complete",
+            1,
+            "sha256:dataset",
+            "traversal_v1",
+            None,
+        ),
+    ]
+    schema_fields = {
+        "rk_parent": [("$.data", ["array"], False, True, 1, "[]")],
+        "rk_data": [("$.id", ["string"], False, True, 100, "1")],
+        "rk_paging": [("$.next", ["string"], False, True, 1, "https://...")],
+    }
+    conn = _mock_connection(
+        artifact_row=artifact_row,
+        schema_root_rows=schema_root_rows,
+        schema_field_rows_by_root_key=schema_fields,
+    )
+    desc, _ = _fetch_inline_describe(conn, "art_parent")
+    root_paths = [schema["root_path"] for schema in desc["schemas"]]
+    assert "$.result" not in root_paths
+    assert set(root_paths) == {"$.result.data", "$.result.paging"}

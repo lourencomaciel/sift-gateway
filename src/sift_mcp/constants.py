@@ -51,9 +51,17 @@ DEFAULT_DATA_DIR: str = ".sift-mcp"
 STATE_SUBDIR: str = "state"
 RESOURCES_SUBDIR: str = "resources"
 BLOBS_BIN_SUBDIR: str = "blobs/bin"
+BLOBS_PAYLOAD_SUBDIR: str = "blobs/payload"
 TMP_SUBDIR: str = "tmp"
 LOGS_SUBDIR: str = "logs"
 CONFIG_FILENAME: str = "config.json"
+
+# ---------------------------------------------------------------------------
+# Artifact kinds
+# ---------------------------------------------------------------------------
+KIND_DATA: str = "data"
+KIND_DERIVED_QUERY: str = "derived_query"
+KIND_DERIVED_CODEGEN: str = "derived_codegen"
 
 # ---------------------------------------------------------------------------
 # Envelope constants (§5)

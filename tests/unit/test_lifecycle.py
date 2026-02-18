@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from pathlib import Path
+import sqlite3
 
 from sift_mcp.config.settings import GatewayConfig, UpstreamConfig
 from sift_mcp.lifecycle import (
+    _check_db,
     ensure_data_dirs,
     run_startup_check,
 )
@@ -118,3 +120,32 @@ def test_lifecycle_startup_check_sqlite_failure(
     assert report.db_ok is False
     assert report.ok is False
     assert any("SQLite check failed" in item for item in report.details)
+
+
+def test_check_db_allows_fresh_empty_database(tmp_path: Path) -> None:
+    config = GatewayConfig(data_dir=tmp_path)
+    ensure_data_dirs(config)
+
+    ok, details = _check_db(config)
+
+    assert ok is True
+    assert details == []
+
+
+def test_check_db_rejects_stale_schema(tmp_path: Path) -> None:
+    config = GatewayConfig(data_dir=tmp_path)
+    ensure_data_dirs(config)
+    with sqlite3.connect(str(config.sqlite_path)) as conn:
+        conn.execute(
+            "CREATE TABLE artifacts (workspace_id TEXT, artifact_id TEXT)"
+        )
+        conn.execute(
+            "CREATE TABLE payload_blobs (workspace_id TEXT, payload_hash_full TEXT)"
+        )
+        conn.commit()
+
+    ok, details = _check_db(config)
+
+    assert ok is False
+    assert any("outdated" in item.lower() for item in details)
+    assert any("gateway.db" in item for item in details)

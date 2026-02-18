@@ -26,6 +26,7 @@ SEARCH_FILTERS = {
     "status",
     "source_tool_prefix",
     "source_tool",
+    "kind",
     "upstream_instance_id",
     "request_key",
     "payload_hash_full",
@@ -39,6 +40,7 @@ SEARCH_FILTERS = {
 
 _VALID_ORDER_BY = ("created_seq_desc", "last_seen_desc", "chain_seq_asc")
 _VALID_STATUS = ("ok", "error")
+_VALID_KIND = ("data", "derived_query", "derived_codegen")
 
 
 def _invalid_arg(message: str) -> dict[str, Any]:
@@ -127,6 +129,16 @@ def _validate_status_filter(
     return None
 
 
+def _validate_kind_filter(
+    filters: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Validate the ``kind`` filter value."""
+    kind = filters.get("kind")
+    if kind is not None and kind not in _VALID_KIND:
+        return _invalid_arg(f"invalid kind filter: {kind}")
+    return None
+
+
 def _validate_limit(
     arguments: dict[str, Any], *, max_limit: int
 ) -> int | dict[str, Any]:
@@ -189,12 +201,20 @@ def validate_search_args(
     err = _validate_status_filter(filters)
     if err is not None:
         return err
+    err = _validate_kind_filter(filters)
+    if err is not None:
+        return err
 
     limit_result = _validate_limit(arguments, max_limit=max_limit)
     if isinstance(limit_result, dict):
         return limit_result
     limit = limit_result
     cursor = arguments.get("cursor")
+    query = arguments.get("query")
+    if query is not None and (
+        not isinstance(query, str) or not query.strip()
+    ):
+        return _invalid_arg("query must be a non-empty string when provided")
 
     return {
         "session_id": session_id,
@@ -202,6 +222,7 @@ def validate_search_args(
         "order_by": order_by,
         "limit": limit,
         "cursor": cursor,
+        "query": query.strip() if isinstance(query, str) else None,
     }
 
 
@@ -232,10 +253,10 @@ def _collect_simple_equality_conditions(
     params: list[Any] = []
     simple_eq_filters: tuple[tuple[str, str], ...] = (
         ("source_tool", "a.source_tool = %s"),
+        ("kind", "a.kind = %s"),
         ("upstream_instance_id", "a.upstream_instance_id = %s"),
         ("request_key", "a.request_key = %s"),
         ("payload_hash_full", "a.payload_hash_full = %s"),
-        ("parent_artifact_id", "a.parent_artifact_id = %s"),
     )
     for key, sql_fragment in simple_eq_filters:
         value = filters.get(key)
@@ -298,6 +319,21 @@ def _collect_search_filter_conditions(
     conditions.extend(eq_conditions)
     params.extend(eq_params)
 
+    parent_artifact_id = filters.get("parent_artifact_id")
+    if parent_artifact_id:
+        conditions.append(
+            "("
+            "a.parent_artifact_id = %s "
+            "OR EXISTS ("
+            "SELECT 1 FROM artifact_lineage_edges ale "
+            "WHERE ale.workspace_id = a.workspace_id "
+            "AND ale.child_artifact_id = a.artifact_id "
+            "AND ale.parent_artifact_id = %s"
+            ")"
+            ")"
+        )
+        params.extend([parent_artifact_id, parent_artifact_id])
+
     has_binary_refs = filters.get("has_binary_refs")
     if has_binary_refs is not None:
         conditions.append(
@@ -322,6 +358,7 @@ def build_search_query(
     order_by: str,
     limit: int,
     *,
+    query: str | None = None,
     offset: int = 0,
 ) -> tuple[str, list[Any]]:
     """Build SQL query for artifact search.
@@ -333,6 +370,7 @@ def build_search_query(
         order_by: Sort key (``created_seq_desc`` or
             ``last_seen_desc``).
         limit: Maximum rows to return (before +1 overfetch).
+        query: Optional FTS query text for indexed search.
         offset: Number of rows to skip for pagination.
 
     Returns:
@@ -340,7 +378,8 @@ def build_search_query(
     """
     params: list[Any] = [WORKSPACE_ID]
 
-    base = """
+    if query:
+        base = """
     SELECT a.artifact_id, a.created_seq, a.created_at,
            a.last_referenced_at AS last_seen_at, a.source_tool,
            a.upstream_instance_id,
@@ -349,7 +388,25 @@ def build_search_query(
            END AS status,
            a.payload_total_bytes, a.error_summary,
            a.map_kind, a.map_status,
-           a.chain_seq
+           a.chain_seq, a.kind
+    FROM artifacts_fts fts
+    JOIN artifacts a
+      ON a.artifact_id = fts.artifact_id
+     AND a.workspace_id = %s
+    WHERE artifacts_fts MATCH %s
+    """
+        params.append(query)
+    else:
+        base = """
+    SELECT a.artifact_id, a.created_seq, a.created_at,
+           a.last_referenced_at AS last_seen_at, a.source_tool,
+           a.upstream_instance_id,
+           CASE WHEN a.error_summary IS NULL
+                THEN 'ok' ELSE 'error'
+           END AS status,
+           a.payload_total_bytes, a.error_summary,
+           a.map_kind, a.map_status,
+           a.chain_seq, a.kind
     FROM artifacts a
     WHERE a.workspace_id = %s
     """
@@ -362,11 +419,24 @@ def build_search_query(
 
     # Ordering
     if order_by == "created_seq_desc":
-        base += " ORDER BY a.created_seq DESC"
+        base += (
+            " ORDER BY bm25(artifacts_fts), a.created_seq DESC"
+            if query
+            else " ORDER BY a.created_seq DESC"
+        )
     elif order_by == "chain_seq_asc":
-        base += " ORDER BY a.chain_seq ASC NULLS LAST, a.created_seq ASC"
+        base += (
+            " ORDER BY bm25(artifacts_fts),"
+            " a.chain_seq ASC NULLS LAST, a.created_seq ASC"
+            if query
+            else " ORDER BY a.chain_seq ASC NULLS LAST, a.created_seq ASC"
+        )
     else:
-        base += " ORDER BY a.last_referenced_at DESC"
+        base += (
+            " ORDER BY bm25(artifacts_fts), a.last_referenced_at DESC"
+            if query
+            else " ORDER BY a.last_referenced_at DESC"
+        )
 
     base += " LIMIT %s"
     # fetch one extra for pagination detection
