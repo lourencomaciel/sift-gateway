@@ -2,10 +2,10 @@
 
 Practical patterns for retrieving and reusing Sift artifacts.
 
-## Pattern 1: Large Response -> Deterministic Retrieval
+## Pattern 1: Handle Response -> Deterministic Retrieval
 
-When an upstream tool returns a large payload, Sift returns an artifact handle.
-Use `select` to page through the data.
+When a mirrored upstream call returns a handle (typically larger payloads or
+continuation-required responses), use `select` to page through the data.
 
 ```python
 # 1) Mirrored upstream call
@@ -38,6 +38,10 @@ Notes:
 - `cursor` is passed back as a top-level field.
 - `pagination.next_cursor` contains the same continuation token.
 - Completeness is based on `pagination.retrieval_status == "COMPLETE"`.
+- If the mirrored call returned raw payload, the response will not include
+  `artifact_id`. Use `query_kind="search"` to locate the persisted artifact for
+  the session, or set `passthrough_max_bytes=0` for deterministic handle
+  returns.
 
 ## Pattern 1b: Filtered Retrieval
 

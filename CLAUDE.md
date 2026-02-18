@@ -1,12 +1,12 @@
 # Sift
 
 ## Build & Test
-- `python -m pytest tests/unit/ -q` — run unit tests
-- `python -m ruff check src tests` — lint
-- `python -m ruff format src tests` — auto-format
-- `python -m mypy src` — strict type checking
-- `PYTHONPATH=src python scripts/check_docs_consistency.py` — enforce docs/runtime contract
-- Integration tests: `python -m pytest tests/integration/ -q`
+- `uv run python -m pytest tests/unit/ -q` — run unit tests
+- `uv run python -m ruff check src tests` — lint
+- `uv run python -m ruff format src tests` — auto-format
+- `uv run python -m mypy src` — strict type checking
+- `PYTHONPATH=src uv run python scripts/check_docs_consistency.py` — enforce docs/runtime contract
+- Integration tests: `uv run python -m pytest tests/integration/ -q`
 - Build system: uv_build via pyproject.toml
 - Always run full test suite after changes: tests must stay green
 
@@ -14,7 +14,7 @@
 - `sift-mcp --check` — validate config/DB/FS/upstreams and exit
 - `sift-mcp init --from <file>` — import mcpServers config (SQLite backend)
 - `sift-mcp upstream add <json>` — add upstream to existing config
-- `sift-mcp instances list [--json]` — list managed instances
+- `sift-mcp install <packages...>` / `sift-mcp uninstall <packages...>` — manage code-query packages
 - `--dry-run` and `--revert` flags on init; `--data-dir` works globally
 - Transport modes: `--transport stdio` (default), `sse`, `streamable-http`
 
@@ -30,13 +30,12 @@
 - `mcp/handlers/` — one handler per tool (artifact_get, artifact_select, artifact_code, etc.)
 - `envelope/` — `Envelope` frozen dataclass, `ContentPart` union, `ErrorBlock`, normalize/serialize
 - `artifacts/` — artifact creation pipeline (`persist_artifact`)
-- `cache/` — request deduplication, advisory locks
 - `mapping/` — full (in-memory) + partial (streaming) schema discovery
 - `retrieval/` — output budget truncation for retrieval responses
 - `query/` — JSONPath, select paths, structured filters, SQL compilation
 - `pagination/` — auto-pagination loop, metadata extraction
 - `cursor/` — Unsigned cursor tokens (`cur1.<payload_b64u>`), TTL enforcement
-- `canon/` — RFC 8785 canonical JSON, zstandard compression
+- `canon/` — RFC 8785 canonical JSON and compression helpers (`gzip`/`none`)
 - `codegen/` — code query execution in subprocess with AST safety guards
 - `obs/` — structlog setup (`LogEvents` constants), Prometheus metrics (`GatewayMetrics`)
 - `jobs/` — quota enforcement, soft/hard delete, FS reconciliation
@@ -68,17 +67,18 @@
 - Env vars starting with `[` or `{` auto-parse as JSON for list/dict fields
 - Tests monkeypatch module-level imports; when moving code between modules, update test patches too
 - No shared pytest fixtures in root conftest — helpers are module-local
-- Passthrough mode: results < passthrough_max_bytes (default 8 KB) returned raw; larger results return gateway handle payload (`artifact_id`, cache meta, inline describe, usage hint)
-- Binary responses (with blob refs) never passthrough regardless of size
+- Mirrored tool calls always persist artifacts; small responses may return raw upstream payloads while larger/continuation responses return handle payloads
+- Raw passthrough responses do not include `artifact_id`; set `passthrough_max_bytes=0` for deterministic handle responses
+- Upstream pagination state on handle responses is surfaced in `pagination` metadata and continued via `artifact(action="next_page", artifact_id=...)`
 
 ## Architecture
 - Async throughout: handlers, upstream calls, mapping workers all use `asyncio`
-- FastMCP framework: tools registered via `@app.tool()` decorator; `bootstrap_server()` async factory
-- MCP tool handlers in `mcp/handlers/` — each is an async function taking typed args, returning `ToolResult`
+- FastMCP framework: tools registered programmatically in `build_fastmcp_app()`; `bootstrap_server()` async factory
+- MCP tool handlers in `mcp/handlers/` are async gateway routines wired through `GatewayServer` dispatch methods
 - Upstream mirroring: `MirroredTool` dataclass wraps discovered upstream tools, registered as `prefix.tool_name`
 - Database: SQLite backend with WAL mode
 - Repos: direct SQL with parameterization (no ORM); separate modules for artifacts, payloads, sessions, mapping, pruning
-- Migrations: alembic-style with `schema_migrations` table; migration files in `db/migrations_sqlite/`
+- Migrations: startup migration manager with `schema_migrations` table (implemented in `db/migrate.py`)
 - Error flow: upstream exceptions → `classify_upstream_exception()` → stable error codes → `ErrorBlock` in `Envelope`
 - Error responses: `gateway_error(code, message)` and `gateway_tool_result()` in `envelope/responses.py`
 - Logging: structlog with `LogEvents` constants for event names; JSON output to stderr

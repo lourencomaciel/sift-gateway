@@ -37,6 +37,7 @@ Notes:
 | `NOT_FOUND` | Artifact (or related upstream tool) does not exist or is not visible in session scope |
 | `GONE` | Artifact exists but has been soft-deleted |
 | `RESOURCE_EXHAUSTED` | Query budget/limit exceeded (for example lineage size limits) |
+| `RESPONSE_TOO_LARGE` | Response exceeded configured output-size budget (for example code-query output over `max_bytes_out`) |
 | `NOT_IMPLEMENTED` | Requested operation requires a database that is not configured |
 
 ### Cursor-specific
@@ -51,6 +52,7 @@ Notes:
 | Code | Meaning |
 |------|---------|
 | `INTERNAL` | Unexpected gateway-side failure (DB/runtime corruption/reconstruction failure/etc.) |
+| `DERIVED_PERSISTENCE_FAILED` | Derived artifact could not be persisted after query execution |
 
 ## Upstream/runtime failure codes
 
