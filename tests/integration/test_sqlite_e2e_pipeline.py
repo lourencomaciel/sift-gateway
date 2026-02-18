@@ -172,15 +172,10 @@ def _call_mirrored(
     tool_qualified_name: str,
     session_id: str,
     extra_args: dict[str, Any] | None = None,
-    *,
-    allow_reuse: bool = False,
 ) -> dict[str, Any]:
     mirrored = server.mirrored_tools[tool_qualified_name]
     args: dict[str, Any] = {
-        "_gateway_context": {
-            "session_id": session_id,
-            "allow_reuse": allow_reuse,
-        },
+        "_gateway_context": {"session_id": session_id},
     }
     if extra_args:
         args.update(extra_args)
@@ -352,66 +347,3 @@ def test_sqlite_e2e_next_page_flow(sqlite_e2e_paginated_env):
         scope="single",
     )
     assert [item["value"] for item in ids["items"]] == [4, 5, 6]
-
-
-def test_sqlite_e2e_cache_reuse_across_sessions(sqlite_e2e_env):
-    server, _config, _backend = sqlite_e2e_env
-    session_a = f"sess_{uuid.uuid4().hex}"
-    session_b = f"sess_{uuid.uuid4().hex}"
-    marker = f"sqlite_shared_{uuid.uuid4().hex}"
-
-    first = _call_mirrored(
-        server,
-        "test.get_users",
-        session_a,
-        extra_args={"marker": marker},
-        allow_reuse=True,
-    )
-    artifact_id = first["artifact_id"]
-
-    second = _call_mirrored(
-        server,
-        "test.get_users",
-        session_b,
-        extra_args={"marker": marker},
-        allow_reuse=True,
-    )
-    assert second["artifact_id"] == artifact_id
-    assert second["meta"]["cache"]["reused"] is True
-
-    get_b = _artifact_query(
-        server,
-        session_b,
-        query_kind="get",
-        artifact_id=artifact_id,
-        target="envelope",
-        scope="single",
-    )
-    assert get_b["artifact_id"] == artifact_id
-
-
-def test_sqlite_e2e_cache_fresh_when_reuse_disabled(sqlite_e2e_env):
-    server, _config, _backend = sqlite_e2e_env
-    session_id = f"sess_{uuid.uuid4().hex}"
-    marker = f"sqlite_fresh_{uuid.uuid4().hex}"
-
-    first = _call_mirrored(
-        server,
-        "test.get_users",
-        session_id,
-        extra_args={"marker": marker},
-        allow_reuse=False,
-    )
-    second = _call_mirrored(
-        server,
-        "test.get_users",
-        session_id,
-        extra_args={"marker": marker},
-        allow_reuse=False,
-    )
-
-    assert first["type"] == "gateway_tool_result"
-    assert second["type"] == "gateway_tool_result"
-    assert first["artifact_id"] != second["artifact_id"]
-    assert first["meta"]["cache"]["reused"] is False
-    assert second["meta"]["cache"]["reused"] is False

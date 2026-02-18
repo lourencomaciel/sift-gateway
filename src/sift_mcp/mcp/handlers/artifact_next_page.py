@@ -208,9 +208,6 @@ async def handle_artifact_next_page(
         **state.next_params,
     }
     next_gateway_context = dict(raw_ctx)
-    # Force a fresh persisted page so chain_pages for this parent remains
-    # complete even when the same request_key exists in prior chains.
-    next_gateway_context["allow_reuse"] = False
     next_args["_gateway_context"] = next_gateway_context
     next_args["_gateway_parent_artifact_id"] = artifact_id
     next_args["_gateway_chain_seq"] = state.page_number + 1

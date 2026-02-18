@@ -29,12 +29,10 @@ Use `LogEvents` constants from `src/sift_mcp/obs/logging.py`.
 - `gateway.startup.complete`
 - `gateway.startup.failed`
 
-### Request/cache
+### Request
 
 - `gateway.request.received`
 - `gateway.request.key_computed`
-- `gateway.reuse.hit`
-- `gateway.reuse.miss`
 
 ### Artifact/mapping
 
@@ -70,10 +68,8 @@ Use `LogEvents` constants from `src/sift_mcp/obs/logging.py`.
 - `gateway.auto_pagination.envelope_normalization_failed`
 - `gateway.auto_pagination.binary_content_stop`
 
-### Locking/quota/pruning
+### Quota/pruning
 
-- `gateway.lock.acquired`
-- `gateway.lock.timeout`
 - `gateway.quota.check`
 - `gateway.quota.breach`
 - `gateway.quota.prune_triggered`

@@ -5,10 +5,8 @@ from decimal import Decimal
 from sift_mcp.canon.rfc8785 import canonical_bytes
 from sift_mcp.request_identity import (
     RequestIdentity,
-    compute_dedupe_hash,
     compute_request_identity,
 )
-from sift_mcp.util.hashing import sha256_hex
 
 # ---- compute_request_identity ----
 
@@ -126,68 +124,6 @@ def test_request_identity_preserves_metadata() -> None:
     assert ri.upstream_instance_id == "inst_abc"
     assert ri.prefix == "github"
     assert ri.tool_name == "search"
-
-
-# ---- compute_dedupe_hash ----
-
-
-def test_dedupe_hash_no_exclusions() -> None:
-    args_bytes = canonical_bytes({"query": "test", "repo": "acme/app"})
-    h = compute_dedupe_hash(args_bytes)
-    assert h == sha256_hex(args_bytes)
-
-
-def test_dedupe_hash_with_exclusion() -> None:
-    args_bytes = canonical_bytes({"query": "test", "timestamp": "2025-01-01"})
-    h_with = compute_dedupe_hash(args_bytes, exclusion_paths=["timestamp"])
-    h_without = compute_dedupe_hash(args_bytes)
-    assert h_with != h_without
-
-    # Hash with exclusion should equal hash of args without the excluded key
-    expected_bytes = canonical_bytes({"query": "test"})
-    assert h_with == sha256_hex(expected_bytes)
-
-
-def test_dedupe_hash_jsonpath_dollar_prefix() -> None:
-    args_bytes = canonical_bytes({"query": "test", "ts": "now"})
-    h1 = compute_dedupe_hash(args_bytes, exclusion_paths=["$.ts"])
-    h2 = compute_dedupe_hash(args_bytes, exclusion_paths=["ts"])
-    assert h1 == h2
-
-
-def test_dedupe_hash_missing_exclusion_key_is_noop() -> None:
-    args_bytes = canonical_bytes({"query": "test"})
-    h1 = compute_dedupe_hash(args_bytes, exclusion_paths=["nonexistent"])
-    h2 = compute_dedupe_hash(args_bytes)
-    assert h1 == h2
-
-
-# ---- Decimal safety in dedupe hash ----
-
-
-def test_dedupe_hash_preserves_decimal_through_exclusion() -> None:
-    """Dedupe hash with exclusions must preserve Decimal values (no float drift).
-
-    canonical_args might contain decimal numbers. When dedupe_hash parses
-    them via loads_decimal and re-canonicalizes, the result must be
-    identical to canonicalizing the original data without the excluded key.
-    """
-    args = {"price": Decimal("19.99"), "timestamp": "2025-01-01"}
-    args_bytes = canonical_bytes(args)
-
-    h = compute_dedupe_hash(args_bytes, exclusion_paths=["timestamp"])
-
-    # Expected: canonical hash of {"price": Decimal("19.99")} only
-    expected = sha256_hex(canonical_bytes({"price": Decimal("19.99")}))
-    assert h == expected
-
-
-def test_dedupe_hash_with_decimal_no_exclusion_is_identity() -> None:
-    """Without exclusions, dedupe hash is just sha256 of canonical bytes, even with Decimal."""
-    args = {"amount": Decimal("100.50"), "query": "test"}
-    args_bytes = canonical_bytes(args)
-    h = compute_dedupe_hash(args_bytes)
-    assert h == sha256_hex(args_bytes)
 
 
 def test_request_identity_uses_canonical_bytes_for_args() -> None:

@@ -109,7 +109,7 @@ def main() -> int:
 
     required_api_contract_phrases = [
         'action="query"',
-        "_gateway_context.allow_reuse",
+        "_gateway_context.session_id",
     ]
     for phrase in required_api_contract_phrases:
         if not _contains_phrase(api_contracts_doc, phrase):

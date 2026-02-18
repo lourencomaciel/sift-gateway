@@ -47,8 +47,6 @@ def test_log_events_startup_events() -> None:
 def test_log_events_request_events() -> None:
     assert LogEvents.REQUEST_RECEIVED == "gateway.request.received"
     assert LogEvents.REQUEST_KEY_COMPUTED == "gateway.request.key_computed"
-    assert LogEvents.REUSE_HIT == "gateway.reuse.hit"
-    assert LogEvents.REUSE_MISS == "gateway.reuse.miss"
 
 
 def test_log_events_artifact_events() -> None:
@@ -116,11 +114,6 @@ def test_log_events_auto_pagination_events() -> None:
         LogEvents.AUTO_PAGINATION_BINARY_CONTENT_STOP
         == "gateway.auto_pagination.binary_content_stop"
     )
-
-
-def test_log_events_advisory_lock_events() -> None:
-    assert LogEvents.ADVISORY_LOCK_ACQUIRED == "gateway.lock.acquired"
-    assert LogEvents.ADVISORY_LOCK_TIMEOUT == "gateway.lock.timeout"
 
 
 def test_log_events_all_start_with_gateway_prefix() -> None:

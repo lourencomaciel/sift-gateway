@@ -36,11 +36,6 @@ from sift_mcp.artifacts.create import (
     generate_artifact_id,
     prepare_envelope_storage,
 )
-from sift_mcp.cache.reuse import (
-    FIND_REUSABLE_BY_REQUEST_KEY_SQL,
-    ReuseResult,
-    check_reuse_candidate,
-)
 from sift_mcp.config.settings import GatewayConfig
 from sift_mcp.constants import WORKSPACE_ID
 from sift_mcp.cursor.payload import (
@@ -543,15 +538,6 @@ class RuntimeTool(Tool):
         arguments = _ensure_gateway_context(arguments)
         result = await self.handler(arguments)
         return ToolResult(structured_content=result)
-
-
-_CANDIDATE_COLUMNS = [
-    "artifact_id",
-    "payload_hash_full",
-    "upstream_tool_schema_hash",
-    "map_status",
-    "generation",
-]
 
 
 def _upstream_error_message(result: dict[str, Any]) -> str:
@@ -1399,42 +1385,6 @@ class GatewayServer:
             )
             return
         self._schedule_background_mapping(handle=handle, envelope=envelope)
-
-    # -- Reuse / cache helpers --
-
-    def _check_reuse_on_connection(
-        self,
-        connection: Any,
-        *,
-        request_key: str,
-        expected_schema_hash: str | None,
-        strict_schema_reuse: bool,
-    ) -> ReuseResult:
-        """Check if an existing artifact can be reused for a request.
-
-        Args:
-            connection: Active database connection.
-            request_key: Hash key identifying the request.
-            expected_schema_hash: Expected upstream tool schema
-                hash, or None to skip the check.
-            strict_schema_reuse: If True, reject reuse when
-                the schema hash differs.
-
-        Returns:
-            ReuseResult indicating whether reuse is possible.
-        """
-        row = connection.execute(
-            FIND_REUSABLE_BY_REQUEST_KEY_SQL,
-            (WORKSPACE_ID, request_key),
-        ).fetchone()
-
-        from sift_mcp.mcp.handlers.common import row_to_dict
-
-        return check_reuse_candidate(
-            row_to_dict(row, _CANDIDATE_COLUMNS),
-            expected_schema_hash=expected_schema_hash,
-            strict_schema_reuse=strict_schema_reuse,
-        )
 
     # -- Envelope transformation --
 

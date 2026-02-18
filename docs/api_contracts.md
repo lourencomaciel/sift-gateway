@@ -66,23 +66,20 @@ For `pagination.layer = "upstream"`:
 
 ## Gateway Context Controls
 
-Mirrored tool calls may include `_gateway_context.allow_reuse`.
+Mirrored tool calls must include `_gateway_context.session_id`.
 
-- `false` (default): always create a fresh artifact
-- `true`: allow request-key dedupe and reuse when eligible
+Sift always creates a fresh artifact for mirrored upstream calls.
 
 Handle responses include cache metadata under `meta.cache`:
 
-- `reused`
 - `request_key`
-- `reason` (`fresh` or `request_key_match`)
-- `artifact_id_origin` (`fresh` or `cache`)
-- `allow_reuse`
+- `reason` (`fresh`)
+- `artifact_id_origin` (`fresh`)
 
 Session visibility guarantee:
 
-- If a cached artifact is reused, Sift attaches it to the caller session before
-  returning the handle, so follow-up retrieval in the same session succeeds.
+- Created artifacts are attached to the caller session before returning the
+  handle, so follow-up retrieval in the same session succeeds.
 
 ## Handle Response Contract
 

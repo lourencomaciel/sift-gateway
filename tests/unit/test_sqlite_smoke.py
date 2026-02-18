@@ -6,7 +6,6 @@ from pathlib import Path
 
 import pytest
 
-from sift_mcp.cache.reuse import try_acquire_advisory_lock
 from sift_mcp.db.backend import SqliteBackend
 from sift_mcp.db.migrate import apply_migrations
 
@@ -118,14 +117,6 @@ class TestSqliteSmoke:
                     "v1",
                 ),
             )
-
-    def test_advisory_lock_noop_on_sqlite(
-        self, sqlite_backend: SqliteBackend
-    ) -> None:
-        """Advisory lock should always return True on SQLite."""
-        with sqlite_backend.connection() as conn:
-            result = try_acquire_advisory_lock(conn, request_key="test-key")
-            assert result is True
 
     def test_json_column_roundtrip(self, sqlite_backend: SqliteBackend) -> None:
         """JSON columns auto-convert between Python dicts and TEXT."""

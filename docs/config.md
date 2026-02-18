@@ -57,7 +57,6 @@ Derived path:
 Runtime behavior:
 
 - SQLite runs in WAL mode.
-- Advisory lock behavior is emulated with a process-local per-`request_key` lock.
 
 ## Envelope storage
 
@@ -237,7 +236,6 @@ artifact before returning.
 |-----|------|---------|---------|-------------|
 | `binary_probe_bytes` | int | `65536` | `SIFT_MCP_BINARY_PROBE_BYTES` | Bytes used for binary detection |
 | `select_missing_as_null` | bool | `false` | `SIFT_MCP_SELECT_MISSING_AS_NULL` | Missing select fields become `null` |
-| `advisory_lock_timeout_ms` | int | `5000` | `SIFT_MCP_ADVISORY_LOCK_TIMEOUT_MS` | Advisory lock wait timeout |
 
 ## Upstream configuration
 
@@ -267,9 +265,7 @@ Upstream fields:
 | `headers` | dict[str,str] | `{}` | http headers |
 | `semantic_salt_headers` | list[str] | `[]` | Non-secret header keys used in identity |
 | `semantic_salt_env_keys` | list[str] | `[]` | Non-secret env keys used in identity |
-| `strict_schema_reuse` | bool | `true` | Require schema hash match for reuse |
 | `passthrough_allowed` | bool | `true` | Allow passthrough for this upstream |
-| `dedupe_exclusions` | list[str] | `[]` | JSONPath exclusions in dedupe hash |
 | `pagination` | object | null | Upstream pagination config |
 | `auto_paginate_max_pages` | int | null | Per-upstream override for gateway auto-pagination page cap |
 | `auto_paginate_max_records` | int | null | Per-upstream override for gateway auto-pagination record cap |
