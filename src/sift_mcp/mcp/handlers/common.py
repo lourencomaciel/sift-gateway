@@ -71,10 +71,10 @@ def rows_to_dicts(
 
 VISIBLE_ARTIFACT_SQL = """
 SELECT 1
-FROM artifact_refs
+FROM artifacts
 WHERE workspace_id = %s
-  AND session_id = %s
   AND artifact_id = %s
+  AND deleted_at IS NULL
 LIMIT 1
 """
 

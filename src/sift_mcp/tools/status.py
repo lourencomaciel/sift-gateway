@@ -134,7 +134,6 @@ def build_status_response_with_runtime(
             "cursor_version": CURSOR_VERSION,
             "prng_version": PRNG_VERSION,
         },
-        "mapping_mode": config.mapping_mode.value,
         "budgets": {
             "max_items": config.max_items,
             "max_bytes_out": config.max_bytes_out,

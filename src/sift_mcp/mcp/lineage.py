@@ -54,11 +54,7 @@ visible AS (
     SELECT a.artifact_id, a.parent_artifact_id, a.chain_seq,
            a.created_seq, a.generation, a.map_kind, a.map_status
     FROM artifacts a
-    JOIN artifact_refs ar
-      ON ar.workspace_id = a.workspace_id
-     AND ar.artifact_id = a.artifact_id
     WHERE a.workspace_id = %s
-      AND ar.session_id = %s
       AND a.deleted_at IS NULL
 ),
 edges AS (
@@ -99,7 +95,8 @@ def resolve_related_artifacts(
 
     Args:
         connection: Active database connection.
-        session_id: Session requesting visibility.
+        session_id: Session requesting visibility (unused, retained
+            for call-site compatibility).
         anchor_artifact_id: Anchor artifact for lineage traversal.
 
     Returns:
@@ -109,7 +106,6 @@ def resolve_related_artifacts(
         RESOLVE_RELATED_ARTIFACTS_SQL,
         (
             WORKSPACE_ID,
-            session_id,
             anchor_artifact_id,
         ),
     ).fetchall()

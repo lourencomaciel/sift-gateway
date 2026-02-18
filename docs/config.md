@@ -25,19 +25,6 @@ Derived paths (not directly configurable):
 | `config_json_path` | `{data_dir}/state/config.json` |
 | `upstream_secrets_dir` | `{data_dir}/state/upstream_secrets/` |
 
-## Managed instances
-
-`sift-mcp init --from ...` stores migrated configs in per-source managed
-instance directories. Root defaults to `~/.sift-mcp/instances` and can be
-overridden with `SIFT_MCP_INSTANCES_DIR`.
-
-| Path | Derivation |
-|------|-----------|
-| `instances_root` | `SIFT_MCP_INSTANCES_DIR` or `~/.sift-mcp/instances` |
-| `instance_data_dir` | `{instances_root}/{instance_id}` |
-| `instance_config_json_path` | `{instance_data_dir}/state/config.json` |
-| `instances_registry_path` | `{instances_root}/registry.json` |
-
 ## Database
 
 Sift uses SQLite as its database backend.
@@ -109,12 +96,6 @@ Runtime behavior:
 | `max_record_bytes_partial` | int | `100000` | `SIFT_MCP_MAX_RECORD_BYTES_PARTIAL` | Max bytes per sampled record |
 | `max_leaf_paths_partial` | int | `500` | `SIFT_MCP_MAX_LEAF_PATHS_PARTIAL` | Max discovered leaf paths |
 | `max_root_discovery_depth` | int | `5` | `SIFT_MCP_MAX_ROOT_DISCOVERY_DEPTH` | Max discovery depth for roots |
-
-## Mapping mode
-
-| Key | Type | Default | Env var | Description |
-|-----|------|---------|---------|-------------|
-| `mapping_mode` | enum | `hybrid` | `SIFT_MCP_MAPPING_MODE` | `async`, `hybrid`, `sync` |
 
 ## Retrieval budgets
 
@@ -190,7 +171,7 @@ sift-mcp uninstall scipy
 These commands:
 
 1. Run `pip install` (or `pip uninstall`) using Sift's own Python interpreter.
-2. Add (or remove) the package root to the instance's
+2. Add (or remove) the package root to the gateway's
    `code_query_allowed_import_roots` config so the import is permitted.
 
 For convenience, common data-science packages are available as an install
@@ -202,15 +183,6 @@ pipx install "sift-mcp[data-science]"   # pandas, numpy, jmespath
 
 `query_kind=code` is intended for trusted environments. Policy checks
 reduce risk but do not provide full OS-level sandboxing.
-
-## Passthrough mode
-
-| Key | Type | Default | Env var | Description |
-|-----|------|---------|---------|-------------|
-| `passthrough_max_bytes` | int | `8192` | `SIFT_MCP_PASSTHROUGH_MAX_BYTES` | Payload size threshold for raw passthrough (`0` disables) |
-
-Passthrough returns the raw upstream response for small non-binary payloads.
-Those responses are still persisted asynchronously.
 
 ## Cursor
 
@@ -265,7 +237,6 @@ Upstream fields:
 | `headers` | dict[str,str] | `{}` | http headers |
 | `semantic_salt_headers` | list[str] | `[]` | Non-secret header keys used in identity |
 | `semantic_salt_env_keys` | list[str] | `[]` | Non-secret env keys used in identity |
-| `passthrough_allowed` | bool | `true` | Allow passthrough for this upstream |
 | `pagination` | object | null | Upstream pagination config |
 | `auto_paginate_max_pages` | int | null | Per-upstream override for gateway auto-pagination page cap |
 | `auto_paginate_max_records` | int | null | Per-upstream override for gateway auto-pagination record cap |
@@ -371,25 +342,20 @@ unless args already provide it.
 ## Sync metadata (`_gateway_sync`)
 
 After `sift-mcp init --from <path-or-shortcut>`, Sift stores sync metadata in
-the selected instance `state/config.json`. On startup (except `--check`), it
+`{data_dir}/state/config.json`. On startup (except `--check`), it
 imports newly added upstreams from the source config, externalizes secrets,
 then rewrites source config back to gateway-only.
 
-If `_gateway_sync.data_dir` points to another instance, Sift follows that
+If `_gateway_sync.data_dir` points to another data directory, Sift follows that
 redirect only when the target `state/config.json` exists and is valid.
 
 ## `upstream add` target resolution
 
-`sift-mcp upstream add` accepts three targeting modes:
+`sift-mcp upstream add` accepts:
 
 - `--from <path-or-shortcut>`: resolve source, then use explicit `--data-dir`
-  if provided, otherwise source-pinned gateway `--data-dir` when present,
-  otherwise resolve an initialized managed instance for that source.
-- `--instance <instance_id>`: resolve target from managed instance registry.
-- no target flag: use explicit `--data-dir`, otherwise
-  `SIFT_MCP_DATA_DIR`, otherwise latest initialized managed instance.
-
-`--instance` cannot be combined with `--data-dir`.
+  if provided, otherwise source-pinned gateway `--data-dir` when present.
+- no `--from`: use explicit `--data-dir` when provided.
 
 ## Server runtime flags
 
@@ -409,8 +375,7 @@ Runtime `data_dir` resolution order:
 
 1. `--data-dir` (if provided)
 2. `SIFT_MCP_DATA_DIR` environment variable
-3. latest initialized managed instance from registry
-4. legacy default `.sift-mcp`
+3. default `.sift-mcp`
 
 ## URL mode security
 

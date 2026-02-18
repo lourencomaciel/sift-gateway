@@ -1,7 +1,7 @@
 """Collect gateway metrics via counters and histograms.
 
 Provides ``GatewayMetrics``, a central registry of ``Counter``
-and ``Histogram`` objects covering cache, ingest, mapping,
+and ``Histogram`` objects covering ingest, mapping,
 cursor, lock, pruning, and quota subsystems.  Also exposes
 ``counter_value``/``counter_reset`` helpers and a thread-safe
 ``get_metrics`` singleton accessor.
@@ -49,7 +49,7 @@ class Counter:
 
         Args:
             name: Metric name (e.g.
-                ``gateway_cache_hits_total``).
+                ``gateway_upstream_calls_total``).
             doc: Human-readable description.
         """
         self._name = name
@@ -187,11 +187,6 @@ _HISTOGRAM_ATTRS: frozenset[str] = frozenset({
 # GatewayMetrics attribute names (counters or histograms);
 # nested dicts become nested sections in the output.
 _SNAPSHOT_LAYOUT: dict[str, dict[str, Any]] = {
-    "cache": {
-        "hits": "cache_hits",
-        "misses": "cache_misses",
-        "alias_hits": "alias_hits",
-    },
     "upstream": {
         "calls": "upstream_calls",
         "errors": "upstream_errors",
@@ -336,9 +331,6 @@ class GatewayMetrics:
     """
 
     # Type annotations for IDE / mypy (populated in __init__)
-    cache_hits: Counter
-    cache_misses: Counter
-    alias_hits: Counter
     upstream_calls: Counter
     upstream_errors: Counter
     upstream_latency: Histogram

@@ -206,7 +206,7 @@ tar -xzf blobs_backup.tar.gz
 - Check database size: `du -sh .sift-mcp/state/gateway.db`
 - Monitor query performance through structured stderr events (see [Observability](observability.md))
 - Review blob storage usage: `du -sh .sift-mcp/blobs/`
-- Consider adjusting `passthrough_max_bytes` threshold
+- Tune retrieval budgets (`max_items`, `max_bytes_out`) and mapping budgets in `state/config.json`
 
 ### Authentication failures
 

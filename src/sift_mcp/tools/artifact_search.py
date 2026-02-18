@@ -1,15 +1,13 @@
 """Validate arguments and build SQL for ``artifact.search``.
 
-Discover artifacts visible to a session through ``artifact_refs``,
-with support for filtering by status, source tool, timestamps, and
-other metadata columns.  Exports ``validate_search_args`` and
-``build_search_query``.
+Discover artifacts across the local workspace with support for
+filtering by status, source tool, timestamps, and other metadata
+columns. Exports ``validate_search_args`` and ``build_search_query``.
 
 Typical usage example::
 
     validated = validate_search_args(arguments, max_limit=200)
     sql, params = build_search_query(
-        validated["session_id"],
         validated["filters"],
         validated["order_by"],
         validated["limit"],
@@ -58,26 +56,15 @@ def _invalid_arg(message: str) -> dict[str, Any]:
     }
 
 
-def _validate_context(
-    arguments: dict[str, Any],
-) -> str | dict[str, Any]:
-    """Extract and validate ``session_id`` from gateway context.
-
-    Args:
-        arguments: Raw tool arguments containing
-            ``_gateway_context``.
-
-    Returns:
-        The ``session_id`` string, or an error dict when the
-        context is missing or invalid.
-    """
+def _extract_session_id(arguments: dict[str, Any]) -> str:
+    """Best-effort session ID extraction for cursor identity."""
     ctx = arguments.get("_gateway_context")
     if not isinstance(ctx, dict):
-        return _invalid_arg("missing _gateway_context.session_id")
+        return "local"
     session_id = ctx.get("session_id")
-    if not isinstance(session_id, str) or not session_id:
-        return _invalid_arg("missing _gateway_context.session_id")
-    return session_id
+    if isinstance(session_id, str) and session_id:
+        return session_id
+    return "local"
 
 
 def _validate_filters(
@@ -187,9 +174,7 @@ def validate_search_args(
         ``order_by``, ``limit``, and ``cursor`` keys, or an
         error dict with ``code`` and ``message`` on failure.
     """
-    session_id = _validate_context(arguments)
-    if isinstance(session_id, dict):
-        return session_id
+    session_id = _extract_session_id(arguments)
 
     filters_result = _validate_filters(arguments)
     if isinstance(filters_result, tuple):
@@ -221,21 +206,17 @@ def validate_search_args(
 
 
 def build_search_query(
-    session_id: str,
     filters: dict[str, Any],
     order_by: str,
     limit: int,
     *,
     offset: int = 0,
 ) -> tuple[str, list[Any]]:
-    """Build SQL query for artifact search via ``artifact_refs``.
+    """Build SQL query for artifact search.
 
-    Artifacts are discovered only through the ``artifact_refs``
-    join for the given session. One extra row is fetched to
-    detect whether a next page exists.
+    One extra row is fetched to detect whether a next page exists.
 
     Args:
-        session_id: Current session identifier.
         filters: Validated filter dict (Addendum B columns).
         order_by: Sort key (``created_seq_desc`` or
             ``last_seen_desc``).
@@ -245,11 +226,11 @@ def build_search_query(
     Returns:
         A ``(sql, params)`` tuple ready for execution.
     """
-    params: list[Any] = [WORKSPACE_ID, session_id]
+    params: list[Any] = [WORKSPACE_ID]
 
     base = """
     SELECT a.artifact_id, a.created_seq, a.created_at,
-           ar.last_seen_at, a.source_tool,
+           a.last_referenced_at AS last_seen_at, a.source_tool,
            a.upstream_instance_id,
            CASE WHEN a.error_summary IS NULL
                 THEN 'ok' ELSE 'error'
@@ -257,12 +238,8 @@ def build_search_query(
            a.payload_total_bytes, a.error_summary,
            a.map_kind, a.map_status,
            a.chain_seq
-    FROM artifact_refs ar
-    JOIN artifacts a
-      ON a.workspace_id = ar.workspace_id
-     AND a.artifact_id = ar.artifact_id
-    WHERE ar.workspace_id = %s
-      AND ar.session_id = %s
+    FROM artifacts a
+    WHERE a.workspace_id = %s
     """
 
     conditions: list[str] = []
@@ -342,7 +319,7 @@ def build_search_query(
     elif order_by == "chain_seq_asc":
         base += " ORDER BY a.chain_seq ASC NULLS LAST, a.created_seq ASC"
     else:
-        base += " ORDER BY ar.last_seen_at DESC"
+        base += " ORDER BY a.last_referenced_at DESC"
 
     base += " LIMIT %s"
     # fetch one extra for pagination detection

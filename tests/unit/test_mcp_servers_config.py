@@ -205,7 +205,6 @@ class TestToUpstreamConfigs:
                     "command": "gh",
                     "_gateway": {
                         "semantic_salt_env_keys": ["GITHUB_ORG"],
-                        "passthrough_allowed": False,
                         "pagination": {
                             "strategy": "cursor",
                             "cursor_response_path": "$.paging.cursors.after",
@@ -218,7 +217,6 @@ class TestToUpstreamConfigs:
         )
         c = configs[0]
         assert c["semantic_salt_env_keys"] == ["GITHUB_ORG"]
-        assert c["passthrough_allowed"] is False
         assert c["pagination"]["strategy"] == "cursor"
 
     def test_gateway_extensions_invalid_type_raises(self) -> None:
@@ -384,7 +382,6 @@ class TestLoadGatewayConfigMcpServers:
                             "command": "gh",
                             "_gateway": {
                                 "semantic_salt_env_keys": ["GITHUB_ORG"],
-                                "passthrough_allowed": False,
                                 "pagination": {
                                     "strategy": "cursor",
                                     "cursor_response_path": (
@@ -401,7 +398,6 @@ class TestLoadGatewayConfigMcpServers:
         config = load_gateway_config(data_dir_override=str(tmp_path))
         gh = config.upstreams[0]
         assert gh.semantic_salt_env_keys == ["GITHUB_ORG"]
-        assert gh.passthrough_allowed is False
         assert gh.pagination is not None
         assert gh.pagination.strategy == "cursor"
         assert gh.pagination.cursor_param_name == "after"

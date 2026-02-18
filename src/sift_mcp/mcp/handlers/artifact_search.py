@@ -88,7 +88,6 @@ async def handle_artifact_search(
         offset = raw_offset
 
     sql, params = build_search_query(
-        session_id,
         filters,
         order_by,
         limit,
@@ -100,19 +99,6 @@ async def handle_artifact_search(
         mapped_rows = rows_to_dicts(rows, _SEARCH_COLUMNS)
         page_rows = mapped_rows[:limit]
         truncated = len(mapped_rows) > limit
-        artifact_ids = [
-            str(row["artifact_id"])
-            for row in page_rows
-            if isinstance(row.get("artifact_id"), str)
-        ]
-        ctx._safe_touch_for_search(
-            connection,
-            session_id=session_id,
-            artifact_ids=artifact_ids,
-        )
-        commit = getattr(connection, "commit", None)
-        if callable(commit):
-            commit()
 
     next_cursor: str | None = None
     if truncated:

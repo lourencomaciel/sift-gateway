@@ -11,7 +11,6 @@ import pytest
 from sift_mcp.artifacts.create import (
     INSERT_ARTIFACT_SQL,
     INSERT_PAYLOAD_BINARY_REF_SQL,
-    UPSERT_ARTIFACT_REF_SQL,
     CreateArtifactInput,
     build_artifact_row,
     compute_payload_sizes,
@@ -355,10 +354,6 @@ def test_insert_artifact_sql_has_returning_clause() -> None:
     assert "RETURNING created_seq" in INSERT_ARTIFACT_SQL
 
 
-def test_upsert_artifact_ref_sql_has_on_conflict() -> None:
-    assert "ON CONFLICT" in UPSERT_ARTIFACT_REF_SQL
-
-
 def test_insert_payload_binary_ref_sql_has_on_conflict() -> None:
     assert "ON CONFLICT" in INSERT_PAYLOAD_BINARY_REF_SQL
 
@@ -414,7 +409,7 @@ def test_persist_artifact_executes_core_writes(tmp_path: Path) -> None:
     assert handle.created_seq == 42
     assert handle.status == "ok"
     assert conn.committed is True
-    assert len(conn.calls) == 4  # payload, session, artifact, artifact_refs
+    assert len(conn.calls) == 3  # payload, session, artifact
 
 
 def test_persist_artifact_accepts_float_values(tmp_path: Path) -> None:

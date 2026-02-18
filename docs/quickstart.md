@@ -56,9 +56,9 @@ sift-mcp init \
 
 This command:
 
-1. Copies your `mcpServers` configuration into a managed instance config at `~/.sift-mcp/instances/<instance_id>/state/config.json`
+1. Copies your `mcpServers` configuration into `{data_dir}/state/config.json` (default data dir: `.sift-mcp`)
 2. Configures the SQLite database backend (no setup required)
-3. Externalizes inline `env` and `headers` into per-upstream secret files under `~/.sift-mcp/instances/<instance_id>/state/upstream_secrets/`
+3. Externalizes inline `env` and `headers` into per-upstream secret files under `{data_dir}/state/upstream_secrets/`
 4. Creates a backup of your original config at `<source>.backup`
 5. Rewrites the source config to point to Sift only
 6. Stores `_gateway_sync` metadata for automatic future syncing
@@ -130,7 +130,7 @@ After running `init`, your source config file contains only the Sift gateway ent
   "mcpServers": {
     "artifact-gateway": {
       "command": "sift-mcp",
-      "args": ["--data-dir", "/absolute/path/to/.sift-mcp/instances/<instance_id>"]
+      "args": ["--data-dir", "/absolute/path/to/.sift-mcp"]
     },
     "new-server": {
       "command": "npx",
@@ -153,17 +153,11 @@ sift-mcp upstream add '{"new-server":{"command":"npx","args":["-y","@modelcontex
 ```
 
 Optional targeting overrides:
-- `sift-mcp upstream add '<json>' --from claude --data-dir /abs/path/to/instance`
-- `sift-mcp upstream add '<json>' --instance <instance_id>`
-- `--instance` and `--data-dir` cannot be combined.
-
-For multi-config setups, use:
-- `sift-mcp instances list`
-- `sift-mcp instances list --json`
+- `sift-mcp upstream add '<json>' --from claude --data-dir /abs/path/to/data-dir`
 
 ## Manual Configuration
 
-You can also manually configure Sift by creating an instance config such as `~/.sift-mcp/instances/<instance_id>/state/config.json`:
+You can also manually configure Sift by creating `{data_dir}/state/config.json`:
 
 ```json
 {
@@ -173,8 +167,7 @@ You can also manually configure Sift by creating an instance config such as `~/.
       "args": ["-y", "@modelcontextprotocol/server-github"],
       "_gateway": {
         "secret_ref": "github",
-        "semantic_salt_env_keys": ["GITHUB_ORG"],
-        "passthrough_allowed": true
+        "semantic_salt_env_keys": ["GITHUB_ORG"]
       }
     },
     "remote": {
@@ -246,7 +239,7 @@ After setup:
 
 1. **Restart your MCP client** (Claude Desktop, Claude Code, Cursor, VS Code, Windsurf, or Zed)
 
-2. **Call an upstream tool** that returns a large response (> 8 KB default)
+2. **Call an upstream tool** through Sift
 
 3. **Receive an artifact handle** instead of the full response:
 
@@ -292,14 +285,14 @@ See [Recipes & Examples](recipes.md) for more usage patterns.
 ### Upstream tools not working
 
 - Verify upstream servers are configured correctly in your original MCP config
-- Check `~/.sift-mcp/instances/<instance_id>/state/upstream_secrets/` for externalized secrets
+- Check `{data_dir}/state/upstream_secrets/` for externalized secrets
 - Test upstream directly (temporarily remove Sift from config)
 
 ### Artifacts not being created
 
-- Check passthrough threshold: default is 8 KB (`passthrough_max_bytes`)
-- Verify response size exceeds threshold
-- See [Configuration Reference](config.md) to adjust threshold
+- Check `sift-mcp --check` for DB/FS health errors
+- Verify upstream calls succeed and return content
+- See [Configuration Reference](config.md) for artifact and mapping budgets
 
 ## Next Steps
 

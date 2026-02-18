@@ -302,14 +302,6 @@ async def handle_artifact_select(
                 if artifact_id == anchor_artifact_id:
                     anchor_meta = artifact_meta
                 if artifact_meta.get("deleted_at") is not None:
-                    ctx._safe_touch_for_retrieval(
-                        connection,
-                        session_id=session_id,
-                        artifact_id=artifact_id,
-                    )
-                    commit = getattr(connection, "commit", None)
-                    if callable(commit):
-                        commit()
                     return gateway_error(
                         "GONE", "artifact has been deleted"
                     )
@@ -548,15 +540,6 @@ async def handle_artifact_select(
                         count_row[0] if count_row else 0
                     )
 
-            ctx._safe_touch_for_retrieval_many(
-                connection,
-                session_id=session_id,
-                artifact_ids=related_ids,
-            )
-            commit = getattr(connection, "commit", None)
-            if callable(commit):
-                commit()
-
             return {
                 "count": total_count,
                 "truncated": False,
@@ -692,15 +675,6 @@ async def handle_artifact_select(
                         "projection": projection,
                     }
                 )
-
-        ctx._safe_touch_for_retrieval_many(
-            connection,
-            session_id=session_id,
-            artifact_ids=related_ids,
-        )
-        commit = getattr(connection, "commit", None)
-        if callable(commit):
-            commit()
 
     # Deduplicate by projection when distinct is requested.
     use_distinct = arguments.get("distinct") is True

@@ -110,10 +110,8 @@ class TestSchemaTablesExist:
         "sessions",
         "binary_blobs",
         "payload_blobs",
-        "payload_hash_aliases",
         "payload_binary_refs",
         "artifacts",
-        "artifact_refs",
         "artifact_roots",
         "artifact_samples",
     ]
@@ -137,10 +135,8 @@ class TestPrimaryKeysIncludeWorkspaceId:
         "sessions",
         "binary_blobs",
         "payload_blobs",
-        "payload_hash_aliases",
         "payload_binary_refs",
         "artifacts",
-        "artifact_refs",
         "artifact_roots",
         "artifact_samples",
     ]
@@ -173,12 +169,6 @@ class TestForeignKeysExist:
     def _load_sql(self) -> None:
         self.sql = _normalize(_read_sql("001_init.sql")).lower()
 
-    def test_payload_hash_aliases_fk_to_payload_blobs(self) -> None:
-        assert (
-            "references payload_blobs (workspace_id, payload_hash_full)"
-            in self.sql
-        )
-
     def test_payload_binary_refs_fk_to_payload_blobs(self) -> None:
         assert (
             "references payload_blobs (workspace_id, payload_hash_full)"
@@ -199,12 +189,6 @@ class TestForeignKeysExist:
         )
 
     def test_artifacts_self_fk_parent(self) -> None:
-        assert "references artifacts (workspace_id, artifact_id)" in self.sql
-
-    def test_artifact_refs_fk_to_sessions(self) -> None:
-        assert "references sessions (workspace_id, session_id)" in self.sql
-
-    def test_artifact_refs_fk_to_artifacts(self) -> None:
         assert "references artifacts (workspace_id, artifact_id)" in self.sql
 
     def test_artifact_roots_fk_to_artifacts(self) -> None:
@@ -311,9 +295,6 @@ class TestOrderingIndexesExist:
 
     def test_idx_sessions_last_seen(self) -> None:
         assert "idx_sessions_last_seen" in self.all_sql
-
-    def test_idx_artifact_refs_last_seen(self) -> None:
-        assert "idx_artifact_refs_last_seen" in self.all_sql
 
     def test_idx_artifacts_last_referenced_at(self) -> None:
         assert "idx_artifacts_last_referenced_at" in self.all_sql

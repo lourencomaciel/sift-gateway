@@ -66,21 +66,6 @@ class CanonicalEncoding(StrEnum):
     none = "none"
 
 
-class MappingMode(StrEnum):
-    """Control when artifact mapping runs after persistence.
-
-    Attributes:
-        async_: Run mapping in a background task.
-        hybrid: Run mapping inline, fall back to background.
-        sync: Run mapping inline within the request.
-    """
-
-    async_ = "async"
-    hybrid = "hybrid"
-    sync = "sync"
-
-
-
 # ---------------------------------------------------------------------------
 # Pagination config
 # ---------------------------------------------------------------------------
@@ -245,7 +230,6 @@ class UpstreamConfig(BaseSettings):
         headers: HTTP headers for http transport.
         semantic_salt_headers: Stable header names for identity.
         semantic_salt_env_keys: Stable env keys for identity.
-        passthrough_allowed: Allow small-result passthrough.
         secret_ref: Reference to an external secret store entry.
         inherit_parent_env: Inherit parent process env vars.
         external_user_id: Stable user identity for upstream
@@ -287,11 +271,6 @@ class UpstreamConfig(BaseSettings):
     semantic_salt_env_keys: list[str] = Field(
         default_factory=list,
         description="Stable non-secret env key/value pairs for identity",
-    )
-
-    # Tool-level configuration
-    passthrough_allowed: bool = Field(
-        True, description="Allow passthrough for small results (§ passthrough)"
     )
 
     # Pagination
@@ -446,8 +425,6 @@ class GatewayConfig(BaseSettings):
         data_dir: Root directory for all persistent state.
         sqlite_busy_timeout_ms: SQLite busy timeout in milliseconds.
         upstreams: List of upstream server configurations.
-        mapping_mode: When to run artifact mapping.
-        passthrough_max_bytes: Max bytes for passthrough mode.
         cursor_ttl_minutes: Cursor token time-to-live.
     """
 
@@ -527,9 +504,6 @@ class GatewayConfig(BaseSettings):
     max_leaf_paths_partial: int = Field(500, ge=1)
     max_root_discovery_depth: int = Field(5, ge=1)
 
-    # --------------- Mapping mode (§13.1) ---------------
-    mapping_mode: MappingMode = Field(MappingMode.hybrid)
-
     # --------------- Retrieval budgets (§16.3) ---------------
     max_items: int = Field(1000, ge=1)
     max_bytes_out: int = Field(5_000_000, ge=1)
@@ -564,9 +538,6 @@ class GatewayConfig(BaseSettings):
             "Maximum related artifacts allowed in a lineage-scoped query."
         ),
     )
-
-    # --------------- Passthrough (small result bypass) ---------------
-    passthrough_max_bytes: int = Field(8192, ge=0)
 
     # --------------- Cursor (§14, Addendum D) ---------------
     cursor_ttl_minutes: int = Field(60, ge=1)

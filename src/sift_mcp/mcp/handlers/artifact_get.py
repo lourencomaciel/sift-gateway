@@ -186,14 +186,6 @@ async def handle_artifact_get(
                         }
                     )
                     continue
-                ctx._safe_touch_for_retrieval(
-                    connection,
-                    session_id=session_id,
-                    artifact_id=artifact_id,
-                )
-                commit = getattr(connection, "commit", None)
-                if callable(commit):
-                    commit()
                 return gateway_error(
                     str(precondition["code"]),
                     str(precondition["message"]),
@@ -240,15 +232,6 @@ async def handle_artifact_get(
                         )
             except CursorStaleError as exc:
                 return ctx._cursor_error(exc)
-
-        ctx._safe_touch_for_retrieval_many(
-            connection,
-            session_id=session_id,
-            artifact_ids=related_ids,
-        )
-        commit = getattr(connection, "commit", None)
-        if callable(commit):
-            commit()
 
         if target == "mapped":
             root_entries: list[dict[str, Any]] = []
