@@ -6,7 +6,7 @@
 # Clone and install with dev dependencies
 git clone https://github.com/lourencomaciel/sift-mcp.git
 cd sift-mcp
-uv sync --extra dev --extra postgres
+uv sync --extra dev
 ```
 
 ## Running Tests
@@ -15,8 +15,8 @@ uv sync --extra dev --extra postgres
 # Unit tests
 uv run python -m pytest tests/unit/ -q
 
-# Integration tests (requires live Postgres)
-SIFT_MCP_TEST_POSTGRES_DSN="postgresql://..." uv run python -m pytest tests/integration/ -q
+# Integration tests (SQLite, no external deps)
+uv run python -m pytest tests/integration/ -q
 ```
 
 ## Linting & Formatting
@@ -56,14 +56,14 @@ src/sift_mcp/
   artifacts/               # envelope and artifact creation pipeline
   mapping/                 # full + partial mapping
   retrieval/               # bounded deterministic traversal responses
-  cursor/                  # signed cursor payload + HMAC verification
-  query/                   # JSONPath subset, select paths, where DSL
+  cursor/                  # cursor token encoding, payload construction, TTL
+  query/                   # JSONPath, select paths, structured filters, SQL
   tools/                   # gateway and artifact retrieval tool handlers
   jobs/                    # soft delete, hard delete, reconcile tasks
   obs/                     # structured logging + metrics
 tests/
   unit/                    # unit tests
-  integration/             # integration tests (requires PostgreSQL)
+  integration/             # integration tests
 docs/
   README.md              # Documentation map and reading paths
   architecture.md         # Architecture and design specification

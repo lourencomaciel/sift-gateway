@@ -22,7 +22,7 @@ jobs:
         uses: astral-sh/setup-uv@v7
 
       - name: Install dependencies
-        run: uv sync --extra dev --extra postgres
+        run: uv sync --extra dev
 
       - name: Lint
         run: uv run python -m ruff check src tests
@@ -42,7 +42,7 @@ jobs:
         uses: astral-sh/setup-uv@v7
 
       - name: Install dependencies
-        run: uv sync --extra dev --extra postgres
+        run: uv sync --extra dev
 
       - name: Type check
         run: uv run python -m mypy src
@@ -62,7 +62,7 @@ jobs:
         uses: astral-sh/setup-uv@v7
 
       - name: Install dependencies
-        run: uv sync --extra dev --extra postgres
+        run: uv sync --extra dev
 
       - name: Unit tests
         run: uv run python -m pytest tests/unit/ -q

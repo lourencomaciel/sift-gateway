@@ -303,3 +303,32 @@ def evaluate_jsonpath(
                 raise JsonPathError(msg)
         nodes = next_nodes
     return nodes
+
+
+def reject_wildcards(path: str, *, context: str) -> None:
+    """Validate that a JSONPath contains no wildcard segments.
+
+    Parse the path and raise ``ValueError`` if it is malformed
+    or contains ``[*]``.  Used by SQL compilation layers where
+    SQLite ``json_extract`` does not support wildcards.
+
+    Args:
+        path: JSONPath string to validate.
+        context: Short label (e.g. ``"select"`` or ``"filter"``)
+            included in the error message for diagnostics.
+
+    Raises:
+        ValueError: If the path is invalid or contains a wildcard.
+    """
+    try:
+        segments = parse_jsonpath(path)
+    except JsonPathError as exc:
+        msg = f"invalid {context} path {path!r}: {exc}"
+        raise ValueError(msg) from exc
+    for seg in segments:
+        if seg.kind == "wildcard":
+            msg = (
+                f"wildcard paths not supported in"
+                f" {context}: {path}"
+            )
+            raise ValueError(msg)

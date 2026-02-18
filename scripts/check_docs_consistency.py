@@ -9,7 +9,6 @@ Checks:
 - `docs/api_contracts.md` does not include unsupported `BUDGET_EXCEEDED` code.
 - `docs/recipes.md` does not claim code-query result caching behavior.
 - `README.md` documents `query_kind="search"` as current behavior, not future work.
-- `docs/quickstart.md` does not claim a hardcoded default Postgres DSN.
 - `docs/observability.md` lists all `LogEvents` event values.
 - `docs/errors.md` includes required core gateway error codes.
 """
@@ -26,7 +25,6 @@ ROOT = Path(__file__).resolve().parents[1]
 README_PATH = ROOT / "README.md"
 API_CONTRACTS_PATH = ROOT / "docs" / "api_contracts.md"
 RECIPES_DOC_PATH = ROOT / "docs" / "recipes.md"
-QUICKSTART_DOC_PATH = ROOT / "docs" / "quickstart.md"
 CONFIG_DOC_PATH = ROOT / "docs" / "config.md"
 ERRORS_DOC_PATH = ROOT / "docs" / "errors.md"
 OBS_DOC_PATH = ROOT / "docs" / "observability.md"
@@ -89,7 +87,6 @@ def main() -> int:
     readme = _read_text(README_PATH)
     api_contracts_doc = _read_text(API_CONTRACTS_PATH)
     recipes_doc = _read_text(RECIPES_DOC_PATH)
-    quickstart_doc = _read_text(QUICKSTART_DOC_PATH)
     config_doc = _read_text(CONFIG_DOC_PATH)
     errors_doc = _read_text(ERRORS_DOC_PATH)
     observability_doc = _read_text(OBS_DOC_PATH)
@@ -172,16 +169,6 @@ def main() -> int:
         if _contains_phrase(readme, snippet):
             failures.append(
                 "README.md contains outdated query_kind=search guidance: "
-                f"{snippet}"
-            )
-
-    forbidden_quickstart_snippets = [
-        "postgresql://sift:sift@localhost:5432/sift",
-    ]
-    for snippet in forbidden_quickstart_snippets:
-        if _contains_phrase(quickstart_doc, snippet):
-            failures.append(
-                "docs/quickstart.md contains hardcoded postgres DSN claim: "
                 f"{snippet}"
             )
 

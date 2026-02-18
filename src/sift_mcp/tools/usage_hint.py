@@ -271,7 +271,12 @@ def build_usage_hint(
                 "If projection fails for this root shape, use get + jsonpath instead"
             )
             schema_parts.append(
-                "Add where to filter (e.g. where='to_number(spend) > 0')"
+                'Add where to filter, e.g. '
+            'where={"path":"$.spend","op":"gt","value":0}. '
+            "Ops: eq, ne, gt, gte, lt, lte, in, contains, "
+            "array_contains, exists, not_exists. "
+            'Combine: {"logic":"and"|"or","filters":[...]}. '
+            'Negate: {"not":{...}}'
             )
             schema_parts.append(
                 "Use count_only=true for counts, distinct=true for unique values"
@@ -364,7 +369,12 @@ def build_usage_hint(
             f"select_paths=[{select_list}]"
             ") to project specific fields"
         )
-        parts.append("Add where to filter (e.g. where='to_number(spend) > 0')")
+        parts.append('Add where to filter, e.g. '
+            'where={"path":"$.spend","op":"gt","value":0}. '
+            "Ops: eq, ne, gt, gte, lt, lte, in, contains, "
+            "array_contains, exists, not_exists. "
+            'Combine: {"logic":"and"|"or","filters":[...]}. '
+            'Negate: {"not":{...}}')
         parts.append(
             "Use count_only=true for counts, distinct=true for unique values"
         )

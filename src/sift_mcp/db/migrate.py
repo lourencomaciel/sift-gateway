@@ -75,7 +75,7 @@ def _ensure_schema_migrations(connection: ConnectionLike) -> None:
     Args:
         connection: Database connection to execute DDL on.
     """
-    # Use CURRENT_TIMESTAMP which works on both Postgres and SQLite.
+    # Use CURRENT_TIMESTAMP (standard SQL, works in SQLite).
     connection.execute(
         """
         CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -191,16 +191,12 @@ def _split_sql_statements(sql: str) -> list[str]:
 def apply_migrations(
     connection: ConnectionLike,
     migrations_dir: Path,
-    *,
-    param_marker: str = "%s",
 ) -> list[str]:
     """Apply pending SQL migrations and record them.
 
     Args:
         connection: Database connection for executing DDL.
         migrations_dir: Directory containing numbered SQL files.
-        param_marker: SQL placeholder (``%s`` for Postgres,
-            ``?`` for SQLite).
 
     Returns:
         List of migration names that were newly applied.
@@ -222,11 +218,11 @@ def apply_migrations(
         # for multi-statement migrations.
         for stmt in _split_sql_statements(migration.sql):
             connection.execute(stmt)
-        insert_sql = (
+        connection.execute(
             "INSERT INTO schema_migrations"
-            f" (migration_name) VALUES ({param_marker})"
+            " (migration_name) VALUES (%s)",
+            (migration.name,),
         )
-        connection.execute(insert_sql, (migration.name,))
         newly_applied.append(migration.name)
 
     connection.commit()

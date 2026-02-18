@@ -84,25 +84,25 @@ def test_load_gateway_config_reads_state_config(tmp_path: Path) -> None:
     state_dir = tmp_path / "state"
     state_dir.mkdir(parents=True, exist_ok=True)
     (state_dir / "config.json").write_text(
-        json.dumps({"postgres_dsn": "postgresql://example.local/db"}),
+        json.dumps({"passthrough_max_bytes": 16384}),
         encoding="utf-8",
     )
 
     config = load_gateway_config(data_dir_override=str(tmp_path))
-    assert config.postgres_dsn == "postgresql://example.local/db"
+    assert config.passthrough_max_bytes == 16384
 
 
 def test_env_overrides_state_config(tmp_path: Path, monkeypatch) -> None:
     state_dir = tmp_path / "state"
     state_dir.mkdir(parents=True, exist_ok=True)
     (state_dir / "config.json").write_text(
-        json.dumps({"postgres_dsn": "postgresql://from-file/db"}),
+        json.dumps({"passthrough_max_bytes": 16384}),
         encoding="utf-8",
     )
-    monkeypatch.setenv("SIFT_MCP_POSTGRES_DSN", "postgresql://from-env/db")
+    monkeypatch.setenv("SIFT_MCP_PASSTHROUGH_MAX_BYTES", "32768")
 
     config = load_gateway_config(data_dir_override=str(tmp_path))
-    assert config.postgres_dsn == "postgresql://from-env/db"
+    assert config.passthrough_max_bytes == 32768
 
 
 def test_nested_env_overrides_state_config(tmp_path: Path, monkeypatch) -> None:

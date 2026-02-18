@@ -59,15 +59,6 @@ ON CONFLICT (workspace_id, session_id, artifact_id)
 DO UPDATE SET last_seen_at = EXCLUDED.last_seen_at;
 """
 
-_BATCH_UPSERT_ARTIFACT_REFS_SQL = """
-INSERT INTO artifact_refs (
-    workspace_id, session_id, artifact_id,
-    first_seen_at, last_seen_at)
-SELECT %s, %s, unnest(%s::text[]), NOW(), NOW()
-ON CONFLICT (workspace_id, session_id, artifact_id)
-DO UPDATE SET last_seen_at = EXCLUDED.last_seen_at;
-"""
-
 _TOUCH_ARTIFACT_SQL = """
 UPDATE artifacts
 SET last_referenced_at = NOW()
@@ -75,15 +66,6 @@ WHERE workspace_id = %s
   AND artifact_id = %s
   AND deleted_at IS NULL;
 """
-
-_BATCH_TOUCH_ARTIFACTS_SQL = """
-UPDATE artifacts
-SET last_referenced_at = NOW()
-WHERE workspace_id = %s
-  AND artifact_id = ANY(%s::text[])
-  AND deleted_at IS NULL;
-"""
-
 
 # ---------------------------------------------------------------------------
 # Helper functions
@@ -199,10 +181,7 @@ def touch_for_retrieval(
 def batch_upsert_artifact_refs(
     conn: Any, session_id: str, artifact_ids: list[str]
 ) -> bool:
-    """Upsert multiple artifact_refs rows in a single query.
-
-    Uses Postgres ``unnest`` for batch insert when available,
-    falling back to individual inserts for SQLite.
+    """Upsert multiple artifact_refs rows.
 
     Args:
         conn: Database connection with cursor support.
@@ -214,29 +193,17 @@ def batch_upsert_artifact_refs(
     """
     if not artifact_ids:
         return False
-
-    from sift_mcp.db.backend import _SqliteConnectionProxy
-
-    if isinstance(conn, _SqliteConnectionProxy):
-        with conn.cursor() as cur:
-            for aid in artifact_ids:
-                cur.execute(
-                    _UPSERT_ARTIFACT_REF_SQL,
-                    (WORKSPACE_ID, session_id, aid),
-                )
-    else:
-        with conn.cursor() as cur:
+    with conn.cursor() as cur:
+        for aid in artifact_ids:
             cur.execute(
-                _BATCH_UPSERT_ARTIFACT_REFS_SQL,
-                (WORKSPACE_ID, session_id, artifact_ids),
+                _UPSERT_ARTIFACT_REF_SQL,
+                (WORKSPACE_ID, session_id, aid),
             )
     return True
 
 
 def batch_touch_artifacts(conn: Any, artifact_ids: list[str]) -> int:
     """Touch many artifacts and return the number of rows updated.
-
-    Uses a single UPDATE for Postgres and a per-row fallback for SQLite.
 
     Args:
         conn: Database connection with cursor support.
@@ -247,25 +214,17 @@ def batch_touch_artifacts(conn: Any, artifact_ids: list[str]) -> int:
     """
     if not artifact_ids:
         return 0
-
-    from sift_mcp.db.backend import _SqliteConnectionProxy
-
-    if isinstance(conn, _SqliteConnectionProxy):
-        touched = 0
-        with conn.cursor() as cur:
-            for artifact_id in artifact_ids:
-                cur.execute(_TOUCH_ARTIFACT_SQL, (WORKSPACE_ID, artifact_id))
-                rowcount = getattr(cur, "rowcount", 0)
-                if isinstance(rowcount, int) and rowcount > 0:
-                    touched += int(rowcount)
-        return touched
-
+    touched = 0
     with conn.cursor() as cur:
-        cur.execute(_BATCH_TOUCH_ARTIFACTS_SQL, (WORKSPACE_ID, artifact_ids))
-        rowcount = getattr(cur, "rowcount", 0)
-        if isinstance(rowcount, int) and rowcount > 0:
-            return int(rowcount)
-    return 0
+        for artifact_id in artifact_ids:
+            cur.execute(
+                _TOUCH_ARTIFACT_SQL,
+                (WORKSPACE_ID, artifact_id),
+            )
+            rowcount = getattr(cur, "rowcount", 0)
+            if isinstance(rowcount, int) and rowcount > 0:
+                touched += int(rowcount)
+    return touched
 
 
 def touch_for_search(

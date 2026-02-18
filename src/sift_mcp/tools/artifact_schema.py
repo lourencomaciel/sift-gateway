@@ -1,14 +1,5 @@
 """Shared SQL helpers for persisted schema rows."""
 
-FETCH_SCHEMA_ROOTS_SQL = """
-SELECT root_key, root_path, schema_version, schema_hash,
-       mode, completeness, observed_records, dataset_hash,
-       traversal_contract_version, map_budget_fingerprint
-FROM artifact_schema_roots
-WHERE workspace_id = %s AND artifact_id = %s
-ORDER BY observed_records DESC, root_path ASC
-"""
-
 FETCH_SCHEMA_ROOT_BY_PATH_SQL = """
 SELECT root_key, root_path, schema_version, schema_hash,
        mode, completeness, observed_records, dataset_hash,

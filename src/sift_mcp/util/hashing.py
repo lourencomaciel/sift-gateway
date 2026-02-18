@@ -10,7 +10,6 @@ deterministic and side-effect-free.
 from __future__ import annotations
 
 import hashlib
-import struct
 from typing import Any
 
 from sift_mcp.canon.rfc8785 import canonical_bytes
@@ -77,25 +76,6 @@ def blob_id(binary_hash_hex: str) -> str:
         Blob ID string (e.g. ``bin_<32 hex chars>``).
     """
     return BLOB_ID_PREFIX + binary_hash_hex[:32]
-
-
-def advisory_lock_keys(request_key_str: str) -> tuple[int, int]:
-    """Derive two signed int32 keys for pg_advisory_lock.
-
-    Hash the request key with SHA-256 and unpack the first
-    8 bytes as two big-endian unsigned 32-bit integers,
-    then convert each to signed int32.
-
-    Args:
-        request_key_str: Request key string to hash.
-
-    Returns:
-        Tuple of two signed int32 values suitable for
-        ``pg_try_advisory_lock(key1, key2)``.
-    """
-    digest = hashlib.sha256(request_key_str.encode("utf-8")).digest()
-    key1_u32, key2_u32 = struct.unpack(">II", digest[:8])
-    return _to_signed_int32(key1_u32), _to_signed_int32(key2_u32)
 
 
 def payload_hash_full(canonical_bytes_uncompressed: bytes) -> str:
@@ -231,15 +211,3 @@ def sample_set_hash(
     return hashlib.sha256(canonical_bytes(payload)).hexdigest()[:32]
 
 
-def _to_signed_int32(value: int) -> int:
-    """Convert an unsigned 32-bit integer to signed int32.
-
-    Args:
-        value: Unsigned 32-bit integer (0 to 0xFFFFFFFF).
-
-    Returns:
-        Signed int32 in the range -2^31 to 2^31 - 1.
-    """
-    if value >= 0x80000000:
-        return value - 0x100000000
-    return value

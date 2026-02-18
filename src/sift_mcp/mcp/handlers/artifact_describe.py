@@ -67,10 +67,10 @@ async def handle_artifact_describe(
     from sift_mcp.tools.artifact_describe import (
         FETCH_DESCRIBE_SQL,
         FETCH_ROOTS_SQL,
-        FETCH_SCHEMA_FIELDS_SQL,
         FETCH_SCHEMA_ROOTS_SQL,
         validate_describe_args,
     )
+    from sift_mcp.tools.artifact_schema import FETCH_SCHEMA_FIELDS_SQL
 
     err = validate_describe_args(arguments)
     if err is not None:

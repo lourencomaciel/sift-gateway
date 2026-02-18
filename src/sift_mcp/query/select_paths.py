@@ -1,22 +1,17 @@
-"""Canonicalize select-path lists and project records.
+"""Canonicalize select-path lists and compute stable hashes.
 
 Deduplicate and sort JSONPath select-path lists into a
-canonical form, compute stable hashes over them, and project
-selected fields from JSON records.  Key exports are
-``canonicalize_select_paths``, ``select_paths_hash``, and
-``project_select_paths``.
+canonical form and compute stable hashes over them.  Key
+exports are ``canonicalize_select_paths`` and
+``select_paths_hash``.
 """
 
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Any
 
 from sift_mcp.canon.rfc8785 import canonical_bytes
-from sift_mcp.query.jsonpath import (
-    canonicalize_jsonpath,
-    evaluate_jsonpath,
-)
+from sift_mcp.query.jsonpath import canonicalize_jsonpath
 from sift_mcp.util.hashing import sha256_hex
 
 
@@ -80,54 +75,3 @@ def select_paths_hash(
         max_path_segments=max_path_segments,
     )
     return sha256_hex(canonical_bytes(canonical))
-
-
-def project_select_paths(
-    record: Any,
-    paths: Sequence[str],
-    *,
-    missing_as_null: bool = False,
-    max_jsonpath_length: int | None = None,
-    max_path_segments: int | None = None,
-    max_wildcard_expansion_total: int | None = None,
-) -> dict[str, Any]:
-    """Project selected fields from a JSON record.
-
-    Evaluate each canonical select-path against the record
-    and collect matched values into a dict keyed by path.
-    Single matches are returned as scalars; multiple matches
-    (from wildcards) are returned as lists.
-
-    Args:
-        record: JSON-compatible value to project from.
-        paths: JSONPath strings selecting desired fields.
-        missing_as_null: If True, emit None for paths that
-            match nothing instead of omitting the key.
-        max_jsonpath_length: Optional cap per path string.
-        max_path_segments: Optional cap on segments per path.
-        max_wildcard_expansion_total: Optional cumulative cap
-            on wildcard expansion across all evaluations.
-
-    Returns:
-        Dict mapping canonical path strings to their
-        projected values.
-    """
-    projected: dict[str, Any] = {}
-    for path in canonicalize_select_paths(
-        paths,
-        max_jsonpath_length=max_jsonpath_length,
-        max_path_segments=max_path_segments,
-    ):
-        values = evaluate_jsonpath(
-            record,
-            path,
-            max_length=max_jsonpath_length,
-            max_segments=max_path_segments,
-            max_wildcard_expansion_total=max_wildcard_expansion_total,
-        )
-        if not values:
-            if missing_as_null:
-                projected[path] = None
-            continue
-        projected[path] = values[0] if len(values) == 1 else values
-    return projected

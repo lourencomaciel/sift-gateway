@@ -1,15 +1,8 @@
-"""Re-export cursor signing, payload, and secret management API."""
+"""Re-export cursor token, payload, and sample-set hash API."""
 
-from sift_mcp.cursor.hmac import (
-    CursorExpiredError,
-    CursorTokenError,
-    sign_cursor_payload,
-    verify_cursor_token,
-)
 from sift_mcp.cursor.payload import (
     CursorBindingError,
     CursorStaleError,
-    assert_cursor_binding,
     build_cursor_payload,
 )
 from sift_mcp.cursor.sample_set_hash import (
@@ -17,27 +10,22 @@ from sift_mcp.cursor.sample_set_hash import (
     assert_sample_set_hash_binding,
     compute_sample_set_hash,
 )
-from sift_mcp.cursor.secrets import (
-    CursorSecrets,
-    load_cursor_secrets,
-    load_or_create_cursor_secrets,
-    save_cursor_secrets,
+from sift_mcp.cursor.token import (
+    CursorExpiredError,
+    CursorTokenError,
+    decode_cursor,
+    encode_cursor,
 )
 
 __all__ = [
     "CursorBindingError",
     "CursorExpiredError",
-    "CursorSecrets",
     "CursorStaleError",
     "CursorTokenError",
     "SampleSetHashBindingError",
-    "assert_cursor_binding",
     "assert_sample_set_hash_binding",
     "build_cursor_payload",
     "compute_sample_set_hash",
-    "load_cursor_secrets",
-    "load_or_create_cursor_secrets",
-    "save_cursor_secrets",
-    "sign_cursor_payload",
-    "verify_cursor_token",
+    "decode_cursor",
+    "encode_cursor",
 ]

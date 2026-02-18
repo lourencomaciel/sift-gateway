@@ -12,10 +12,9 @@ from sift_mcp.config.settings import (
     PaginationConfig,
     UpstreamConfig,
 )
-from sift_mcp.cursor.hmac import CursorExpiredError
 from sift_mcp.cursor.payload import CursorStaleError
 from sift_mcp.cursor.sample_set_hash import compute_sample_set_hash
-from sift_mcp.cursor.secrets import CursorSecrets
+from sift_mcp.cursor.token import CursorExpiredError
 from sift_mcp.fs.blob_store import BlobStore
 from sift_mcp.mcp.server import (
     GatewayServer,
@@ -27,8 +26,8 @@ from sift_mcp.mcp.upstream import (
 )
 from sift_mcp.obs.metrics import GatewayMetrics, counter_value
 from sift_mcp.pagination.extract import PaginationState
+from sift_mcp.query.filters import filter_hash, parse_filter_dict
 from sift_mcp.query.select_paths import select_paths_hash
-from sift_mcp.query.where_hash import where_hash
 from sift_mcp.storage.payload_store import prepare_payload
 
 
@@ -371,30 +370,14 @@ def test_status_handler_rejects_non_boolean_probe_upstreams(
     assert response["code"] == "INVALID_ARGUMENT"
 
 
-def test_status_handler_includes_cursor_secrets_info(tmp_path: Path) -> None:
-    """handle_status should include sanitized cursor secret metadata."""
-    secrets = CursorSecrets(
-        active={"v1": "secret_a", "v2": "secret_b"},
-        signing_version="v2",
-    )
-    server = GatewayServer(
-        config=GatewayConfig(data_dir=tmp_path),
-        cursor_secrets=secrets,
-    )
-    response = asyncio.run(server.handle_status({}))
-    cursor = response["cursor"]
-    assert cursor["secrets_loaded"] is True
-    assert cursor["active_secret_count"] == 2
-
-
-def test_status_handler_omits_cursor_secrets_when_not_loaded(
+def test_status_handler_cursor_section_has_ttl_only(
     tmp_path: Path,
 ) -> None:
-    """When cursor_secrets is None, the status response should not include secret fields."""
+    """Cursor section should only contain TTL setting."""
     server = _server(tmp_path)
-    assert server.cursor_secrets is None
     response = asyncio.run(server.handle_status({}))
     cursor = response["cursor"]
+    assert cursor["cursor_ttl_minutes"] == 60
     assert "secrets_loaded" not in cursor
     assert "active_secret_count" not in cursor
 
@@ -466,12 +449,6 @@ def test_cursor_error_updates_metrics(tmp_path: Path) -> None:
     expired = server._cursor_error(CursorExpiredError("expired"))
     assert expired["code"] == "CURSOR_EXPIRED"
     assert counter_value(server.metrics.cursor_expired) == 1
-
-    stale = server._cursor_error(
-        CursorStaleError("cursor where_canonicalization_mode mismatch")
-    )
-    assert stale["code"] == "CURSOR_STALE"
-    assert counter_value(server.metrics.cursor_stale_where_mode) == 1
 
     stale_budget = server._cursor_error(
         CursorStaleError("cursor map_budget_fingerprint mismatch")
@@ -1905,7 +1882,8 @@ def test_artifact_select_db_runtime_partial_projects_records(
                     "mbf",
                 )
             ),
-            _SeqCursor(all_rows=[(0, {"id": 1, "name": "A"}, 16, "h1")]),
+            _SeqCursor(all_rows=[(0,)]),
+            _SeqCursor(all_rows=[(0, {"$.id": 1})]),
         ]
     )
     server = GatewayServer(
@@ -1971,12 +1949,7 @@ def test_artifact_select_cursor_sample_set_mismatch_returns_stale(
                     "mbf",
                 )
             ),
-            _SeqCursor(
-                all_rows=[
-                    (0, {"id": 1}, 10, "h1"),
-                    (1, {"id": 2}, 10, "h2"),
-                ]
-            ),
+            _SeqCursor(all_rows=[(0,), (1,)]),
         ]
     )
     server = GatewayServer(
@@ -1997,9 +1970,8 @@ def test_artifact_select_cursor_sample_set_mismatch_returns_stale(
             "scope": "single",
             "root_path": "$.items",
             "select_paths_hash": select_paths_hash(["$.id"]),
-            "where_hash": where_hash(
-                where_expr,
-                mode=server.config.where_canonicalization_mode.value,
+            "where_hash": filter_hash(
+                parse_filter_dict(where_expr),
             ),
             "artifact_generation": 1,
             "map_budget_fingerprint": "mbf",
@@ -2062,10 +2034,11 @@ def test_artifact_select_cursor_includes_partial_binding_fields(
                     "mbf",
                 )
             ),
+            _SeqCursor(all_rows=[(0,), (1,)]),
             _SeqCursor(
                 all_rows=[
-                    (0, {"id": 1}, 10, "h1"),
-                    (1, {"id": 2}, 10, "h2"),
+                    (0, {"$.id": 1}),
+                    (1, {"$.id": 2}),
                 ]
             ),
         ]
@@ -2153,21 +2126,10 @@ def test_artifact_select_cursor_restores_scope_when_omitted(
                 )
             ),
             _SeqCursor(
-                one=(
-                    "art_1",
-                    "payload_hash",
-                    None,
-                    "full",
-                    "ready",
-                    1,
-                    0,
-                    "mbf",
-                    {"content": [], "items": [{"id": 1}, {"id": 2}]},
-                    "gzip",
-                    b"",
-                    0,
-                    False,
-                )
+                all_rows=[
+                    (0, {"$.id": 1}),
+                    (1, {"$.id": 2}),
+                ]
             ),
         ]
     )
@@ -2239,10 +2201,11 @@ def test_artifact_select_cursor_always_binds_order_by(
                     "mbf",
                 )
             ),
+            _SeqCursor(all_rows=[(0,), (1,)]),
             _SeqCursor(
                 all_rows=[
-                    (0, {"id": 1}, 10, "h1"),
-                    (1, {"id": 2}, 10, "h2"),
+                    (0, {"$.id": 1}),
+                    (1, {"$.id": 2}),
                 ]
             ),
         ]
@@ -2428,73 +2391,6 @@ def test_check_sample_corruption_returns_internal_when_rows_missing() -> None:
     assert result["details"]["actual_count"] == 1
 
 
-def test_artifact_select_returns_internal_on_sample_corruption(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
-    # root says sample_indices=[0, 1] but only sample_index=0 exists
-    conn = _SeqConnection(
-        [
-            # artifact_visible
-            _SeqCursor(one=(1,)),
-            # artifact_meta
-            _SeqCursor(
-                one=("art_1", "partial", "ready", "off", None, 1, "mbf")
-            ),
-            # root_row with sample_indices=[0, 1]
-            _SeqCursor(
-                one=(
-                    "rk_1",
-                    "$.items",
-                    100,
-                    "array",
-                    {"id": {"number": 1}},
-                    [0, 1],
-                    {"sampled_prefix_len": 9},
-                )
-            ),
-            _SeqCursor(
-                one=(
-                    "rk_1",
-                    "$.items",
-                    "schema_v1",
-                    "sha256:schema_items",
-                    "sampled",
-                    "partial",
-                    1,
-                    "sha256:dataset_items",
-                    "traversal_v1",
-                    "mbf",
-                )
-            ),
-            # sample_rows: only index 0 present
-            _SeqCursor(all_rows=[(0, {"id": 1}, 8, "h0")]),
-        ]
-    )
-    server = GatewayServer(
-        config=GatewayConfig(data_dir=tmp_path),
-        db_pool=_SeqPool(conn),  # type: ignore[arg-type]
-    )
-    monkeypatch.setattr(
-        server, "_safe_touch_for_retrieval", lambda *args, **kwargs: None
-    )
-
-    response = asyncio.run(
-        server.handle_artifact(
-            {
-                "action": "query",
-                "query_kind": "select",
-                "scope": "single",
-                "_gateway_context": {"session_id": "sess_1"},
-                "artifact_id": "art_1",
-                "root_path": "$.items",
-                "select_paths": ["id"],
-            }
-        )
-    )
-    assert response["code"] == "INTERNAL"
-    assert response["details"]["missing_indices"] == [1]
-
 
 # ---------------------------------------------------------------------------
 # Health gate: INTERNAL on unhealthy DB or FS
@@ -2505,11 +2401,11 @@ def test_handle_mirrored_tool_returns_internal_when_db_unhealthy(
     tmp_path: Path,
 ) -> None:
     """When db_pool exists, db_ok=False, and recovery probe fails, return INTERNAL."""
-    import psycopg
+    import sqlite3
 
     class _DeadPool:
         def connection(self):
-            raise psycopg.OperationalError("connection refused")
+            raise sqlite3.OperationalError("connection refused")
 
     server = GatewayServer(
         config=GatewayConfig(data_dir=tmp_path),
@@ -2634,11 +2530,11 @@ def test_handle_mirrored_tool_returns_internal_on_cache_check_connectivity_failu
     tmp_path: Path,
 ) -> None:
     """When Phase 1 cache check hits OperationalError, return INTERNAL and mark db_ok=False."""
-    import psycopg
+    import sqlite3
 
     class _FailPool:
         def connection(self):
-            raise psycopg.OperationalError("connection refused")
+            raise sqlite3.OperationalError("connection refused")
 
     server = GatewayServer(
         config=GatewayConfig(data_dir=tmp_path),
@@ -2751,7 +2647,7 @@ def test_handle_mirrored_tool_returns_internal_on_db_persist_failure(
     monkeypatch,
 ) -> None:
     """When persist_artifact raises a DB error, return INTERNAL and mark db_ok=False."""
-    import psycopg
+    import sqlite3
 
     class _FailPool:
         def __init__(self) -> None:
@@ -2761,7 +2657,7 @@ def test_handle_mirrored_tool_returns_internal_on_db_persist_failure(
             self._checkouts += 1
             if self._checkouts == 1:
                 return _FakeConnectionContext(None)
-            raise psycopg.OperationalError("connection lost")
+            raise sqlite3.OperationalError("connection lost")
 
     server = GatewayServer(
         config=GatewayConfig(
@@ -2808,7 +2704,7 @@ def test_handle_mirrored_tool_keeps_db_ok_on_integrity_error(
     monkeypatch,
 ) -> None:
     """IntegrityError (FK violation, unique conflict) returns INTERNAL but keeps db_ok=True."""
-    import psycopg
+    import sqlite3
 
     server = GatewayServer(
         config=GatewayConfig(data_dir=tmp_path, passthrough_max_bytes=0),
@@ -2829,7 +2725,7 @@ def test_handle_mirrored_tool_keeps_db_ok_on_integrity_error(
     monkeypatch.setattr("sift_mcp.mcp.server.call_upstream_tool", _fake_call)
 
     def _fk_persist(**_kw):
-        raise psycopg.IntegrityError("violates foreign key constraint")
+        raise sqlite3.IntegrityError("violates foreign key constraint")
 
     monkeypatch.setattr(
         "sift_mcp.mcp.handlers.mirrored_tool.persist_artifact",
@@ -3038,7 +2934,7 @@ def test_handle_mirrored_tool_triggers_mapping_on_single_connection(
     monkeypatch,
 ) -> None:
     """Mapping reuses persist connection after one resolve checkout."""
-    import psycopg
+    import sqlite3
 
     checkout_count = 0
     mapping_called = False
@@ -3050,7 +2946,7 @@ def test_handle_mirrored_tool_triggers_mapping_on_single_connection(
             nonlocal checkout_count
             checkout_count += 1
             if checkout_count > 2:
-                raise psycopg.OperationalError("pool exhausted")
+                raise sqlite3.OperationalError("pool exhausted")
             return _FakeConnectionContext(None)
 
     server = GatewayServer(
@@ -3636,7 +3532,7 @@ def test_handle_mirrored_tool_quota_check_marks_unhealthy_on_connectivity_error(
     monkeypatch,
 ) -> None:
     """OperationalError during quota check marks db_ok=False and returns INTERNAL."""
-    import psycopg
+    import sqlite3
 
     class _FailOnSecondPool:
         """First connection succeeds (probe), second fails (quota check)."""
@@ -3648,7 +3544,7 @@ def test_handle_mirrored_tool_quota_check_marks_unhealthy_on_connectivity_error(
             if self._call_count == 1:
                 # Probe succeeds
                 return _FakeConnectionContext(None)
-            raise psycopg.OperationalError("connection refused")
+            raise sqlite3.OperationalError("connection refused")
 
     server = GatewayServer(
         config=GatewayConfig(data_dir=tmp_path, passthrough_max_bytes=0),
@@ -3807,10 +3703,11 @@ def test_artifact_select_includes_total_matched(
                     "mbf",
                 )
             ),
+            _SeqCursor(all_rows=[(0,), (1,)]),
             _SeqCursor(
                 all_rows=[
-                    (0, {"id": 1, "name": "A"}, 16, "h1"),
-                    (1, {"id": 2, "name": "B"}, 16, "h2"),
+                    (0, {"$.id": 1}),
+                    (1, {"$.id": 2}),
                 ]
             ),
         ]
@@ -3872,12 +3769,7 @@ def test_artifact_select_count_only(tmp_path: Path, monkeypatch) -> None:
                     "mbf",
                 )
             ),
-            _SeqCursor(
-                all_rows=[
-                    (0, {"id": 1, "name": "A"}, 16, "h1"),
-                    (1, {"id": 2, "name": "B"}, 16, "h2"),
-                ]
-            ),
+            _SeqCursor(one=(2,)),
         ]
     )
     server = GatewayServer(
@@ -3941,12 +3833,7 @@ def test_artifact_select_count_only_with_where_filter(
                     "mbf",
                 )
             ),
-            _SeqCursor(
-                all_rows=[
-                    (0, {"id": 1, "name": "A"}, 16, "h1"),
-                    (1, {"id": 2, "name": "B"}, 16, "h2"),
-                ]
-            ),
+            _SeqCursor(one=(1,)),
         ]
     )
     server = GatewayServer(
@@ -4009,11 +3896,12 @@ def test_artifact_select_distinct_deduplicates(
                     "mbf",
                 )
             ),
+            _SeqCursor(all_rows=[(0,), (1,), (2,)]),
             _SeqCursor(
                 all_rows=[
-                    (0, {"name": "A"}, 16, "h1"),
-                    (1, {"name": "A"}, 16, "h2"),
-                    (2, {"name": "B"}, 16, "h3"),
+                    (0, {"$.name": "A"}),
+                    (1, {"$.name": "A"}),
+                    (2, {"$.name": "B"}),
                 ]
             ),
         ]
@@ -4081,10 +3969,11 @@ def test_artifact_select_distinct_embeds_in_cursor(
                     "mbf",
                 )
             ),
+            _SeqCursor(all_rows=[(0,), (1,)]),
             _SeqCursor(
                 all_rows=[
-                    (0, {"name": "A"}, 16, "h1"),
-                    (1, {"name": "B"}, 16, "h2"),
+                    (0, {"$.name": "A"}),
+                    (1, {"$.name": "B"}),
                 ]
             ),
         ]

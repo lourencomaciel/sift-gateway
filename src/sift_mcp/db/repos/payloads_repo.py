@@ -2,11 +2,6 @@
 
 from __future__ import annotations
 
-try:
-    from psycopg.types.json import Jsonb
-except ImportError:  # SQLite-only install — no psycopg
-    Jsonb = lambda v: v  # type: ignore[assignment,misc]  # noqa: E731
-
 from sift_mcp.constants import WORKSPACE_ID
 
 INSERT_PAYLOAD_BLOB_SQL = """
@@ -62,7 +57,7 @@ def payload_blob_params(
     return (
         WORKSPACE_ID,
         payload_hash_full,
-        Jsonb(envelope) if envelope is not None else None,
+        envelope,
         encoding,
         canonical_bytes,
         canonical_len,

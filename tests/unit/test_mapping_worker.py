@@ -8,6 +8,7 @@ from sift_mcp.config.settings import GatewayConfig
 from sift_mcp.mapping.runner import (
     MappingInput,
     MappingResult,
+    RecordRow,
     RootInventory,
     SampleRecord,
 )
@@ -17,8 +18,10 @@ from sift_mcp.mapping.schema import (
 )
 from sift_mcp.mapping.worker import (
     CONDITIONAL_MAP_UPDATE_SQL,
+    DELETE_RECORDS_SQL,
     DELETE_ROOTS_SQL,
     DELETE_SCHEMA_ROOTS_SQL,
+    INSERT_RECORD_SQL,
     INSERT_ROOT_SQL,
     INSERT_SAMPLE_SQL,
     INSERT_SCHEMA_FIELD_SQL,
@@ -108,6 +111,11 @@ def _partial_ready_result() -> MappingResult:
         traversal_contract_version="traversal_v1",
         map_budget_fingerprint="mbf_1",
     )
+    record_row = RecordRow(
+        root_path="$.items",
+        idx=0,
+        record={"id": 1},
+    )
     return MappingResult(
         map_kind="partial",
         map_status="ready",
@@ -119,12 +127,30 @@ def _partial_ready_result() -> MappingResult:
         map_error=None,
         samples=[sample],
         schemas=[schema],
+        record_rows=[record_row],
     )
 
 
 def test_should_run_mapping_pending() -> None:
     """should_run_mapping returns True for pending status."""
     assert should_run_mapping("pending") is True
+
+
+def test_jsonb_serializes_scalars_as_json_text() -> None:
+    """_jsonb produces JSON text for non-dict/non-list values."""
+    from sift_mcp.mapping.worker import _jsonb
+
+    # dict and list pass through (adapter handles serialization)
+    assert _jsonb({"a": 1}) == {"a": 1}
+    assert _jsonb([1, 2]) == [1, 2]
+
+    # Scalars are serialized as JSON text
+    assert _jsonb(42) == "42"
+    assert _jsonb("hello") == '"hello"'
+    assert _jsonb(True) == "true"
+    assert _jsonb(False) == "false"
+    assert _jsonb(None) == "null"
+    assert _jsonb(3.14) == "3.14"
 
 
 def test_should_run_mapping_stale() -> None:
@@ -223,6 +249,8 @@ def test_persist_mapping_result_writes_roots_and_samples_transactionally() -> (
     assert DELETE_ROOTS_SQL.strip() in connection.queries
     assert INSERT_ROOT_SQL.strip() in connection.queries
     assert INSERT_SAMPLE_SQL.strip() in connection.queries
+    assert DELETE_RECORDS_SQL.strip() in connection.queries
+    assert INSERT_RECORD_SQL.strip() in connection.queries
     assert DELETE_SCHEMA_ROOTS_SQL.strip() in connection.queries
     assert INSERT_SCHEMA_ROOT_SQL.strip() in connection.queries
     assert INSERT_SCHEMA_FIELD_SQL.strip() in connection.queries
@@ -333,6 +361,10 @@ def _full_ready_result() -> MappingResult:
         traversal_contract_version="traversal_v1",
         map_budget_fingerprint=None,
     )
+    record_rows = [
+        RecordRow(root_path="$", idx=i, record={"id": i + 1})
+        for i in range(3)
+    ]
     return MappingResult(
         map_kind="full",
         map_status="ready",
@@ -343,6 +375,7 @@ def _full_ready_result() -> MappingResult:
         prng_version=None,
         map_error=None,
         schemas=[schema],
+        record_rows=record_rows,
     )
 
 
@@ -366,6 +399,9 @@ def test_persist_full_mapping_writes_roots_no_samples() -> None:
     assert DELETE_SCHEMA_ROOTS_SQL.strip() in connection.queries
     assert INSERT_SCHEMA_ROOT_SQL.strip() in connection.queries
     assert INSERT_SCHEMA_FIELD_SQL.strip() in connection.queries
+    # Full mapping writes records
+    assert DELETE_RECORDS_SQL.strip() in connection.queries
+    assert INSERT_RECORD_SQL.strip() in connection.queries
     # Full mapping should NOT write samples
     assert INSERT_SAMPLE_SQL.strip() not in connection.queries
     assert DELETE_SAMPLES_SQL.strip() not in connection.queries
@@ -397,6 +433,8 @@ def test_persist_failed_mapping_commits_without_roots() -> None:
     assert CONDITIONAL_MAP_UPDATE_SQL.strip() in connection.queries
     assert DELETE_ROOTS_SQL.strip() not in connection.queries
     assert INSERT_ROOT_SQL.strip() not in connection.queries
+    assert DELETE_RECORDS_SQL.strip() not in connection.queries
+    assert INSERT_RECORD_SQL.strip() not in connection.queries
 
 
 def test_validate_sample_alignment_rejects_mismatch() -> None:

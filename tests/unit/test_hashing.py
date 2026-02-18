@@ -5,7 +5,6 @@ import hashlib
 import pytest
 
 from sift_mcp.util.hashing import (
-    advisory_lock_keys,
     binary_hash,
     blob_id,
     map_budget_fingerprint,
@@ -62,37 +61,6 @@ def test_blob_id_prefix_and_truncation() -> None:
 def test_blob_id_short_hash() -> None:
     result = blob_id("abc")
     assert result == "bin_abc"
-
-
-# ---- advisory_lock_keys ----
-
-
-def test_advisory_lock_keys_returns_two_ints() -> None:
-    k1, k2 = advisory_lock_keys("some_request_key")
-    assert isinstance(k1, int)
-    assert isinstance(k2, int)
-    assert -(2**31) <= k1 < 2**31
-    assert -(2**31) <= k2 < 2**31
-
-
-def test_advisory_lock_keys_deterministic() -> None:
-    a = advisory_lock_keys("test_key")
-    b = advisory_lock_keys("test_key")
-    assert a == b
-
-
-def test_advisory_lock_keys_differ_for_different_inputs() -> None:
-    a = advisory_lock_keys("key_a")
-    b = advisory_lock_keys("key_b")
-    assert a != b
-
-
-def test_advisory_lock_keys_handles_high_bit() -> None:
-    """Keys with high bit set should be negative (signed 32-bit)."""
-    for test_key in ["a", "b", "ffffffff", "00000000", "deadbeef"]:
-        k1, k2 = advisory_lock_keys(test_key)
-        assert -(2**31) <= k1 < 2**31, f"key1 out of range for input {test_key}"
-        assert -(2**31) <= k2 < 2**31, f"key2 out of range for input {test_key}"
 
 
 # ---- payload_hash_full ----

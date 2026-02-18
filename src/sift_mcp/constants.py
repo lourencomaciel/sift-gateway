@@ -53,7 +53,6 @@ RESOURCES_SUBDIR: str = "resources"
 BLOBS_BIN_SUBDIR: str = "blobs/bin"
 TMP_SUBDIR: str = "tmp"
 LOGS_SUBDIR: str = "logs"
-SECRETS_FILENAME: str = "secrets.json"
 CONFIG_FILENAME: str = "config.json"
 
 # ---------------------------------------------------------------------------
