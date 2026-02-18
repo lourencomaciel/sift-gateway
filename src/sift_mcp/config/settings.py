@@ -36,6 +36,83 @@ from sift_mcp.constants import (
     STATE_SUBDIR,
 )
 
+_CGROUP_MEMORY_LIMIT_SENTINEL_BYTES = 1 << 60
+_IN_MEMORY_MAPPING_BUDGET_NUMERATOR = 1
+_IN_MEMORY_MAPPING_BUDGET_DENOMINATOR = 16
+_IN_MEMORY_MAPPING_BUDGET_MIN_BYTES = 50_000_000
+_IN_MEMORY_MAPPING_BUDGET_MAX_BYTES = 512_000_000
+
+
+def _read_int_file(path: Path) -> int | None:
+    """Read an integer value from a file path.
+
+    Args:
+        path: File path to read.
+
+    Returns:
+        Parsed positive integer value, or ``None`` when
+        unavailable/unparseable.
+    """
+    try:
+        raw = path.read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    if not raw or raw.lower() == "max":
+        return None
+    try:
+        value = int(raw)
+    except ValueError:
+        return None
+    if value <= 0:
+        return None
+    return value
+
+
+def _detect_memory_capacity_bytes() -> int | None:
+    """Detect stable process memory capacity in bytes.
+
+    Prefer cgroup limits when present (container-aware),
+    otherwise fall back to host physical memory.
+    """
+    cgroup_candidates: list[int] = []
+    for path in (
+        Path("/sys/fs/cgroup/memory.max"),
+        Path("/sys/fs/cgroup/memory/memory.limit_in_bytes"),
+    ):
+        value = _read_int_file(path)
+        if value is None:
+            continue
+        if value >= _CGROUP_MEMORY_LIMIT_SENTINEL_BYTES:
+            continue
+        cgroup_candidates.append(value)
+    if cgroup_candidates:
+        return min(cgroup_candidates)
+
+    try:
+        pages = os.sysconf("SC_PHYS_PAGES")
+        page_size = os.sysconf("SC_PAGE_SIZE")
+    except (OSError, ValueError, AttributeError):
+        return None
+    if not isinstance(pages, int) or not isinstance(page_size, int):
+        return None
+    if pages <= 0 or page_size <= 0:
+        return None
+    return pages * page_size
+
+
+def _default_max_in_memory_mapping_bytes() -> int:
+    """Compute startup in-memory mapping budget from capacity."""
+    capacity = _detect_memory_capacity_bytes()
+    if capacity is None:
+        return _IN_MEMORY_MAPPING_BUDGET_MIN_BYTES
+    derived = (
+        capacity * _IN_MEMORY_MAPPING_BUDGET_NUMERATOR
+    ) // _IN_MEMORY_MAPPING_BUDGET_DENOMINATOR
+    return max(
+        _IN_MEMORY_MAPPING_BUDGET_MIN_BYTES,
+        min(_IN_MEMORY_MAPPING_BUDGET_MAX_BYTES, derived),
+    )
+
 
 # ---------------------------------------------------------------------------
 # Enums
@@ -493,6 +570,10 @@ class GatewayConfig(BaseSettings):
 
     # --------------- Full mapping (§13.3) ---------------
     max_full_map_bytes: int = Field(10_000_000, ge=1)
+    max_in_memory_mapping_bytes: int = Field(
+        default_factory=_default_max_in_memory_mapping_bytes,
+        ge=1,
+    )
     max_root_discovery_k: int = Field(3, ge=1)
 
     # --------------- Partial mapping budgets (§13.5.2) ---------------

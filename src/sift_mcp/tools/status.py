@@ -141,6 +141,7 @@ def build_status_response_with_runtime(
             "max_compute_steps": config.max_compute_steps,
             "max_json_part_parse_bytes": config.max_json_part_parse_bytes,
             "max_full_map_bytes": config.max_full_map_bytes,
+            "max_in_memory_mapping_bytes": config.max_in_memory_mapping_bytes,
             "max_bytes_read_partial_map": config.max_bytes_read_partial_map,
             "max_compute_steps_partial_map": (
                 config.max_compute_steps_partial_map
