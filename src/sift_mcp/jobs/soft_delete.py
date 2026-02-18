@@ -2,9 +2,9 @@
 
 Provides batched SQL operations that set ``deleted_at`` on
 artifacts whose TTL has expired or whose last reference is
-older than a threshold.  Supports both Postgres (``FOR UPDATE
-SKIP LOCKED``) and SQLite (subquery) concurrency strategies.
-Exports ``SoftDeleteResult`` and the two runner functions.
+older than a threshold.  Uses SQLite-compatible subquery
+concurrency strategy.  Exports ``SoftDeleteResult`` and the
+two runner functions.
 """
 
 from __future__ import annotations
@@ -13,7 +13,6 @@ from dataclasses import dataclass
 from typing import Any
 
 from sift_mcp.constants import WORKSPACE_ID
-from sift_mcp.db.backend import Dialect
 from sift_mcp.db.protocols import (
     ConnectionLike,
     increment_metric,
@@ -35,34 +34,7 @@ class SoftDeleteResult:
     artifact_ids: list[str]
 
 
-# Use SKIP LOCKED for concurrent safety, recheck predicates
 SOFT_DELETE_BATCH_SQL = """
-WITH candidates AS (
-    SELECT artifact_id, generation
-    FROM artifacts
-    WHERE workspace_id = %s
-      AND deleted_at IS NULL
-      AND expires_at IS NOT NULL
-      AND expires_at <= NOW()
-    ORDER BY expires_at ASC
-    LIMIT %s
-    FOR UPDATE SKIP LOCKED
-)
-UPDATE artifacts a
-SET deleted_at = NOW(),
-    generation = a.generation + 1
-FROM candidates c
-WHERE a.workspace_id = %s
-  AND a.artifact_id = c.artifact_id
-  AND a.generation = c.generation
-  AND a.deleted_at IS NULL
-  AND a.expires_at IS NOT NULL
-  AND a.expires_at <= NOW()
-RETURNING a.artifact_id
-"""
-
-# SQLite version: no table alias on UPDATE, no FROM clause, subquery instead
-SOFT_DELETE_BATCH_SQLITE_SQL = """
 UPDATE artifacts
 SET deleted_at = datetime('now'),
     generation = generation + 1
@@ -82,30 +54,7 @@ WHERE workspace_id = ?
 RETURNING artifact_id
 """
 
-# Soft delete by last_referenced_at threshold
 SOFT_DELETE_UNREFERENCED_SQL = """
-WITH candidates AS (
-    SELECT artifact_id, generation
-    FROM artifacts
-    WHERE workspace_id = %s
-      AND deleted_at IS NULL
-      AND last_referenced_at < %s
-    ORDER BY last_referenced_at ASC
-    LIMIT %s
-    FOR UPDATE SKIP LOCKED
-)
-UPDATE artifacts a
-SET deleted_at = NOW(),
-    generation = a.generation + 1
-FROM candidates c
-WHERE a.workspace_id = %s
-  AND a.artifact_id = c.artifact_id
-  AND a.generation = c.generation
-  AND a.deleted_at IS NULL
-RETURNING a.artifact_id
-"""
-
-SOFT_DELETE_UNREFERENCED_SQLITE_SQL = """
 UPDATE artifacts
 SET deleted_at = datetime('now'),
     generation = generation + 1
@@ -132,7 +81,7 @@ def soft_delete_expired_params(batch_size: int = 100) -> tuple[object, ...]:
     Returns:
         Parameter tuple for the expired soft-delete query.
     """
-    return (WORKSPACE_ID, batch_size, WORKSPACE_ID)
+    return (WORKSPACE_ID, WORKSPACE_ID, batch_size)
 
 
 def soft_delete_unreferenced_params(
@@ -149,7 +98,7 @@ def soft_delete_unreferenced_params(
     Returns:
         Parameter tuple for the unreferenced soft-delete query.
     """
-    return (WORKSPACE_ID, threshold_timestamp, batch_size, WORKSPACE_ID)
+    return (WORKSPACE_ID, WORKSPACE_ID, threshold_timestamp, batch_size)
 
 
 def _extract_artifact_ids(rows: list[tuple[object, ...]]) -> list[str]:
@@ -175,7 +124,6 @@ def run_soft_delete_expired(
     connection: ConnectionLike,
     *,
     batch_size: int = 100,
-    dialect: Dialect = Dialect.POSTGRES,
     metrics: Any | None = None,
     logger: Any | None = None,
 ) -> SoftDeleteResult:
@@ -184,7 +132,6 @@ def run_soft_delete_expired(
     Args:
         connection: Database connection for the transaction.
         batch_size: Maximum artifacts to process per batch.
-        dialect: SQL dialect (Postgres or SQLite).
         metrics: Optional GatewayMetrics for counter updates.
         logger: Optional structured logger override.
 
@@ -193,17 +140,8 @@ def run_soft_delete_expired(
     """
     log = logger or get_logger(component="jobs.soft_delete")
     try:
-        if dialect is Dialect.SQLITE:
-            sql = SOFT_DELETE_BATCH_SQLITE_SQL
-            params: tuple[object, ...] = (
-                WORKSPACE_ID,
-                WORKSPACE_ID,
-                batch_size,
-            )
-        else:
-            sql = SOFT_DELETE_BATCH_SQL
-            params = soft_delete_expired_params(batch_size=batch_size)
-        rows = connection.execute(sql, params).fetchall()
+        params = soft_delete_expired_params(batch_size=batch_size)
+        rows = connection.execute(SOFT_DELETE_BATCH_SQL, params).fetchall()
         artifact_ids = _extract_artifact_ids(rows)
         connection.commit()
         increment_metric(metrics, "prune_soft_deletes", len(artifact_ids))
@@ -228,7 +166,6 @@ def run_soft_delete_unreferenced(
     *,
     threshold_timestamp: str,
     batch_size: int = 100,
-    dialect: Dialect = Dialect.POSTGRES,
     metrics: Any | None = None,
     logger: Any | None = None,
 ) -> SoftDeleteResult:
@@ -239,7 +176,6 @@ def run_soft_delete_unreferenced(
         threshold_timestamp: ISO timestamp cutoff for
             last_referenced_at.
         batch_size: Maximum artifacts to process per batch.
-        dialect: SQL dialect (Postgres or SQLite).
         metrics: Optional GatewayMetrics for counter updates.
         logger: Optional structured logger override.
 
@@ -248,21 +184,13 @@ def run_soft_delete_unreferenced(
     """
     log = logger or get_logger(component="jobs.soft_delete")
     try:
-        if dialect is Dialect.SQLITE:
-            sql = SOFT_DELETE_UNREFERENCED_SQLITE_SQL
-            params: tuple[object, ...] = (
-                WORKSPACE_ID,
-                WORKSPACE_ID,
-                threshold_timestamp,
-                batch_size,
-            )
-        else:
-            sql = SOFT_DELETE_UNREFERENCED_SQL
-            params = soft_delete_unreferenced_params(
-                threshold_timestamp=threshold_timestamp,
-                batch_size=batch_size,
-            )
-        rows = connection.execute(sql, params).fetchall()
+        params = soft_delete_unreferenced_params(
+            threshold_timestamp=threshold_timestamp,
+            batch_size=batch_size,
+        )
+        rows = connection.execute(
+            SOFT_DELETE_UNREFERENCED_SQL, params
+        ).fetchall()
         artifact_ids = _extract_artifact_ids(rows)
         connection.commit()
         increment_metric(metrics, "prune_soft_deletes", len(artifact_ids))

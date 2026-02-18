@@ -12,19 +12,16 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass
+import json
 import time
 from typing import Any
-
-try:
-    from psycopg.types.json import Jsonb
-except ImportError:  # SQLite-only install — no psycopg
-    Jsonb = lambda v: v  # type: ignore[assignment,misc]  # noqa: E731
 
 from sift_mcp.constants import MAPPER_VERSION, WORKSPACE_ID
 from sift_mcp.db.protocols import ConnectionLike, safe_rollback
 from sift_mcp.mapping.runner import (
     MappingInput,
     MappingResult,
+    RecordRow,
     SampleRecord,
     run_mapping,
 )
@@ -36,17 +33,24 @@ from sift_mcp.obs.logging import LogEvents, get_logger
 
 
 def _jsonb(value: Any) -> Any:
-    """Wrap non-None values in Jsonb for psycopg3 JSONB columns.
+    """Prepare a value for JSON column insertion.
+
+    SQLite's registered adapters handle ``dict`` and ``list``
+    serialization automatically.  Scalar values (``int``,
+    ``float``, ``str``, ``bool``, ``None``) must be explicitly
+    serialized to JSON text so that ``json_extract`` can operate
+    on them.
 
     Args:
-        value: A Python value to wrap, or None.
+        value: A JSON-compatible Python value.
 
     Returns:
-        Jsonb-wrapped value, or None if input is None.
+        The value unchanged for dict/list (adapter handles it),
+        or a JSON text string for scalars.
     """
-    if value is None:
-        return None
-    return Jsonb(value)
+    if isinstance(value, (dict, list)):
+        return value
+    return json.dumps(value, ensure_ascii=False)
 
 
 @dataclass(frozen=True)
@@ -131,6 +135,20 @@ DO UPDATE SET
 DELETE_SAMPLES_SQL = """
 DELETE FROM artifact_samples
 WHERE workspace_id = %s AND artifact_id = %s AND root_key = %s
+"""
+
+
+DELETE_RECORDS_SQL = """
+DELETE FROM artifact_records
+WHERE workspace_id = %s AND artifact_id = %s
+"""
+
+INSERT_RECORD_SQL = """
+INSERT INTO artifact_records (
+    workspace_id, artifact_id, root_path, idx, record
+) VALUES (%s, %s, %s, %s, %s)
+ON CONFLICT (workspace_id, artifact_id, root_path, idx)
+DO UPDATE SET record = EXCLUDED.record
 """
 
 
@@ -269,6 +287,27 @@ def _sample_insert_params(
         _jsonb(sample.record),
         sample.record_bytes,
         sample.record_hash,
+    )
+
+
+def _record_insert_params(
+    *, artifact_id: str, row: RecordRow
+) -> tuple[object, ...]:
+    """Build positional SQL parameters for record insertion.
+
+    Args:
+        artifact_id: Artifact owning this record.
+        row: A RecordRow object.
+
+    Returns:
+        Ordered tuple matching INSERT_RECORD_SQL placeholders.
+    """
+    return (
+        WORKSPACE_ID,
+        artifact_id,
+        row.root_path,
+        row.idx,
+        _jsonb(row.record),
     )
 
 
@@ -443,6 +482,18 @@ def persist_mapping_result(
                         artifact_id=worker_ctx.artifact_id, sample=sample
                     ),
                 )
+
+    connection.execute(
+        DELETE_RECORDS_SQL,
+        (WORKSPACE_ID, worker_ctx.artifact_id),
+    )
+    for row in result.record_rows or []:
+        connection.execute(
+            INSERT_RECORD_SQL,
+            _record_insert_params(
+                artifact_id=worker_ctx.artifact_id, row=row
+            ),
+        )
 
     connection.execute(
         DELETE_SCHEMA_ROOTS_SQL,

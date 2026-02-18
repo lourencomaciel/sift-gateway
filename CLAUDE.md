@@ -6,13 +6,13 @@
 - `python -m ruff format src tests` — auto-format
 - `python -m mypy src` — strict type checking
 - `PYTHONPATH=src python scripts/check_docs_consistency.py` — enforce docs/runtime contract
-- Integration tests: `docker compose up -d` then `SIFT_MCP_TEST_POSTGRES_DSN=postgresql://sift:sift@localhost:5432/sift_test python -m pytest tests/integration/ -q`
+- Integration tests: `python -m pytest tests/integration/ -q`
 - Build system: uv_build via pyproject.toml
 - Always run full test suite after changes: tests must stay green
 
 ## CLI
 - `sift-mcp --check` — validate config/DB/FS/upstreams and exit
-- `sift-mcp init --from <file>` — import mcpServers config (SQLite by default; use `--db-backend postgres` for Postgres auto-provisioning)
+- `sift-mcp init --from <file>` — import mcpServers config (SQLite backend)
 - `sift-mcp upstream add <json>` — add upstream to existing config
 - `sift-mcp instances list [--json]` — list managed instances
 - `--dry-run` and `--revert` flags on init; `--data-dir` works globally
@@ -25,22 +25,22 @@
 - `lifecycle.py` — Startup checks (`CheckResult`)
 - `constants.py` — Version strings, `WORKSPACE_ID = "local"`, ID prefixes (`art_`, `bin_`), reserved keys
 - `config/` — Pydantic settings (`GatewayConfig`, `UpstreamConfig`), init/sync/secrets
-- `db/` — `DatabaseBackend` protocol, `Dialect` enum (Postgres/SQLite), repos, migrations
+- `db/` — SQLite backend, repos, migrations
 - `mcp/` — `GatewayServer`, upstream connections, tool mirroring, handlers
 - `mcp/handlers/` — one handler per tool (artifact_get, artifact_select, artifact_code, etc.)
 - `envelope/` — `Envelope` frozen dataclass, `ContentPart` union, `ErrorBlock`, normalize/serialize
 - `artifacts/` — artifact creation pipeline (`persist_artifact`)
 - `cache/` — request deduplication, advisory locks
 - `mapping/` — full (in-memory) + partial (streaming) schema discovery
-- `retrieval/` — bounded path traversal, where-filter evaluation
-- `query/` — JSONPath, select paths, where DSL
+- `retrieval/` — output budget truncation for retrieval responses
+- `query/` — JSONPath, select paths, structured filters, SQL compilation
 - `pagination/` — auto-pagination loop, metadata extraction
-- `cursor/` — HMAC-signed cursor tokens, key rotation
+- `cursor/` — Unsigned cursor tokens (`cur1.<payload_b64u>`), TTL enforcement
 - `canon/` — RFC 8785 canonical JSON, zstandard compression
 - `codegen/` — code query execution in subprocess with AST safety guards
 - `obs/` — structlog setup (`LogEvents` constants), Prometheus metrics (`GatewayMetrics`)
 - `jobs/` — quota enforcement, soft/hard delete, FS reconciliation
-- Tests: `tests/unit/` (~97 files), `tests/integration/` (requires Postgres)
+- Tests: `tests/unit/` (~97 files), `tests/integration/`
 - Docs: `docs/` — README.md, quickstart.md, config.md, api_contracts.md, deployment.md, errors.md, observability.md, recipes.md, architecture.md
 - Local dev: `local/` — gitignored; place ad-hoc validation scripts, scratch files, and test data here (not in `scripts/` which is tracked)
 
@@ -76,9 +76,9 @@
 - FastMCP framework: tools registered via `@app.tool()` decorator; `bootstrap_server()` async factory
 - MCP tool handlers in `mcp/handlers/` — each is an async function taking typed args, returning `ToolResult`
 - Upstream mirroring: `MirroredTool` dataclass wraps discovered upstream tools, registered as `prefix.tool_name`
-- Database: `DatabaseBackend` protocol with SQLite and Postgres implementations; `Dialect` enum for SQL differences
+- Database: SQLite backend with WAL mode
 - Repos: direct SQL with parameterization (no ORM); separate modules for artifacts, payloads, sessions, mapping, pruning
-- Migrations: alembic-style with `schema_migrations` table; separate dirs for Postgres (`db/migrations/`) and SQLite (`db/migrations_sqlite/`)
+- Migrations: alembic-style with `schema_migrations` table; migration files in `db/migrations_sqlite/`
 - Error flow: upstream exceptions → `classify_upstream_exception()` → stable error codes → `ErrorBlock` in `Envelope`
 - Error responses: `gateway_error(code, message)` and `gateway_tool_result()` in `envelope/responses.py`
 - Logging: structlog with `LogEvents` constants for event names; JSON output to stderr

@@ -44,7 +44,7 @@ See [CONTRIBUTING.md](../CONTRIBUTING.md) for full development guide.
 
 Sift can import your existing MCP server configuration from Claude Desktop, Claude Code, Cursor, VS Code, Windsurf, or Zed.
 
-### Basic Import (SQLite)
+### Basic Import
 
 ```bash
 sift-mcp init \
@@ -57,7 +57,7 @@ sift-mcp init \
 This command:
 
 1. Copies your `mcpServers` configuration into a managed instance config at `~/.sift-mcp/instances/<instance_id>/state/config.json`
-2. Sets `db_backend` to `sqlite` (default, no setup required)
+2. Configures the SQLite database backend (no setup required)
 3. Externalizes inline `env` and `headers` into per-upstream secret files under `~/.sift-mcp/instances/<instance_id>/state/upstream_secrets/`
 4. Creates a backup of your original config at `<source>.backup`
 5. Rewrites the source config to point to Sift only
@@ -118,67 +118,6 @@ sift-mcp uninstall scipy
 > **Note:** Sift runs in an isolated Python environment. Packages installed
 > in your system Python are not available to code queries — use
 > `sift-mcp install` instead of `pip install`.
-
-## PostgreSQL Setup (Optional)
-
-For production deployments or when you need concurrent multi-process access, use PostgreSQL instead of SQLite.
-
-### Install with PostgreSQL Support
-
-```bash
-# Using pipx
-pipx install "sift-mcp[postgres]"
-
-# Using uv
-uv tool install "sift-mcp[postgres]"
-
-# From source
-uv sync --extra postgres
-```
-
-### Start PostgreSQL with Docker
-
-The project includes a `docker-compose.yml` that provisions two databases:
-
-- `sift` — Application runtime database
-- `sift_test` — Integration test database (created by `scripts/init-test-db.sql`)
-
-```bash
-docker compose up -d
-```
-
-If the container existed before the init script mount, recreate it:
-
-```bash
-docker compose down -v && docker compose up -d
-```
-
-### Import with PostgreSQL Backend
-
-```bash
-sift-mcp init \
-  --from claude \
-  --db-backend postgres
-```
-
-When `--postgres-dsn` is not provided, Sift resolves the DSN in this order:
-
-1. `SIFT_MCP_POSTGRES_DSN` environment variable
-2. Existing `postgres_dsn` in the selected instance config (`~/.sift-mcp/instances/<instance_id>/state/config.json`)
-3. Auto-provisioned local Docker Postgres DSN
-
-The resolved DSN is written to the selected instance config.
-
-### Custom PostgreSQL DSN
-
-To use an existing PostgreSQL instance:
-
-```bash
-sift-mcp init \
-  --from claude \
-  --db-backend postgres \
-  --postgres-dsn postgresql://user:pass@host:5432/sift
-```
 
 ## Adding MCP Servers After Initial Setup
 
@@ -357,12 +296,6 @@ See [Recipes & Examples](recipes.md) for more usage patterns.
 - Verify upstream servers are configured correctly in your original MCP config
 - Check `~/.sift-mcp/instances/<instance_id>/state/upstream_secrets/` for externalized secrets
 - Test upstream directly (temporarily remove Sift from config)
-
-### PostgreSQL connection errors
-
-- Verify Docker container is running: `docker ps`
-- Check DSN format: `postgresql://user:pass@host:port/database`
-- Test with the same DSN Sift is using: `psql "$SIFT_MCP_POSTGRES_DSN"` (or copy `postgres_dsn` from your instance `state/config.json`)
 
 ### Artifacts not being created
 

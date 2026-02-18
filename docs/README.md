@@ -9,7 +9,7 @@ maintainer-only guide.
 - `config.md` — all config keys, env vars, defaults, and runtime flags
 - `api_contracts.md` — tool contract and response shapes
 - `recipes.md` — practical patterns and end-to-end examples
-- `deployment.md` — URL mode, Postgres, scaling, and ops checks
+- `deployment.md` — URL mode, scaling, and ops checks
 - `errors.md` — gateway/runtime error taxonomy
 - `observability.md` — structured log events and metrics
 

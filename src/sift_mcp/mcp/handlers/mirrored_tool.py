@@ -81,10 +81,10 @@ from sift_mcp.schema_compact import (
 from sift_mcp.sessions import upsert_artifact_ref, upsert_session
 from sift_mcp.tools.artifact_describe import (
     FETCH_DESCRIBE_SQL,
-    FETCH_SCHEMA_FIELDS_SQL,
     FETCH_SCHEMA_ROOTS_SQL,
     build_describe_response,
 )
+from sift_mcp.tools.artifact_schema import FETCH_SCHEMA_FIELDS_SQL
 from sift_mcp.tools.usage_hint import (
     build_usage_hint,
     with_pagination_completeness_rule,
@@ -94,28 +94,7 @@ if TYPE_CHECKING:
     from sift_mcp.mcp.server import GatewayServer
 
 
-class _NeverRaisedError(Exception):
-    """Sentinel exception that is never raised.
-
-    Used as the fallback when ``psycopg`` is not installed so
-    that ``except`` clauses referencing Postgres-specific
-    exceptions remain syntactically valid without catching
-    anything.
-    """
-
-
-try:
-    import psycopg
-
-    _PG_OPERATIONAL_ERROR: type[BaseException] = psycopg.OperationalError
-    _PG_INTERFACE_ERROR: type[BaseException] = psycopg.InterfaceError
-except ImportError:
-    _PG_OPERATIONAL_ERROR = _NeverRaisedError
-    _PG_INTERFACE_ERROR = _NeverRaisedError
-
 _DB_CONNECTIVITY_ERRORS: tuple[type[BaseException], ...] = (
-    _PG_OPERATIONAL_ERROR,
-    _PG_INTERFACE_ERROR,
     sqlite3.OperationalError,
     sqlite3.InterfaceError,
 )

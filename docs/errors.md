@@ -28,7 +28,7 @@ Notes:
 
 | Code | Meaning |
 |------|---------|
-| `INVALID_ARGUMENT` | Invalid tool arguments, invalid cursor token format, invalid JSONPath/where/select params, or unsupported parameter combination |
+| `INVALID_ARGUMENT` | Invalid tool arguments, invalid cursor token format, invalid JSONPath/filter/select params, or unsupported parameter combination |
 
 ### Artifact lifecycle
 
@@ -37,7 +37,7 @@ Notes:
 | `NOT_FOUND` | Artifact (or related upstream tool) does not exist or is not visible in session scope |
 | `GONE` | Artifact exists but has been soft-deleted |
 | `RESOURCE_EXHAUSTED` | Query budget/limit exceeded (for example lineage size limits) |
-| `NOT_IMPLEMENTED` | Requested operation requires a DB backend that is not configured |
+| `NOT_IMPLEMENTED` | Requested operation requires a database that is not configured |
 
 ### Cursor-specific
 

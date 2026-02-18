@@ -100,7 +100,7 @@ async def _handle_query(
         if raw_scope is None:
             cursor_token = query_args.get("cursor")
             has_cursor = isinstance(cursor_token, str) and bool(cursor_token)
-            # Let handlers recover scope from signed cursor when omitted.
+            # Let handlers recover scope from cursor when omitted.
             if not has_cursor:
                 query_args["scope"] = "all_related"
         else:

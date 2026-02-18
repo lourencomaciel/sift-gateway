@@ -542,8 +542,6 @@ def test_serve_dispatches_init_command(
             data_dir=str(data_dir),
             gateway_name="artifact-gateway",
             gateway_url=None,
-            db_backend="sqlite",
-            postgres_dsn=None,
         ),
     )
 
@@ -590,8 +588,6 @@ def test_serve_dispatches_init_command_with_source_shortcut(
             data_dir=str(data_dir),
             gateway_name="artifact-gateway",
             gateway_url=None,
-            db_backend="sqlite",
-            postgres_dsn=None,
         ),
     )
 
@@ -601,56 +597,6 @@ def test_serve_dispatches_init_command_with_source_shortcut(
     assert exit_code == 0
     assert str(source.resolve()) in captured.out
 
-
-def test_init_accepts_postgres_dsn_flag_when_backend_postgres(
-    tmp_path: Path, monkeypatch, capsys
-) -> None:
-    source = tmp_path / "config.json"
-    source.write_text(
-        json.dumps(
-            {
-                "mcpServers": {"gh": {"command": "gh"}},
-            }
-        ),
-        encoding="utf-8",
-    )
-    data_dir = tmp_path / "gateway"
-
-    monkeypatch.setattr(
-        "sift_mcp.main._parse_args",
-        lambda: argparse.Namespace(
-            command="init",
-            source=str(source),
-            revert=False,
-            dry_run=False,
-            data_dir=str(data_dir),
-            gateway_name="artifact-gateway",
-            gateway_url=None,
-            db_backend="postgres",
-            postgres_dsn="postgresql://custom:pass@host:5432/db",
-        ),
-    )
-
-    exit_code = serve()
-
-    assert exit_code == 0
-    gw_config = json.loads((data_dir / "state" / "config.json").read_text())
-    assert gw_config["postgres_dsn"] == "postgresql://custom:pass@host:5432/db"
-
-
-# ---- Database backend configuration tests ----
-
-
-def test_gateway_config_default_backend_is_sqlite(tmp_path: Path) -> None:
-    """Default db_backend is 'sqlite' (zero-config)."""
-    config = GatewayConfig(data_dir=tmp_path)
-    assert config.db_backend == "sqlite"
-
-
-def test_gateway_config_postgres_backend(tmp_path: Path) -> None:
-    """db_backend can be set to 'postgres'."""
-    config = GatewayConfig(data_dir=tmp_path, db_backend="postgres")
-    assert config.db_backend == "postgres"
 
 
 def test_gateway_config_sqlite_path_derived(tmp_path: Path) -> None:
@@ -672,17 +618,6 @@ def test_gateway_config_sqlite_busy_timeout_customizable(
     """sqlite_busy_timeout_ms can be overridden."""
     config = GatewayConfig(data_dir=tmp_path, sqlite_busy_timeout_ms=10000)
     assert config.sqlite_busy_timeout_ms == 10000
-
-
-def test_gateway_config_db_backend_env_override(
-    tmp_path: Path, monkeypatch
-) -> None:
-    """SIFT_MCP_DB_BACKEND env var overrides default."""
-    monkeypatch.setenv("SIFT_MCP_DB_BACKEND", "postgres")
-    from sift_mcp.config.settings import load_gateway_config
-
-    config = load_gateway_config(data_dir_override=str(tmp_path))
-    assert config.db_backend == "postgres"
 
 
 # ---- Transport / HTTP bind CLI flag tests ----
@@ -725,31 +660,6 @@ def test_parse_args_transport_accepts_streamable_http(
     )
     args = _parse_args()
     assert args.transport == "streamable-http"
-
-
-def test_parse_args_init_backend_defaults_to_sqlite(monkeypatch) -> None:
-    monkeypatch.setattr(
-        "sys.argv",
-        ["sift-mcp", "init", "--from", "config.json"],
-    )
-    args = _parse_args()
-    assert args.db_backend == "sqlite"
-
-
-def test_parse_args_init_backend_accepts_postgres(monkeypatch) -> None:
-    monkeypatch.setattr(
-        "sys.argv",
-        [
-            "sift-mcp",
-            "init",
-            "--from",
-            "config.json",
-            "--db-backend",
-            "postgres",
-        ],
-    )
-    args = _parse_args()
-    assert args.db_backend == "postgres"
 
 
 def test_parse_args_upstream_add_accepts_from_shortcut(monkeypatch) -> None:

@@ -5,11 +5,11 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from sift_mcp.constants import WORKSPACE_ID
-from sift_mcp.cursor.hmac import (
+from sift_mcp.cursor.payload import CursorStaleError
+from sift_mcp.cursor.token import (
     CursorExpiredError,
     CursorTokenError,
 )
-from sift_mcp.cursor.payload import CursorStaleError
 from sift_mcp.envelope.responses import gateway_error
 from sift_mcp.mcp.handlers.common import rows_to_dicts
 

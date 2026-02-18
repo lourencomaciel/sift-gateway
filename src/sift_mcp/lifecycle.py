@@ -17,14 +17,10 @@ from __future__ import annotations
 
 import contextlib
 from dataclasses import dataclass
-import logging
 from pathlib import Path
 import tempfile
-from typing import Any, cast
 
 from sift_mcp.config.settings import GatewayConfig
-
-_logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -139,71 +135,7 @@ def _validate_upstreams(config: GatewayConfig) -> tuple[bool, list[str]]:
     return True, details
 
 
-def _check_migrations(connection: object, details: list[str]) -> None:
-    """Append migration status info to *details*.
-
-    This is purely informational and never causes ``db_ok`` to
-    become ``False``.
-
-    Args:
-        connection: Open database connection with cursor support.
-        details: Mutable list to which diagnostic strings are
-            appended.
-    """
-    try:
-        migrations_dir = Path(__file__).resolve().parent / "db" / "migrations"
-        if not migrations_dir.is_dir():
-            return
-
-        from sift_mcp.db.migrate import list_migrations
-
-        available_names = {p.name for p in list_migrations(migrations_dir)}
-
-        db_conn = cast(Any, connection)
-        with db_conn.cursor() as cur:
-            cur.execute(
-                "SELECT EXISTS ("
-                "SELECT FROM information_schema.tables "
-                "WHERE table_schema = 'public' "
-                "AND table_name = 'schema_migrations')"
-            )
-            row = cur.fetchone()
-            if not row or not row[0]:
-                pending_count = len(available_names)
-                details.append(
-                    f"migrations: {pending_count}"
-                    " pending (table not initialized)"
-                )
-                return
-            cur.execute("SELECT migration_name FROM schema_migrations")
-            applied = {str(r[0]) for r in cur.fetchall()}
-
-        pending = sorted(available_names - applied)
-        if pending:
-            names = ", ".join(pending[:3])
-            suffix = ", ..." if len(pending) > 3 else ""
-            details.append(
-                f"migrations: {len(pending)} pending ({names}{suffix})"
-            )
-    except Exception:
-        _logger.warning("migration check failed", exc_info=True)
-
-
 def _check_db(config: GatewayConfig) -> tuple[bool, list[str]]:
-    """Dispatch database connectivity check to the correct backend.
-
-    Args:
-        config: Gateway configuration specifying the backend.
-
-    Returns:
-        A ``(ok, details)`` tuple from the backend-specific check.
-    """
-    if config.db_backend == "sqlite":
-        return _check_sqlite(config)
-    return _check_postgres(config)
-
-
-def _check_sqlite(config: GatewayConfig) -> tuple[bool, list[str]]:
     """Verify SQLite connectivity with a simple probe query.
 
     Args:
@@ -221,48 +153,6 @@ def _check_sqlite(config: GatewayConfig) -> tuple[bool, list[str]]:
     except Exception as exc:
         details.append(f"SQLite check failed: {exc}")
         return False, details
-    return True, details
-
-
-def _check_postgres(config: GatewayConfig) -> tuple[bool, list[str]]:
-    """Verify Postgres connectivity and optionally check migrations.
-
-    Args:
-        config: Gateway configuration with ``postgres_dsn``.
-
-    Returns:
-        A ``(ok, details)`` tuple.
-    """
-    from sift_mcp.db.conn import connect
-
-    details: list[str] = []
-    if not config.postgres_dsn.strip():
-        details.append("postgres_dsn is empty")
-        return False, details
-
-    try:
-        connection = connect(config)
-    except Exception as exc:
-        details.append(f"DB connect failed: {exc}")
-        return False, details
-
-    try:
-        with connection.cursor() as cursor:
-            cursor.execute("SELECT 1")
-            cursor.fetchone()
-        _check_migrations(connection, details)
-    except Exception as exc:
-        details.append(f"DB probe query failed: {exc}")
-        return False, details
-    finally:
-        try:
-            connection.close()
-        except Exception:
-            _logger.warning(
-                "failed to close DB connection during startup check",
-                exc_info=True,
-            )
-
     return True, details
 
 

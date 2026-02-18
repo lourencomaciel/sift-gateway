@@ -43,20 +43,15 @@ from sift_mcp.cache.reuse import (
 )
 from sift_mcp.config.settings import GatewayConfig
 from sift_mcp.constants import WORKSPACE_ID
-from sift_mcp.cursor.hmac import (
-    CursorExpiredError,
-    CursorTokenError,
-    sign_cursor_payload,
-    verify_cursor_token,
-)
 from sift_mcp.cursor.payload import (
     CursorStaleError,
-    assert_cursor_binding,
     build_cursor_payload,
 )
-from sift_mcp.cursor.secrets import (
-    CursorSecrets,
-    load_or_create_cursor_secrets,
+from sift_mcp.cursor.token import (
+    CursorExpiredError,
+    CursorTokenError,
+    decode_cursor,
+    encode_cursor,
 )
 from sift_mcp.envelope.model import BinaryRefContentPart, Envelope
 from sift_mcp.envelope.normalize import normalize_envelope
@@ -234,17 +229,18 @@ _BUILTIN_TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
                 ),
             },
             "where": {
+                "type": "object",
                 "description": (
-                    "[query_kind=select] WHERE-DSL filter. "
-                    "Operators: =, !=, >, <, >=, <=, "
-                    "IN, CONTAINS, EXISTS, AND, OR, NOT. "
-                    "Casts: to_number(path), to_string(path). "
-                    "Paths are relative (no $ prefix). "
-                    "Strings use double quotes. "
-                    "Examples: 'spend != \"0\"', "
-                    "'to_number(spend) > 0', "
-                    '\'status IN ["active", "paused"]\', '
-                    "'EXISTS(email)'."
+                    "[query_kind=select] Structured filter object. "
+                    'Leaf: {"path": "$.field", "op": "<op>", "value": <v>}. '
+                    "Ops: eq, ne, gt, gte, lt, lte, in, contains, "
+                    "array_contains, exists, not_exists. "
+                    'Group: {"logic": "and"|"or", "filters": [...]}. '
+                    'Negate: {"not": {<filter>}}. '
+                    "Paths use JSONPath ($.prefix). "
+                    'Examples: {"path":"$.status","op":"eq","value":"active"}, '
+                    '{"path":"$.spend","op":"gt","value":0}, '
+                    '{"not":{"path":"$.name","op":"in","value":["x","y"]}}.'
                 ),
             },
             "code": {
@@ -634,26 +630,24 @@ class GatewayServer:
 
     Attributes:
         config: Gateway configuration.
-        db_pool: Database backend (Postgres or SQLite), or None.
+        db_pool: Database backend (SQLite), or None.
         blob_store: Content-addressed binary blob store.
         upstreams: Connected upstream MCP server instances.
         fs_ok: True if filesystem passed startup checks.
         db_ok: True if database passed startup checks.
         metrics: Prometheus-style gateway metrics.
-        cursor_secrets: HMAC signing secrets for cursors.
         upstream_errors: Map of prefix to connection error.
         upstream_runtime: Per-upstream runtime probe/failure metadata.
         mirrored_tools: Qualified name to MirroredTool mapping.
     """
 
     config: GatewayConfig
-    db_pool: Any = None  # DatabaseBackend | None (Postgres or SQLite)
+    db_pool: Any = None  # SqliteBackend | None
     blob_store: BlobStore | None = None
     upstreams: list[UpstreamInstance] = field(default_factory=list)
     fs_ok: bool = True
     db_ok: bool = True
     metrics: GatewayMetrics = field(default_factory=get_metrics)
-    cursor_secrets: CursorSecrets | None = None
     upstream_errors: dict[str, str] = field(default_factory=dict)
     upstream_runtime: dict[str, dict[str, Any]] = field(default_factory=dict)
     mirrored_tools: dict[str, MirroredTool] = field(default_factory=dict)
@@ -906,8 +900,6 @@ class GatewayServer:
             reason = "related_set_mismatch"
         elif "map_budget_fingerprint mismatch" in message:
             reason = "map_budget_mismatch"
-        elif "where_canonicalization_mode mismatch" in message:
-            reason = "where_mode_mismatch"
         elif "traversal_contract_version mismatch" in message:
             reason = "traversal_version_mismatch"
         elif "artifact_generation mismatch" in message:
@@ -977,19 +969,6 @@ class GatewayServer:
         self._increment_metric("cursor_invalid")
         return gateway_error("INVALID_ARGUMENT", "invalid cursor")
 
-    def _get_cursor_secrets(self) -> CursorSecrets:
-        """Load or return cached HMAC signing secrets.
-
-        Returns:
-            CursorSecrets used for signing and verifying
-            cursor tokens.
-        """
-        if self.cursor_secrets is None:
-            self.cursor_secrets = load_or_create_cursor_secrets(
-                self.config.secrets_path
-            )
-        return self.cursor_secrets
-
     def _issue_cursor(
         self,
         *,
@@ -998,7 +977,7 @@ class GatewayServer:
         position_state: dict[str, Any],
         extra: dict[str, Any] | None = None,
     ) -> str:
-        """Build and sign a new cursor token.
+        """Build and encode a new cursor token.
 
         Args:
             tool: Tool name the cursor is bound to.
@@ -1007,17 +986,16 @@ class GatewayServer:
             extra: Optional additional payload fields.
 
         Returns:
-            HMAC-signed cursor token string.
+            Encoded cursor token string.
         """
         payload = build_cursor_payload(
             tool=tool,
             artifact_id=artifact_id,
             position_state=position_state,
             ttl_minutes=self.config.cursor_ttl_minutes,
-            where_canonicalization_mode=self.config.where_canonicalization_mode.value,
             extra=extra,
         )
-        return sign_cursor_payload(payload, self._get_cursor_secrets())
+        return encode_cursor(payload)
 
     def _verify_cursor(
         self,
@@ -1029,7 +1007,7 @@ class GatewayServer:
         """Verify a cursor token and return its position state.
 
         Args:
-            token: Signed cursor token string.
+            token: Cursor token string.
             tool: Expected tool binding.
             artifact_id: Expected artifact binding.
 
@@ -1055,10 +1033,10 @@ class GatewayServer:
         tool: str,
         artifact_id: str,
     ) -> dict[str, Any]:
-        """Verify a cursor token and return the full payload.
+        """Decode a cursor token and check tool/artifact binding.
 
         Args:
-            token: Signed cursor token string.
+            token: Encoded cursor token string.
             tool: Expected tool binding.
             artifact_id: Expected artifact binding.
 
@@ -1072,13 +1050,13 @@ class GatewayServer:
             CursorExpiredError: If the token has expired.
             CursorStaleError: If bindings do not match.
         """
-        payload = verify_cursor_token(token, self._get_cursor_secrets())
-        assert_cursor_binding(
-            payload,
-            expected_tool=tool,
-            expected_artifact_id=artifact_id,
-            expected_where_mode=self.config.where_canonicalization_mode.value,
-        )
+        payload = decode_cursor(token)
+        if payload.get("tool") != tool:
+            msg = "cursor tool mismatch"
+            raise CursorStaleError(msg)
+        if payload.get("artifact_id") != artifact_id:
+            msg = "cursor artifact binding mismatch"
+            raise CursorStaleError(msg)
         position = payload.get("position_state")
         if not isinstance(position, dict):
             msg = "cursor missing position_state"
@@ -1585,21 +1563,6 @@ class GatewayServer:
             ),
         )
 
-    def _cursor_secrets_info(self) -> dict[str, Any] | None:
-        """Return cursor secret metadata for the status response.
-
-        Returns:
-            Dict with signing_version and active_versions, or
-            None if cursor secrets are not loaded.
-        """
-        secrets = self.cursor_secrets
-        if secrets is None:
-            return None
-        return {
-            "signing_version": secrets.signing_version,
-            "active_versions": sorted(secrets.active.keys()),
-        }
-
     # ------------------------------------------------------------------
     # Tool registration
     # ------------------------------------------------------------------
@@ -1867,7 +1830,7 @@ class GatewayServer:
 async def bootstrap_server(
     config: GatewayConfig,
     *,
-    db_pool: Any = None,  # DatabaseBackend | None (Postgres or SQLite)
+    db_pool: Any = None,  # SqliteBackend | None
     blob_store: BlobStore | None = None,
     fs_ok: bool = True,
     db_ok: bool = True,
@@ -1877,7 +1840,7 @@ async def bootstrap_server(
     Args:
         config: Gateway configuration.
         db_pool: Optional pre-configured database backend
-            (Postgres or SQLite).
+            (SQLite).
         blob_store: Optional content-addressed blob store.
         fs_ok: Whether the filesystem passed startup checks.
         db_ok: Whether the database passed startup checks.

@@ -103,7 +103,6 @@ def test_gateway_metrics_record_cursor_stale_reason() -> None:
     reasons = [
         "sample_set_mismatch",
         "map_budget_mismatch",
-        "where_mode_mismatch",
         "traversal_version_mismatch",
         "generation_mismatch",
     ]
@@ -112,7 +111,6 @@ def test_gateway_metrics_record_cursor_stale_reason() -> None:
 
     assert counter_value(m.cursor_stale_sample_set) == 1
     assert counter_value(m.cursor_stale_map_budget) == 1
-    assert counter_value(m.cursor_stale_where_mode) == 1
     assert counter_value(m.cursor_stale_traversal) == 1
     assert counter_value(m.cursor_stale_generation) == 1
 

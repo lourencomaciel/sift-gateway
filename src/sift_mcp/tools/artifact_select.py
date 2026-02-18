@@ -221,7 +221,7 @@ def validate_select_args(arguments: dict[str, Any]) -> dict[str, Any] | None:
 
     When a ``cursor`` is present, ``root_path``, ``select_paths``,
     and ``where`` are optional — they will be extracted from the
-    signed cursor payload by the handler.
+    cursor payload by the handler.
 
     Args:
         arguments: Raw tool arguments.

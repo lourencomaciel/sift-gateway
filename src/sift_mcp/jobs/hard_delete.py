@@ -15,12 +15,6 @@ from pathlib import Path
 from typing import Any
 
 from sift_mcp.constants import WORKSPACE_ID
-from sift_mcp.db.backend import Dialect
-from sift_mcp.db.dialect import (
-    adapt_params,
-    expand_any_clause,
-    strip_skip_locked,
-)
 from sift_mcp.db.protocols import increment_metric, safe_rollback
 from sift_mcp.obs.logging import LogEvents, get_logger
 
@@ -166,11 +160,14 @@ def run_hard_delete_batch(
     batch_size: int = 50,
     remove_fs_blobs: bool = True,
     blobs_root: Path | None = None,
-    dialect: Dialect = Dialect.POSTGRES,
     metrics: Any | None = None,
     logger: Any | None = None,
 ) -> HardDeleteResult:
     """Run one hard-delete batch and clean up orphaned storage.
+
+    SQL uses Postgres-style syntax (``%s``, ``= ANY()``,
+    ``FOR UPDATE SKIP LOCKED``) which the SQLite connection
+    proxy rewrites transparently.
 
     Args:
         connection: Database connection for the transaction.
@@ -181,7 +178,6 @@ def run_hard_delete_batch(
             from the filesystem after commit.
         blobs_root: Optional root directory used to constrain
             filesystem blob deletion paths.
-        dialect: SQL dialect (Postgres or SQLite).
         metrics: Optional GatewayMetrics for counter updates.
         logger: Optional structured logger override.
 
@@ -191,18 +187,13 @@ def run_hard_delete_batch(
     """
     log = logger or get_logger(component="jobs.hard_delete")
     try:
-        find_sql = FIND_HARD_DELETE_CANDIDATES_SQL
-        if dialect is Dialect.SQLITE:
-            find_sql = strip_skip_locked(find_sql)
-        find_sql, find_params = adapt_params(
-            find_sql,
+        candidate_rows = connection.execute(
+            FIND_HARD_DELETE_CANDIDATES_SQL,
             hard_delete_candidates_params(
                 grace_period_timestamp=grace_period_timestamp,
                 batch_size=batch_size,
             ),
-            dialect,
-        )
-        candidate_rows = connection.execute(find_sql, find_params).fetchall()
+        ).fetchall()
 
         artifact_ids = [
             row[0]
@@ -210,25 +201,15 @@ def run_hard_delete_batch(
             if len(row) >= 1 and isinstance(row[0], str)
         ]
         if artifact_ids:
-            if dialect is Dialect.SQLITE:
-                del_sql, del_params = expand_any_clause(
-                    DELETE_ARTIFACTS_BATCH_SQL,
-                    (WORKSPACE_ID, artifact_ids),
-                    any_param_index=1,
-                )
-            else:
-                del_sql = DELETE_ARTIFACTS_BATCH_SQL
-                del_params = (WORKSPACE_ID, artifact_ids)
-            connection.execute(del_sql, del_params)
+            connection.execute(
+                DELETE_ARTIFACTS_BATCH_SQL,
+                (WORKSPACE_ID, artifact_ids),
+            )
         artifacts_deleted = len(artifact_ids)
 
-        unref_pay_sql, unref_pay_params = adapt_params(
+        payload_rows = connection.execute(
             FIND_UNREFERENCED_PAYLOADS_SQL,
             (WORKSPACE_ID,),
-            dialect,
-        )
-        payload_rows = connection.execute(
-            unref_pay_sql, unref_pay_params
         ).fetchall()
         payload_hashes = []
         payload_bytes_reclaimed = 0
@@ -243,25 +224,15 @@ def run_hard_delete_batch(
             if isinstance(payload_total_bytes, int) and payload_total_bytes > 0:
                 payload_bytes_reclaimed += payload_total_bytes
         if payload_hashes:
-            if dialect is Dialect.SQLITE:
-                del_pay_sql, del_pay_params = expand_any_clause(
-                    DELETE_PAYLOADS_BATCH_SQL,
-                    (WORKSPACE_ID, payload_hashes),
-                    any_param_index=1,
-                )
-            else:
-                del_pay_sql = DELETE_PAYLOADS_BATCH_SQL
-                del_pay_params = (WORKSPACE_ID, payload_hashes)
-            connection.execute(del_pay_sql, del_pay_params)
+            connection.execute(
+                DELETE_PAYLOADS_BATCH_SQL,
+                (WORKSPACE_ID, payload_hashes),
+            )
         payloads_deleted = len(payload_hashes)
 
-        unref_blob_sql, unref_blob_params = adapt_params(
+        blob_rows = connection.execute(
             FIND_UNREFERENCED_BLOBS_SQL,
             (WORKSPACE_ID,),
-            dialect,
-        )
-        blob_rows = connection.execute(
-            unref_blob_sql, unref_blob_params
         ).fetchall()
         blob_hashes = []
         fs_blobs_removed = 0
@@ -281,16 +252,10 @@ def run_hard_delete_batch(
             if remove_fs_blobs and isinstance(fs_path, str):
                 fs_paths_to_remove.append(fs_path)
         if blob_hashes:
-            if dialect is Dialect.SQLITE:
-                del_blob_sql, del_blob_params = expand_any_clause(
-                    DELETE_BLOBS_BATCH_SQL,
-                    (WORKSPACE_ID, blob_hashes),
-                    any_param_index=1,
-                )
-            else:
-                del_blob_sql = DELETE_BLOBS_BATCH_SQL
-                del_blob_params = (WORKSPACE_ID, blob_hashes)
-            connection.execute(del_blob_sql, del_blob_params)
+            connection.execute(
+                DELETE_BLOBS_BATCH_SQL,
+                (WORKSPACE_ID, blob_hashes),
+            )
         binary_blobs_deleted = len(blob_hashes)
 
         total_reclaimed = payload_bytes_reclaimed + blob_bytes_reclaimed

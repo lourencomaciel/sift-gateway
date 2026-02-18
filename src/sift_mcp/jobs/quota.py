@@ -120,28 +120,7 @@ SELECT
         FROM payload_blobs WHERE workspace_id = %s), 0)
 """
 
-SOFT_DELETE_LRU_FOR_QUOTA_SQL_PG = """
-WITH candidates AS (
-    SELECT artifact_id, generation, payload_total_bytes
-    FROM artifacts
-    WHERE workspace_id = %s
-      AND deleted_at IS NULL
-    ORDER BY last_referenced_at ASC
-    LIMIT %s
-    FOR UPDATE SKIP LOCKED
-)
-UPDATE artifacts a
-SET deleted_at = NOW(),
-    generation = a.generation + 1
-FROM candidates c
-WHERE a.workspace_id = %s
-  AND a.artifact_id = c.artifact_id
-  AND a.generation = c.generation
-  AND a.deleted_at IS NULL
-RETURNING a.artifact_id, c.payload_total_bytes
-"""
-
-SOFT_DELETE_LRU_FOR_QUOTA_SQL_SQLITE = """
+SOFT_DELETE_LRU_FOR_QUOTA_SQL = """
 UPDATE artifacts
 SET deleted_at = datetime('now'),
     generation = generation + 1
@@ -170,30 +149,16 @@ def storage_usage_params() -> tuple[object, ...]:
     return (WORKSPACE_ID, WORKSPACE_ID, WORKSPACE_ID)
 
 
-def soft_delete_lru_params_pg(
+def soft_delete_lru_params(
     batch_size: int = 100,
 ) -> tuple[object, ...]:
-    """Build parameter tuple for the Postgres LRU soft-delete SQL.
+    """Build parameter tuple for the LRU soft-delete SQL.
 
     Args:
         batch_size: Maximum artifacts to soft-delete.
 
     Returns:
-        Parameter tuple for the Postgres variant.
-    """
-    return (WORKSPACE_ID, batch_size, WORKSPACE_ID)
-
-
-def soft_delete_lru_params_sqlite(
-    batch_size: int = 100,
-) -> tuple[object, ...]:
-    """Build parameter tuple for the SQLite LRU soft-delete SQL.
-
-    Args:
-        batch_size: Maximum artifacts to soft-delete.
-
-    Returns:
-        Parameter tuple for the SQLite variant.
+        Parameter tuple for the LRU soft-delete query.
     """
     return (WORKSPACE_ID, WORKSPACE_ID, batch_size)
 
@@ -217,7 +182,6 @@ def _parse_storage_usage(row: tuple[object, ...] | None) -> StorageUsage:
             payload_total_bytes=0,
             total_storage_bytes=0,
         )
-    # psycopg may return Decimal for SUM(BIGINT).
     binary_blob_bytes = _coerce_numeric_to_int(row[0])
     payload_total_bytes = _coerce_numeric_to_int(row[1])
     payload_json_bytes_sum = _coerce_numeric_to_int(row[2])
@@ -327,16 +291,10 @@ def soft_delete_lru_batch(
         Tuple of (count, estimated_bytes_freed).
     """
     log = logger or get_logger(component="jobs.quota")
-
-    from sift_mcp.db.backend import _SqliteConnectionProxy
-
-    if isinstance(connection, _SqliteConnectionProxy):
-        sql = SOFT_DELETE_LRU_FOR_QUOTA_SQL_SQLITE
-        params = soft_delete_lru_params_sqlite(batch_size=batch_size)
-    else:
-        sql = SOFT_DELETE_LRU_FOR_QUOTA_SQL_PG
-        params = soft_delete_lru_params_pg(batch_size=batch_size)
-    rows = connection.execute(sql, params).fetchall()
+    params = soft_delete_lru_params(batch_size=batch_size)
+    rows = connection.execute(
+        SOFT_DELETE_LRU_FOR_QUOTA_SQL, params
+    ).fetchall()
 
     count = 0
     estimated_bytes = 0

@@ -39,6 +39,32 @@ Notes:
 - `pagination.next_cursor` contains the same continuation token.
 - Completeness is based on `pagination.retrieval_status == "COMPLETE"`.
 
+## Pattern 1b: Filtered Retrieval
+
+Use `where` with structured filter objects to push predicates down to SQL.
+
+```python
+page = artifact(
+    action="query",
+    query_kind="select",
+    artifact_id=artifact_id,
+    root_path="$.items",
+    select_paths=["name", "stargazers_count"],
+    where={
+        "logic": "and",
+        "filters": [
+            {"path": "$.stargazers_count", "op": "gte", "value": 100},
+            {"path": "$.language", "op": "in", "value": ["Python", "TypeScript"]},
+        ],
+    },
+    limit=50,
+)
+```
+
+Supported operators: `eq`, `ne`, `gt`, `gte`, `lt`, `lte`, `in`, `contains`,
+`array_contains`, `exists`, `not_exists`. See `api_contracts.md` for full
+syntax.
+
 ## Pattern 2: Upstream Pagination Chain
 
 Use `next_page` only for upstream-layer pagination captured from mirrored tools.

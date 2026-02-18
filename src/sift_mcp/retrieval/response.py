@@ -1,10 +1,8 @@
 """Build bounded retrieval responses with item and byte budgets.
 
 Apply deterministic truncation to result item sequences,
-enforcing both item count and byte size limits, then wrap
-the output into the standard retrieval response dict with
-cursor and stats.  Key exports are ``apply_output_budgets``
-and ``build_retrieval_response``.
+enforcing both item count and byte size limits.  Key export
+is ``apply_output_budgets``.
 """
 
 from __future__ import annotations
@@ -14,9 +12,6 @@ import json
 from typing import Any
 
 from sift_mcp.canon.rfc8785 import canonical_bytes
-from sift_mcp.pagination.contract import (
-    build_retrieval_pagination_meta,
-)
 
 
 def apply_output_budgets(
@@ -70,50 +65,3 @@ def apply_output_budgets(
     omitted = len(items) - len(selected)
     truncated = omitted > 0
     return selected, truncated, omitted, used_bytes
-
-
-def build_retrieval_response(
-    *,
-    items: list[Any],
-    truncated: bool,
-    cursor: str | None,
-    omitted: int = 0,
-    stats: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-    """Build a standard retrieval response dict.
-
-    Wrap items with truncation status, cursor, omitted
-    count, and optional stats into the canonical response
-    shape returned by retrieval tools.
-
-    Args:
-        items: Result items to include.
-        truncated: Whether the result set was truncated.
-        cursor: Opaque cursor token for pagination.
-            Required when truncated is True.
-        omitted: Number of items omitted by truncation.
-        stats: Optional stats dict to include.
-
-    Returns:
-        Dict with items, truncated, cursor, omitted,
-        and stats keys.
-
-    Raises:
-        ValueError: If truncated is True but no cursor
-            is provided.
-    """
-    if truncated and not cursor:
-        msg = "cursor is required when response is truncated"
-        raise ValueError(msg)
-
-    return {
-        "items": items,
-        "truncated": truncated,
-        "cursor": cursor if truncated else None,
-        "omitted": omitted,
-        "stats": stats or {},
-        "pagination": build_retrieval_pagination_meta(
-            truncated=truncated,
-            cursor=cursor if truncated else None,
-        ),
-    }

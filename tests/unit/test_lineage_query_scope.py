@@ -142,32 +142,8 @@ def test_select_all_related_merges_records_with_artifact_locator(
             _SeqCursor(one=("art_2", "full", "ready", "off", None, 1, "mbf")),
             _SeqCursor(one=_root_row("rk_2")),
             _SeqCursor(one=_schema_root_row("rk_2")),
-            _SeqCursor(
-                one=_artifact_row(
-                    "art_1",
-                    {
-                        "content": [
-                            {
-                                "type": "json",
-                                "value": {"items": [{"id": 1}]},
-                            }
-                        ]
-                    },
-                )
-            ),
-            _SeqCursor(
-                one=_artifact_row(
-                    "art_2",
-                    {
-                        "content": [
-                            {
-                                "type": "json",
-                                "value": {"items": [{"id": 2}]},
-                            }
-                        ]
-                    },
-                )
-            ),
+            _SeqCursor(all_rows=[(0, {"$.id": 1})]),
+            _SeqCursor(all_rows=[(0, {"$.id": 2})]),
         ]
     )
     server = _server(tmp_path, conn)

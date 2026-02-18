@@ -1,10 +1,10 @@
 """Provide advisory lock stampede control and artifact reuse.
 
 Implement cache-hit detection by request key or dedupe alias,
-and advisory-lock acquisition (Postgres native or SQLite
-emulated) to prevent concurrent duplicate artifact creation.
-Key exports are ``ReuseResult``, ``check_reuse_candidate``,
-and ``acquire_advisory_lock``.
+and advisory-lock acquisition (SQLite threading-lock emulated)
+to prevent concurrent duplicate artifact creation.  Key exports
+are ``ReuseResult``, ``check_reuse_candidate``, and
+``acquire_advisory_lock``.
 """
 
 from __future__ import annotations
@@ -18,11 +18,10 @@ from typing import Any
 
 from sift_mcp.db.protocols import increment_metric
 from sift_mcp.obs.logging import LogEvents, get_logger
-from sift_mcp.util.hashing import advisory_lock_keys
 
-# Per-key locks for SQLite advisory lock emulation.
-# Postgres uses pg_try_advisory_xact_lock (transaction-scoped).
-# SQLite has no equivalent, so we emulate with threading.Lock per request_key.
+# Per-key locks for advisory lock emulation.
+# SQLite has no native advisory locks, so we emulate with
+# threading.Lock per request_key.
 _sqlite_key_locks: dict[str, _threading.Lock] = {}
 _sqlite_guard = _threading.Lock()
 
@@ -45,11 +44,6 @@ class ReuseResult:
     artifact_id: str | None = None
     reason: str | None = None  # "request_key_match" | "dedupe_alias_match"
 
-
-# SQL for advisory lock
-ACQUIRE_ADVISORY_LOCK_SQL = """
-SELECT pg_try_advisory_xact_lock(%s, %s)
-"""
 
 # SQL for finding reusable artifact by request_key
 FIND_REUSABLE_BY_REQUEST_KEY_SQL = """
@@ -152,67 +146,35 @@ ON CONFLICT (workspace_id, payload_hash_dedupe, payload_hash_full) DO NOTHING
 """
 
 
-def _lock_result(row: tuple[object, ...] | None) -> bool:
-    """Interpret a pg_try_advisory_xact_lock result row as bool.
-
-    Args:
-        row: Single-column row from the lock query, or None.
-
-    Returns:
-        True if the lock was acquired, False otherwise.
-    """
-    if row is None or not row:
-        return False
-    return bool(row[0])
-
-
 def try_acquire_advisory_lock(connection: Any, *, request_key: str) -> bool:
     """Try to acquire an advisory lock for request_key.
 
-    For SQLite connections, acquire a per-key threading.Lock
-    (non-blocking).  For Postgres, use
-    ``pg_try_advisory_xact_lock``.
+    Uses a per-key threading.Lock (non-blocking).
 
     Args:
-        connection: Database connection (sqlite3 or psycopg).
+        connection: Database connection (unused but kept for
+            interface compatibility).
         request_key: Content-addressed request fingerprint.
 
     Returns:
         True if the lock was acquired, False if contended.
     """
-    import sqlite3
-
-    from sift_mcp.db.backend import _SqliteConnectionProxy
-
-    if isinstance(connection, (sqlite3.Connection, _SqliteConnectionProxy)):
-        with _sqlite_guard:
-            lock = _sqlite_key_locks.setdefault(request_key, _threading.Lock())
-        return lock.acquire(blocking=False)
-
-    key_a, key_b = advisory_lock_keys(request_key)
-    row = connection.execute(
-        ACQUIRE_ADVISORY_LOCK_SQL, (key_a, key_b)
-    ).fetchone()
-    return _lock_result(row)
+    with _sqlite_guard:
+        lock = _sqlite_key_locks.setdefault(request_key, _threading.Lock())
+    return lock.acquire(blocking=False)
 
 
 def release_advisory_lock(connection: Any, *, request_key: str) -> None:
     """Release the advisory lock for request_key.
 
-    For SQLite, release and remove the per-key threading.Lock
-    so the dict does not grow unbounded.  For Postgres this is
-    a no-op because advisory locks are transaction-scoped.
+    Release and remove the per-key threading.Lock so the dict
+    does not grow unbounded.
 
     Args:
-        connection: Database connection (sqlite3 or psycopg).
+        connection: Database connection (unused but kept for
+            interface compatibility).
         request_key: Content-addressed request fingerprint.
     """
-    import sqlite3
-
-    from sift_mcp.db.backend import _SqliteConnectionProxy
-
-    if not isinstance(connection, (sqlite3.Connection, _SqliteConnectionProxy)):
-        return
     with _sqlite_guard:
         lock = _sqlite_key_locks.pop(request_key, None)
     if lock is not None:
@@ -235,7 +197,7 @@ def acquire_advisory_lock(
     lock is obtained or the deadline expires.
 
     Args:
-        connection: Database connection (sqlite3 or psycopg).
+        connection: Database connection.
         request_key: Content-addressed request fingerprint.
         timeout_ms: Maximum milliseconds to wait for the lock.
         poll_interval_ms: Milliseconds between retry attempts.
@@ -283,7 +245,7 @@ async def acquire_advisory_lock_async(
     ``asyncio.sleep`` to avoid blocking the event loop.
 
     Args:
-        connection: Database connection (sqlite3 or psycopg).
+        connection: Database connection.
         request_key: Content-addressed request fingerprint.
         timeout_ms: Maximum milliseconds to wait for the lock.
         poll_interval_ms: Milliseconds between retry attempts.

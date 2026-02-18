@@ -26,6 +26,7 @@ from sift_mcp.constants import (
     PRNG_VERSION,
     TRAVERSAL_CONTRACT_VERSION,
 )
+from sift_mcp.mapping._helpers import json_type_name, normalize_path_segment
 from sift_mcp.mapping.runner import RootInventory, SampleRecord
 from sift_mcp.util.hashing import (
     map_budget_fingerprint as _compute_mbf,
@@ -326,36 +327,6 @@ class _RootState:
     skipped_oversize_records: int = 0
 
 
-# ---------------------------------------------------------------------------
-# JSON type name helper
-# ---------------------------------------------------------------------------
-
-
-def _json_type_name(value: Any) -> str:
-    """Return a JSON-style type name for a Python value.
-
-    Args:
-        value: Any Python value to classify.
-
-    Returns:
-        One of "null", "boolean", "number", "string",
-        "array", "object", or the Python type name.
-    """
-    if value is None:
-        return "null"
-    if isinstance(value, bool):
-        return "boolean"
-    if isinstance(value, (int, float)):
-        return "number"
-    if isinstance(value, str):
-        return "string"
-    if isinstance(value, list):
-        return "array"
-    if isinstance(value, dict):
-        return "object"
-    return type(value).__name__
-
-
 def _update_field_types(
     field_types: dict[str, dict[str, int]],
     record: dict[str, Any],
@@ -368,7 +339,7 @@ def _update_field_types(
         record: A parsed JSON object whose fields are counted.
     """
     for key, val in record.items():
-        type_name = _json_type_name(val)
+        type_name = json_type_name(val)
         if key not in field_types:
             field_types[key] = {}
         field_types[key][type_name] = field_types[key].get(type_name, 0) + 1
@@ -381,22 +352,6 @@ class _PathStats:
     types: set[str]
     observed_count: int
     example_value: Any | None
-
-
-def _normalize_path_segment(key: str) -> str:
-    """Encode an object key as a canonical JSONPath segment."""
-    import re
-
-    if re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", key):
-        return f".{key}"
-    escaped = (
-        key.replace("\\", "\\\\")
-        .replace("'", "\\'")
-        .replace("\n", "\\n")
-        .replace("\r", "\\r")
-        .replace("\t", "\\t")
-    )
-    return f"['{escaped}']"
 
 
 def _walk_value(
@@ -417,12 +372,12 @@ def _walk_value(
         stats[path] = existing
     elif existing.example_value is None:
         existing.example_value = value
-    existing.types.add(_json_type_name(value))
+    existing.types.add(json_type_name(value))
     seen_paths.add(path)
 
     if isinstance(value, dict):
         for key in sorted(value.keys()):
-            child_path = f"{path}{_normalize_path_segment(str(key))}"
+            child_path = f"{path}{normalize_path_segment(str(key))}"
             _walk_value(
                 value[key],
                 path=child_path,
@@ -812,20 +767,7 @@ def _prefix_to_jsonpath(prefix: str) -> str:
         elif segment.isdigit():
             parts.append(f"[{segment}]")
         else:
-            # Use dot notation for valid identifiers
-            import re
-
-            if re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", segment):
-                parts.append(f".{segment}")
-            else:
-                escaped = (
-                    segment.replace("\\", "\\\\")
-                    .replace("'", "\\'")
-                    .replace("\n", "\\n")
-                    .replace("\r", "\\r")
-                    .replace("\t", "\\t")
-                )
-                parts.append(f"['{escaped}']")
+            parts.append(normalize_path_segment(segment))
     return "".join(parts)
 
 

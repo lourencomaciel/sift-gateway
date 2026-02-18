@@ -8,7 +8,7 @@ settings.  Exports ``GatewayConfig``, ``UpstreamConfig``, and
 Typical usage example::
 
     config = load_gateway_config(data_dir_override="./data")
-    print(config.db_backend, config.upstreams)
+    print(config.upstreams)
 """
 
 from __future__ import annotations
@@ -79,17 +79,6 @@ class MappingMode(StrEnum):
     hybrid = "hybrid"
     sync = "sync"
 
-
-class WhereCanonicalizationMode(StrEnum):
-    """Control how ``where`` filter expressions are canonicalized.
-
-    Attributes:
-        raw_string: Hash the raw filter string as-is.
-        canonical_ast: Parse and canonicalize the AST first.
-    """
-
-    raw_string = "raw_string"
-    canonical_ast = "canonical_ast"
 
 
 # ---------------------------------------------------------------------------
@@ -464,7 +453,7 @@ class GatewayConfig(BaseSettings):
 
     Attributes:
         data_dir: Root directory for all persistent state.
-        db_backend: Database backend (``"sqlite"`` or ``"postgres"``).
+        sqlite_busy_timeout_ms: SQLite busy timeout in milliseconds.
         upstreams: List of upstream server configurations.
         mapping_mode: When to run artifact mapping.
         passthrough_max_bytes: Max bytes for passthrough mode.
@@ -482,21 +471,6 @@ class GatewayConfig(BaseSettings):
         Path(DEFAULT_DATA_DIR),
         description="Root data directory (default .sift-mcp/)",
     )
-
-    # --------------- Database backend ---------------
-    db_backend: Literal["sqlite", "postgres"] = Field(
-        "sqlite",
-        description=("Database backend: 'sqlite' (default) or 'postgres'"),
-    )
-
-    # --------------- Postgres ---------------
-    postgres_dsn: str = Field(
-        "postgresql://localhost:5432/sift",
-        description="Postgres connection string",
-    )
-    postgres_pool_min: int = Field(2, ge=1)
-    postgres_pool_max: int = Field(10, ge=1)
-    postgres_statement_timeout_ms: int = Field(30_000, ge=1000)
 
     # --------------- SQLite ---------------
     sqlite_busy_timeout_ms: int = Field(5000, ge=100)
@@ -605,10 +579,6 @@ class GatewayConfig(BaseSettings):
 
     # --------------- Cursor (§14, Addendum D) ---------------
     cursor_ttl_minutes: int = Field(60, ge=1)
-    cursor_secret_max_active_keys: int = Field(5, ge=1)
-    where_canonicalization_mode: WhereCanonicalizationMode = Field(
-        WhereCanonicalizationMode.raw_string
-    )
 
     # --------------- Binary probe (§6.3) ---------------
     binary_probe_bytes: int = Field(65_536, ge=0)
@@ -667,11 +637,6 @@ class GatewayConfig(BaseSettings):
     def logs_dir(self) -> Path:
         """The log output directory."""
         return self.data_dir / "logs"
-
-    @property
-    def secrets_path(self) -> Path:
-        """The cursor secrets JSON file path."""
-        return self.state_dir / "secrets.json"
 
     @property
     def sqlite_path(self) -> Path:

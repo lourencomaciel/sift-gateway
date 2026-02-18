@@ -21,7 +21,7 @@ jobs:
         uses: astral-sh/setup-uv@v7
 
       - name: Install dependencies
-        run: uv sync --extra dev --extra postgres
+        run: uv sync --extra dev
 
       - name: Lint
         run: uv run python -m ruff check src tests

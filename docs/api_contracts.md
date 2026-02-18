@@ -137,11 +137,20 @@ Optional:
 
 ### `query_kind="select"`
 
-Required:
+Required request args:
+
+- `artifact_id`, `root_path`, `select_paths`
+
+Optional request args:
+
+- `where` — structured filter object (see [Filter syntax](#filter-syntax) below)
+- `order_by`, `distinct`, `count_only`, `limit`, `cursor`, `scope`
+
+Required response fields:
 
 - `items`, `truncated`, `total_matched`, `scope`, `lineage`, `pagination`
 
-Optional:
+Optional response fields:
 
 - `cursor`, `omitted`, `stats`, `determinism`, `warnings`
 - `sampled_only`, `sample_indices_used`, `sampled_prefix_len`
@@ -195,13 +204,13 @@ Optional:
     }
   ],
   "truncated": true,
-  "cursor": "cur.v1....",
+  "cursor": "cur1....",
   "pagination": {
     "layer": "artifact_retrieval",
     "retrieval_status": "PARTIAL",
     "partial_reason": "CURSOR_AVAILABLE",
     "has_more": true,
-    "next_cursor": "cur.v1....",
+    "next_cursor": "cur1....",
     "hint": "More results available. Resume with the cursor returned in this response."
   },
   "total_matched": 150,
@@ -212,6 +221,95 @@ Optional:
     "artifact_count": 3,
     "artifact_ids": ["art_1", "art_2", "art_3"]
   }
+}
+```
+
+## Filter Syntax
+
+The `where` parameter for `query_kind="select"` accepts a structured filter
+object. Filters compile to parameterized SQLite `json_extract` queries — no
+custom DSL parsing required.
+
+### Single predicate
+
+```json
+{"path": "$.status", "op": "eq", "value": "active"}
+```
+
+### Logical group
+
+```json
+{
+  "logic": "and",
+  "filters": [
+    {"path": "$.spend", "op": "gte", "value": 100},
+    {"path": "$.region", "op": "in", "value": ["US", "EU"]}
+  ]
+}
+```
+
+### Supported operators
+
+| Operator | Description | Value |
+|----------|-------------|-------|
+| `eq` | Equal | scalar |
+| `ne` | Not equal | scalar |
+| `gt` | Greater than | scalar |
+| `gte` | Greater than or equal | scalar |
+| `lt` | Less than | scalar |
+| `lte` | Less than or equal | scalar |
+| `in` | Value in list | list |
+| `contains` | Substring match (cast to text) | string |
+| `array_contains` | JSON array element membership | scalar |
+| `exists` | Field is present | _(ignored)_ |
+| `not_exists` | Field is absent | _(ignored)_ |
+
+### Negation
+
+Wrap any filter or group with `"not"` to negate it:
+
+```json
+{"not": {"path": "$.status", "op": "eq", "value": "deleted"}}
+```
+
+Negation works with any filter type, including groups:
+
+```json
+{"not": {"logic": "or", "filters": [
+  {"path": "$.status", "op": "eq", "value": "archived"},
+  {"path": "$.status", "op": "eq", "value": "deleted"}
+]}}
+```
+
+Negation can also appear inside a group:
+
+```json
+{
+  "logic": "and",
+  "filters": [
+    {"path": "$.active", "op": "eq", "value": true},
+    {"not": {"path": "$.name", "op": "in", "value": ["test", "demo"]}}
+  ]
+}
+```
+
+### Nesting
+
+Groups and negations can be nested arbitrarily:
+
+```json
+{
+  "logic": "or",
+  "filters": [
+    {"path": "$.status", "op": "eq", "value": "active"},
+    {
+      "logic": "and",
+      "filters": [
+        {"path": "$.status", "op": "eq", "value": "pending"},
+        {"path": "$.priority", "op": "gte", "value": 5}
+      ]
+    }
+  ]
 }
 ```
 

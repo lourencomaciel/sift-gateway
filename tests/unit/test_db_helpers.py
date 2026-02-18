@@ -1,45 +1,9 @@
 from __future__ import annotations
 
-from sift_mcp.config.settings import GatewayConfig
-from sift_mcp.db.conn import create_pool, db_conn_info
 from sift_mcp.db.repos.mapping_repo import update_map_status_params
 from sift_mcp.db.repos.payloads_repo import payload_blob_params
 from sift_mcp.db.repos.prune_repo import soft_delete_expired_params
 from sift_mcp.db.repos.sessions_repo import upsert_session_params
-
-
-def test_db_conn_info_uses_config_values() -> None:
-    config = GatewayConfig(
-        postgres_dsn="postgresql://localhost/test",
-        postgres_statement_timeout_ms=1234,
-    )
-    info = db_conn_info(config)
-    assert info.dsn.endswith("/test")
-    assert info.statement_timeout_ms == 1234
-
-
-def test_create_pool_uses_pool_sizes(monkeypatch) -> None:
-    captured: dict[str, object] = {}
-
-    class _FakePool:
-        def __init__(self, **kwargs) -> None:
-            captured.update(kwargs)
-
-    monkeypatch.setattr("sift_mcp.db.conn.ConnectionPool", _FakePool)
-
-    config = GatewayConfig(
-        postgres_dsn="postgresql://localhost/test",
-        postgres_statement_timeout_ms=5000,
-        postgres_pool_min=3,
-        postgres_pool_max=7,
-    )
-    pool = create_pool(config)
-
-    assert isinstance(pool, _FakePool)
-    assert captured["conninfo"] == "postgresql://localhost/test"
-    assert captured["min_size"] == 3
-    assert captured["max_size"] == 7
-    assert captured["kwargs"] == {"options": "-c statement_timeout=5000"}
 
 
 def test_repo_param_helpers_include_workspace() -> None:

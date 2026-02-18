@@ -68,15 +68,6 @@ WHERE workspace_id = %s AND artifact_id = %s
 ORDER BY observed_records DESC, root_path ASC
 """
 
-FETCH_SCHEMA_FIELDS_SQL = """
-SELECT field_path, types, nullable, required, observed_count, example_value,
-       distinct_values, cardinality
-FROM artifact_schema_fields
-WHERE workspace_id = %s AND artifact_id = %s AND root_key = %s
-ORDER BY field_path ASC
-"""
-
-
 def build_describe_response(
     artifact_row: dict[str, Any],
     roots: list[dict[str, Any]],
