@@ -15,7 +15,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 import json
 import tempfile
-from typing import Any, BinaryIO
+from typing import Any, BinaryIO, cast
 
 from sift_mcp.config.settings import GatewayConfig
 from sift_mcp.mapping.schema import (
@@ -638,7 +638,7 @@ def _open_partial_stream(
         for chunk in encoder.iterencode(normalized_value):
             spool.write(chunk.encode("utf-8"))
         spool.seek(0)
-        return spool, True
+        return cast(BinaryIO, spool), True
     except Exception:
         spool.close()
         raise
