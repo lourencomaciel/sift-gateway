@@ -1193,13 +1193,23 @@ class GatewayServer:
         artifact_ids: Sequence[str],
         now: dt.datetime | None = None,
     ) -> bool:
-        """Best-effort search touch for session/artifact recency."""
-        return self._safe_touch_for_retrieval_many(
-            connection,
-            session_id=session_id,
-            artifact_ids=artifact_ids,
-            now=now,
+        """Best-effort search touch for session activity only.
+
+        Search should not alter artifact recency because
+        ``last_referenced_at`` is used for LRU/retention and
+        search ordering.
+        """
+        from sift_mcp.db.repos.sessions_repo import (
+            UPSERT_SESSION_SQL,
+            upsert_session_params,
         )
+
+        execute = getattr(connection, "execute", None)
+        if not callable(execute):
+            return False
+        execute(UPSERT_SESSION_SQL, upsert_session_params(session_id))
+        _ = (artifact_ids, now)
+        return True
 
     def _check_sample_corruption(
         self,

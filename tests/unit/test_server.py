@@ -858,7 +858,7 @@ def test_artifact_search_db_runtime_returns_items(
     assert conn.committed is False
 
 
-def test_artifact_search_touches_recency_when_not_mocked(
+def test_artifact_search_touches_session_when_not_mocked(
     tmp_path: Path,
 ) -> None:
     conn = _SeqConnection(
@@ -1063,6 +1063,24 @@ def test_safe_touch_for_retrieval_many_deduplicates_artifacts(
     assert len(update_calls) == 2
     assert update_calls[0][1] == ("local", "art_1")
     assert update_calls[1][1] == ("local", "art_2")
+
+
+def test_safe_touch_for_search_updates_session_only(
+    tmp_path: Path,
+) -> None:
+    server = _server(tmp_path)
+    conn = _CaptureConnection()
+
+    touched = server._safe_touch_for_search(
+        conn,
+        session_id="sess_1",
+        artifact_ids=["art_1", "art_2"],
+    )
+
+    assert touched is True
+    assert len(conn.calls) == 1
+    assert "INSERT INTO sessions" in conn.calls[0][0]
+    assert conn.calls[0][1] == ("local", "sess_1")
 
 
 def test_artifact_get_cursor_includes_target_and_jsonpath_binding(
