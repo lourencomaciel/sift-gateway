@@ -1057,7 +1057,7 @@ def _build_code_response(
     response["lineage"] = _build_code_lineage(request=request, state=state)
     if state.warnings:
         response["warnings"] = state.warnings
-    return response
+    return cast(dict[str, Any], response)
 
 
 def _parse_code_args(

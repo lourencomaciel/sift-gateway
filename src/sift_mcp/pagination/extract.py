@@ -9,6 +9,7 @@ JSONPath configuration.  Exports
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -273,7 +274,10 @@ def _build_next_params(
         Dict of next-page arg overrides, or ``None`` when no
         follow-up request can be built.
     """
-    strategy_builders: dict[str, Any] = {
+    strategy_builders: dict[
+        str,
+        Callable[..., dict[str, Any] | None],
+    ] = {
         "cursor": _next_params_cursor,
         "offset": _next_params_offset,
         "page_number": _next_params_page_number,
