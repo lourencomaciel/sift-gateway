@@ -60,9 +60,10 @@ That's it. Sift is now proxying your upstream servers. Mirrored responses are pe
 1. Sift connects to your configured upstream MCP servers (stdio or HTTP).
 2. Each upstream tool is mirrored as `{prefix}.{tool_name}` with the original schema preserved. No injected fields.
 3. Every mirrored tool response is persisted durably in SQLite + blob storage as an artifact envelope.
-4. If the serialized response is small (default <= 8 KB), Sift returns the raw upstream result directly; otherwise it returns a lightweight **artifact handle** with `artifact_id`, schemas, and usage hints.
-5. You query persisted artifacts using `artifact(action="query", query_kind=...)` with bounded responses and explicit pagination metadata.
-6. Raw passthrough responses omit `artifact_id`; set `SIFT_MCP_PASSTHROUGH_MAX_BYTES=0` when you need deterministic handle returns.
+4. Before returning tool output, Sift applies outbound secret redaction (enabled by default, configurable).
+5. If the serialized response is small (default <= 8 KB), Sift returns the raw upstream result directly; otherwise it returns a lightweight **artifact handle** with `artifact_id`, schemas, and usage hints.
+6. You query persisted artifacts using `artifact(action="query", query_kind=...)` with bounded responses and explicit pagination metadata.
+7. Raw passthrough responses omit `artifact_id`; set `SIFT_MCP_PASSTHROUGH_MAX_BYTES=0` when you need deterministic handle returns.
 
 ## What You Can Do With Artifacts
 
@@ -145,7 +146,9 @@ Sift resolves references server-side before forwarding to the upstream tool. The
 | `code` | Python execution against stored data |
 | `search` | List session artifacts visible in the current workspace |
 
-## Security Note: Code Queries
+## Security Notes
+
+### Code queries
 
 Code queries execute model-generated Python in a subprocess with AST-level validation, an import allowlist, timeout enforcement, and memory limits. **This is not a full OS-level sandbox.** The guardrails prevent common abuse patterns but do not provide the isolation guarantees of a container or VM.
 
@@ -153,6 +156,22 @@ For production environments where untrusted models generate code, consider runni
 
 ```bash
 export SIFT_MCP_CODE_QUERY_ENABLED=false
+```
+
+### Outbound response redaction
+
+Sift scans outbound tool responses for likely secrets and replaces matches with a placeholder token (`[REDACTED_SECRET]` by default). This is enabled by default and applies to both mirrored and built-in tool responses.
+
+Disable redaction:
+
+```bash
+export SIFT_MCP_SECRET_REDACTION_ENABLED=false
+```
+
+Fail closed when redaction cannot run (for example scanner runtime/import issues):
+
+```bash
+export SIFT_MCP_SECRET_REDACTION_FAIL_CLOSED=true
 ```
 
 See [SECURITY.md](SECURITY.md) for reporting vulnerabilities.

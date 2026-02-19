@@ -19,6 +19,7 @@ from sift_mcp.cursor.token import CursorExpiredError
 from sift_mcp.mcp.handlers.common import VISIBLE_ARTIFACT_SQL
 from sift_mcp.mcp.server import (
     GatewayServer,
+    RuntimeTool,
     _check_sample_corruption,
 )
 from sift_mcp.mcp.upstream import (
@@ -29,6 +30,10 @@ from sift_mcp.obs.metrics import GatewayMetrics, counter_value
 from sift_mcp.pagination.extract import PaginationState
 from sift_mcp.query.filters import filter_hash, parse_filter_dict
 from sift_mcp.query.select_paths import select_paths_hash
+from sift_mcp.security.redaction import (
+    RedactionResult,
+    SecretRedactionError,
+)
 from sift_mcp.storage.payload_store import prepare_payload
 
 
@@ -325,6 +330,113 @@ def test_register_tools_returns_callable_handlers(tmp_path: Path) -> None:
     assert "artifact" in tools
     for handler in tools.values():
         assert callable(handler)
+
+
+def test_runtime_tool_applies_response_sanitizer() -> None:
+    async def _handler(_arguments: dict[str, object]) -> dict[str, object]:
+        return {"token": "sk_live_123"}
+
+    tool = RuntimeTool(
+        name="demo",
+        description="Demo tool",
+        parameters={"type": "object", "properties": {}},
+        handler=_handler,
+        response_sanitizer=lambda payload: {"token": "[MASKED]"},
+    )
+
+    result = asyncio.run(tool.run({}))
+    assert result.structured_content["token"] == "[MASKED]"
+
+
+def test_sanitize_tool_result_returns_internal_on_fail_closed(
+    tmp_path: Path,
+) -> None:
+    class _RaisingRedactor:
+        def redact_payload(self, _payload: dict[str, object]) -> object:
+            raise SecretRedactionError("redaction failed")
+
+    server = _server(tmp_path)
+    server.metrics = GatewayMetrics()
+    server.response_redactor = _RaisingRedactor()  # type: ignore[assignment]
+
+    response = server._sanitize_tool_result({"type": "gateway_tool_result"})
+    assert response["type"] == "gateway_error"
+    assert response["code"] == "INTERNAL"
+    assert response["message"] == "response redaction failed"
+    assert counter_value(server.metrics.secret_redaction_failures) == 1
+
+
+def test_sanitize_tool_result_uses_redacted_payload(tmp_path: Path) -> None:
+    class _FixedRedactor:
+        def redact_payload(self, _payload: dict[str, object]) -> RedactionResult:
+            return RedactionResult(
+                payload={"token": "[REDACTED_SECRET]"},
+                redacted_count=1,
+            )
+
+    server = _server(tmp_path)
+    server.metrics = GatewayMetrics()
+    server.response_redactor = _FixedRedactor()  # type: ignore[assignment]
+
+    response = server._sanitize_tool_result({"token": "sk_live_123"})
+    assert response["token"] == "[REDACTED_SECRET]"
+    assert counter_value(server.metrics.secret_redaction_matches) == 1
+
+
+def test_sanitize_tool_result_preserves_protocol_cursor_fields(
+    tmp_path: Path,
+) -> None:
+    class _FixedRedactor:
+        def redact_payload(
+            self, payload: dict[str, object]
+        ) -> RedactionResult:
+            mutated = {
+                **payload,
+                "cursor": "[REDACTED_SECRET]",
+                "next_cursor": "[REDACTED_SECRET]",
+                "pagination": {
+                    "next_cursor": "[REDACTED_SECRET]",
+                    "next_params": {"after": "[REDACTED_SECRET]"},
+                    "next_action": {
+                        "tool": "artifact",
+                        "arguments": {
+                            "action": "next_page",
+                            "artifact_id": "[REDACTED_SECRET]",
+                        },
+                    },
+                },
+                "message": "[REDACTED_SECRET]",
+            }
+            return RedactionResult(payload=mutated, redacted_count=5)
+
+    payload: dict[str, object] = {
+        "type": "gateway_tool_result",
+        "cursor": "cur1.top_level",
+        "next_cursor": "cur1.next_level",
+        "pagination": {
+            "next_cursor": "cur1.pagination",
+            "next_params": {"after": "cur1.after"},
+            "next_action": {
+                "tool": "artifact",
+                "arguments": {
+                    "action": "next_page",
+                    "artifact_id": "art_123",
+                },
+            },
+        },
+        "message": "token sk_live_123",
+    }
+
+    server = _server(tmp_path)
+    server.metrics = GatewayMetrics()
+    server.response_redactor = _FixedRedactor()  # type: ignore[assignment]
+
+    response = server._sanitize_tool_result(payload)
+    assert response["cursor"] == "cur1.top_level"
+    assert response["next_cursor"] == "cur1.next_level"
+    assert response["pagination"] == payload["pagination"]
+    assert response["message"] == "[REDACTED_SECRET]"
+    assert counter_value(server.metrics.secret_redaction_matches) == 5
 
 
 def test_status_handler_returns_status_payload(tmp_path: Path) -> None:

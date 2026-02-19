@@ -10,8 +10,9 @@ Sift is a local, single-tenant MCP proxy that:
 2. Mirrors each tool as `{prefix}.{tool}` with identical schema — no injected fields.
 3. Intercepts every tool call, forwards it upstream, and wraps the result in a **durable artifact envelope** stored to SQLite and the local filesystem.
 4. Persists every mirrored tool call, then returns either raw upstream payloads (small responses) or a **handle** (larger/continuation responses) with artifact ID, inline schema-first metadata (`mapping` + `schemas`), usage hint, and optional upstream pagination metadata.
-5. Generates a **deterministic inventory** (full or partial schema mapping) for each artifact's JSON payload.
-6. Provides a consolidated **`artifact`** retrieval tool with
+5. Applies outbound secret redaction to tool responses before returning them to the MCP client (enabled by default; configurable).
+6. Generates a **deterministic inventory** (full or partial schema mapping) for each artifact's JSON payload.
+7. Provides a consolidated **`artifact`** retrieval tool with
    actions (`query`, `next_page`) using cursor pagination.
    Query behavior is explicit via `query_kind=describe|get|select|search|code`.
    For non-search kinds, `scope` defaults to `all_related`.
@@ -23,6 +24,7 @@ Sift is a local, single-tenant MCP proxy that:
 - **Bounded responses**: every retrieval tool enforces item, byte, compute, and wildcard caps.
 - **Crash safety**: filesystem writes are atomic (temp → fsync → rename); DB writes use transactions.
 - **Always store**: even upstream errors produce an error-envelope artifact.
+- **Outbound safety by default**: responses are redacted for likely secrets before client return unless explicitly disabled.
 
 ## 2. Storage model
 
@@ -235,7 +237,7 @@ For `query_kind=code`, pagination fields are omitted (`truncated=false`, no curs
 ## 12. Observability
 
 - **Logging**: structlog JSON with correlation fields (session_id, artifact_id, request_key, payload_hash_full)
-- **Metrics**: alias hits, upstream calls, oversize JSON count, partial map stop_reason distribution, cursor stale reasons
+- **Metrics**: alias hits, upstream calls, oversize JSON count, partial map stop_reason distribution, cursor stale reasons, secret redaction matches/failures
 - **Determinism debug**: map_budget_fingerprint, map_backend_id, prng_version, sample_set_hash logged on cursor issue/verify
 
 ## 13. Version constants
@@ -259,6 +261,9 @@ Return shape:
 - larger responses and continuation-required responses return handle payloads
 - raw passthrough responses omit gateway handle metadata (`artifact_id`,
   `mapping`, `schemas`, `pagination`) even though artifacts are still persisted
+- all responses pass through outbound secret redaction before return; `cursor`,
+  `next_cursor`, and `pagination` control fields are preserved from the
+  original result to keep continuation stable
 
 When a handle is returned, the caller receives:
 

@@ -71,6 +71,10 @@ from sift_mcp.mcp.upstream import (
 from sift_mcp.mcp.upstream_errors import classify_upstream_exception
 from sift_mcp.obs.logging import LogEvents, get_logger
 from sift_mcp.obs.metrics import GatewayMetrics, get_metrics
+from sift_mcp.security.redaction import (
+    ResponseSecretRedactor,
+    SecretRedactionError,
+)
 from sift_mcp.tools.usage_hint import PAGINATION_COMPLETENESS_RULE
 
 _GENERIC_ARGS_SCHEMA: dict[str, Any] = {
@@ -541,6 +545,7 @@ class RuntimeTool(Tool):
     """
 
     handler: Callable[[dict[str, Any]], Awaitable[dict[str, Any]]]
+    response_sanitizer: Callable[[dict[str, Any]], dict[str, Any]] | None = None
 
     async def run(self, arguments: dict[str, Any]) -> ToolResult:
         """Execute the handler with raw arguments.
@@ -558,6 +563,8 @@ class RuntimeTool(Tool):
         """
         arguments = _ensure_gateway_context(arguments)
         result = await self.handler(arguments)
+        if self.response_sanitizer is not None:
+            result = self.response_sanitizer(result)
         return ToolResult(structured_content=result)
 
 
@@ -658,9 +665,17 @@ class GatewayServer:
     upstream_errors: dict[str, str] = field(default_factory=dict)
     upstream_runtime: dict[str, dict[str, Any]] = field(default_factory=dict)
     mirrored_tools: dict[str, MirroredTool] = field(default_factory=dict)
+    response_redactor: ResponseSecretRedactor | None = None
     def __post_init__(self) -> None:  # noqa: D105
         if not self.mirrored_tools and self.upstreams:
             self.mirrored_tools = build_mirrored_tools(self.upstreams)
+        if self.response_redactor is None:
+            self.response_redactor = ResponseSecretRedactor(
+                enabled=self.config.secret_redaction_enabled,
+                fail_closed=self.config.secret_redaction_fail_closed,
+                max_scan_bytes=self.config.secret_redaction_max_scan_bytes,
+                replacement=self.config.secret_redaction_placeholder,
+            )
 
     # ------------------------------------------------------------------
     # Utility / infrastructure methods (used by handler modules via ctx)
@@ -841,6 +856,48 @@ class GatewayServer:
         observe = getattr(histogram, "observe", None)
         if callable(observe):
             observe(value)
+
+    def _restore_protocol_response_fields(
+        self,
+        *,
+        original: dict[str, Any],
+        sanitized: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Preserve control-plane fields that must remain protocol-stable."""
+        for protocol_field in ("cursor", "next_cursor"):
+            if protocol_field in original:
+                sanitized[protocol_field] = original[protocol_field]
+        if "pagination" in original:
+            sanitized["pagination"] = original["pagination"]
+        return sanitized
+
+    def _sanitize_tool_result(
+        self, result: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Redact detected secrets from a tool result payload."""
+        if self.response_redactor is None:
+            return result
+        try:
+            redaction = self.response_redactor.redact_payload(result)
+        except SecretRedactionError as exc:
+            self._increment_metric("secret_redaction_failures")
+            get_logger(component="mcp.server").warning(
+                "tool response redaction failed",
+                error_type=type(exc).__name__,
+            )
+            return gateway_error(
+                "INTERNAL",
+                "response redaction failed",
+            )
+        if redaction.redacted_count > 0:
+            self._increment_metric(
+                "secret_redaction_matches",
+                redaction.redacted_count,
+            )
+        return self._restore_protocol_response_fields(
+            original=result,
+            sanitized=redaction.payload,
+        )
 
     async def _call_upstream_with_metrics(
         self,
@@ -1521,6 +1578,7 @@ class GatewayServer:
                     ),
                     parameters=dict(schema),
                     handler=handler,
+                    response_sanitizer=self._sanitize_tool_result,
                 )
             )
 
@@ -1547,6 +1605,7 @@ class GatewayServer:
                     description=mirrored_description,
                     parameters=dict(mirrored.upstream_tool.input_schema),
                     handler=mirrored_handlers[tool_name],
+                    response_sanitizer=self._sanitize_tool_result,
                 )
             )
 

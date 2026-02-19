@@ -93,6 +93,18 @@ size- and state-dependent:
 - raw passthrough responses do not include `artifact_id`; disable passthrough
   (`passthrough_max_bytes=0`) when you need deterministic handle IDs
 
+## Outbound response sanitization
+
+Before returning any tool result, Sift applies outbound secret redaction
+(enabled by default; configurable via `secret_redaction_*` settings).
+
+Protocol/control-plane continuation fields are preserved from the original tool
+result and are never rewritten by redaction:
+
+- top-level `cursor`
+- top-level `next_cursor`
+- `pagination` object
+
 ## Handle Response Contract
 
 Common fields:
