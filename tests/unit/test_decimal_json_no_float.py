@@ -4,7 +4,7 @@ from decimal import Decimal
 
 import pytest
 
-from sift_mcp.canon.decimal_json import (
+from sift_gateway.canon.decimal_json import (
     NonFiniteNumberError,
     ensure_no_floats,
     loads_decimal,

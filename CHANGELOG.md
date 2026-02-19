@@ -36,7 +36,7 @@
 - Passthrough mode: small results returned raw, larger results stored as artifacts
 - Determinism artifacts in responses; cursor stale logging
 - Lifecycle checks: migration validation, `--check` output, clean shutdown
-- Standard `mcpServers` config format and `sift-mcp init` command
+- Standard `mcpServers` config format and `sift-gateway init` command
 - Quota enforcement with LRU prune on storage cap breach
 - E2E integration tests
 - Sample corruption detection and expanded where DSL/hash test coverage

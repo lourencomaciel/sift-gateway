@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-from sift_mcp.config.settings import PaginationConfig
-from sift_mcp.mcp.handlers.mirrored_tool import (
+from sift_gateway.config.settings import PaginationConfig
+from sift_gateway.mcp.handlers.mirrored_tool import (
     _detect_duplicate_page_warning,
     _fetch_inline_describe,
     _minimal_describe,

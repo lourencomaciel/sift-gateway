@@ -6,8 +6,8 @@ from unittest.mock import patch
 
 import pytest
 
-from sift_mcp.codegen.ast_guard import ALLOWED_IMPORT_ROOTS
-from sift_mcp.config.package_install import (
+from sift_gateway.codegen.ast_guard import ALLOWED_IMPORT_ROOTS
+from sift_gateway.config.package_install import (
     _filter_shared_roots,
     _load_config,
     _resolve_import_roots,
@@ -17,7 +17,7 @@ from sift_mcp.config.package_install import (
     install_packages,
     uninstall_packages,
 )
-from sift_mcp.constants import CONFIG_FILENAME, STATE_SUBDIR
+from sift_gateway.constants import CONFIG_FILENAME, STATE_SUBDIR
 
 
 def _cfg_path(data_dir: Path) -> Path:
@@ -31,9 +31,7 @@ def _write_cfg(data_dir: Path, cfg: dict) -> None:
 
 
 def _read_cfg(data_dir: Path) -> dict:
-    return json.loads(
-        _cfg_path(data_dir).read_text(encoding="utf-8")
-    )
+    return json.loads(_cfg_path(data_dir).read_text(encoding="utf-8"))
 
 
 # ---- _load_config / _write_config ----
@@ -89,9 +87,7 @@ def test_add_to_explicit_list_appends(tmp_path: Path) -> None:
     )
     _update_allowlist(tmp_path, ["scipy"], add=True)
 
-    roots = _read_cfg(tmp_path)[
-        "code_query_allowed_import_roots"
-    ]
+    roots = _read_cfg(tmp_path)["code_query_allowed_import_roots"]
     assert roots == ["json", "os", "scipy"]
 
 
@@ -105,9 +101,7 @@ def test_add_duplicate_to_explicit_list_is_noop(
     )
     _update_allowlist(tmp_path, ["scipy"], add=True)
 
-    roots = _read_cfg(tmp_path)[
-        "code_query_allowed_import_roots"
-    ]
+    roots = _read_cfg(tmp_path)["code_query_allowed_import_roots"]
     assert roots == ["json", "scipy"]
 
 
@@ -124,9 +118,7 @@ def test_remove_from_explicit_list(tmp_path: Path) -> None:
     )
     _update_allowlist(tmp_path, ["scipy"], add=False)
 
-    roots = _read_cfg(tmp_path)[
-        "code_query_allowed_import_roots"
-    ]
+    roots = _read_cfg(tmp_path)["code_query_allowed_import_roots"]
     assert roots == ["json", "os"]
 
 
@@ -176,7 +168,7 @@ def test_resolve_import_roots_uses_metadata(
         "PIL": ["pillow"],
     }
     monkeypatch.setattr(
-        "sift_mcp.config.package_install.packages_distributions",
+        "sift_gateway.config.package_install.packages_distributions",
         lambda: fake_map,
     )
     roots = _resolve_import_roots(["scikit-learn", "Pillow"])
@@ -189,7 +181,7 @@ def test_resolve_import_roots_fallback(
 ) -> None:
     """Falls back to normalised name when metadata unavailable."""
     monkeypatch.setattr(
-        "sift_mcp.config.package_install.packages_distributions",
+        "sift_gateway.config.package_install.packages_distributions",
         dict,
     )
     roots = _resolve_import_roots(["my-pkg>=1.0"])
@@ -201,7 +193,7 @@ def test_resolve_import_roots_strips_extras(
 ) -> None:
     """Extras brackets are stripped before resolution."""
     monkeypatch.setattr(
-        "sift_mcp.config.package_install.packages_distributions",
+        "sift_gateway.config.package_install.packages_distributions",
         dict,
     )
     roots = _resolve_import_roots(["scipy[all]"])
@@ -216,7 +208,7 @@ def test_resolve_import_roots_hyphenated_dist(
         "dateutil": ["python-dateutil"],
     }
     monkeypatch.setattr(
-        "sift_mcp.config.package_install.packages_distributions",
+        "sift_gateway.config.package_install.packages_distributions",
         lambda: fake_map,
     )
     roots = _resolve_import_roots(["python-dateutil"])
@@ -228,7 +220,7 @@ def test_resolve_import_roots_fallback_normalises_hyphens(
 ) -> None:
     """Fallback normalises hyphens so allowlist entries pass isidentifier."""
     monkeypatch.setattr(
-        "sift_mcp.config.package_install.packages_distributions",
+        "sift_gateway.config.package_install.packages_distributions",
         dict,
     )
     roots = _resolve_import_roots(["charset-normalizer"])
@@ -255,12 +247,10 @@ def test_install_calls_pip_and_updates_allowlist(
     _write_cfg(tmp_path, {})
 
     with patch(
-        "sift_mcp.config.package_install.subprocess.run",
+        "sift_gateway.config.package_install.subprocess.run",
         _mock_pip_success,
     ):
-        rc = install_packages(
-            ["scipy"], data_dir=tmp_path
-        )
+        rc = install_packages(["scipy"], data_dir=tmp_path)
 
     assert rc == 0
     cfg = _read_cfg(tmp_path)
@@ -273,12 +263,10 @@ def test_install_pip_failure_returns_nonzero(
     _write_cfg(tmp_path, {})
 
     with patch(
-        "sift_mcp.config.package_install.subprocess.run",
+        "sift_gateway.config.package_install.subprocess.run",
         _mock_pip_failure,
     ):
-        rc = install_packages(
-            ["scipy"], data_dir=tmp_path
-        )
+        rc = install_packages(["scipy"], data_dir=tmp_path)
 
     assert rc == 1
     cfg = _read_cfg(tmp_path)
@@ -287,7 +275,7 @@ def test_install_pip_failure_returns_nonzero(
 
 def test_install_no_data_dir_skips_allowlist() -> None:
     with patch(
-        "sift_mcp.config.package_install.subprocess.run",
+        "sift_gateway.config.package_install.subprocess.run",
         _mock_pip_success,
     ):
         rc = install_packages(["scipy"], data_dir=None)
@@ -309,17 +297,13 @@ def test_uninstall_calls_pip_and_updates_allowlist(
     )
 
     with patch(
-        "sift_mcp.config.package_install.subprocess.run",
+        "sift_gateway.config.package_install.subprocess.run",
         _mock_pip_success,
     ):
-        rc = uninstall_packages(
-            ["scipy"], data_dir=tmp_path
-        )
+        rc = uninstall_packages(["scipy"], data_dir=tmp_path)
 
     assert rc == 0
-    roots = _read_cfg(tmp_path)[
-        "code_query_allowed_import_roots"
-    ]
+    roots = _read_cfg(tmp_path)["code_query_allowed_import_roots"]
     assert "scipy" not in roots
     assert "json" in roots
 
@@ -337,22 +321,18 @@ def test_uninstall_resolves_roots_before_pip(
     # python-dateutil distribution maps to 'dateutil' import root.
     fake_map = {"dateutil": ["python-dateutil"]}
     monkeypatch.setattr(
-        "sift_mcp.config.package_install.packages_distributions",
+        "sift_gateway.config.package_install.packages_distributions",
         lambda: fake_map,
     )
 
     with patch(
-        "sift_mcp.config.package_install.subprocess.run",
+        "sift_gateway.config.package_install.subprocess.run",
         _mock_pip_success,
     ):
-        rc = uninstall_packages(
-            ["python-dateutil"], data_dir=tmp_path
-        )
+        rc = uninstall_packages(["python-dateutil"], data_dir=tmp_path)
 
     assert rc == 0
-    roots = _read_cfg(tmp_path)[
-        "code_query_allowed_import_roots"
-    ]
+    roots = _read_cfg(tmp_path)["code_query_allowed_import_roots"]
     assert "dateutil" not in roots
     assert "json" in roots
 
@@ -373,9 +353,7 @@ def test_update_allowlist_by_roots_removes(
     )
     _update_allowlist_by_roots(tmp_path, ["dateutil"])
 
-    roots = _read_cfg(tmp_path)[
-        "code_query_allowed_import_roots"
-    ]
+    roots = _read_cfg(tmp_path)["code_query_allowed_import_roots"]
     assert roots == ["json", "os"]
 
 
@@ -404,12 +382,10 @@ def test_filter_shared_roots_preserves_shared(
         ],
     }
     monkeypatch.setattr(
-        "sift_mcp.config.package_install.packages_distributions",
+        "sift_gateway.config.package_install.packages_distributions",
         lambda: fake_map,
     )
-    safe = _filter_shared_roots(
-        ["google-cloud-storage"], ["google"]
-    )
+    safe = _filter_shared_roots(["google-cloud-storage"], ["google"])
     assert safe == []
 
 
@@ -421,12 +397,10 @@ def test_filter_shared_roots_removes_exclusive(
         "dateutil": ["python-dateutil"],
     }
     monkeypatch.setattr(
-        "sift_mcp.config.package_install.packages_distributions",
+        "sift_gateway.config.package_install.packages_distributions",
         lambda: fake_map,
     )
-    safe = _filter_shared_roots(
-        ["python-dateutil"], ["dateutil"]
-    )
+    safe = _filter_shared_roots(["python-dateutil"], ["dateutil"])
     assert safe == ["dateutil"]
 
 
@@ -451,22 +425,18 @@ def test_uninstall_preserves_shared_root(
         ],
     }
     monkeypatch.setattr(
-        "sift_mcp.config.package_install.packages_distributions",
+        "sift_gateway.config.package_install.packages_distributions",
         lambda: fake_map,
     )
 
     with patch(
-        "sift_mcp.config.package_install.subprocess.run",
+        "sift_gateway.config.package_install.subprocess.run",
         _mock_pip_success,
     ):
-        rc = uninstall_packages(
-            ["google-cloud-storage"], data_dir=tmp_path
-        )
+        rc = uninstall_packages(["google-cloud-storage"], data_dir=tmp_path)
 
     assert rc == 0
-    roots = _read_cfg(tmp_path)[
-        "code_query_allowed_import_roots"
-    ]
+    roots = _read_cfg(tmp_path)["code_query_allowed_import_roots"]
     assert "google" in roots
 
 
@@ -474,11 +444,9 @@ def test_uninstall_pip_failure_returns_nonzero(
     tmp_path: Path,
 ) -> None:
     with patch(
-        "sift_mcp.config.package_install.subprocess.run",
+        "sift_gateway.config.package_install.subprocess.run",
         _mock_pip_failure,
     ):
-        rc = uninstall_packages(
-            ["scipy"], data_dir=tmp_path
-        )
+        rc = uninstall_packages(["scipy"], data_dir=tmp_path)
 
     assert rc == 1

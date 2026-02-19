@@ -1,5 +1,5 @@
 [project]
-name = "sift-mcp"
+name = "sift-gateway"
 version = "0.2.1"
 description = "Keep big MCP responses out of your context window. Query them."
 readme = "README.md"
@@ -42,10 +42,10 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/lourencomaciel/sift-mcp"
-Repository = "https://github.com/lourencomaciel/sift-mcp"
-Issues = "https://github.com/lourencomaciel/sift-mcp/issues"
-Changelog = "https://github.com/lourencomaciel/sift-mcp/blob/main/CHANGELOG.md"
+Homepage = "https://github.com/lourencomaciel/sift-gateway"
+Repository = "https://github.com/lourencomaciel/sift-gateway"
+Issues = "https://github.com/lourencomaciel/sift-gateway/issues"
+Changelog = "https://github.com/lourencomaciel/sift-gateway/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
 code = [
@@ -60,7 +60,7 @@ data-science = [
     "jmespath>=1.0.1",
 ]
 dev = [
-    "sift-mcp[code]",
+    "sift-gateway[code]",
     "pytest>=8.0.0",
     "pytest-asyncio>=0.24.0",
     "pytest-cov>=6.0.0",
@@ -69,9 +69,9 @@ dev = [
 ]
 
 [project.scripts]
-sift-mcp = "sift_mcp.main:cli"
-sift = "sift_mcp.cli_main:cli"
-sift-openclaw-skill = "sift_mcp.openclaw.cli:main"
+sift-gateway = "sift_gateway.main:cli"
+sift = "sift_gateway.cli_main:cli"
+sift-openclaw-skill = "sift_gateway.openclaw.cli:main"
 
 [build-system]
 requires = ["uv_build>=0.10.0,<0.11.0"]
@@ -113,14 +113,14 @@ convention = "google"
 
 [tool.ruff.lint.isort]
 force-sort-within-sections = true
-known-first-party = ["sift_mcp"]
+known-first-party = ["sift_gateway"]
 
 [tool.ruff.lint.per-file-ignores]
-"src/sift_mcp/main.py" = ["T201"]
-"src/sift_mcp/cli_main.py" = ["T201"]
-"src/sift_mcp/config/init.py" = ["T201"]
-"src/sift_mcp/config/upstream_add.py" = ["T201"]
-"src/sift_mcp/config/package_install.py" = ["T201"]
+"src/sift_gateway/main.py" = ["T201"]
+"src/sift_gateway/cli_main.py" = ["T201"]
+"src/sift_gateway/config/init.py" = ["T201"]
+"src/sift_gateway/config/upstream_add.py" = ["T201"]
+"src/sift_gateway/config/package_install.py" = ["T201"]
 "tests/**/*.py" = [
     "D100",
     "D101",

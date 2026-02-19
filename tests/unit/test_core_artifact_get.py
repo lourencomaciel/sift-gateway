@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from sift_mcp.core.artifact_get import execute_artifact_get
+from sift_gateway.core.artifact_get import execute_artifact_get
 
 
 class _FakeCursor:
@@ -190,7 +190,10 @@ class _Runtime:
         return [{"root_path": "$.items", "compatible_for_select": True}]
 
     def not_implemented(self, tool_name: str) -> dict[str, Any]:
-        return {"code": "NOT_IMPLEMENTED", "message": f"{tool_name} unavailable"}
+        return {
+            "code": "NOT_IMPLEMENTED",
+            "message": f"{tool_name} unavailable",
+        }
 
 
 def _artifact_row(artifact_id: str) -> tuple[Any, ...]:
@@ -236,7 +239,9 @@ def test_execute_artifact_get_returns_envelope_items_for_single_scope() -> None:
     assert conn.committed is True
 
 
-def test_execute_artifact_get_returns_cursor_stale_on_binding_mismatch() -> None:
+def test_execute_artifact_get_returns_cursor_stale_on_binding_mismatch() -> (
+    None
+):
     conn = _SeqConnection([_FakeCursor(one=_artifact_row("art_1"))])
     runtime = _Runtime(
         db_pool=_SeqPool(conn),
@@ -261,4 +266,3 @@ def test_execute_artifact_get_returns_cursor_stale_on_binding_mismatch() -> None
 
     assert result["code"] == "CURSOR_STALE"
     assert "target mismatch" in result["message"]
-

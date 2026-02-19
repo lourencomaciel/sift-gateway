@@ -4,8 +4,8 @@
 
 ```bash
 # Clone and install with dev dependencies
-git clone https://github.com/lourencomaciel/sift-mcp.git
-cd sift-mcp
+git clone https://github.com/lourencomaciel/sift-gateway.git
+cd sift-gateway
 uv sync --extra dev
 ```
 
@@ -46,7 +46,7 @@ Guardrails in this repo:
 ## Project Layout
 
 ```
-src/sift_mcp/
+src/sift_gateway/
   main.py                  # CLI entrypoint
   app.py                   # app composition root
   config/                  # settings, mcpServers parser, init, sync, secrets
@@ -81,7 +81,7 @@ docs/
 - **Frozen dataclasses** for domain models (`BinaryRef`, `Envelope`, etc.)
 - **All hashing** via `util/hashing.py` — `sha256_hex`, `binary_hash`, `blob_id`, `request_key`
 - **Reserved key prefix** `_gateway_*` — stripped before upstream forwarding and hashing
-- **Config precedence**: env vars (`SIFT_MCP_*`) > `state/config.json` > defaults
+- **Config precedence**: env vars (`SIFT_GATEWAY_*`) > `state/config.json` > defaults
 - **Metrics**: `prometheus_client.Counter` for counters, custom `Histogram` for latency (min/max tracking)
 - **No shared pytest fixtures** in root conftest — helpers are module-local
 - **Tests monkeypatch module-level imports** — when moving code between modules, update test patches too
@@ -145,14 +145,14 @@ git push origin v0.1.1
 6. Validate `publish_testpypi` output before approving the `pypi`
    environment deployment.
 7. Confirm TestPyPI and PyPI install/upgrade paths:
-   - `pipx install sift-mcp`
-   - `uv tool install sift-mcp`
+   - `pipx install sift-gateway`
+   - `uv tool install sift-gateway`
 
 ### Trusted Publisher Setup (One-Time)
 
 Configure Trusted Publishers in both TestPyPI and PyPI with:
 
-- GitHub repository: `lourencomaciel/sift-mcp`
+- GitHub repository: `lourencomaciel/sift-gateway`
 - TestPyPI workflow: `.github/workflows/release.yml`
 - TestPyPI environment: `testpypi`
 - PyPI workflow: `.github/workflows/release.yml`

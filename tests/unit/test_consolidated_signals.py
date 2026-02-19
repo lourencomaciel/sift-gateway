@@ -5,8 +5,8 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
-from sift_mcp.config.settings import GatewayConfig
-from sift_mcp.mcp.server import GatewayServer
+from sift_gateway.config.settings import GatewayConfig
+from sift_gateway.mcp.server import GatewayServer
 
 
 def _server(tmp_path: Path) -> GatewayServer:

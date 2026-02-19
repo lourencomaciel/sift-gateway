@@ -8,22 +8,22 @@ from pathlib import Path
 
 import pytest
 
-from sift_mcp.canon import (
+from sift_gateway.canon import (
     canonical_bytes,
     compress_bytes,
     decompress_bytes,
 )
-from sift_mcp.config.settings import (
+from sift_gateway.config.settings import (
     CanonicalEncoding,
     EnvelopeJsonbMode,
 )
-from sift_mcp.constants import CANONICALIZER_VERSION
-from sift_mcp.storage.payload_store import (
+from sift_gateway.constants import CANONICALIZER_VERSION
+from sift_gateway.storage.payload_store import (
     PreparedPayload,
     prepare_payload,
     reconstruct_envelope,
 )
-from sift_mcp.util.hashing import payload_hash_full
+from sift_gateway.util.hashing import payload_hash_full
 
 
 def _write_payload_bytes(

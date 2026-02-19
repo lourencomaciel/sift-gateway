@@ -9,15 +9,15 @@ import uuid
 
 import pytest
 
-from sift_mcp.config.settings import (
+from sift_gateway.config.settings import (
     GatewayConfig,
     PaginationConfig,
     UpstreamConfig,
 )
-from sift_mcp.db.backend import SqliteBackend
-from sift_mcp.db.migrate import apply_migrations
-from sift_mcp.mcp.server import GatewayServer
-from sift_mcp.mcp.upstream import (
+from sift_gateway.db.backend import SqliteBackend
+from sift_gateway.db.migrate import apply_migrations
+from sift_gateway.mcp.server import GatewayServer
+from sift_gateway.mcp.upstream import (
     UpstreamInstance,
     UpstreamToolSchema,
 )
@@ -119,7 +119,7 @@ def _sqlite_migrations_dir() -> Path:
     return (
         Path(__file__).resolve().parents[2]
         / "src"
-        / "sift_mcp"
+        / "sift_gateway"
         / "db"
         / "migrations_sqlite"
     )
@@ -232,7 +232,7 @@ def sqlite_e2e_env(tmp_path, monkeypatch):
             config=config, db_pool=backend, upstreams=[upstream]
         )
         monkeypatch.setattr(
-            "sift_mcp.mcp.server.call_upstream_tool",
+            "sift_gateway.mcp.server.call_upstream_tool",
             _stub_upstream,
         )
         yield server, config, backend
@@ -263,7 +263,7 @@ def sqlite_e2e_paginated_env(tmp_path, monkeypatch):
             config=config, db_pool=backend, upstreams=[upstream]
         )
         monkeypatch.setattr(
-            "sift_mcp.mcp.server.call_upstream_tool",
+            "sift_gateway.mcp.server.call_upstream_tool",
             _stub_upstream,
         )
         yield server, config, backend

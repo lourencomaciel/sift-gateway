@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from sift_mcp.tools.artifact_describe import (
+from sift_gateway.tools.artifact_describe import (
     build_describe_response,
     validate_describe_args,
 )

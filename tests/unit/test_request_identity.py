@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from decimal import Decimal
 
-from sift_mcp.canon.rfc8785 import canonical_bytes
-from sift_mcp.request_identity import (
+from sift_gateway.canon.rfc8785 import canonical_bytes
+from sift_gateway.request_identity import (
     RequestIdentity,
     compute_request_identity,
 )

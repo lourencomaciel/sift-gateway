@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from sift_mcp.core.artifact_describe import execute_artifact_describe
+from sift_gateway.core.artifact_describe import execute_artifact_describe
 
 
 class _FakeCursor:
@@ -185,7 +185,10 @@ class _Runtime:
         ]
 
     def not_implemented(self, tool_name: str) -> dict[str, Any]:
-        return {"code": "NOT_IMPLEMENTED", "message": f"{tool_name} unavailable"}
+        return {
+            "code": "NOT_IMPLEMENTED",
+            "message": f"{tool_name} unavailable",
+        }
 
 
 def test_execute_artifact_describe_single_scope_returns_compact_roots() -> None:
@@ -294,4 +297,3 @@ def test_execute_artifact_describe_all_related_respects_max_artifacts() -> None:
     )
 
     assert result["code"] == "RESOURCE_EXHAUSTED"
-

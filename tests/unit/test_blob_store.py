@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from sift_mcp.fs.blob_store import BlobStore
+from sift_gateway.fs.blob_store import BlobStore
 
 
 def test_blob_store_put_and_open(tmp_path: Path) -> None:

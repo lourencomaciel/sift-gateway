@@ -4,19 +4,19 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from sift_mcp.config.settings import GatewayConfig
-from sift_mcp.mapping.runner import (
+from sift_gateway.config.settings import GatewayConfig
+from sift_gateway.mapping.runner import (
     MappingInput,
     MappingResult,
     RecordRow,
     RootInventory,
     SampleRecord,
 )
-from sift_mcp.mapping.schema import (
+from sift_gateway.mapping.schema import (
     SchemaFieldInventory,
     SchemaInventory,
 )
-from sift_mcp.mapping.worker import (
+from sift_gateway.mapping.worker import (
     CONDITIONAL_MAP_UPDATE_SQL,
     DELETE_RECORDS_SQL,
     DELETE_ROOTS_SQL,
@@ -32,7 +32,7 @@ from sift_mcp.mapping.worker import (
     run_mapping_worker,
     should_run_mapping,
 )
-from sift_mcp.obs.metrics import GatewayMetrics, counter_value
+from sift_gateway.obs.metrics import GatewayMetrics, counter_value
 
 
 class _FakeCursor:
@@ -138,7 +138,7 @@ def test_should_run_mapping_pending() -> None:
 
 def test_jsonb_serializes_scalars_as_json_text() -> None:
     """_jsonb produces JSON text for non-dict/non-list values."""
-    from sift_mcp.mapping.worker import _jsonb
+    from sift_gateway.mapping.worker import _jsonb
 
     # dict and list pass through (adapter handles serialization)
     assert _jsonb({"a": 1}) == {"a": 1}
@@ -283,7 +283,7 @@ def test_run_mapping_worker_records_metrics(
     result = _partial_ready_result()
 
     monkeypatch.setattr(
-        "sift_mcp.mapping.worker.run_mapping",
+        "sift_gateway.mapping.worker.run_mapping",
         lambda _mapping_input: result,
     )
 
@@ -362,8 +362,7 @@ def _full_ready_result() -> MappingResult:
         map_budget_fingerprint=None,
     )
     record_rows = [
-        RecordRow(root_path="$", idx=i, record={"id": i + 1})
-        for i in range(3)
+        RecordRow(root_path="$", idx=i, record={"id": i + 1}) for i in range(3)
     ]
     return MappingResult(
         map_kind="full",
@@ -381,7 +380,7 @@ def _full_ready_result() -> MappingResult:
 
 def test_persist_full_mapping_writes_roots_no_samples() -> None:
     """Full mapping writes roots but does not write samples."""
-    from sift_mcp.mapping.worker import DELETE_SAMPLES_SQL
+    from sift_gateway.mapping.worker import DELETE_SAMPLES_SQL
 
     connection = _FakeConnection(conditional_rowcount=1)
     result = _full_ready_result()
@@ -441,7 +440,7 @@ def test_validate_sample_alignment_rejects_mismatch() -> None:
     """_validate_sample_alignment raises ValueError on index mismatch."""
     import pytest
 
-    from sift_mcp.mapping.worker import _validate_sample_alignment
+    from sift_gateway.mapping.worker import _validate_sample_alignment
 
     root = RootInventory(
         root_key="items",
@@ -499,7 +498,7 @@ def test_run_mapping_worker_records_full_metrics(
     result = _full_ready_result()
 
     monkeypatch.setattr(
-        "sift_mcp.mapping.worker.run_mapping",
+        "sift_gateway.mapping.worker.run_mapping",
         lambda _mi: result,
     )
     run_mapping_worker(
@@ -537,7 +536,7 @@ def test_run_mapping_worker_records_failed_metrics(
         map_error="test error",
     )
     monkeypatch.setattr(
-        "sift_mcp.mapping.worker.run_mapping",
+        "sift_gateway.mapping.worker.run_mapping",
         lambda _mi: failed,
     )
     run_mapping_worker(
@@ -564,7 +563,7 @@ def test_run_mapping_worker_emits_structured_log(
     connection = _FakeConnection(conditional_rowcount=1)
     result = _full_ready_result()
     monkeypatch.setattr(
-        "sift_mcp.mapping.worker.run_mapping",
+        "sift_gateway.mapping.worker.run_mapping",
         lambda _mi: result,
     )
 
@@ -591,7 +590,7 @@ def test_run_mapping_worker_emits_structured_log(
         ),
         logger=logger,
     )
-    from sift_mcp.obs.logging import LogEvents
+    from sift_gateway.obs.logging import LogEvents
 
     assert LogEvents.MAPPING_STARTED in log_events
     assert LogEvents.MAPPING_COMPLETED in log_events
@@ -613,7 +612,7 @@ def test_run_mapping_worker_emits_failed_log(
         map_error="test error",
     )
     monkeypatch.setattr(
-        "sift_mcp.mapping.worker.run_mapping",
+        "sift_gateway.mapping.worker.run_mapping",
         lambda _mi: failed,
     )
 
@@ -640,7 +639,7 @@ def test_run_mapping_worker_emits_failed_log(
         ),
         logger=logger,
     )
-    from sift_mcp.obs.logging import LogEvents
+    from sift_gateway.obs.logging import LogEvents
 
     assert LogEvents.MAPPING_STARTED in log_events
     assert LogEvents.MAPPING_FAILED in log_events

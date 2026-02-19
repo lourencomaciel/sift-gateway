@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 
-from sift_mcp.mapping.json_strings import resolve_json_strings
+from sift_gateway.mapping.json_strings import resolve_json_strings
 
 
 def test_dict_with_json_object_string_is_parsed() -> None:

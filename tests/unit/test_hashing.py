@@ -4,7 +4,7 @@ import hashlib
 
 import pytest
 
-from sift_mcp.util.hashing import (
+from sift_gateway.util.hashing import (
     binary_hash,
     blob_id,
     map_budget_fingerprint,

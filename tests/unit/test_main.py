@@ -6,10 +6,10 @@ from pathlib import Path
 
 import pytest
 
-from sift_mcp import __version__
-from sift_mcp.config.settings import GatewayConfig
-from sift_mcp.lifecycle import CheckResult
-from sift_mcp.main import _parse_args, _run_upstream_add, serve
+from sift_gateway import __version__
+from sift_gateway.config.settings import GatewayConfig
+from sift_gateway.lifecycle import CheckResult
+from sift_gateway.main import _parse_args, _run_upstream_add, serve
 
 
 class _FakeConnectionContext:
@@ -56,15 +56,15 @@ def test_serve_check_mode_prints_startup_report(
     report = CheckResult(fs_ok=True, db_ok=True, upstream_ok=True, details=[])
 
     monkeypatch.setattr(
-        "sift_mcp.main._parse_args",
+        "sift_gateway.main._parse_args",
         lambda: argparse.Namespace(command=None, check=True, data_dir=None),
     )
     monkeypatch.setattr(
-        "sift_mcp.main.load_gateway_config",
+        "sift_gateway.main.load_gateway_config",
         lambda **_kwargs: config,
     )
     monkeypatch.setattr(
-        "sift_mcp.main.run_startup_check", lambda _config: report
+        "sift_gateway.main.run_startup_check", lambda _config: report
     )
 
     exit_code = serve()
@@ -94,15 +94,15 @@ def test_serve_returns_one_when_startup_check_fails(
     )
 
     monkeypatch.setattr(
-        "sift_mcp.main._parse_args",
+        "sift_gateway.main._parse_args",
         lambda: argparse.Namespace(command=None, check=False, data_dir=None),
     )
     monkeypatch.setattr(
-        "sift_mcp.main.load_gateway_config",
+        "sift_gateway.main.load_gateway_config",
         lambda **_kwargs: config,
     )
     monkeypatch.setattr(
-        "sift_mcp.main.run_startup_check", lambda _config: report
+        "sift_gateway.main.run_startup_check", lambda _config: report
     )
 
     exit_code = serve()
@@ -118,7 +118,7 @@ def test_serve_check_mode_loads_config_from_sync_redirect_data_dir(
     source = (tmp_path / "source.json").resolve()
     source.write_text(
         json.dumps(
-            {"mcpServers": {"artifact-gateway": {"command": "sift-mcp"}}}
+            {"mcpServers": {"artifact-gateway": {"command": "sift-gateway"}}}
         ),
         encoding="utf-8",
     )
@@ -150,7 +150,7 @@ def test_serve_check_mode_loads_config_from_sync_redirect_data_dir(
     seen: dict[str, object] = {}
 
     monkeypatch.setattr(
-        "sift_mcp.main._parse_args",
+        "sift_gateway.main._parse_args",
         lambda: argparse.Namespace(
             command=None,
             check=True,
@@ -163,11 +163,11 @@ def test_serve_check_mode_loads_config_from_sync_redirect_data_dir(
         return config
 
     monkeypatch.setattr(
-        "sift_mcp.main.load_gateway_config",
+        "sift_gateway.main.load_gateway_config",
         _fake_load_gateway_config,
     )
     monkeypatch.setattr(
-        "sift_mcp.main.run_startup_check", lambda _config: report
+        "sift_gateway.main.run_startup_check", lambda _config: report
     )
 
     exit_code = serve()
@@ -182,7 +182,7 @@ def test_serve_check_mode_ignores_stale_sync_redirect_data_dir(
     source = (tmp_path / "source.json").resolve()
     source.write_text(
         json.dumps(
-            {"mcpServers": {"artifact-gateway": {"command": "sift-mcp"}}}
+            {"mcpServers": {"artifact-gateway": {"command": "sift-gateway"}}}
         ),
         encoding="utf-8",
     )
@@ -210,7 +210,7 @@ def test_serve_check_mode_ignores_stale_sync_redirect_data_dir(
     seen: dict[str, object] = {}
 
     monkeypatch.setattr(
-        "sift_mcp.main._parse_args",
+        "sift_gateway.main._parse_args",
         lambda: argparse.Namespace(
             command=None,
             check=True,
@@ -223,11 +223,11 @@ def test_serve_check_mode_ignores_stale_sync_redirect_data_dir(
         return config
 
     monkeypatch.setattr(
-        "sift_mcp.main.load_gateway_config",
+        "sift_gateway.main.load_gateway_config",
         _fake_load_gateway_config,
     )
     monkeypatch.setattr(
-        "sift_mcp.main.run_startup_check", lambda _config: report
+        "sift_gateway.main.run_startup_check", lambda _config: report
     )
 
     exit_code = serve()
@@ -244,7 +244,7 @@ def test_serve_non_check_mode_loads_config_from_sync_redirect_data_dir(
         json.dumps(
             {
                 "mcpServers": {
-                    "artifact-gateway": {"command": "sift-mcp"},
+                    "artifact-gateway": {"command": "sift-gateway"},
                     "new-upstream": {"command": "npx", "args": ["-y"]},
                 }
             }
@@ -290,7 +290,7 @@ def test_serve_non_check_mode_loads_config_from_sync_redirect_data_dir(
     seen: dict[str, object] = {}
 
     monkeypatch.setattr(
-        "sift_mcp.main._parse_args",
+        "sift_gateway.main._parse_args",
         lambda: argparse.Namespace(
             command=None,
             check=False,
@@ -308,14 +308,14 @@ def test_serve_non_check_mode_loads_config_from_sync_redirect_data_dir(
         return config
 
     monkeypatch.setattr(
-        "sift_mcp.main.load_gateway_config",
+        "sift_gateway.main.load_gateway_config",
         _fake_load_gateway_config,
     )
     monkeypatch.setattr(
-        "sift_mcp.main.run_startup_check", lambda _config: report
+        "sift_gateway.main.run_startup_check", lambda _config: report
     )
     monkeypatch.setattr(
-        "sift_mcp.main._run_server",
+        "sift_gateway.main._run_server",
         lambda _config, _report, _args: 0,
     )
 
@@ -335,7 +335,7 @@ def test_serve_runs_bootstrap_and_closes_pool(
     server = _FakeServer(app)
 
     monkeypatch.setattr(
-        "sift_mcp.main._parse_args",
+        "sift_gateway.main._parse_args",
         lambda: argparse.Namespace(
             command=None,
             check=False,
@@ -348,14 +348,14 @@ def test_serve_runs_bootstrap_and_closes_pool(
         ),
     )
     monkeypatch.setattr(
-        "sift_mcp.main.load_gateway_config",
+        "sift_gateway.main.load_gateway_config",
         lambda **_kwargs: config,
     )
     monkeypatch.setattr(
-        "sift_mcp.main.run_startup_check", lambda _config: report
+        "sift_gateway.main.run_startup_check", lambda _config: report
     )
     monkeypatch.setattr(
-        "sift_mcp.app.build_app",
+        "sift_gateway.app.build_app",
         lambda *, config, startup_report: (server, pool),
     )
 
@@ -382,7 +382,7 @@ def test_serve_dispatches_init_command(
     data_dir = tmp_path / "gateway"
 
     monkeypatch.setattr(
-        "sift_mcp.main._parse_args",
+        "sift_gateway.main._parse_args",
         lambda: argparse.Namespace(
             command="init",
             source=str(source),
@@ -428,7 +428,7 @@ def test_serve_dispatches_init_command_with_source_shortcut(
     data_dir = tmp_path / "gateway"
 
     monkeypatch.setattr(
-        "sift_mcp.main._parse_args",
+        "sift_gateway.main._parse_args",
         lambda: argparse.Namespace(
             command="init",
             source="claude",
@@ -445,7 +445,6 @@ def test_serve_dispatches_init_command_with_source_shortcut(
 
     assert exit_code == 0
     assert str(source.resolve()) in captured.out
-
 
 
 def test_gateway_config_sqlite_path_derived(tmp_path: Path) -> None:
@@ -475,7 +474,7 @@ def test_gateway_config_sqlite_busy_timeout_customizable(
 def test_parse_args_transport_default_is_stdio(
     monkeypatch,
 ) -> None:
-    monkeypatch.setattr("sys.argv", ["sift-mcp"])
+    monkeypatch.setattr("sys.argv", ["sift-gateway"])
     args = _parse_args()
     assert args.transport == "stdio"
 
@@ -484,18 +483,18 @@ def test_parse_args_version_prints_package_version(
     monkeypatch,
     capsys,
 ) -> None:
-    monkeypatch.setattr("sys.argv", ["sift-mcp", "--version"])
+    monkeypatch.setattr("sys.argv", ["sift-gateway", "--version"])
     with pytest.raises(SystemExit) as exc_info:
         _parse_args()
     captured = capsys.readouterr()
     assert exc_info.value.code == 0
-    assert captured.out.strip() == f"sift-mcp {__version__}"
+    assert captured.out.strip() == f"sift-gateway {__version__}"
 
 
 def test_parse_args_transport_accepts_sse(
     monkeypatch,
 ) -> None:
-    monkeypatch.setattr("sys.argv", ["sift-mcp", "--transport", "sse"])
+    monkeypatch.setattr("sys.argv", ["sift-gateway", "--transport", "sse"])
     args = _parse_args()
     assert args.transport == "sse"
 
@@ -505,7 +504,7 @@ def test_parse_args_transport_accepts_streamable_http(
 ) -> None:
     monkeypatch.setattr(
         "sys.argv",
-        ["sift-mcp", "--transport", "streamable-http"],
+        ["sift-gateway", "--transport", "streamable-http"],
     )
     args = _parse_args()
     assert args.transport == "streamable-http"
@@ -515,7 +514,7 @@ def test_parse_args_upstream_add_accepts_from_shortcut(monkeypatch) -> None:
     monkeypatch.setattr(
         "sys.argv",
         [
-            "sift-mcp",
+            "sift-gateway",
             "upstream",
             "add",
             '{"gh":{"command":"npx"}}',
@@ -536,7 +535,7 @@ def test_parse_args_upstream_add_accepts_from_with_data_dir(
     monkeypatch.setattr(
         "sys.argv",
         [
-            "sift-mcp",
+            "sift-gateway",
             "upstream",
             "add",
             '{"gh":{"command":"npx"}}',
@@ -561,7 +560,7 @@ def test_parse_args_global_data_dir_reaches_install(
     monkeypatch.setattr(
         "sys.argv",
         [
-            "sift-mcp",
+            "sift-gateway",
             "--data-dir",
             "/tmp/my-instance",
             "install",
@@ -580,7 +579,7 @@ def test_parse_args_data_dir_after_install_subcommand(
     monkeypatch.setattr(
         "sys.argv",
         [
-            "sift-mcp",
+            "sift-gateway",
             "install",
             "pandas",
             "--data-dir",
@@ -599,7 +598,7 @@ def test_parse_args_data_dir_after_uninstall_subcommand(
     monkeypatch.setattr(
         "sys.argv",
         [
-            "sift-mcp",
+            "sift-gateway",
             "uninstall",
             "pandas",
             "--data-dir",
@@ -612,13 +611,13 @@ def test_parse_args_data_dir_after_uninstall_subcommand(
 
 
 def test_parse_args_host_default(monkeypatch) -> None:
-    monkeypatch.setattr("sys.argv", ["sift-mcp"])
+    monkeypatch.setattr("sys.argv", ["sift-gateway"])
     args = _parse_args()
     assert args.host == "127.0.0.1"
 
 
 def test_parse_args_port_default(monkeypatch) -> None:
-    monkeypatch.setattr("sys.argv", ["sift-mcp"])
+    monkeypatch.setattr("sys.argv", ["sift-gateway"])
     args = _parse_args()
     assert args.port == 8080
 
@@ -627,7 +626,7 @@ def test_run_upstream_add_from_source_falls_back_to_gateway_data_dir_arg(
     tmp_path: Path, monkeypatch
 ) -> None:
     monkeypatch.setenv(
-        "SIFT_MCP_INSTANCES_DIR",
+        "SIFT_GATEWAY_INSTANCES_DIR",
         str(tmp_path / "instances-root"),
     )
     source = tmp_path / "config.json"
@@ -642,7 +641,7 @@ def test_run_upstream_add_from_source_falls_back_to_gateway_data_dir_arg(
             {
                 "mcpServers": {
                     "artifact-gateway": {
-                        "command": "sift-mcp",
+                        "command": "sift-gateway",
                         "args": [
                             "--data-dir",
                             str(instance_data_dir.resolve()),
@@ -668,11 +667,11 @@ def test_run_upstream_add_from_source_falls_back_to_gateway_data_dir_arg(
         return {"added": [], "skipped": [], "config_path": "ignored"}
 
     monkeypatch.setattr(
-        "sift_mcp.config.upstream_add.run_upstream_add",
+        "sift_gateway.config.upstream_add.run_upstream_add",
         _fake_run_upstream_add,
     )
     monkeypatch.setattr(
-        "sift_mcp.config.upstream_add.print_add_summary",
+        "sift_gateway.config.upstream_add.print_add_summary",
         lambda *_args, **_kwargs: None,
     )
 
@@ -693,7 +692,7 @@ def test_run_upstream_add_from_source_prefers_gateway_data_dir_arg_when_uninitia
     tmp_path: Path, monkeypatch
 ) -> None:
     monkeypatch.setenv(
-        "SIFT_MCP_INSTANCES_DIR",
+        "SIFT_GATEWAY_INSTANCES_DIR",
         str(tmp_path / "instances-root"),
     )
     source = tmp_path / "config.json"
@@ -703,7 +702,7 @@ def test_run_upstream_add_from_source_prefers_gateway_data_dir_arg_when_uninitia
             {
                 "mcpServers": {
                     "artifact-gateway": {
-                        "command": "sift-mcp",
+                        "command": "sift-gateway",
                         "args": [
                             "--data-dir",
                             str(source_data_dir.resolve()),
@@ -715,7 +714,7 @@ def test_run_upstream_add_from_source_prefers_gateway_data_dir_arg_when_uninitia
         encoding="utf-8",
     )
 
-    from sift_mcp.constants import (
+    from sift_gateway.constants import (
         CONFIG_FILENAME,
         DEFAULT_DATA_DIR,
         STATE_SUBDIR,
@@ -743,11 +742,11 @@ def test_run_upstream_add_from_source_prefers_gateway_data_dir_arg_when_uninitia
         return {"added": [], "skipped": [], "config_path": "ignored"}
 
     monkeypatch.setattr(
-        "sift_mcp.config.upstream_add.run_upstream_add",
+        "sift_gateway.config.upstream_add.run_upstream_add",
         _fake_run_upstream_add,
     )
     monkeypatch.setattr(
-        "sift_mcp.config.upstream_add.print_add_summary",
+        "sift_gateway.config.upstream_add.print_add_summary",
         lambda *_args, **_kwargs: None,
     )
 
@@ -770,7 +769,7 @@ def test_run_upstream_add_with_source_respects_explicit_data_dir(
     source = tmp_path / "config.json"
     source.write_text(
         json.dumps(
-            {"mcpServers": {"artifact-gateway": {"command": "sift-mcp"}}}
+            {"mcpServers": {"artifact-gateway": {"command": "sift-gateway"}}}
         ),
         encoding="utf-8",
     )
@@ -790,11 +789,11 @@ def test_run_upstream_add_with_source_respects_explicit_data_dir(
         return {"added": [], "skipped": [], "config_path": "ignored"}
 
     monkeypatch.setattr(
-        "sift_mcp.config.upstream_add.run_upstream_add",
+        "sift_gateway.config.upstream_add.run_upstream_add",
         _fake_run_upstream_add,
     )
     monkeypatch.setattr(
-        "sift_mcp.config.upstream_add.print_add_summary",
+        "sift_gateway.config.upstream_add.print_add_summary",
         lambda *_args, **_kwargs: None,
     )
 
@@ -822,7 +821,7 @@ def test_serve_http_transport_calls_run_with_transport_args(
     server = _FakeServer(app)
 
     monkeypatch.setattr(
-        "sift_mcp.main._parse_args",
+        "sift_gateway.main._parse_args",
         lambda: argparse.Namespace(
             command=None,
             check=False,
@@ -835,15 +834,15 @@ def test_serve_http_transport_calls_run_with_transport_args(
         ),
     )
     monkeypatch.setattr(
-        "sift_mcp.main.load_gateway_config",
+        "sift_gateway.main.load_gateway_config",
         lambda **_kwargs: config,
     )
     monkeypatch.setattr(
-        "sift_mcp.main.run_startup_check",
+        "sift_gateway.main.run_startup_check",
         lambda _config: report,
     )
     monkeypatch.setattr(
-        "sift_mcp.app.build_app",
+        "sift_gateway.app.build_app",
         lambda *, config, startup_report: (server, pool),
     )
 
@@ -884,7 +883,7 @@ def test_serve_http_transport_with_token_wraps_asgi_and_runs_uvicorn(
     uvicorn_seen: dict[str, object] = {}
 
     monkeypatch.setattr(
-        "sift_mcp.main._parse_args",
+        "sift_gateway.main._parse_args",
         lambda: argparse.Namespace(
             command=None,
             check=False,
@@ -897,15 +896,15 @@ def test_serve_http_transport_with_token_wraps_asgi_and_runs_uvicorn(
         ),
     )
     monkeypatch.setattr(
-        "sift_mcp.main.load_gateway_config",
+        "sift_gateway.main.load_gateway_config",
         lambda **_kwargs: config,
     )
     monkeypatch.setattr(
-        "sift_mcp.main.run_startup_check",
+        "sift_gateway.main.run_startup_check",
         lambda _config: report,
     )
     monkeypatch.setattr(
-        "sift_mcp.app.build_app",
+        "sift_gateway.app.build_app",
         lambda *, config, startup_report: (server, pool),
     )
 
@@ -919,11 +918,11 @@ def test_serve_http_transport_with_token_wraps_asgi_and_runs_uvicorn(
         return wrapped_asgi
 
     monkeypatch.setattr(
-        "sift_mcp.mcp.http_auth.validate_http_bind",
+        "sift_gateway.mcp.http_auth.validate_http_bind",
         _fake_validate_http_bind,
     )
     monkeypatch.setattr(
-        "sift_mcp.mcp.http_auth.bearer_auth_middleware",
+        "sift_gateway.mcp.http_auth.bearer_auth_middleware",
         _fake_bearer_auth_middleware,
     )
 
@@ -961,7 +960,7 @@ def test_serve_nonlocal_host_without_token_exits(
     report = CheckResult(fs_ok=True, db_ok=True, upstream_ok=True, details=[])
 
     monkeypatch.setattr(
-        "sift_mcp.main._parse_args",
+        "sift_gateway.main._parse_args",
         lambda: argparse.Namespace(
             command=None,
             check=False,
@@ -974,14 +973,14 @@ def test_serve_nonlocal_host_without_token_exits(
         ),
     )
     monkeypatch.setattr(
-        "sift_mcp.main.load_gateway_config",
+        "sift_gateway.main.load_gateway_config",
         lambda **_kwargs: config,
     )
     monkeypatch.setattr(
-        "sift_mcp.main.run_startup_check",
+        "sift_gateway.main.run_startup_check",
         lambda _config: report,
     )
-    monkeypatch.delenv("SIFT_MCP_AUTH_TOKEN", raising=False)
+    monkeypatch.delenv("SIFT_GATEWAY_AUTH_TOKEN", raising=False)
 
     with pytest.raises(SystemExit, match="Security error"):
         serve()

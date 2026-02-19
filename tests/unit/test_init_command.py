@@ -1,4 +1,4 @@
-"""Tests for sift-mcp init --from migration command."""
+"""Tests for sift-gateway init --from migration command."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from sift_mcp.config.init import run_init, run_revert
+from sift_gateway.config.init import run_init, run_revert
 
 
 def _claude_desktop_config() -> dict:
@@ -66,7 +66,7 @@ class TestRunInit:
         assert "artifact-gateway" in rewritten["mcpServers"]
         assert len(rewritten["mcpServers"]) == 1
         gw_entry = rewritten["mcpServers"]["artifact-gateway"]
-        assert gw_entry["command"] == "sift-mcp"
+        assert gw_entry["command"] == "sift-gateway"
         assert gw_entry["args"] == ["--data-dir", str(data_dir.resolve())]
 
     def test_preserves_non_mcp_keys_in_source(self, tmp_path: Path) -> None:
@@ -217,6 +217,7 @@ class TestRunInit:
 
         summary = run_init(Path("~/config.json"), data_dir=tmp_path / "gateway")
         assert summary["servers_migrated"] == ["gh"]
+
 
 class TestRunRevert:
     def test_restores_from_backup(self, tmp_path: Path) -> None:

@@ -51,8 +51,8 @@ jobs:
           source /tmp/sift-smoke/bin/activate
           python -m pip install --upgrade pip
           python -m pip install dist/*.whl
-          sift-mcp --help > /dev/null
-          sift-mcp --version
+          sift-gateway --help > /dev/null
+          sift-gateway --version
 
       - name: Upload dist artifacts
         uses: actions/upload-artifact@v6

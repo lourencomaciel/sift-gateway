@@ -11,15 +11,15 @@
 - Always run full test suite after changes: tests must stay green
 
 ## CLI
-- `sift-mcp --check` — validate config/DB/FS/upstreams and exit
-- `sift-mcp init --from <file>` — import mcpServers config (SQLite backend)
-- `sift-mcp upstream add <json>` — add upstream to existing config
-- `sift-mcp install <packages...>` / `sift-mcp uninstall <packages...>` — manage code-query packages
+- `sift-gateway --check` — validate config/DB/FS/upstreams and exit
+- `sift-gateway init --from <file>` — import mcpServers config (SQLite backend)
+- `sift-gateway upstream add <json>` — add upstream to existing config
+- `sift-gateway install <packages...>` / `sift-gateway uninstall <packages...>` — manage code-query packages
 - `--dry-run` and `--revert` flags on init; `--data-dir` works globally
 - Transport modes: `--transport stdio` (default), `sse`, `streamable-http`
 
 ## Project Structure
-- Source: `src/sift_mcp/`
+- Source: `src/sift_gateway/`
 - `main.py` — CLI entrypoint (argparse, subcommands)
 - `app.py` — Composition root (config -> db -> fs -> upstreams -> MCP server)
 - `lifecycle.py` — Startup checks (`CheckResult`)
@@ -62,8 +62,8 @@
 - Pydantic `BaseSettings` for configuration models (GatewayConfig, UpstreamConfig)
 - All hashing via `util/hashing.py` — sha256_hex, binary_hash, blob_id, request_key
 - Reserved key prefix `_gateway_*` — stripped before upstream forwarding and hashing
-- Config precedence: env vars (SIFT_MCP_*) > state/config.json > defaults
-- Config nested env var syntax: `SIFT_MCP_UPSTREAMS__0__PREFIX=github` (uses `__` delimiter)
+- Config precedence: env vars (SIFT_GATEWAY_*) > state/config.json > defaults
+- Config nested env var syntax: `SIFT_GATEWAY_UPSTREAMS__0__PREFIX=github` (uses `__` delimiter)
 - Env vars starting with `[` or `{` auto-parse as JSON for list/dict fields
 - Tests monkeypatch module-level imports; when moving code between modules, update test patches too
 - No shared pytest fixtures in root conftest — helpers are module-local

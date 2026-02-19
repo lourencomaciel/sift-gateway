@@ -4,8 +4,8 @@ import datetime as dt
 
 import pytest
 
-from sift_mcp.cursor.payload import build_cursor_payload
-from sift_mcp.cursor.token import (
+from sift_gateway.cursor.payload import build_cursor_payload
+from sift_gateway.cursor.token import (
     CursorExpiredError,
     CursorTokenError,
     decode_cursor,
@@ -52,9 +52,7 @@ def test_decode_rejects_non_object() -> None:
     import base64
 
     b64 = base64.urlsafe_b64encode(b"[1,2,3]").decode().rstrip("=")
-    with pytest.raises(
-        CursorTokenError, match="must be a JSON object"
-    ):
+    with pytest.raises(CursorTokenError, match="must be a JSON object"):
         decode_cursor(f"cur1.{b64}")
 
 
@@ -63,9 +61,7 @@ def test_decode_rejects_missing_expires_at() -> None:
     import json
 
     b64 = (
-        base64.urlsafe_b64encode(
-            json.dumps({"tool": "x"}).encode()
-        )
+        base64.urlsafe_b64encode(json.dumps({"tool": "x"}).encode())
         .decode()
         .rstrip("=")
     )
