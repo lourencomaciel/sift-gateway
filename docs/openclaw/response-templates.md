@@ -23,11 +23,18 @@ Returned <count> rows from <artifact_id> at <root_path>.
 Fields: <field_a>, <field_b>, <field_c>.
 ```
 
-## Paginated Follow-Up
+## Retrieval Cursor Follow-Up
 
 ```text
 Returned first <count> rows; more available.
 Use cursor: `<cursor>` for next page.
+```
+
+## Upstream Continuation Follow-Up
+
+```text
+Upstream has more pages for <artifact_id>.
+Use: `sift-gateway run --continue-from <artifact_id> -- <next-command-with-next_params-applied>`.
 ```
 
 ## Diff Result

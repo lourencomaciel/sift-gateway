@@ -297,3 +297,209 @@ def test_execute_artifact_describe_all_related_respects_max_artifacts() -> None:
     )
 
     assert result["code"] == "RESOURCE_EXHAUSTED"
+
+
+def test_execute_artifact_describe_surfaces_upstream_pagination_meta() -> None:
+    conn = _SeqConnection(
+        [
+            _FakeCursor(
+                one=(
+                    "art_1",
+                    "partial",
+                    "ready",
+                    "mapper_v1",
+                    "mbf",
+                    "backend",
+                    "prng_xoshiro256ss_v1",
+                    0,
+                    None,
+                    1,
+                )
+            ),
+            _FakeCursor(
+                all_rows=[
+                    (
+                        "rk_1",
+                        "$.items",
+                        10,
+                        1.0,
+                        {},
+                        10.0,
+                        "array",
+                        {"id": {"number": 10}},
+                        [0, 1],
+                    )
+                ]
+            ),
+            _FakeCursor(
+                all_rows=[
+                    (
+                        "rk_1",
+                        "$.items",
+                        "schema_v1",
+                        "sha256:schema_items",
+                        "sampled",
+                        "partial",
+                        2,
+                        "sha256:dataset_items",
+                        "traversal_v1",
+                        "mbf",
+                    )
+                ]
+            ),
+            _FakeCursor(
+                all_rows=[
+                    (
+                        "$.id",
+                        ["number"],
+                        False,
+                        True,
+                        2,
+                        "1",
+                        [1, 2],
+                        2,
+                    )
+                ]
+            ),
+            _FakeCursor(
+                one=(
+                    "art_1",
+                    "hash_1",
+                    {
+                        "meta": {
+                            "_gateway_pagination": {
+                                "upstream_prefix": "cli",
+                                "tool_name": "run",
+                                "original_args": {
+                                    "command_argv": ["fake-api", "--after", "C1"]
+                                },
+                                "next_params": {"after": "C2"},
+                                "page_number": 0,
+                            }
+                        }
+                    },
+                    "none",
+                    "payload/path",
+                )
+            ),
+        ]
+    )
+    runtime = _Runtime(db_pool=_SeqPool(conn))
+
+    result = execute_artifact_describe(
+        runtime,
+        arguments={
+            "_gateway_context": {"session_id": "sess_1"},
+            "artifact_id": "art_1",
+            "scope": "single",
+        },
+    )
+
+    assert result["pagination"]["layer"] == "upstream"
+    assert result["pagination"]["has_next_page"] is False
+    assert result["pagination"]["retrieval_status"] == "PARTIAL"
+    assert result["pagination"]["next_action"] is None
+    assert result["pagination"]["next_params"] == {"after": "C2"}
+
+
+def test_execute_artifact_describe_surfaces_next_page_for_mirrored_state() -> None:
+    conn = _SeqConnection(
+        [
+            _FakeCursor(
+                one=(
+                    "art_1",
+                    "partial",
+                    "ready",
+                    "mapper_v1",
+                    "mbf",
+                    "backend",
+                    "prng_xoshiro256ss_v1",
+                    0,
+                    None,
+                    1,
+                )
+            ),
+            _FakeCursor(
+                all_rows=[
+                    (
+                        "rk_1",
+                        "$.items",
+                        10,
+                        1.0,
+                        {},
+                        10.0,
+                        "array",
+                        {"id": {"number": 10}},
+                        [0, 1],
+                    )
+                ]
+            ),
+            _FakeCursor(
+                all_rows=[
+                    (
+                        "rk_1",
+                        "$.items",
+                        "schema_v1",
+                        "sha256:schema_items",
+                        "sampled",
+                        "partial",
+                        2,
+                        "sha256:dataset_items",
+                        "traversal_v1",
+                        "mbf",
+                    )
+                ]
+            ),
+            _FakeCursor(
+                all_rows=[
+                    (
+                        "$.id",
+                        ["number"],
+                        False,
+                        True,
+                        2,
+                        "1",
+                        [1, 2],
+                        2,
+                    )
+                ]
+            ),
+            _FakeCursor(
+                one=(
+                    "art_1",
+                    "hash_1",
+                    {
+                        "meta": {
+                            "_gateway_pagination": {
+                                "upstream_prefix": "github",
+                                "tool_name": "list_prs",
+                                "original_args": {"after": "C1"},
+                                "next_params": {"after": "C2"},
+                                "page_number": 0,
+                            }
+                        }
+                    },
+                    "none",
+                    "payload/path",
+                )
+            ),
+        ]
+    )
+    runtime = _Runtime(db_pool=_SeqPool(conn))
+
+    result = execute_artifact_describe(
+        runtime,
+        arguments={
+            "_gateway_context": {"session_id": "sess_1"},
+            "artifact_id": "art_1",
+            "scope": "single",
+        },
+    )
+
+    assert result["pagination"]["layer"] == "upstream"
+    assert result["pagination"]["has_next_page"] is True
+    assert result["pagination"]["retrieval_status"] == "PARTIAL"
+    assert result["pagination"]["next_action"] == {
+        "tool": "artifact",
+        "arguments": {"action": "next_page", "artifact_id": "art_1"},
+    }

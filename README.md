@@ -77,6 +77,27 @@ sift-gateway run -- git status --porcelain
 cat payload.json | sift-gateway run --stdin
 ```
 
+### Continuing paginated CLI captures
+
+If `sift-gateway run` detects upstream pagination, it returns:
+
+- `pagination.has_next_page`
+- `pagination.next_params`
+- `pagination.next_action.command_line`
+
+Follow up by running the next command explicitly and linking lineage:
+
+```bash
+# first capture
+sift-gateway run -- gh api repos/org/repo/pulls --limit 100 --after CUR_1
+
+# follow-up capture (example: apply next_params from prior response)
+sift-gateway run --continue-from art_123 -- gh api repos/org/repo/pulls --limit 100 --after CUR_2
+```
+
+In MCP mode, continuation is `artifact(action="next_page", artifact_id=...)`.
+In CLI mode, continuation is manual via `run --continue-from`.
+
 ### Query and inspect artifacts
 
 ```bash
