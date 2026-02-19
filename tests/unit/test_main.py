@@ -9,7 +9,13 @@ import pytest
 from sift_gateway import __version__
 from sift_gateway.config.settings import GatewayConfig
 from sift_gateway.lifecycle import CheckResult
-from sift_gateway.main import _parse_args, _run_upstream_add, serve
+from sift_gateway.main import (
+    _extract_logs_flag,
+    _parse_args,
+    _run_upstream_add,
+    cli,
+    serve,
+)
 
 
 class _FakeConnectionContext:
@@ -429,6 +435,102 @@ def test_serve_dispatches_artifact_cli_mode(monkeypatch) -> None:
         "--limit",
         "1",
     ]
+
+
+def test_serve_dispatches_artifact_cli_mode_with_logs_flag(
+    monkeypatch,
+) -> None:
+    seen: dict[str, object] = {}
+
+    def _fake_cli_serve(argv: list[str] | None = None) -> int:
+        seen["argv"] = argv
+        return 23
+
+    monkeypatch.setattr(
+        "sift_gateway.cli_main.serve",
+        _fake_cli_serve,
+    )
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "sift-gateway",
+            "--logs",
+            "--data-dir",
+            "/tmp/demo",
+            "list",
+            "--limit",
+            "1",
+        ],
+    )
+
+    exit_code = serve()
+
+    assert exit_code == 23
+    assert seen["argv"] == [
+        "--data-dir",
+        "/tmp/demo",
+        "list",
+        "--limit",
+        "1",
+    ]
+
+
+def test_extract_logs_flag_does_not_strip_after_run_separator() -> None:
+    logs_enabled, argv = _extract_logs_flag(
+        ["run", "--", "echo", "--logs"],
+    )
+    assert logs_enabled is False
+    assert argv == ["run", "--", "echo", "--logs"]
+
+
+def test_cli_disables_logs_by_default(monkeypatch) -> None:
+    seen: dict[str, object] = {}
+
+    def _fake_configure_logging(**kwargs: object) -> None:
+        seen["logging_kwargs"] = kwargs
+
+    def _fake_serve(argv: list[str] | None = None) -> int:
+        seen["argv"] = argv
+        return 0
+
+    monkeypatch.setattr(
+        "sift_gateway.obs.logging.configure_logging",
+        _fake_configure_logging,
+    )
+    monkeypatch.setattr("sift_gateway.main.serve", _fake_serve)
+    monkeypatch.setattr("sys.argv", ["sift-gateway", "--check"])
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli()
+
+    assert exc_info.value.code == 0
+    assert seen["argv"] == ["--check"]
+    assert seen["logging_kwargs"] == {"enabled": False}
+
+
+def test_cli_enables_logs_with_logs_flag(monkeypatch) -> None:
+    seen: dict[str, object] = {}
+
+    def _fake_configure_logging(**kwargs: object) -> None:
+        seen["logging_kwargs"] = kwargs
+
+    def _fake_serve(argv: list[str] | None = None) -> int:
+        seen["argv"] = argv
+        return 0
+
+    monkeypatch.setattr(
+        "sift_gateway.obs.logging.configure_logging",
+        _fake_configure_logging,
+    )
+    monkeypatch.setattr("sift_gateway.main.serve", _fake_serve)
+    monkeypatch.setattr("sys.argv", ["sift-gateway", "--logs", "--check"])
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli()
+
+    assert exc_info.value.code == 0
+    assert seen["argv"] == ["--check"]
+    assert seen["logging_kwargs"] == {"enabled": True}
 
 
 def test_serve_dispatches_init_command_with_source_shortcut(

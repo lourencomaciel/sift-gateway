@@ -26,6 +26,13 @@ def test_configure_logging_console_does_not_raise() -> None:
     configure_logging(json_output=False, level="DEBUG")
 
 
+def test_configure_logging_disabled_suppresses_emission(capsys) -> None:
+    configure_logging(json_output=True, level="INFO", enabled=False)
+    get_logger(component="test").info("suppressed")
+    captured = capsys.readouterr()
+    assert captured.err == ""
+
+
 def test_get_logger_returns_bound_logger() -> None:
     configure_logging(json_output=True, level="INFO")
     log = get_logger(component="test")
