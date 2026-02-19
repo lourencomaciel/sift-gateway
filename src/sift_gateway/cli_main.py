@@ -790,6 +790,15 @@ def _dispatch_command(
     raise ValueError(msg)
 
 
+def _sanitize_cli_payload(runtime: Any, payload: dict[str, Any]) -> dict[str, Any]:
+    """Apply outbound redaction when runtime exposes the gateway sanitizer."""
+    gateway = getattr(runtime, "gateway", None)
+    sanitize = getattr(gateway, "_sanitize_tool_result", None)
+    if callable(sanitize):
+        return sanitize(payload)
+    return payload
+
+
 def _add_common_json_flag(parser: argparse.ArgumentParser) -> None:
     """Add ``--json`` output mode flag to a subparser."""
     parser.add_argument(
@@ -984,6 +993,7 @@ def serve(argv: list[str] | None = None) -> int:
     try:
         with _runtime_context(data_dir_override=args.data_dir) as runtime:
             payload, mode = _dispatch_command(runtime, args)
+            payload = _sanitize_cli_payload(runtime, payload)
     except ValueError as exc:
         _write_line(str(exc), stream=sys.stderr)
         return 1
