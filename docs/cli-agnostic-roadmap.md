@@ -10,6 +10,8 @@ queryability, and keep agent context small.
 
 1. Any large output can be captured once and queried incrementally.
 2. MCP and CLI expose different interfaces but identical retrieval behavior.
+   Pagination semantics stay aligned, while continuation invocation differs
+   (`artifact(action="next_page")` in MCP vs `run --continue-from` in CLI).
 3. OpenClaw users avoid context overflow by default through concise summaries.
 4. Existing MCP users keep backward-compatible contracts during migration.
 
@@ -43,6 +45,8 @@ queryability, and keep agent context small.
    - `describe|get|select|search|code` plus cursor continuation.
 3. Pagination continuation service
    - Continue upstream pagination where upstream metadata exists.
+   - MCP uses `artifact(action="next_page")`; CLI uses explicit follow-up
+     `run --continue-from <artifact_id> -- <command>`.
 4. Lifecycle service
    - TTL expiry, soft delete, hard delete, quota reconciliation.
 5. Policy service

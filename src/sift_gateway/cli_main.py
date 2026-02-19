@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 from collections.abc import Generator
 from contextlib import contextmanager
+from dataclasses import dataclass
 import difflib
 import hashlib
 import json
@@ -38,6 +39,10 @@ from sift_gateway.mcp.adapters.artifact_query_runtime import (
     GatewayArtifactQueryRuntime,
 )
 from sift_gateway.mcp.server import GatewayServer
+from sift_gateway.pagination.extract import (
+    PaginationAssessment,
+    assess_pagination,
+)
 from sift_gateway.request_identity import compute_request_identity
 from sift_gateway.storage.payload_store import reconstruct_envelope
 
@@ -46,6 +51,7 @@ _CLI_PREFIX = "cli"
 _CLI_UPSTREAM_INSTANCE_ID = "cli_local"
 _DEFAULT_TTL_RAW = "24h"
 _TTL_PATTERN = re.compile(r"^([1-9][0-9]*)([smhd]?)$")
+_INT_PATTERN = re.compile(r"^[+-]?[0-9]+$")
 _DIFF_DEFAULT_MAX_LINES = 200
 _CODE_EXPR_TEMPLATE = textwrap.dedent(
     """
@@ -56,6 +62,47 @@ _CODE_EXPR_TEMPLATE = textwrap.dedent(
         return {expr}
     """
 ).strip()
+
+_FETCH_CLI_CONTINUE_PARENT_SQL = """
+SELECT artifact_id, deleted_at, capture_kind, chain_seq
+FROM artifacts
+WHERE workspace_id = %s
+  AND artifact_id = %s
+"""
+
+_CLI_CONTINUE_PARENT_COLUMNS = [
+    "artifact_id",
+    "deleted_at",
+    "capture_kind",
+    "chain_seq",
+]
+
+_LIST_FILTER_ATTRS: tuple[tuple[str, str], ...] = (
+    ("status", "status"),
+    ("kind", "kind"),
+    ("source_tool", "source_tool"),
+    ("source_tool_prefix", "source_tool_prefix"),
+    ("upstream_instance_id", "upstream_instance_id"),
+    ("request_key", "request_key"),
+    ("capture_kind", "capture_kind"),
+    ("capture_key", "capture_key"),
+    ("parent_artifact_id", "parent_artifact_id"),
+)
+
+
+@dataclass
+class _RunCaptureExecution:
+    """Execution payload for one ``sift-gateway run`` invocation mode."""
+
+    payload: Any
+    identity: Any
+    capture_kind: str
+    capture_origin: dict[str, Any]
+    command_exit_code: int
+    status: str
+    error_block: dict[str, Any] | None
+    pagination_meta: dict[str, Any]
+    pagination_assessment: PaginationAssessment | None
 
 
 def _migrations_dir() -> Path:
@@ -190,6 +237,298 @@ def _normalize_command_argv(raw_argv: list[str]) -> list[str]:
     return argv
 
 
+def _coerce_cli_flag_value(raw_value: str) -> Any:
+    """Coerce a CLI flag value into stable JSON-friendly scalar types."""
+    value = raw_value.strip()
+    lowered = value.lower()
+    if lowered == "true":
+        return True
+    if lowered == "false":
+        return False
+    if _INT_PATTERN.fullmatch(value):
+        unsigned = value[1:] if value and value[0] in {"+", "-"} else value
+        # Preserve string cursor/token values that rely on leading zeroes.
+        if len(unsigned) > 1 and unsigned.startswith("0"):
+            return value
+        try:
+            return int(value)
+        except ValueError:
+            return value
+    return value
+
+
+def _is_cli_flag_token(token: str) -> bool:
+    """Return whether token should be interpreted as a CLI flag token."""
+    return bool(token) and token != "-" and token.startswith("-")
+
+
+def _raw_cli_flag_key(token: str) -> str | None:
+    """Extract raw key segment from one short/long option token."""
+    raw_key = token[2:] if token.startswith("--") else token[1:]
+    return raw_key if raw_key else None
+
+
+def _apply_inline_cli_flag_assignment(
+    raw_key: str,
+    parsed: dict[str, Any],
+) -> bool:
+    """Apply ``--key=value`` assignment when present."""
+    if "=" not in raw_key:
+        return False
+    key, raw_value = raw_key.split("=", 1)
+    key = key.strip()
+    if key:
+        parsed[key] = _coerce_cli_flag_value(raw_value)
+    return True
+
+
+def _is_cli_flag_value_token(token: str | None) -> bool:
+    """Return whether token can be consumed as a positional flag value."""
+    return bool(token) and token != "--" and not token.startswith("-")
+
+
+def _consume_cli_flag_token(
+    *,
+    tokens: list[str],
+    index: int,
+    parsed: dict[str, Any],
+) -> int:
+    """Consume one flag token and return number of consumed argv entries."""
+    raw_key = _raw_cli_flag_key(tokens[index])
+    if raw_key is None:
+        return 1
+    if _apply_inline_cli_flag_assignment(raw_key, parsed):
+        return 1
+
+    key = raw_key.strip()
+    if not key:
+        return 1
+    if key.startswith("no-") and len(key) > 3:
+        parsed[key[3:]] = False
+        return 1
+
+    next_token = tokens[index + 1] if index + 1 < len(tokens) else None
+    if _is_cli_flag_value_token(next_token):
+        assert next_token is not None
+        parsed[key] = _coerce_cli_flag_value(next_token)
+        return 2
+
+    parsed[key] = True
+    return 1
+
+
+def _extract_cli_flag_args(command_argv: list[str]) -> dict[str, Any]:
+    """Best-effort parse of CLI-style flags from command argv."""
+    if len(command_argv) <= 1:
+        return {}
+
+    parsed: dict[str, Any] = {}
+    tokens = command_argv[1:]
+    index = 0
+    while index < len(tokens):
+        token = tokens[index]
+        if token == "--":
+            break
+        if not _is_cli_flag_token(token):
+            index += 1
+            continue
+        index += _consume_cli_flag_token(
+            tokens=tokens,
+            index=index,
+            parsed=parsed,
+        )
+    return parsed
+
+
+def _assess_cli_pagination(
+    *,
+    json_value: Any,
+    command_argv: list[str],
+    page_number: int = 0,
+) -> tuple[dict[str, Any], PaginationAssessment | None]:
+    """Build capture meta pagination state for CLI command output."""
+    if not command_argv:
+        return {}, None
+
+    original_args = _extract_cli_flag_args(command_argv)
+    original_args["command_argv"] = list(command_argv)
+    assessment = assess_pagination(
+        json_value=json_value,
+        pagination_config=None,
+        original_args=original_args,
+        upstream_prefix=_CLI_PREFIX,
+        tool_name="run",
+        page_number=page_number,
+    )
+    if assessment is None:
+        return {}, None
+    if assessment.state is None:
+        return {}, assessment
+    return {"_gateway_pagination": assessment.state.to_dict()}, assessment
+
+
+def _build_cli_continue_command(artifact_id: str) -> str:
+    """Build the CLI continuation command template for one artifact."""
+    return (
+        f"sift-gateway run --continue-from {artifact_id} -- <next-command>"
+    )
+
+
+def _build_cli_next_action(artifact_id: str) -> dict[str, Any]:
+    """Build CLI-native continuation action metadata."""
+    return {
+        "command": "run",
+        "continue_from_artifact_id": artifact_id,
+        "command_line": _build_cli_continue_command(artifact_id),
+    }
+
+
+def _is_artifact_next_page_action(next_action: Any) -> bool:
+    """Return whether next_action is canonical artifact(action=next_page)."""
+    if not isinstance(next_action, dict):
+        return False
+    if next_action.get("tool") != "artifact":
+        return False
+    arguments = next_action.get("arguments")
+    if not isinstance(arguments, dict):
+        return False
+    if arguments.get("action") != "next_page":
+        return False
+    artifact_id = arguments.get("artifact_id")
+    return isinstance(artifact_id, str) and bool(artifact_id)
+
+
+def _build_cli_continue_hint(artifact_id: str) -> str:
+    """Build a consistent continuation hint for CLI pagination."""
+    return (
+        "More results are available. Continue with "
+        f'"{_build_cli_continue_command(artifact_id)}" and use '
+        '"pagination.next_params" as continuation values.'
+    )
+
+
+def _pagination_has_known_next_action(
+    *,
+    pagination: dict[str, Any],
+    next_action: Any,
+) -> bool:
+    """Return whether pagination already has a supported next_action."""
+    if pagination.get("has_next_page") is not True:
+        return False
+    if isinstance(next_action, dict) and next_action.get("command") == "run":
+        return True
+    return _is_artifact_next_page_action(next_action)
+
+
+def _pagination_requires_manual_cli_continuation(
+    pagination: dict[str, Any],
+) -> bool:
+    """Return whether pagination indicates manual CLI continuation."""
+    next_params = pagination.get("next_params")
+    return (
+        pagination.get("has_next_page") is not True
+        and pagination.get("has_more") is True
+        and isinstance(next_params, dict)
+        and bool(next_params)
+    )
+
+
+def _artifact_id_from_pagination_next_action(next_action: Any) -> str | None:
+    """Extract artifact_id from canonical artifact-next-page action."""
+    if not isinstance(next_action, dict):
+        return None
+    arguments = next_action.get("arguments")
+    if not isinstance(arguments, dict):
+        return None
+    candidate_id = arguments.get("artifact_id")
+    if isinstance(candidate_id, str) and candidate_id:
+        return candidate_id
+    return None
+
+
+def _non_empty_string(value: Any) -> str | None:
+    """Normalize optional non-empty string."""
+    if isinstance(value, str) and value:
+        return value
+    return None
+
+
+def _adapt_cli_pagination_meta(
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    """Rewrite generic pagination next_action to CLI-native form."""
+    pagination = payload.get("pagination")
+    if not isinstance(pagination, dict):
+        return payload
+    next_action = pagination.get("next_action")
+    if _pagination_has_known_next_action(
+        pagination=pagination,
+        next_action=next_action,
+    ):
+        return payload
+
+    if not _pagination_requires_manual_cli_continuation(pagination):
+        return payload
+
+    artifact_id = _artifact_id_from_pagination_next_action(next_action)
+    if artifact_id is None:
+        artifact_id = _non_empty_string(payload.get("artifact_id"))
+    if artifact_id is None:
+        return payload
+
+    updated_pagination = dict(pagination)
+    updated_pagination["has_next_page"] = True
+    updated_pagination["next_action"] = _build_cli_next_action(artifact_id)
+    updated_pagination["hint"] = _build_cli_continue_hint(artifact_id)
+    return {
+        **payload,
+        "pagination": updated_pagination,
+    }
+
+
+def _build_cli_pagination_output(
+    *,
+    assessment: PaginationAssessment,
+    artifact_id: str,
+) -> dict[str, Any]:
+    """Build model-facing pagination metadata for CLI command captures."""
+    has_next_page = assessment.has_more and assessment.state is not None
+    next_action = _build_cli_next_action(artifact_id) if has_next_page else None
+    if has_next_page:
+        hint = _build_cli_continue_hint(artifact_id)
+    elif assessment.retrieval_status == "PARTIAL":
+        hint = (
+            "Result set may be incomplete. More pages might exist, "
+            "but continuation parameters were not discovered."
+        )
+    else:
+        hint = "No additional pages are available."
+
+    pagination: dict[str, Any] = {
+        "layer": "upstream",
+        "retrieval_status": assessment.retrieval_status,
+        "partial_reason": assessment.partial_reason,
+        "has_more": assessment.has_more,
+        "page_number": assessment.page_number,
+        "next_action": next_action,
+        "warning": assessment.warning,
+        "has_next_page": has_next_page,
+        "hint": hint,
+    }
+    if has_next_page and assessment.state is not None:
+        pagination["next_params"] = assessment.state.next_params
+        if len(assessment.state.next_params) == 1:
+            cursor_param, cursor_value = next(
+                iter(assessment.state.next_params.items())
+            )
+            if isinstance(cursor_param, str) and cursor_param:
+                pagination["next_cursor_param"] = cursor_param
+                pagination["next_cursor"] = cursor_value
+    if isinstance(assessment.warning, str) and assessment.warning:
+        pagination["warnings"] = [{"code": assessment.warning}]
+    return pagination
+
+
 def _estimate_records(payload: Any) -> int | None:
     """Best-effort row estimate for captured payload summaries."""
     if isinstance(payload, list):
@@ -300,6 +639,44 @@ def _fetch_artifact_for_diff(
         }
 
 
+def _load_cli_continue_chain_seq(
+    runtime: GatewayArtifactQueryRuntime,
+    *,
+    artifact_id: str,
+) -> int:
+    """Load and validate the parent chain sequence for ``run --continue-from``."""
+    if runtime.db_pool is None:
+        msg = "run --continue-from requires database backend"
+        raise ValueError(msg)
+
+    with runtime.db_pool.connection() as connection:
+        row = connection.execute(
+            _FETCH_CLI_CONTINUE_PARENT_SQL,
+            (WORKSPACE_ID, artifact_id),
+        ).fetchone()
+
+    if row is None:
+        msg = f"artifact not found: {artifact_id}"
+        raise ValueError(msg)
+
+    loaded = dict(zip(_CLI_CONTINUE_PARENT_COLUMNS, row, strict=False))
+    if loaded.get("deleted_at") is not None:
+        msg = f"artifact has been deleted: {artifact_id}"
+        raise ValueError(msg)
+    if loaded.get("capture_kind") != CAPTURE_KIND_CLI_COMMAND:
+        msg = (
+            "run --continue-from requires a cli command parent artifact: "
+            f"{artifact_id}"
+        )
+        raise ValueError(msg)
+
+    raw_chain_seq = loaded.get("chain_seq")
+    chain_seq = raw_chain_seq if isinstance(raw_chain_seq, int) else 0
+    if chain_seq < 0:
+        chain_seq = 0
+    return chain_seq + 1
+
+
 @contextmanager
 def _runtime_context(
     *,
@@ -339,24 +716,10 @@ def _collect_list_filters(args: argparse.Namespace) -> dict[str, Any]:
     filters: dict[str, Any] = {}
     if args.include_deleted:
         filters["include_deleted"] = True
-    if args.status is not None:
-        filters["status"] = args.status
-    if args.kind is not None:
-        filters["kind"] = args.kind
-    if args.source_tool is not None:
-        filters["source_tool"] = args.source_tool
-    if args.source_tool_prefix is not None:
-        filters["source_tool_prefix"] = args.source_tool_prefix
-    if args.upstream_instance_id is not None:
-        filters["upstream_instance_id"] = args.upstream_instance_id
-    if args.request_key is not None:
-        filters["request_key"] = args.request_key
-    if args.capture_kind is not None:
-        filters["capture_kind"] = args.capture_kind
-    if args.capture_key is not None:
-        filters["capture_key"] = args.capture_key
-    if args.parent_artifact_id is not None:
-        filters["parent_artifact_id"] = args.parent_artifact_id
+    for attr_name, filter_key in _LIST_FILTER_ATTRS:
+        value = getattr(args, attr_name, None)
+        if value is not None:
+            filters[filter_key] = value
     return filters
 
 
@@ -410,6 +773,71 @@ def _emit_human_list(payload: dict[str, Any]) -> None:
         _write_line(f"next_cursor: {cursor}")
 
 
+def _emit_human_schema_roots(roots: Any) -> None:
+    """Emit compact root summary lines for schema output."""
+    if not isinstance(roots, list):
+        return
+    _write_line(f"roots: {len(roots)}")
+    for root in roots:
+        if not isinstance(root, dict):
+            continue
+        root_path = root.get("root_path")
+        count = root.get("count_estimate")
+        _write_line(f"- {root_path} count={count}")
+
+
+def _schema_next_line_and_artifact(
+    next_action: Any,
+) -> tuple[str | None, str | None]:
+    """Resolve emitted next-line text and CLI artifact override."""
+    if not isinstance(next_action, dict):
+        return None, None
+
+    artifact_id = _non_empty_string(
+        next_action.get("continue_from_artifact_id")
+    )
+    command_line = _non_empty_string(next_action.get("command_line"))
+    if command_line is not None:
+        return f"next: {command_line}", artifact_id
+
+    if _is_artifact_next_page_action(next_action):
+        arguments = next_action.get("arguments")
+        if isinstance(arguments, dict):
+            next_artifact_id = _non_empty_string(arguments.get("artifact_id"))
+            if next_artifact_id is not None:
+                return (
+                    "next: "
+                    f'artifact(action="next_page", artifact_id="{next_artifact_id}")',
+                    artifact_id,
+                )
+    return None, artifact_id
+
+
+def _emit_human_schema_pagination(
+    payload: dict[str, Any],
+    pagination: dict[str, Any],
+) -> None:
+    """Emit continuation lines for schema output when pagination exists."""
+    if pagination.get("has_next_page") is not True:
+        return
+
+    artifact_id = _non_empty_string(payload.get("artifact_id"))
+    next_line, candidate_artifact_id = _schema_next_line_and_artifact(
+        pagination.get("next_action")
+    )
+    if candidate_artifact_id is not None:
+        artifact_id = candidate_artifact_id
+
+    if next_line is not None:
+        _write_line(next_line)
+    elif artifact_id is not None:
+        _write_line(f"next: {_build_cli_continue_command(artifact_id)}")
+
+    hint = _non_empty_string(pagination.get("hint"))
+    if hint is not None:
+        _write_line(f"hint: {hint}")
+
+
 def _emit_human_schema(payload: dict[str, Any]) -> None:
     """Emit compact human-readable output for ``sift-gateway schema``."""
     _write_line(f"artifact: {payload.get('artifact_id')}")
@@ -417,15 +845,12 @@ def _emit_human_schema(payload: dict[str, Any]) -> None:
     artifacts = payload.get("artifacts")
     if isinstance(artifacts, list):
         _write_line(f"artifacts: {len(artifacts)}")
-    roots = payload.get("roots")
-    if isinstance(roots, list):
-        _write_line(f"roots: {len(roots)}")
-        for root in roots:
-            if not isinstance(root, dict):
-                continue
-            root_path = root.get("root_path")
-            count = root.get("count_estimate")
-            _write_line(f"- {root_path} count={count}")
+
+    _emit_human_schema_roots(payload.get("roots"))
+
+    pagination = payload.get("pagination")
+    if isinstance(pagination, dict):
+        _emit_human_schema_pagination(payload, pagination)
 
 
 def _emit_human_generic(payload: dict[str, Any]) -> None:
@@ -467,6 +892,13 @@ def _emit_human_run(payload: dict[str, Any]) -> None:
     command_exit_code = payload.get("command_exit_code")
     if isinstance(command_exit_code, int):
         _write_line(f"exit:     {command_exit_code}")
+    pagination = payload.get("pagination")
+    if (
+        isinstance(pagination, dict)
+        and pagination.get("has_next_page") is True
+        and isinstance(artifact_id, str)
+    ):
+        _write_line(f"next:     {_build_cli_continue_command(artifact_id)}")
     if isinstance(artifact_id, str):
         _write_line(
             f"hint:     use `sift-gateway query {artifact_id} '$'` to explore"
@@ -590,6 +1022,264 @@ def _execute_code(
     )
 
 
+def _validate_run_mode_inputs(
+    *,
+    use_stdin: bool,
+    command_argv: list[str],
+    parent_artifact_id: str | None,
+) -> None:
+    """Validate mutually exclusive run-mode flags before execution."""
+    if use_stdin and command_argv:
+        msg = "--stdin cannot be combined with a command"
+        raise ValueError(msg)
+    if use_stdin and parent_artifact_id is not None:
+        msg = "--stdin cannot be combined with --continue-from"
+        raise ValueError(msg)
+
+
+def _build_run_identity_args(
+    *,
+    command_argv: list[str],
+    cwd: str,
+    env_fingerprint: str,
+    parent_artifact_id: str | None,
+) -> dict[str, Any]:
+    """Build request-identity args for command run captures."""
+    identity_args: dict[str, Any] = {
+        "command_argv": command_argv,
+        "cwd": cwd,
+        "env_fingerprint": env_fingerprint,
+    }
+    if parent_artifact_id is not None:
+        identity_args["continue_from_artifact_id"] = parent_artifact_id
+    return identity_args
+
+
+def _build_run_capture_origin(
+    *,
+    command_argv: list[str],
+    cwd: str,
+    env_fingerprint: str,
+    parent_artifact_id: str | None,
+) -> dict[str, Any]:
+    """Build capture_origin metadata for command run captures."""
+    capture_origin: dict[str, Any] = {
+        "command_argv": command_argv,
+        "cwd": cwd,
+        "env_fingerprint": env_fingerprint,
+    }
+    if parent_artifact_id is not None:
+        capture_origin["continue_from_artifact_id"] = parent_artifact_id
+    return capture_origin
+
+
+def _execute_run_subprocess(
+    command_argv: list[str],
+) -> subprocess.CompletedProcess[bytes]:
+    """Execute command and normalize process-level execution failures."""
+    try:
+        return subprocess.run(
+            command_argv,
+            capture_output=True,
+            check=False,
+            text=False,
+        )
+    except FileNotFoundError as exc:
+        msg = f"command not found: {command_argv[0]}"
+        raise ValueError(msg) from exc
+    except OSError as exc:
+        msg = f"failed to execute command: {exc}"
+        raise ValueError(msg) from exc
+
+
+def _run_error_block(command_exit_code: int) -> dict[str, Any] | None:
+    """Build run error block for non-zero command exit codes."""
+    if command_exit_code == 0:
+        return None
+    return {
+        "code": "COMMAND_EXIT_NONZERO",
+        "message": f"command exited with code {command_exit_code}",
+        "details": {"exit_code": command_exit_code},
+    }
+
+
+def _execute_run_stdin_capture(
+    *,
+    cwd: str,
+    env_fingerprint: str,
+) -> _RunCaptureExecution:
+    """Capture ``run --stdin`` payload and metadata."""
+    raw_stdin = sys.stdin.buffer.read()
+    stdin_text = raw_stdin.decode("utf-8", errors="replace")
+    payload, is_json = _parse_json_or_text_payload(stdin_text)
+    if not is_json:
+        payload = {"stdin": stdin_text}
+    stdin_hash = hashlib.sha256(raw_stdin).hexdigest()
+    identity = compute_request_identity(
+        upstream_instance_id=_CLI_UPSTREAM_INSTANCE_ID,
+        prefix=_CLI_PREFIX,
+        tool_name="stdin",
+        forwarded_args={
+            "cwd": cwd,
+            "env_fingerprint": env_fingerprint,
+            "stdin_hash": stdin_hash,
+        },
+    )
+    return _RunCaptureExecution(
+        payload=payload,
+        identity=identity,
+        capture_kind=CAPTURE_KIND_STDIN_PIPE,
+        capture_origin={
+            "cwd": cwd,
+            "env_fingerprint": env_fingerprint,
+            "stdin_hash": stdin_hash,
+        },
+        command_exit_code=0,
+        status="ok",
+        error_block=None,
+        pagination_meta={},
+        pagination_assessment=None,
+    )
+
+
+def _execute_run_command_capture(
+    *,
+    command_argv: list[str],
+    cwd: str,
+    env_fingerprint: str,
+    parent_artifact_id: str | None,
+    chain_seq: int | None,
+) -> _RunCaptureExecution:
+    """Execute command-backed run capture and derive pagination metadata."""
+    if not command_argv:
+        msg = "run requires a command or --stdin"
+        raise ValueError(msg)
+
+    identity = compute_request_identity(
+        upstream_instance_id=_CLI_UPSTREAM_INSTANCE_ID,
+        prefix=_CLI_PREFIX,
+        tool_name="run",
+        forwarded_args=_build_run_identity_args(
+            command_argv=command_argv,
+            cwd=cwd,
+            env_fingerprint=env_fingerprint,
+            parent_artifact_id=parent_artifact_id,
+        ),
+    )
+    capture_origin = _build_run_capture_origin(
+        command_argv=command_argv,
+        cwd=cwd,
+        env_fingerprint=env_fingerprint,
+        parent_artifact_id=parent_artifact_id,
+    )
+
+    completed = _execute_run_subprocess(command_argv)
+    stdout_text = completed.stdout.decode("utf-8", errors="replace")
+    stderr_text = completed.stderr.decode("utf-8", errors="replace")
+    stdout_payload, stdout_is_json = _parse_json_or_text_payload(stdout_text)
+    command_exit_code = completed.returncode
+
+    pagination_meta: dict[str, Any] = {}
+    pagination_assessment: PaginationAssessment | None = None
+    if stdout_is_json and command_exit_code == 0:
+        pagination_meta, pagination_assessment = _assess_cli_pagination(
+            json_value=stdout_payload,
+            command_argv=command_argv,
+            page_number=chain_seq if chain_seq is not None else 0,
+        )
+
+    payload: Any
+    if stdout_is_json and not stderr_text and command_exit_code == 0:
+        payload = stdout_payload
+    else:
+        payload = {
+            "stdout": stdout_payload if stdout_is_json else stdout_text,
+            "stderr": stderr_text,
+            "exit_code": command_exit_code,
+            "stdout_is_json": stdout_is_json,
+        }
+
+    return _RunCaptureExecution(
+        payload=payload,
+        identity=identity,
+        capture_kind=CAPTURE_KIND_CLI_COMMAND,
+        capture_origin=capture_origin,
+        command_exit_code=command_exit_code,
+        status="ok" if command_exit_code == 0 else "error",
+        error_block=_run_error_block(command_exit_code),
+        pagination_meta=pagination_meta,
+        pagination_assessment=pagination_assessment,
+    )
+
+
+def _build_run_capture_arguments(
+    *,
+    execution: _RunCaptureExecution,
+    use_stdin: bool,
+    ttl_seconds: int | None,
+    tags: list[str],
+    parent_artifact_id: str | None,
+    chain_seq: int | None,
+) -> dict[str, Any]:
+    """Build artifact.capture argument payload for run invocations."""
+    capture_meta: dict[str, Any] = {
+        "capture_mode": "stdin" if use_stdin else "command",
+    }
+    if parent_artifact_id is not None:
+        capture_meta["continue_from_artifact_id"] = parent_artifact_id
+    if not use_stdin:
+        capture_meta.update(execution.pagination_meta)
+
+    capture_arguments: dict[str, Any] = {
+        "_gateway_context": _build_gateway_context(),
+        "capture_kind": execution.capture_kind,
+        "capture_origin": execution.capture_origin,
+        "capture_key": execution.identity.request_key,
+        "prefix": _CLI_PREFIX,
+        "tool_name": "stdin" if use_stdin else "run",
+        "upstream_instance_id": _CLI_UPSTREAM_INSTANCE_ID,
+        "request_key": execution.identity.request_key,
+        "request_args_hash": execution.identity.request_args_hash,
+        "request_args_prefix": execution.identity.request_args_prefix,
+        "payload": execution.payload,
+        "status": execution.status,
+        "error": execution.error_block,
+        "ttl_seconds": ttl_seconds,
+        "tags": tags,
+        "meta": capture_meta,
+    }
+    if parent_artifact_id is not None:
+        capture_arguments["parent_artifact_id"] = parent_artifact_id
+        if chain_seq is not None:
+            capture_arguments["chain_seq"] = chain_seq
+    return capture_arguments
+
+
+def _decorate_run_capture_payload(
+    capture_payload: dict[str, Any],
+    *,
+    execution: _RunCaptureExecution,
+    tags: list[str],
+    parent_artifact_id: str | None,
+) -> None:
+    """Attach CLI run summary fields onto artifact.capture output payload."""
+    capture_payload["records"] = _estimate_records(execution.payload)
+    capture_payload["command_exit_code"] = execution.command_exit_code
+    capture_payload["tags"] = tags
+    if parent_artifact_id is not None:
+        capture_payload["source_artifact_id"] = parent_artifact_id
+    artifact_id = capture_payload.get("artifact_id")
+    if (
+        execution.pagination_assessment is not None
+        and isinstance(artifact_id, str)
+        and artifact_id
+    ):
+        capture_payload["pagination"] = _build_cli_pagination_output(
+            assessment=execution.pagination_assessment,
+            artifact_id=artifact_id,
+        )
+
+
 def _execute_run(
     runtime: GatewayArtifactQueryRuntime,
     args: argparse.Namespace,
@@ -599,127 +1289,58 @@ def _execute_run(
     ttl_seconds = _parse_ttl_seconds(args.ttl)
     cwd = str(Path.cwd())
     env_fingerprint = _environment_fingerprint()
+    parent_artifact_id: str | None = args.continue_from
     command_argv = _normalize_command_argv(args.command_argv)
-    if args.stdin and command_argv:
-        msg = "--stdin cannot be combined with a command"
-        raise ValueError(msg)
+    _validate_run_mode_inputs(
+        use_stdin=args.stdin,
+        command_argv=command_argv,
+        parent_artifact_id=parent_artifact_id,
+    )
 
-    if args.stdin:
-        raw_stdin = sys.stdin.buffer.read()
-        stdin_text = raw_stdin.decode("utf-8", errors="replace")
-        payload, _is_json = _parse_json_or_text_payload(stdin_text)
-        if not _is_json:
-            payload = {"stdin": stdin_text}
-        stdin_hash = hashlib.sha256(raw_stdin).hexdigest()
-        identity = compute_request_identity(
-            upstream_instance_id=_CLI_UPSTREAM_INSTANCE_ID,
-            prefix=_CLI_PREFIX,
-            tool_name="stdin",
-            forwarded_args={
-                "cwd": cwd,
-                "env_fingerprint": env_fingerprint,
-                "stdin_hash": stdin_hash,
-            },
+    chain_seq: int | None = None
+    if parent_artifact_id is not None:
+        chain_seq = _load_cli_continue_chain_seq(
+            runtime,
+            artifact_id=parent_artifact_id,
         )
-        capture_kind = CAPTURE_KIND_STDIN_PIPE
-        capture_origin: dict[str, Any] = {
-            "cwd": cwd,
-            "env_fingerprint": env_fingerprint,
-            "stdin_hash": stdin_hash,
-        }
-        command_exit_code = 0
-        status = "ok"
-        error_block = None
-    else:
-        if not command_argv:
-            msg = "run requires a command or --stdin"
-            raise ValueError(msg)
 
-        identity = compute_request_identity(
-            upstream_instance_id=_CLI_UPSTREAM_INSTANCE_ID,
-            prefix=_CLI_PREFIX,
-            tool_name="run",
-            forwarded_args={
-                "command_argv": command_argv,
-                "cwd": cwd,
-                "env_fingerprint": env_fingerprint,
-            },
+    execution = (
+        _execute_run_stdin_capture(
+            cwd=cwd,
+            env_fingerprint=env_fingerprint,
         )
-        capture_kind = CAPTURE_KIND_CLI_COMMAND
-        capture_origin = {
-            "command_argv": command_argv,
-            "cwd": cwd,
-            "env_fingerprint": env_fingerprint,
-        }
-
-        try:
-            completed = subprocess.run(
-                command_argv,
-                capture_output=True,
-                check=False,
-                text=False,
-            )
-        except FileNotFoundError as exc:
-            msg = f"command not found: {command_argv[0]}"
-            raise ValueError(msg) from exc
-        except OSError as exc:
-            msg = f"failed to execute command: {exc}"
-            raise ValueError(msg) from exc
-
-        stdout_text = completed.stdout.decode("utf-8", errors="replace")
-        stderr_text = completed.stderr.decode("utf-8", errors="replace")
-        stdout_payload, stdout_is_json = _parse_json_or_text_payload(
-            stdout_text
+        if args.stdin
+        else _execute_run_command_capture(
+            command_argv=command_argv,
+            cwd=cwd,
+            env_fingerprint=env_fingerprint,
+            parent_artifact_id=parent_artifact_id,
+            chain_seq=chain_seq,
         )
-        command_exit_code = completed.returncode
-        status = "ok" if command_exit_code == 0 else "error"
-        error_block = None
-        if command_exit_code != 0:
-            error_block = {
-                "code": "COMMAND_EXIT_NONZERO",
-                "message": f"command exited with code {command_exit_code}",
-                "details": {"exit_code": command_exit_code},
-            }
-        if stdout_is_json and not stderr_text and command_exit_code == 0:
-            payload = stdout_payload
-        else:
-            payload = {
-                "stdout": stdout_payload if stdout_is_json else stdout_text,
-                "stderr": stderr_text,
-                "exit_code": command_exit_code,
-                "stdout_is_json": stdout_is_json,
-            }
-
+    )
     if tags:
-        capture_origin["tags"] = tags
+        execution.capture_origin["tags"] = tags
+
+    capture_arguments = _build_run_capture_arguments(
+        execution=execution,
+        use_stdin=args.stdin,
+        ttl_seconds=ttl_seconds,
+        tags=tags,
+        parent_artifact_id=parent_artifact_id,
+        chain_seq=chain_seq,
+    )
 
     capture_payload = execute_artifact_capture(
         runtime,
-        arguments={
-            "_gateway_context": _build_gateway_context(),
-            "capture_kind": capture_kind,
-            "capture_origin": capture_origin,
-            "capture_key": identity.request_key,
-            "prefix": _CLI_PREFIX,
-            "tool_name": "stdin" if args.stdin else "run",
-            "upstream_instance_id": _CLI_UPSTREAM_INSTANCE_ID,
-            "request_key": identity.request_key,
-            "request_args_hash": identity.request_args_hash,
-            "request_args_prefix": identity.request_args_prefix,
-            "payload": payload,
-            "status": status,
-            "error": error_block,
-            "ttl_seconds": ttl_seconds,
-            "tags": tags,
-            "meta": {
-                "capture_mode": "stdin" if args.stdin else "command",
-            },
-        },
+        arguments=capture_arguments,
     )
     if isinstance(capture_payload, dict):
-        capture_payload["records"] = _estimate_records(payload)
-        capture_payload["command_exit_code"] = command_exit_code
-        capture_payload["tags"] = tags
+        _decorate_run_capture_payload(
+            capture_payload,
+            execution=execution,
+            tags=tags,
+            parent_artifact_id=parent_artifact_id,
+        )
     return capture_payload
 
 
@@ -966,6 +1587,14 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Tag(s) to store with capture metadata (repeat or comma-separate)",
     )
     run_parser.add_argument(
+        "--continue-from",
+        default=None,
+        help=(
+            "Parent artifact_id for manual pagination chaining. "
+            "Use with an explicit upstream continuation command after --."
+        ),
+    )
+    run_parser.add_argument(
         "command_argv",
         nargs=argparse.REMAINDER,
         help="Command to execute (use -- to separate command args)",
@@ -989,13 +1618,55 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _dispatch_cli_payload(
+    args: argparse.Namespace,
+) -> tuple[dict[str, Any], str]:
+    """Dispatch one CLI command and apply standard payload sanitation."""
+    with _runtime_context(data_dir_override=args.data_dir) as runtime:
+        payload, mode = _dispatch_command(runtime, args)
+        payload = _sanitize_cli_payload(runtime, payload)
+        payload = _adapt_cli_pagination_meta(payload)
+    return payload, mode
+
+
+def _emit_error_response(payload: dict[str, Any], *, json_mode: bool) -> None:
+    """Emit one error payload in requested output mode."""
+    if json_mode:
+        _emit_json(payload)
+        return
+    _write_line(
+        f"{payload['code']}: {payload['message']}",
+        stream=sys.stderr,
+    )
+
+
+def _emit_human_mode_payload(mode: str, payload: dict[str, Any]) -> None:
+    """Emit successful payload in human mode by dispatch mode."""
+    emitters: dict[str, Any] = {
+        "list": _emit_human_list,
+        "schema": _emit_human_schema,
+        "run": _emit_human_run,
+        "diff": _emit_human_diff,
+    }
+    emitter = emitters.get(mode, _emit_human_generic)
+    emitter(payload)
+
+
+def _command_exit_code(mode: str, payload: dict[str, Any]) -> int | None:
+    """Return command exit code for run mode, when present."""
+    if mode != "run":
+        return None
+    command_exit_code = payload.get("command_exit_code")
+    if isinstance(command_exit_code, int):
+        return command_exit_code
+    return None
+
+
 def serve(argv: list[str] | None = None) -> int:
     """Run artifact CLI mode and return an exit code."""
     args = _build_parser().parse_args(argv)
     try:
-        with _runtime_context(data_dir_override=args.data_dir) as runtime:
-            payload, mode = _dispatch_command(runtime, args)
-            payload = _sanitize_cli_payload(runtime, payload)
+        payload, mode = _dispatch_cli_payload(args)
     except ValueError as exc:
         _write_line(str(exc), stream=sys.stderr)
         return 1
@@ -1004,38 +1675,17 @@ def serve(argv: list[str] | None = None) -> int:
         return 1
 
     if _is_error_response(payload):
-        if args.json:
-            _emit_json(payload)
-        else:
-            _write_line(
-                f"{payload['code']}: {payload['message']}",
-                stream=sys.stderr,
-            )
+        _emit_error_response(payload, json_mode=args.json)
         return 1
 
     if args.json:
         _emit_json(payload)
-        if mode == "run":
-            command_exit_code = payload.get("command_exit_code")
-            if isinstance(command_exit_code, int):
-                return command_exit_code
-        return 0
-
-    if mode == "list":
-        _emit_human_list(payload)
-    elif mode == "schema":
-        _emit_human_schema(payload)
-    elif mode == "run":
-        _emit_human_run(payload)
-    elif mode == "diff":
-        _emit_human_diff(payload)
     else:
-        _emit_human_generic(payload)
+        _emit_human_mode_payload(mode, payload)
 
-    if mode == "run":
-        command_exit_code = payload.get("command_exit_code")
-        if isinstance(command_exit_code, int):
-            return command_exit_code
+    command_exit_code = _command_exit_code(mode, payload)
+    if command_exit_code is not None:
+        return command_exit_code
     return 0
 
 

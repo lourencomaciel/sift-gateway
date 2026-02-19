@@ -41,6 +41,19 @@ Fix:
 sift-gateway query <artifact_id> '$.items' --select "id,name,status" --limit 20
 ```
 
+## Symptom: Paginated API Stops After First Page
+
+Cause:
+- Follow-up command was not issued with continuation parameters.
+
+Fix:
+- Read `pagination.next_params` from the prior `run` result.
+- Re-run the upstream command with those params and link lineage:
+
+```bash
+sift-gateway run --continue-from <artifact_id> -- <next-command-with-next_params-applied>
+```
+
 ## Symptom: `sift-gateway code` Fails Immediately
 
 Cause:

@@ -387,6 +387,213 @@ def test_serve_schema_human_output_snapshot(
     )
 
 
+def test_serve_schema_human_output_includes_continue_from_instruction(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr(
+        "sift_gateway.cli_main._runtime_context",
+        _fake_runtime_context,
+    )
+
+    def _fake_schema(runtime: Any, arguments: dict[str, Any]) -> dict[str, Any]:
+        del runtime, arguments
+        return {
+            "artifact_id": "art_1",
+            "scope": "single",
+            "artifacts": [{"artifact_id": "art_1"}],
+            "roots": [{"root_path": "$.items", "count_estimate": 3}],
+            "pagination": {
+                "layer": "upstream",
+                "retrieval_status": "PARTIAL",
+                "partial_reason": "MORE_PAGES_AVAILABLE",
+                "has_more": True,
+                "page_number": 0,
+                "next_action": None,
+                "warning": "INCOMPLETE_RESULT_SET",
+                "has_next_page": False,
+                "next_params": {"after": "C2"},
+                "hint": "More results are available.",
+            },
+        }
+
+    monkeypatch.setattr(
+        "sift_gateway.cli_main.execute_artifact_describe",
+        _fake_schema,
+    )
+
+    exit_code = cli_main.serve(["schema", "art_1", "--scope", "single"])
+    out = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert (
+        "next: sift-gateway run --continue-from art_1 -- <next-command>\n"
+        in out
+    )
+    assert (
+        '"pagination.next_params" as continuation values'
+        in out
+    )
+
+
+def test_serve_schema_human_output_preserves_non_cli_next_page_action(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr(
+        "sift_gateway.cli_main._runtime_context",
+        _fake_runtime_context,
+    )
+
+    def _fake_schema(runtime: Any, arguments: dict[str, Any]) -> dict[str, Any]:
+        del runtime, arguments
+        return {
+            "artifact_id": "art_1",
+            "scope": "single",
+            "artifacts": [{"artifact_id": "art_1"}],
+            "roots": [{"root_path": "$.items", "count_estimate": 3}],
+            "pagination": {
+                "layer": "upstream",
+                "retrieval_status": "PARTIAL",
+                "partial_reason": "MORE_PAGES_AVAILABLE",
+                "has_more": True,
+                "page_number": 0,
+                "next_action": {
+                    "tool": "artifact",
+                    "arguments": {
+                        "action": "next_page",
+                        "artifact_id": "art_1",
+                    },
+                },
+                "warning": "INCOMPLETE_RESULT_SET",
+                "has_next_page": True,
+                "hint": "Use artifact next_page.",
+            },
+        }
+
+    monkeypatch.setattr(
+        "sift_gateway.cli_main.execute_artifact_describe",
+        _fake_schema,
+    )
+
+    exit_code = cli_main.serve(["schema", "art_1", "--scope", "single"])
+    out = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert (
+        'next: artifact(action="next_page", artifact_id="art_1")\n'
+        in out
+    )
+    assert "run --continue-from" not in out
+
+
+def test_serve_schema_json_preserves_non_cli_next_page_action(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr(
+        "sift_gateway.cli_main._runtime_context",
+        _fake_runtime_context,
+    )
+
+    def _fake_schema(runtime: Any, arguments: dict[str, Any]) -> dict[str, Any]:
+        del runtime, arguments
+        return {
+            "artifact_id": "art_1",
+            "scope": "single",
+            "artifacts": [{"artifact_id": "art_1"}],
+            "roots": [{"root_path": "$.items", "count_estimate": 3}],
+            "pagination": {
+                "layer": "upstream",
+                "retrieval_status": "PARTIAL",
+                "partial_reason": "MORE_PAGES_AVAILABLE",
+                "has_more": True,
+                "page_number": 0,
+                "next_action": {
+                    "tool": "artifact",
+                    "arguments": {
+                        "action": "next_page",
+                        "artifact_id": "art_1",
+                    },
+                },
+                "warning": "INCOMPLETE_RESULT_SET",
+                "has_next_page": True,
+                "hint": "generic hint",
+            },
+        }
+
+    monkeypatch.setattr(
+        "sift_gateway.cli_main.execute_artifact_describe",
+        _fake_schema,
+    )
+
+    exit_code = cli_main.serve(
+        ["schema", "art_1", "--scope", "single", "--json"]
+    )
+    out = capsys.readouterr().out.strip()
+    payload = json.loads(out)
+
+    assert exit_code == 0
+    assert payload["pagination"]["next_action"] == {
+        "tool": "artifact",
+        "arguments": {
+            "action": "next_page",
+            "artifact_id": "art_1",
+        },
+    }
+
+
+def test_serve_schema_json_rewrites_cli_manual_continuation_state(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr(
+        "sift_gateway.cli_main._runtime_context",
+        _fake_runtime_context,
+    )
+
+    def _fake_schema(runtime: Any, arguments: dict[str, Any]) -> dict[str, Any]:
+        del runtime, arguments
+        return {
+            "artifact_id": "art_1",
+            "scope": "single",
+            "artifacts": [{"artifact_id": "art_1"}],
+            "roots": [{"root_path": "$.items", "count_estimate": 3}],
+            "pagination": {
+                "layer": "upstream",
+                "retrieval_status": "PARTIAL",
+                "partial_reason": "MORE_PAGES_AVAILABLE",
+                "has_more": True,
+                "page_number": 0,
+                "next_action": None,
+                "warning": "INCOMPLETE_RESULT_SET",
+                "has_next_page": False,
+                "next_params": {"after": "C2"},
+                "hint": "Result set may be incomplete.",
+            },
+        }
+
+    monkeypatch.setattr(
+        "sift_gateway.cli_main.execute_artifact_describe",
+        _fake_schema,
+    )
+
+    exit_code = cli_main.serve(
+        ["schema", "art_1", "--scope", "single", "--json"]
+    )
+    out = capsys.readouterr().out.strip()
+    payload = json.loads(out)
+
+    assert exit_code == 0
+    assert payload["pagination"]["has_next_page"] is True
+    assert payload["pagination"]["next_action"] == {
+        "command": "run",
+        "continue_from_artifact_id": "art_1",
+        "command_line": "sift-gateway run --continue-from art_1 -- <next-command>",
+    }
+    assert payload["pagination"]["next_params"] == {"after": "C2"}
+
+
 def test_serve_returns_error_exit_for_gateway_error_payload(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -455,6 +662,185 @@ def test_serve_run_human_output_snapshot(
         "exit:     0\n"
         "hint:     use `sift-gateway query art_new '$'` to explore\n"
     )
+
+
+def test_extract_cli_flag_args_parses_common_patterns() -> None:
+    parsed = cli_main._extract_cli_flag_args(
+        [
+            "gh",
+            "api",
+            "--limit=100",
+            "--after",
+            "CUR_1",
+            "--verbose",
+            "--no-cache",
+        ]
+    )
+
+    assert parsed["limit"] == 100
+    assert parsed["after"] == "CUR_1"
+    assert parsed["verbose"] is True
+    assert parsed["cache"] is False
+
+
+def test_extract_cli_flag_args_preserves_leading_zero_tokens() -> None:
+    parsed = cli_main._extract_cli_flag_args(
+        [
+            "fake-api",
+            "--cursor",
+            "000123",
+            "--page",
+            "1",
+            "--limit",
+            "100",
+        ]
+    )
+
+    assert parsed["cursor"] == "000123"
+    assert parsed["page"] == 1
+    assert parsed["limit"] == 100
+
+
+def test_serve_run_injects_pagination_state_into_capture_meta(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr(
+        "sift_gateway.cli_main._runtime_context",
+        _fake_runtime_context,
+    )
+    monkeypatch.setattr(
+        "sift_gateway.cli_main.subprocess.run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(
+            args=["fake"],
+            returncode=0,
+            stdout=(
+                b'{"next":"?after=CURSOR_2&limit=100",'
+                b'"items":[{"id":"1"}]}'
+            ),
+            stderr=b"",
+        ),
+    )
+    captured: dict[str, Any] = {}
+
+    def _fake_capture(
+        runtime: Any, *, arguments: dict[str, Any]
+    ) -> dict[str, Any]:
+        del runtime
+        captured.update(arguments)
+        return {
+            "artifact_id": "art_page_1",
+            "created_seq": 10,
+            "status": "ok",
+            "kind": "data",
+            "capture_kind": "cli_command",
+            "capture_key": "rk_3",
+            "payload_json_bytes": 64,
+            "payload_binary_bytes_total": 0,
+            "payload_total_bytes": 64,
+            "expires_at": None,
+            "reused": False,
+        }
+
+    monkeypatch.setattr(
+        "sift_gateway.cli_main.execute_artifact_capture",
+        _fake_capture,
+    )
+
+    exit_code = cli_main.serve(
+        [
+            "run",
+            "--json",
+            "--",
+            "fake-api",
+            "--after",
+            "CURSOR_1",
+            "--limit",
+            "100",
+        ]
+    )
+    out = capsys.readouterr().out.strip()
+    payload = json.loads(out)
+
+    assert exit_code == 0
+    assert payload["pagination"]["has_next_page"] is True
+    assert payload["pagination"]["next_action"] == {
+        "command": "run",
+        "continue_from_artifact_id": "art_page_1",
+        "command_line": "sift-gateway run --continue-from art_page_1 -- <next-command>",
+    }
+    meta = captured["meta"]
+    assert meta["capture_mode"] == "command"
+    pagination = meta["_gateway_pagination"]
+    assert pagination["upstream_prefix"] == "cli"
+    assert pagination["tool_name"] == "run"
+    assert pagination["page_number"] == 0
+    assert pagination["next_params"] == {"after": "CURSOR_2", "limit": 100}
+
+
+def test_serve_run_derives_numeric_progression_from_integer_flags(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr(
+        "sift_gateway.cli_main._runtime_context",
+        _fake_runtime_context,
+    )
+    monkeypatch.setattr(
+        "sift_gateway.cli_main.subprocess.run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(
+            args=["fake"],
+            returncode=0,
+            stdout=b'{"has_more": true, "items": [{"id":"1"}]}',
+            stderr=b"",
+        ),
+    )
+    captured: dict[str, Any] = {}
+
+    def _fake_capture(
+        runtime: Any, *, arguments: dict[str, Any]
+    ) -> dict[str, Any]:
+        del runtime
+        captured.update(arguments)
+        return {
+            "artifact_id": "art_page_1",
+            "created_seq": 10,
+            "status": "ok",
+            "kind": "data",
+            "capture_kind": "cli_command",
+            "capture_key": "rk_3",
+            "payload_json_bytes": 64,
+            "payload_binary_bytes_total": 0,
+            "payload_total_bytes": 64,
+            "expires_at": None,
+            "reused": False,
+        }
+
+    monkeypatch.setattr(
+        "sift_gateway.cli_main.execute_artifact_capture",
+        _fake_capture,
+    )
+
+    exit_code = cli_main.serve(
+        [
+            "run",
+            "--json",
+            "--",
+            "fake-api",
+            "--page",
+            "1",
+            "--limit",
+            "100",
+        ]
+    )
+    out = capsys.readouterr().out.strip()
+    payload = json.loads(out)
+
+    assert exit_code == 0
+    assert payload["pagination"]["has_next_page"] is True
+    assert payload["pagination"]["next_params"] == {"page": 2}
+    pagination = captured["meta"]["_gateway_pagination"]
+    assert pagination["next_params"] == {"page": 2}
 
 
 def test_serve_run_persists_and_returns_command_exit_code(
@@ -553,6 +939,179 @@ def test_serve_run_stdin_uses_stdin_capture_kind(
     assert captured["capture_kind"] == "stdin_pipe"
     assert captured["tool_name"] == "stdin"
     assert captured["payload"] == {"k": "v"}
+
+
+def test_serve_run_rejects_stdin_with_continue_from(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr(
+        "sift_gateway.cli_main._runtime_context",
+        _fake_runtime_context,
+    )
+
+    exit_code = cli_main.serve(
+        ["run", "--stdin", "--continue-from", "art_1", "--json"]
+    )
+    err = capsys.readouterr().err
+
+    assert exit_code == 1
+    assert "--stdin cannot be combined with --continue-from" in err
+
+
+def test_serve_run_continue_from_links_lineage_and_page_number(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr(
+        "sift_gateway.cli_main._runtime_context",
+        _fake_runtime_context,
+    )
+    monkeypatch.setattr(
+        "sift_gateway.cli_main._load_cli_continue_chain_seq",
+        lambda runtime, artifact_id: 1,
+    )
+    monkeypatch.setattr(
+        "sift_gateway.cli_main.subprocess.run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(
+            args=["fake-api"],
+            returncode=0,
+            stdout=(
+                b'{"next":"?after=CUR_3&limit=100",'
+                b'"items":[{"id":"2"}]}'
+            ),
+            stderr=b"",
+        ),
+    )
+    captured: dict[str, Any] = {}
+
+    def _fake_capture(
+        runtime: Any, *, arguments: dict[str, Any]
+    ) -> dict[str, Any]:
+        del runtime
+        captured.update(arguments)
+        return {
+            "artifact_id": "art_page_2",
+            "created_seq": 11,
+            "status": "ok",
+            "kind": "data",
+            "capture_kind": "cli_command",
+            "capture_key": "rk_next",
+            "payload_json_bytes": 64,
+            "payload_binary_bytes_total": 0,
+            "payload_total_bytes": 64,
+            "expires_at": None,
+            "reused": False,
+        }
+
+    monkeypatch.setattr(
+        "sift_gateway.cli_main.execute_artifact_capture",
+        _fake_capture,
+    )
+
+    exit_code = cli_main.serve(
+        [
+            "run",
+            "--continue-from",
+            "art_page_1",
+            "--json",
+            "--tag",
+            "page2",
+            "--",
+            "fake-api",
+            "--after",
+            "CUR_2",
+            "--limit",
+            "100",
+        ]
+    )
+    out = capsys.readouterr().out.strip()
+    payload = json.loads(out)
+
+    assert exit_code == 0
+    assert payload["artifact_id"] == "art_page_2"
+    assert payload["source_artifact_id"] == "art_page_1"
+    assert payload["pagination"]["has_next_page"] is True
+    assert payload["pagination"]["next_action"] == {
+        "command": "run",
+        "continue_from_artifact_id": "art_page_2",
+        "command_line": "sift-gateway run --continue-from art_page_2 -- <next-command>",
+    }
+    assert payload["pagination"]["page_number"] == 1
+    assert captured["parent_artifact_id"] == "art_page_1"
+    assert captured["chain_seq"] == 1
+    assert captured["capture_origin"]["continue_from_artifact_id"] == "art_page_1"
+    assert captured["capture_origin"]["command_argv"] == [
+        "fake-api",
+        "--after",
+        "CUR_2",
+        "--limit",
+        "100",
+    ]
+    assert captured["meta"]["continue_from_artifact_id"] == "art_page_1"
+    assert captured["meta"]["_gateway_pagination"]["page_number"] == 1
+    assert captured["meta"]["_gateway_pagination"]["next_params"] == {
+        "after": "CUR_3",
+        "limit": 100,
+    }
+
+
+def test_serve_run_continue_from_returns_command_exit_code_in_json_mode(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr(
+        "sift_gateway.cli_main._runtime_context",
+        _fake_runtime_context,
+    )
+    monkeypatch.setattr(
+        "sift_gateway.cli_main._load_cli_continue_chain_seq",
+        lambda runtime, artifact_id: 3,
+    )
+    monkeypatch.setattr(
+        "sift_gateway.cli_main.subprocess.run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(
+            args=["fake-api"],
+            returncode=5,
+            stdout=b'{"items":[1]}',
+            stderr=b"",
+        ),
+    )
+    monkeypatch.setattr(
+        "sift_gateway.cli_main.execute_artifact_capture",
+        lambda runtime, *, arguments: {
+            "artifact_id": "art_page_3",
+            "created_seq": 12,
+            "status": "error",
+            "kind": "data",
+            "capture_kind": "cli_command",
+            "capture_key": "rk_next",
+            "payload_json_bytes": 11,
+            "payload_binary_bytes_total": 0,
+            "payload_total_bytes": 11,
+            "expires_at": None,
+            "reused": False,
+        },
+    )
+
+    exit_code = cli_main.serve(
+        [
+            "run",
+            "--continue-from",
+            "art_page_2",
+            "--json",
+            "--",
+            "fake-api",
+            "--after",
+            "CUR_3",
+        ]
+    )
+    out = capsys.readouterr().out.strip()
+    payload = json.loads(out)
+
+    assert payload["command_exit_code"] == 5
+    assert payload["source_artifact_id"] == "art_page_2"
+    assert exit_code == 5
 
 
 def test_serve_diff_json_reports_hash_equality(
