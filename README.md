@@ -5,10 +5,10 @@ Use it whether an agent operates through MCP servers or through CLI-driven
 tooling. Sift captures outputs as artifacts so you can fix context bloat:
 the model sees handles and focused retrieval, not massive raw payloads.
 
-Current transport/protocol focus is MCP, exposed through two CLIs:
+Sift has two operating modes:
 
-- `sift-gateway` for gateway setup and runtime operations
-- `sift` for artifact retrieval and computation
+- **MCP gateway mode** via `sift-gateway`: run Sift between MCP clients and upstream MCP servers.
+- **Artifact CLI mode** via `sift`: inspect, query, and compute over captured artifacts directly.
 
 It keeps large tool outputs out of model context while preserving full payloads
 for later retrieval.
