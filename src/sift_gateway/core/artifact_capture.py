@@ -360,7 +360,11 @@ def _persist_capture_handle(
     chain_seq: int | None,
 ) -> tuple[Any | None, dict[str, Any] | None]:
     """Persist capture and verify mapping readiness."""
-    with runtime.db_pool.connection() as connection:
+    db_pool = runtime.db_pool
+    if db_pool is None:
+        return None, runtime.not_implemented(_TOOL_NAME)
+
+    with db_pool.connection() as connection:
         handle = persist_artifact(
             connection=connection,
             config=runtime.config,

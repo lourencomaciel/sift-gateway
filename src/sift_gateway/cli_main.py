@@ -284,6 +284,8 @@ def _apply_inline_cli_flag_assignment(
 
 def _is_cli_flag_value_token(token: str | None) -> bool:
     """Return whether token can be consumed as a positional flag value."""
+    if not isinstance(token, str):
+        return False
     return bool(token) and token != "--" and not token.startswith("-")
 
 
