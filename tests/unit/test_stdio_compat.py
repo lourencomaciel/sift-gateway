@@ -20,7 +20,7 @@ from sift_gateway.mcp.stdio_compat import (
 
 
 class _ServerSession:
-    """Manage a sift stdio subprocess for protocol tests."""
+    """Manage a sift-gateway stdio subprocess for protocol tests."""
 
     def __init__(self, tmp_path: Path) -> None:
         env = dict(os.environ)

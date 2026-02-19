@@ -6,14 +6,14 @@ Use these compact templates to keep agent replies small and actionable.
 
 ```text
 Captured to <artifact_id> (<records> records, <bytes> bytes).
-Next: `sift query <artifact_id> '<root_path>' --limit <n>`.
+Next: `sift-gateway query <artifact_id> '<root_path>' --limit <n>`.
 ```
 
 ## Follow-Up Capture
 
 ```text
 Captured a fresh artifact <artifact_id> for this run.
-Next: compare with `sift diff <previous_id> <artifact_id>` if needed.
+Next: compare with `sift-gateway diff <previous_id> <artifact_id>` if needed.
 ```
 
 ## Narrow Query Result

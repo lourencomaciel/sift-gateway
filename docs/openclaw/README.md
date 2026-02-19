@@ -20,25 +20,25 @@ pipx install sift-gateway
 2. Install the packaged skill in your OpenClaw skills directory:
 
 ```bash
-mkdir -p ~/.openclaw/skills/sift
-sift-openclaw-skill --output ~/.openclaw/skills/sift/SKILL.md
+mkdir -p ~/.openclaw/skills/sift-gateway
+sift-gateway-openclaw-skill --output ~/.openclaw/skills/sift-gateway/SKILL.md
 ```
 
 3. Restart OpenClaw (or reload skills) and run a capture flow:
 
 ```bash
-sift run -- echo '[{"id":1,"state":"open"},{"id":2,"state":"closed"}]'
-sift query <artifact_id> '$' --limit 1
-sift code <artifact_id> '$' --expr "df.shape[0]"
+sift-gateway run -- echo '[{"id":1,"state":"open"},{"id":2,"state":"closed"}]'
+sift-gateway query <artifact_id> '$' --limit 1
+sift-gateway code <artifact_id> '$' --expr "df.shape[0]"
 ```
 
 4. Add one short system instruction in your OpenClaw profile:
 
 ```text
-When command output may exceed ~4KB, capture with `sift run` and query incrementally.
+When command output may exceed ~4KB, capture with `sift-gateway run` and query incrementally.
 ```
 
-## `sift code` Methods
+## `sift-gateway code` Methods
 
 Use one of these modes depending on complexity:
 
@@ -48,9 +48,9 @@ Use one of these modes depending on complexity:
 - `--params '<json_object>'` to pass runtime parameters into `params`.
 
 ```bash
-sift code <artifact_id> '$.items' --expr "df.shape[0]"
-sift code <artifact_id> '$.items' --code "def run(data, schema, params): return {'rows': len(data)}"
-sift code <artifact_id> '$.items' --file ./analysis.py --params '{"window":"7d"}'
+sift-gateway code <artifact_id> '$.items' --expr "df.shape[0]"
+sift-gateway code <artifact_id> '$.items' --code "def run(data, schema, params): return {'rows': len(data)}"
+sift-gateway code <artifact_id> '$.items' --file ./analysis.py --params '{"window":"7d"}'
 ```
 
 ## Capture vs Inline Decision Rule
@@ -61,11 +61,11 @@ sift code <artifact_id> '$.items' --file ./analysis.py --params '{"window":"7d"}
 
 ## Manual Validation Checklist
 
-- `sift run -- <cmd>` returns an artifact summary.
-- `sift query <id> '$' --limit 5` returns bounded data.
-- `sift run` always captures a fresh run result.
-- `sift run --stdin` works from a pipe.
-- `sift diff <id1> <id2>` reports equality or bounded diff lines.
+- `sift-gateway run -- <cmd>` returns an artifact summary.
+- `sift-gateway query <id> '$' --limit 5` returns bounded data.
+- `sift-gateway run` always captures a fresh run result.
+- `sift-gateway run --stdin` works from a pipe.
+- `sift-gateway diff <id1> <id2>` reports equality or bounded diff lines.
 
 ## Related Docs
 

@@ -106,14 +106,14 @@ def _build_steps(args: argparse.Namespace) -> list[Step]:
             [
                 Step(
                     name="smoke_cli_version",
-                    command=["uv", "run", "sift", "--version"],
+                    command=["uv", "run", "sift-gateway", "--version"],
                 ),
                 Step(
                     name="smoke_cli_list",
                     command=[
                         "uv",
                         "run",
-                        "sift",
+                        "sift-gateway",
                         "list",
                         "--limit",
                         "1",

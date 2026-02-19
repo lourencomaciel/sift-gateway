@@ -159,13 +159,13 @@ Status: complete as of February 19, 2026.
 
 ### 7.5 Phase 4: CLI foundation (4-6 days)
 
-1. Add `sift` CLI entrypoint alongside `sift-gateway` (done).
+1. Consolidate CLI and MCP modes under `sift-gateway` (done).
 2. Implement core-driven commands (done):
-   - `sift query`
-   - `sift schema`
-   - `sift get`
-   - `sift list`
-   - `sift code`
+   - `sift-gateway query`
+   - `sift-gateway schema`
+   - `sift-gateway get`
+   - `sift-gateway list`
+   - `sift-gateway code`
 3. Provide `--json` machine mode for all commands (done).
 4. Implement stable human-readable compact output defaults (done).
 
@@ -177,11 +177,11 @@ Status: complete as of February 19, 2026.
 
 ### 7.6 Phase 5: CLI capture workflows (5-8 days)
 
-1. Implement `sift run -- <cmd>` command execution wrapper (done).
-2. Implement `sift run --stdin` (done).
+1. Implement `sift-gateway run -- <cmd>` command execution wrapper (done).
+2. Implement `sift-gateway run --stdin` (done).
 3. Implement tags and TTL options (done).
 4. Always run commands fresh and persist each capture (done).
-5. Add `sift diff` for artifact comparison (done).
+5. Add `sift-gateway diff` for artifact comparison (done).
 
 Exit criteria:
 1. End-to-end run/query loop tested (done; unit coverage added).
@@ -204,8 +204,8 @@ Status: complete as of February 19, 2026.
 
 ### 7.8 Phase 7: Packaging and naming transition (2-4 days)
 
-1. Prepare package naming strategy (`sift-data` for CLI distribution) (done).
-2. Keep MCP compatibility package path intact during transition (done).
+1. Consolidate package and CLI handle under `sift-gateway` (done).
+2. Remove separate `sift` command handle from packaging/docs (done).
 3. Add optional extras:
    - `code` extra for pandas/numpy/jmespath (done).
 4. Keep core install minimal without auto-install side effects (done).
@@ -311,7 +311,7 @@ Status: complete as of February 19, 2026.
 ## 12. Decision log needed before Phase 4
 
 Resolved:
-1. CLI executable includes `sift` (with `sift-gateway` compatibility retained).
+1. CLI executable is `sift-gateway` for both gateway and artifact modes.
 2. `--where` uses structured JSON object in v1.
-3. `sift code` is available in CLI; heavier runtime deps are optional via `code` extra.
+3. `sift-gateway code` is available in CLI; heavier runtime deps are optional via `code` extra.
 4. Default CLI TTL behavior is implemented with explicit override support (`--ttl` / env).

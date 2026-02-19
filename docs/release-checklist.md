@@ -35,7 +35,7 @@ Use this checklist for the CLI-agnostic release candidate.
 1. Build artifacts:
    - `UV_CACHE_DIR=/tmp/uv-cache uv build`
 2. Smoke CLI:
-   - `sift --version`
-   - `sift list`
+   - `sift-gateway --version`
+   - `sift-gateway list`
 3. Smoke MCP status path:
    - `sift-gateway --check`

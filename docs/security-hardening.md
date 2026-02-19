@@ -3,7 +3,7 @@
 Phase 8 security pass focuses on two high-risk surfaces: capture execution and
 code execution.
 
-## Capture Surface (`sift run`)
+## Capture Surface (`sift-gateway run`)
 
 Current controls:
 
@@ -14,11 +14,11 @@ Current controls:
 
 Operational guidance:
 
-1. Treat `sift run` as trusted-local execution; it runs real commands.
+1. Treat `sift-gateway run` as trusted-local execution; it runs real commands.
 2. Restrict who can invoke CLI capture in shared environments.
 3. Prefer `--stdin` ingestion for externally fetched data when practical.
 
-## Code Surface (`sift code` / `query_kind=code`)
+## Code Surface (`sift-gateway code` / `query_kind=code`)
 
 Current controls:
 
