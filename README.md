@@ -1,84 +1,117 @@
 # Sift
 
-**Artifact gateway for MCP**. Keep large tool responses out of model context, store them durably, and retrieve only what you need.
+Sift is the gateway layer for AI-agent work with external tools.
+Use it whether an agent operates through MCP servers or through CLI-driven
+tooling. Sift captures outputs as artifacts so you can fix context bloat:
+the model sees handles and focused retrieval, not massive raw payloads.
+
+Current transport/protocol focus is MCP, exposed through two CLIs:
+
+- `sift-gateway` for gateway setup and runtime operations
+- `sift` for artifact retrieval and computation
+
+It keeps large tool outputs out of model context while preserving full payloads
+for later retrieval.
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![PyPI](https://img.shields.io/pypi/v/sift-gateway.svg)](https://pypi.org/project/sift-gateway/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-Sift sits between your MCP client and your upstream MCP servers.
+## MCP Context
 
-- Mirrors upstream tools with original schemas.
-- Persists mirrored responses as artifact envelopes in SQLite + blob storage.
-- Returns raw payloads for small responses and artifact handles for larger ones.
-- Provides retrieval/compute workflows over artifacts without loading full payloads into chat context.
+Sift is a local, single-tenant MCP proxy/gateway:
 
-## Quick Start
+- Sits between an MCP client and upstream MCP servers
+- Preserves upstream tool schemas while mirroring calls
+- Stores tool outputs as durable artifacts for retrieval workflows
 
-### 1. Install
+Typical clients: Claude Desktop, Claude Code, Cursor, VS Code, Windsurf, Zed.  
+Typical upstreams: any MCP server reachable via stdio or HTTP transports.
+
+## Quick Start (CLI)
+
+### Install
 
 ```bash
 pipx install sift-gateway
 ```
 
-### 2. Import your MCP config
+### Import your MCP config into Sift
 
 ```bash
 sift-gateway init --from claude
 ```
 
-`--from` accepts shortcuts (`claude`, `claude-code`, `cursor`, `vscode`, `windsurf`, `zed`, `auto`) or an explicit config path.
+Supported shortcuts for `--from`:
+`claude`, `claude-code`, `cursor`, `vscode`, `windsurf`, `zed`, `auto`.
 
-### 3. Verify setup
+### Validate runtime
 
 ```bash
 sift-gateway --check
 ```
 
-### 4. Restart your MCP client
+### Explore stored artifacts
 
-After restart, your client routes tool calls through Sift.
+```bash
+sift list --limit 10
+```
 
-## CLI Surface
+## CLI Overview
 
-### Gateway CLI (`sift-gateway`)
+### `sift-gateway` (operations)
 
 ```bash
 sift-gateway --help
 ```
 
-Main commands:
-- `init` to import/rewrite MCP config with gateway sync metadata
-- `upstream` to add/manage upstream servers
-- `install` / `uninstall` for code-query packages
-- `--check` to validate FS/DB/upstream readiness
+Primary commands:
 
-### Artifact CLI (`sift`)
+- `sift-gateway init --from <source>`
+- `sift-gateway upstream add '<json>' --from <source>`
+- `sift-gateway install <package...>`
+- `sift-gateway uninstall <package...>`
+- `sift-gateway --check`
+- `sift-gateway --transport sse --host 127.0.0.1 --port 8080`
+
+### `sift` (artifact retrieval CLI)
 
 ```bash
 sift --help
 ```
 
-Main commands:
-- `list`, `schema`, `get`
-- `query`, `code`
-- `run`, `diff`
+Primary commands:
 
-## Artifact Workflow
+- `sift list --limit 25`
+- `sift schema <artifact_id>`
+- `sift get <artifact_id>`
+- `sift query <artifact_id> --root '$.items' --select id,name`
+- `sift code <artifact_id> --expr 'len(data)'`
+- `sift run -- <command ...>`
+- `sift diff <left_artifact_id> <right_artifact_id>`
 
-When mirrored tools return large payloads, Sift returns a lightweight handle with metadata. You then retrieve/select/compute as needed.
+## How Sift Works
 
-### Query kinds
+1. Sift mirrors upstream MCP tools with original schemas.
+2. Mirrored responses are stored as envelopes in SQLite + blob storage.
+3. Small responses can pass through directly.
+4. Large responses return an artifact handle, then you retrieve selectively.
+
+## Artifact Query Model
+
+Sift's main retrieval primitive is the `artifact` tool with `action="query"`.
+
+Supported `query_kind` values:
 
 | query_kind | Purpose |
 |---|---|
-| `describe` | Inspect schema and metadata for an artifact |
-| `get` | Retrieve full stored payload |
-| `select` | Project/filter rows from a root path |
-| `search` | List session artifacts available in the current workspace |
+| `describe` | Schema and metadata |
+| `get` | Full payload retrieval |
+| `select` | Field projection and filtering |
+| `search` | Search and list session artifacts in the current workspace |
 | `code` | Execute constrained Python over artifact data |
 
-Example `query_kind="search"` request:
+Example `query_kind="search"`:
 
 ```python
 artifact(
@@ -89,7 +122,7 @@ artifact(
 )
 ```
 
-Example `query_kind="select"` request:
+Example `query_kind="select"`:
 
 ```python
 artifact(
@@ -104,39 +137,40 @@ artifact(
 
 ## Configuration Highlights
 
-| Setting | Default | Description |
+| Env var | Default | Description |
 |---|---|---|
-| `SIFT_GATEWAY_DATA_DIR` | `.sift-gateway` | Local state root |
-| `SIFT_GATEWAY_PASSTHROUGH_MAX_BYTES` | `8192` | Max raw upstream response size before handle mode |
-| `SIFT_GATEWAY_CODE_QUERY_ENABLED` | `true` | Enable `query_kind="code"` |
-| `SIFT_GATEWAY_SECRET_REDACTION_ENABLED` | `true` | Redact likely secrets in outbound responses |
-| `SIFT_GATEWAY_AUTH_TOKEN` | unset | Token for non-local HTTP binds |
+| `SIFT_GATEWAY_DATA_DIR` | `.sift-gateway` | Data directory |
+| `SIFT_GATEWAY_PASSTHROUGH_MAX_BYTES` | `8192` | Raw passthrough threshold |
+| `SIFT_GATEWAY_CODE_QUERY_ENABLED` | `true` | Enable code queries |
+| `SIFT_GATEWAY_SECRET_REDACTION_ENABLED` | `true` | Redact likely outbound secrets |
+| `SIFT_GATEWAY_AUTH_TOKEN` | unset | Required for non-local HTTP binds |
 
-See the full matrix in [`docs/config.md`](docs/config.md).
+See full configuration in [`docs/config.md`](docs/config.md).
 
 ## Security Notes
 
-- Code queries run with AST/import/time/memory guardrails, but this is not full OS isolation.
+- Code queries use AST/import/time/memory guardrails, but this is not full OS sandboxing.
 - Outbound secret redaction is enabled by default.
-- For strict environments, disable code queries:
+
+Disable code queries if required:
 
 ```bash
 export SIFT_GATEWAY_CODE_QUERY_ENABLED=false
 ```
 
-See [`SECURITY.md`](SECURITY.md) for reporting and policies.
+More details: [`SECURITY.md`](SECURITY.md)
 
 ## Documentation
 
-- [`docs/quickstart.md`](docs/quickstart.md) - full setup walkthrough
-- [`docs/config.md`](docs/config.md) - complete configuration reference
-- [`docs/api_contracts.md`](docs/api_contracts.md) - contract and response shapes
-- [`docs/recipes.md`](docs/recipes.md) - practical retrieval patterns
-- [`docs/deployment.md`](docs/deployment.md) - transport and deployment guidance
-- [`docs/observability.md`](docs/observability.md) - logs and metrics
-- [`docs/errors.md`](docs/errors.md) - error taxonomy
-- [`docs/architecture.md`](docs/architecture.md) - architecture and invariants
-- [`docs/openclaw/README.md`](docs/openclaw/README.md) - OpenClaw integration pack
+- [`docs/quickstart.md`](docs/quickstart.md)
+- [`docs/config.md`](docs/config.md)
+- [`docs/api_contracts.md`](docs/api_contracts.md)
+- [`docs/recipes.md`](docs/recipes.md)
+- [`docs/deployment.md`](docs/deployment.md)
+- [`docs/errors.md`](docs/errors.md)
+- [`docs/observability.md`](docs/observability.md)
+- [`docs/architecture.md`](docs/architecture.md)
+- [`docs/openclaw/README.md`](docs/openclaw/README.md)
 
 ## Development
 
