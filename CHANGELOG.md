@@ -23,7 +23,7 @@
 - Rebranded from "MCP Artifact Gateway" to "Sift"
 - Replaced silent `except Exception: pass` blocks with warning logs
 - **Breaking:** `query_kind=code` now returns all results without pagination/cursor
-- `query_kind=code` ignores `scope` (always all-related semantics)
+- `query_kind=code` supports `scope` (`all_related` default, `single` anchor-only)
 - Documented return normalization for code queries (non-list values auto-wrap to one-item lists)
 - Mirrored tool responses are always persisted; passthrough now controls only whether callers receive raw payloads or gateway handles
 - `docs/cli-agnostic-roadmap.md` now marks Phase 8 complete and tracks RC cut as next action
