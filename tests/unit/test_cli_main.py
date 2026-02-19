@@ -9,7 +9,7 @@ from typing import Any
 
 import pytest
 
-from sift_mcp import cli_main
+from sift_gateway import cli_main
 
 
 class _FakeRuntime:
@@ -27,13 +27,15 @@ def test_serve_list_json_uses_search_and_prints_json(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     monkeypatch.setattr(
-        "sift_mcp.cli_main._runtime_context",
+        "sift_gateway.cli_main._runtime_context",
         _fake_runtime_context,
     )
 
     captured_args: dict[str, Any] = {}
 
-    def _fake_search(runtime: Any, *, arguments: dict[str, Any]) -> dict[str, Any]:
+    def _fake_search(
+        runtime: Any, *, arguments: dict[str, Any]
+    ) -> dict[str, Any]:
         del runtime
         captured_args.update(arguments)
         return {
@@ -52,7 +54,9 @@ def test_serve_list_json_uses_search_and_prints_json(
             "cursor": None,
         }
 
-    monkeypatch.setattr("sift_mcp.cli_main.execute_artifact_search", _fake_search)
+    monkeypatch.setattr(
+        "sift_gateway.cli_main.execute_artifact_search", _fake_search
+    )
 
     exit_code = cli_main.serve(["list", "--json", "--limit", "12"])
     out = capsys.readouterr().out.strip()
@@ -68,7 +72,7 @@ def test_serve_query_passes_where_object_to_select(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
-        "sift_mcp.cli_main._runtime_context",
+        "sift_gateway.cli_main._runtime_context",
         _fake_runtime_context,
     )
 
@@ -79,7 +83,9 @@ def test_serve_query_passes_where_object_to_select(
         captured_args.update(arguments)
         return {"items": [], "truncated": False, "cursor": None}
 
-    monkeypatch.setattr("sift_mcp.cli_main.execute_artifact_select", _fake_select)
+    monkeypatch.setattr(
+        "sift_gateway.cli_main.execute_artifact_select", _fake_select
+    )
 
     exit_code = cli_main.serve(
         [
@@ -110,7 +116,7 @@ def test_serve_query_rejects_invalid_where_json(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     monkeypatch.setattr(
-        "sift_mcp.cli_main._runtime_context",
+        "sift_gateway.cli_main._runtime_context",
         _fake_runtime_context,
     )
 
@@ -127,7 +133,7 @@ def test_serve_code_passes_inline_code_and_params(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
-        "sift_mcp.cli_main._runtime_context",
+        "sift_gateway.cli_main._runtime_context",
         _fake_runtime_context,
     )
     captured_args: dict[str, Any] = {}
@@ -137,7 +143,9 @@ def test_serve_code_passes_inline_code_and_params(
         captured_args.update(arguments)
         return {"items": [{"x": 1}], "truncated": False}
 
-    monkeypatch.setattr("sift_mcp.cli_main.execute_artifact_code", _fake_code)
+    monkeypatch.setattr(
+        "sift_gateway.cli_main.execute_artifact_code", _fake_code
+    )
 
     exit_code = cli_main.serve(
         [
@@ -165,7 +173,7 @@ def test_serve_code_loads_file(
     tmp_path: Path,
 ) -> None:
     monkeypatch.setattr(
-        "sift_mcp.cli_main._runtime_context",
+        "sift_gateway.cli_main._runtime_context",
         _fake_runtime_context,
     )
     code_file = tmp_path / "analysis.py"
@@ -180,7 +188,9 @@ def test_serve_code_loads_file(
         captured_args.update(arguments)
         return {"items": [], "truncated": False}
 
-    monkeypatch.setattr("sift_mcp.cli_main.execute_artifact_code", _fake_code)
+    monkeypatch.setattr(
+        "sift_gateway.cli_main.execute_artifact_code", _fake_code
+    )
 
     exit_code = cli_main.serve(
         [
@@ -201,7 +211,7 @@ def test_serve_code_expr_builds_dataframe_wrapper(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
-        "sift_mcp.cli_main._runtime_context",
+        "sift_gateway.cli_main._runtime_context",
         _fake_runtime_context,
     )
     captured_args: dict[str, Any] = {}
@@ -211,7 +221,9 @@ def test_serve_code_expr_builds_dataframe_wrapper(
         captured_args.update(arguments)
         return {"items": [1], "truncated": False}
 
-    monkeypatch.setattr("sift_mcp.cli_main.execute_artifact_code", _fake_code)
+    monkeypatch.setattr(
+        "sift_gateway.cli_main.execute_artifact_code", _fake_code
+    )
 
     exit_code = cli_main.serve(
         [
@@ -234,7 +246,7 @@ def test_serve_code_rejects_invalid_params_json(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     monkeypatch.setattr(
-        "sift_mcp.cli_main._runtime_context",
+        "sift_gateway.cli_main._runtime_context",
         _fake_runtime_context,
     )
 
@@ -260,11 +272,13 @@ def test_serve_non_json_list_emits_compact_lines(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     monkeypatch.setattr(
-        "sift_mcp.cli_main._runtime_context",
+        "sift_gateway.cli_main._runtime_context",
         _fake_runtime_context,
     )
 
-    def _fake_search(runtime: Any, *, arguments: dict[str, Any]) -> dict[str, Any]:
+    def _fake_search(
+        runtime: Any, *, arguments: dict[str, Any]
+    ) -> dict[str, Any]:
         del runtime, arguments
         return {
             "items": [
@@ -282,7 +296,9 @@ def test_serve_non_json_list_emits_compact_lines(
             "cursor": "cur_next",
         }
 
-    monkeypatch.setattr("sift_mcp.cli_main.execute_artifact_search", _fake_search)
+    monkeypatch.setattr(
+        "sift_gateway.cli_main.execute_artifact_search", _fake_search
+    )
 
     exit_code = cli_main.serve(["list"])
     out = capsys.readouterr().out
@@ -297,11 +313,13 @@ def test_serve_non_json_list_output_snapshot(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     monkeypatch.setattr(
-        "sift_mcp.cli_main._runtime_context",
+        "sift_gateway.cli_main._runtime_context",
         _fake_runtime_context,
     )
 
-    def _fake_search(runtime: Any, *, arguments: dict[str, Any]) -> dict[str, Any]:
+    def _fake_search(
+        runtime: Any, *, arguments: dict[str, Any]
+    ) -> dict[str, Any]:
         del runtime, arguments
         return {
             "items": [
@@ -319,7 +337,9 @@ def test_serve_non_json_list_output_snapshot(
             "cursor": "cur_next",
         }
 
-    monkeypatch.setattr("sift_mcp.cli_main.execute_artifact_search", _fake_search)
+    monkeypatch.setattr(
+        "sift_gateway.cli_main.execute_artifact_search", _fake_search
+    )
 
     exit_code = cli_main.serve(["list"])
     out = capsys.readouterr().out
@@ -337,7 +357,7 @@ def test_serve_schema_human_output_snapshot(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     monkeypatch.setattr(
-        "sift_mcp.cli_main._runtime_context",
+        "sift_gateway.cli_main._runtime_context",
         _fake_runtime_context,
     )
 
@@ -350,15 +370,16 @@ def test_serve_schema_human_output_snapshot(
             "roots": [{"root_path": "$.items", "count_estimate": 3}],
         }
 
-    monkeypatch.setattr("sift_mcp.cli_main.execute_artifact_describe", _fake_schema)
+    monkeypatch.setattr(
+        "sift_gateway.cli_main.execute_artifact_describe", _fake_schema
+    )
 
     exit_code = cli_main.serve(["schema", "art_1", "--scope", "single"])
     out = capsys.readouterr().out
 
     assert exit_code == 0
     assert (
-        out
-        == "artifact: art_1\n"
+        out == "artifact: art_1\n"
         "scope: single\n"
         "artifacts: 1\n"
         "roots: 1\n"
@@ -371,7 +392,7 @@ def test_serve_returns_error_exit_for_gateway_error_payload(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     monkeypatch.setattr(
-        "sift_mcp.cli_main._runtime_context",
+        "sift_gateway.cli_main._runtime_context",
         _fake_runtime_context,
     )
 
@@ -379,7 +400,7 @@ def test_serve_returns_error_exit_for_gateway_error_payload(
         del runtime, arguments
         return {"code": "NOT_FOUND", "message": "artifact not found"}
 
-    monkeypatch.setattr("sift_mcp.cli_main.execute_artifact_get", _fake_get)
+    monkeypatch.setattr("sift_gateway.cli_main.execute_artifact_get", _fake_get)
 
     exit_code = cli_main.serve(["get", "art_missing"])
     err = capsys.readouterr().err
@@ -393,11 +414,11 @@ def test_serve_run_human_output_snapshot(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     monkeypatch.setattr(
-        "sift_mcp.cli_main._runtime_context",
+        "sift_gateway.cli_main._runtime_context",
         _fake_runtime_context,
     )
     monkeypatch.setattr(
-        "sift_mcp.cli_main.subprocess.run",
+        "sift_gateway.cli_main.subprocess.run",
         lambda *args, **kwargs: subprocess.CompletedProcess(
             args=["echo", "hello"],
             returncode=0,
@@ -406,7 +427,7 @@ def test_serve_run_human_output_snapshot(
         ),
     )
     monkeypatch.setattr(
-        "sift_mcp.cli_main.execute_artifact_capture",
+        "sift_gateway.cli_main.execute_artifact_capture",
         lambda runtime, *, arguments: {
             "artifact_id": "art_new",
             "created_seq": 4,
@@ -427,8 +448,7 @@ def test_serve_run_human_output_snapshot(
 
     assert exit_code == 0
     assert (
-        out
-        == "artifact: art_new\n"
+        out == "artifact: art_new\n"
         "records:  1\n"
         "bytes:    12\n"
         "capture:  cli_command\n"
@@ -442,11 +462,11 @@ def test_serve_run_persists_and_returns_command_exit_code(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     monkeypatch.setattr(
-        "sift_mcp.cli_main._runtime_context",
+        "sift_gateway.cli_main._runtime_context",
         _fake_runtime_context,
     )
     monkeypatch.setattr(
-        "sift_mcp.cli_main.subprocess.run",
+        "sift_gateway.cli_main.subprocess.run",
         lambda *args, **kwargs: subprocess.CompletedProcess(
             args=["fake"],
             returncode=3,
@@ -456,7 +476,9 @@ def test_serve_run_persists_and_returns_command_exit_code(
     )
     captured: dict[str, Any] = {}
 
-    def _fake_capture(runtime: Any, *, arguments: dict[str, Any]) -> dict[str, Any]:
+    def _fake_capture(
+        runtime: Any, *, arguments: dict[str, Any]
+    ) -> dict[str, Any]:
         del runtime
         captured.update(arguments)
         return {
@@ -473,7 +495,9 @@ def test_serve_run_persists_and_returns_command_exit_code(
             "reused": False,
         }
 
-    monkeypatch.setattr("sift_mcp.cli_main.execute_artifact_capture", _fake_capture)
+    monkeypatch.setattr(
+        "sift_gateway.cli_main.execute_artifact_capture", _fake_capture
+    )
 
     exit_code = cli_main.serve(["run", "--json", "--", "fake-command"])
     out = capsys.readouterr().out.strip()
@@ -490,12 +514,14 @@ def test_serve_run_stdin_uses_stdin_capture_kind(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
-        "sift_mcp.cli_main._runtime_context",
+        "sift_gateway.cli_main._runtime_context",
         _fake_runtime_context,
     )
     captured: dict[str, Any] = {}
 
-    def _fake_capture(runtime: Any, *, arguments: dict[str, Any]) -> dict[str, Any]:
+    def _fake_capture(
+        runtime: Any, *, arguments: dict[str, Any]
+    ) -> dict[str, Any]:
         del runtime
         captured.update(arguments)
         return {
@@ -516,7 +542,9 @@ def test_serve_run_stdin_uses_stdin_capture_kind(
         def __init__(self, raw: bytes) -> None:
             self.buffer = io.BytesIO(raw)
 
-    monkeypatch.setattr("sift_mcp.cli_main.execute_artifact_capture", _fake_capture)
+    monkeypatch.setattr(
+        "sift_gateway.cli_main.execute_artifact_capture", _fake_capture
+    )
     monkeypatch.setattr("sys.stdin", _FakeStdin(b'{"k": "v"}'))
 
     exit_code = cli_main.serve(["run", "--stdin", "--json"])
@@ -532,11 +560,11 @@ def test_serve_diff_json_reports_hash_equality(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     monkeypatch.setattr(
-        "sift_mcp.cli_main._runtime_context",
+        "sift_gateway.cli_main._runtime_context",
         _fake_runtime_context,
     )
     monkeypatch.setattr(
-        "sift_mcp.cli_main._fetch_artifact_for_diff",
+        "sift_gateway.cli_main._fetch_artifact_for_diff",
         lambda runtime, artifact_id: {
             "artifact_id": artifact_id,
             "payload_hash_full": "same",
@@ -560,11 +588,11 @@ def test_serve_diff_human_output_snapshot(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     monkeypatch.setattr(
-        "sift_mcp.cli_main._runtime_context",
+        "sift_gateway.cli_main._runtime_context",
         _fake_runtime_context,
     )
     monkeypatch.setattr(
-        "sift_mcp.cli_main._fetch_artifact_for_diff",
+        "sift_gateway.cli_main._fetch_artifact_for_diff",
         lambda runtime, artifact_id: {
             "artifact_id": artifact_id,
             "payload_hash_full": "same",
@@ -578,8 +606,7 @@ def test_serve_diff_human_output_snapshot(
 
     assert exit_code == 0
     assert (
-        out
-        == "left:    art_a\n"
+        out == "left:    art_a\n"
         "right:   art_b\n"
         "equal:   True\n"
         "hashes:  same / same\n"

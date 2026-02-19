@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from sift_mcp.config.settings import PaginationConfig
-from sift_mcp.pagination.extract import (
+from sift_gateway.config.settings import PaginationConfig
+from sift_gateway.pagination.extract import (
     PaginationAssessment,
     PaginationState,
     _evaluate_path,
@@ -764,7 +764,7 @@ def test_assess_pagination_with_config_skips_discovery(monkeypatch) -> None:
         raise AssertionError("discovery should not run when config exists")
 
     monkeypatch.setattr(
-        "sift_mcp.pagination.extract.discover_pagination",
+        "sift_gateway.pagination.extract.discover_pagination",
         _fail_discovery,
     )
 

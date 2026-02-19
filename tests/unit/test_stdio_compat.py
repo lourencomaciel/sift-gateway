@@ -12,7 +12,7 @@ import sys
 import time
 from typing import Any
 
-from sift_mcp.mcp.stdio_compat import (
+from sift_gateway.mcp.stdio_compat import (
     _detect_mode,
     _ModeState,
     _parse_next_message,
@@ -32,7 +32,7 @@ class _ServerSession:
         cmd = [
             sys.executable,
             "-c",
-            "from sift_mcp.main import cli; cli()",
+            "from sift_gateway.main import cli; cli()",
             "--data-dir",
             str(tmp_path),
         ]

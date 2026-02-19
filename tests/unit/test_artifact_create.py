@@ -8,7 +8,7 @@ from typing import Any
 
 import pytest
 
-from sift_mcp.artifacts.create import (
+from sift_gateway.artifacts.create import (
     INSERT_ARTIFACT_SQL,
     INSERT_PAYLOAD_BINARY_REF_SQL,
     CreateArtifactInput,
@@ -18,26 +18,26 @@ from sift_mcp.artifacts.create import (
     persist_artifact,
     prepare_envelope_storage,
 )
-from sift_mcp.canon.rfc8785 import canonical_bytes
-from sift_mcp.config.settings import (
+from sift_gateway.canon.rfc8785 import canonical_bytes
+from sift_gateway.config.settings import (
     EnvelopeJsonbMode,
     GatewayConfig,
 )
-from sift_mcp.constants import (
+from sift_gateway.constants import (
     ARTIFACT_ID_PREFIX,
     CANONICALIZER_VERSION,
     MAPPER_VERSION,
     WORKSPACE_ID,
 )
-from sift_mcp.envelope.model import (
+from sift_gateway.envelope.model import (
     BinaryRefContentPart,
     Envelope,
     ErrorBlock,
     JsonContentPart,
     TextContentPart,
 )
-from sift_mcp.obs.metrics import GatewayMetrics, counter_value
-from sift_mcp.util.hashing import sha256_hex
+from sift_gateway.obs.metrics import GatewayMetrics, counter_value
+from sift_gateway.util.hashing import sha256_hex
 
 
 # ---------------------------------------------------------------------------

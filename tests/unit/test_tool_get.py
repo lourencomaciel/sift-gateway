@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from sift_mcp.tools.artifact_get import (
+from sift_gateway.tools.artifact_get import (
     check_get_preconditions,
     is_sampled_only,
     validate_get_args,

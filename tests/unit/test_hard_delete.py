@@ -4,8 +4,8 @@ from pathlib import Path
 
 import pytest
 
-from sift_mcp.constants import WORKSPACE_ID
-from sift_mcp.jobs.hard_delete import (
+from sift_gateway.constants import WORKSPACE_ID
+from sift_gateway.jobs.hard_delete import (
     DELETE_ARTIFACTS_BATCH_SQL,
     DELETE_BLOBS_BATCH_SQL,
     DELETE_PAYLOADS_BATCH_SQL,
@@ -15,7 +15,7 @@ from sift_mcp.jobs.hard_delete import (
     hard_delete_candidates_params,
     run_hard_delete_batch,
 )
-from sift_mcp.obs.metrics import GatewayMetrics, counter_value
+from sift_gateway.obs.metrics import GatewayMetrics, counter_value
 
 
 class _FakeCursor:
@@ -154,7 +154,7 @@ def test_run_hard_delete_batch_uses_default_payload_root(
     payload_path = data_dir / "blobs" / "payload" / payload_rel
     payload_path.parent.mkdir(parents=True, exist_ok=True)
     payload_path.write_bytes(b"payload")
-    monkeypatch.setenv("SIFT_MCP_DATA_DIR", str(data_dir))
+    monkeypatch.setenv("SIFT_GATEWAY_DATA_DIR", str(data_dir))
 
     connection = _FakeConnection(
         candidate_rows=[("art_1", "payload_orphan")],

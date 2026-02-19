@@ -13,8 +13,8 @@ wheels/
 .env
 
 # Sift data directory
-.sift-mcp/
-.sift-mcp-fresh-*/
+.sift-gateway/
+.sift-gateway-fresh-*/
 
 # IDE
 .idea/

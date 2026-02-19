@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from sift_mcp.config.init_source import (
+from sift_gateway.config.init_source import (
     find_source_shortcut_matches,
     resolve_init_source,
     resolve_source_arg,
@@ -43,7 +43,7 @@ def test_resolve_source_shortcut_claude_single_match(
 ) -> None:
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setattr(
-        "sift_mcp.config.init_source._platform_key",
+        "sift_gateway.config.init_source._platform_key",
         lambda: "macos",
     )
     source = (
@@ -65,7 +65,7 @@ def test_resolve_source_shortcut_claude_code_ambiguous(
 ) -> None:
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
     monkeypatch.setattr(
-        "sift_mcp.config.init_source._platform_key",
+        "sift_gateway.config.init_source._platform_key",
         lambda: "linux",
     )
     cwd = tmp_path / "workspace" / "repo" / "pkg"
@@ -85,7 +85,7 @@ def test_resolve_source_shortcut_missing_returns_checked_paths(
 ) -> None:
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setattr(
-        "sift_mcp.config.init_source._platform_key",
+        "sift_gateway.config.init_source._platform_key",
         lambda: "linux",
     )
 
@@ -98,7 +98,7 @@ def test_find_source_shortcut_matches_auto_collects_existing(
 ) -> None:
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setattr(
-        "sift_mcp.config.init_source._platform_key",
+        "sift_gateway.config.init_source._platform_key",
         lambda: "linux",
     )
     claude = tmp_path / ".config" / "Claude" / "claude_desktop_config.json"
@@ -118,13 +118,13 @@ def test_find_source_shortcut_matches_accepts_zed_context_servers_shape(
 ) -> None:
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setattr(
-        "sift_mcp.config.init_source._platform_key",
+        "sift_gateway.config.init_source._platform_key",
         lambda: "linux",
     )
     zed = tmp_path / ".config" / "zed" / "settings.json"
     zed.parent.mkdir(parents=True, exist_ok=True)
     zed.write_text(
-        '{"context_servers":{"gateway":{"command":"sift-mcp"}}}',
+        '{"context_servers":{"gateway":{"command":"sift-gateway"}}}',
         encoding="utf-8",
     )
 
@@ -138,7 +138,7 @@ def test_resolve_init_source_missing_shortcut_raises_file_not_found(
 ) -> None:
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setattr(
-        "sift_mcp.config.init_source._platform_key",
+        "sift_gateway.config.init_source._platform_key",
         lambda: "linux",
     )
 
@@ -151,7 +151,7 @@ def test_resolve_source_shortcut_vscode_ignores_non_mcp_settings_json(
 ) -> None:
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setattr(
-        "sift_mcp.config.init_source._platform_key",
+        "sift_gateway.config.init_source._platform_key",
         lambda: "macos",
     )
     base = tmp_path / "Library" / "Application Support" / "Code" / "User"

@@ -7,7 +7,7 @@ import sqlite3
 
 import pytest
 
-from sift_mcp.query.filters import (
+from sift_gateway.query.filters import (
     Filter,
     FilterGroup,
     FilterNot,
@@ -32,9 +32,17 @@ class TestFilterValidation:
 
     def test_filter_accepts_all_valid_ops(self) -> None:
         for op in (
-            "eq", "ne", "gt", "gte", "lt", "lte",
-            "in", "contains", "array_contains",
-            "exists", "not_exists",
+            "eq",
+            "ne",
+            "gt",
+            "gte",
+            "lt",
+            "lte",
+            "in",
+            "contains",
+            "array_contains",
+            "exists",
+            "not_exists",
         ):
             f = Filter(path="$.x", op=op, value=1)
             assert f.op == op
@@ -65,28 +73,20 @@ class TestCompileComparison:
         assert params == ["$.status", "active"]
 
     def test_eq_numeric_value(self) -> None:
-        _sql, params = compile_filter(
-            Filter(path="$.count", op="eq", value=42)
-        )
+        _sql, params = compile_filter(Filter(path="$.count", op="eq", value=42))
         assert params == ["$.count", 42]
 
     def test_eq_bool_value_coerces_to_int(self) -> None:
-        _, params = compile_filter(
-            Filter(path="$.active", op="eq", value=True)
-        )
+        _, params = compile_filter(Filter(path="$.active", op="eq", value=True))
         assert params == ["$.active", 1]
 
     def test_eq_none_value(self) -> None:
-        sql, params = compile_filter(
-            Filter(path="$.x", op="eq", value=None)
-        )
+        sql, params = compile_filter(Filter(path="$.x", op="eq", value=None))
         assert sql == "json_extract(record, ?) IS NULL"
         assert params == ["$.x"]
 
     def test_ne_none_value(self) -> None:
-        sql, params = compile_filter(
-            Filter(path="$.x", op="ne", value=None)
-        )
+        sql, params = compile_filter(Filter(path="$.x", op="ne", value=None))
         assert sql == "json_extract(record, ?) IS NOT NULL"
         assert params == ["$.x"]
 
@@ -102,22 +102,16 @@ class TestCompileIn:
         assert params == ["$.status", "a", "b", "c"]
 
     def test_in_empty_list(self) -> None:
-        sql, params = compile_filter(
-            Filter(path="$.x", op="in", value=[])
-        )
+        sql, params = compile_filter(Filter(path="$.x", op="in", value=[]))
         assert sql == "0"
         assert params == []
 
     def test_in_rejects_non_list(self) -> None:
         with pytest.raises(ValueError, match="list"):
-            compile_filter(
-                Filter(path="$.x", op="in", value="not-a-list")
-            )
+            compile_filter(Filter(path="$.x", op="in", value="not-a-list"))
 
     def test_in_single_element(self) -> None:
-        sql, params = compile_filter(
-            Filter(path="$.x", op="in", value=[99])
-        )
+        sql, params = compile_filter(Filter(path="$.x", op="in", value=[99]))
         assert sql == "json_extract(record, ?) IN (?)"
         assert params == ["$.x", 99]
 
@@ -145,16 +139,12 @@ class TestCompileExists:
     """Exists and not_exists operators."""
 
     def test_exists(self) -> None:
-        sql, params = compile_filter(
-            Filter(path="$.email", op="exists")
-        )
+        sql, params = compile_filter(Filter(path="$.email", op="exists"))
         assert sql == "json_type(record, ?) IS NOT NULL"
         assert params == ["$.email"]
 
     def test_not_exists(self) -> None:
-        sql, params = compile_filter(
-            Filter(path="$.deleted", op="not_exists")
-        )
+        sql, params = compile_filter(Filter(path="$.deleted", op="not_exists"))
         assert sql == "json_type(record, ?) IS NULL"
         assert params == ["$.deleted"]
 
@@ -245,7 +235,9 @@ class TestCompileFilterNot:
         sql, params = compile_filter(
             FilterNot(
                 child=Filter(
-                    path="$.status", op="in", value=["a", "b"],
+                    path="$.status",
+                    op="in",
+                    value=["a", "b"],
                 )
             )
         )
@@ -271,9 +263,7 @@ class TestCompileFilterNot:
     def test_double_not(self) -> None:
         sql, params = compile_filter(
             FilterNot(
-                child=FilterNot(
-                    child=Filter(path="$.x", op="eq", value=1)
-                )
+                child=FilterNot(child=Filter(path="$.x", op="eq", value=1))
             )
         )
         assert sql == "NOT (NOT (json_extract(record, ?) = ?))"
@@ -284,9 +274,7 @@ class TestCompileFilterNot:
             logic="and",
             filters=[
                 Filter(path="$.a", op="eq", value=1),
-                FilterNot(
-                    child=Filter(path="$.b", op="eq", value=2)
-                ),
+                FilterNot(child=Filter(path="$.b", op="eq", value=2)),
             ],
         )
         sql, params = compile_filter(group)
@@ -311,12 +299,27 @@ class TestSQLiteExecution:
             "  record JSON)"
         )
         records = [
-            {"id": 1, "name": "alice", "age": 30, "active": True,
-             "tags": ["python", "sql"]},
-            {"id": 2, "name": "bob", "age": 25, "active": False,
-             "tags": ["go"]},
-            {"id": 3, "name": "carol", "age": 35, "active": True,
-             "tags": ["python", "rust"]},
+            {
+                "id": 1,
+                "name": "alice",
+                "age": 30,
+                "active": True,
+                "tags": ["python", "sql"],
+            },
+            {
+                "id": 2,
+                "name": "bob",
+                "age": 25,
+                "active": False,
+                "tags": ["go"],
+            },
+            {
+                "id": 3,
+                "name": "carol",
+                "age": 35,
+                "active": True,
+                "tags": ["python", "rust"],
+            },
         ]
         for i, rec in enumerate(records):
             self.conn.execute(
@@ -325,7 +328,8 @@ class TestSQLiteExecution:
             )
 
     def _query(
-        self, f: Filter | FilterGroup | FilterNot,
+        self,
+        f: Filter | FilterGroup | FilterNot,
     ) -> list[dict[str, object]]:
         sql, params = compile_filter(f)
         full_sql = (
@@ -340,16 +344,12 @@ class TestSQLiteExecution:
         return [json.loads(row[0]) for row in rows]
 
     def test_eq_string(self) -> None:
-        results = self._query(
-            Filter(path="$.name", op="eq", value="bob")
-        )
+        results = self._query(Filter(path="$.name", op="eq", value="bob"))
         assert len(results) == 1
         assert results[0]["id"] == 2
 
     def test_gt_numeric(self) -> None:
-        results = self._query(
-            Filter(path="$.age", op="gt", value=28)
-        )
+        results = self._query(Filter(path="$.age", op="gt", value=28))
         assert [r["id"] for r in results] == [1, 3]
 
     def test_in_list(self) -> None:
@@ -359,9 +359,7 @@ class TestSQLiteExecution:
         assert [r["id"] for r in results] == [1, 3]
 
     def test_contains_substring(self) -> None:
-        results = self._query(
-            Filter(path="$.name", op="contains", value="ob")
-        )
+        results = self._query(Filter(path="$.name", op="contains", value="ob"))
         assert len(results) == 1
         assert results[0]["name"] == "bob"
 
@@ -372,15 +370,11 @@ class TestSQLiteExecution:
         assert [r["id"] for r in results] == [1, 3]
 
     def test_exists(self) -> None:
-        results = self._query(
-            Filter(path="$.name", op="exists")
-        )
+        results = self._query(Filter(path="$.name", op="exists"))
         assert len(results) == 3
 
     def test_not_exists(self) -> None:
-        results = self._query(
-            Filter(path="$.email", op="not_exists")
-        )
+        results = self._query(Filter(path="$.email", op="not_exists"))
         assert len(results) == 3
 
     def test_and_group(self) -> None:
@@ -417,10 +411,14 @@ class TestSQLiteExecution:
                         logic="or",
                         filters=[
                             Filter(
-                                path="$.age", op="lt", value=31,
+                                path="$.age",
+                                op="lt",
+                                value=31,
                             ),
                             Filter(
-                                path="$.age", op="gt", value=34,
+                                path="$.age",
+                                op="gt",
+                                value=34,
                             ),
                         ],
                     ),
@@ -431,9 +429,7 @@ class TestSQLiteExecution:
 
     def test_not_eq(self) -> None:
         results = self._query(
-            FilterNot(
-                child=Filter(path="$.name", op="eq", value="bob")
-            )
+            FilterNot(child=Filter(path="$.name", op="eq", value="bob"))
         )
         assert [r["id"] for r in results] == [1, 3]
 
@@ -457,7 +453,9 @@ class TestSQLiteExecution:
                     Filter(path="$.active", op="eq", value=1),
                     FilterNot(
                         child=Filter(
-                            path="$.age", op="gte", value=35,
+                            path="$.age",
+                            op="gte",
+                            value=35,
                         )
                     ),
                 ],
@@ -530,9 +528,7 @@ class TestFilterHash:
         assert filter_hash(f1) == filter_hash(f2)
 
     def test_not_filter_hash(self) -> None:
-        h = filter_hash(
-            FilterNot(child=Filter(path="$.x", op="eq", value=1))
-        )
+        h = filter_hash(FilterNot(child=Filter(path="$.x", op="eq", value=1)))
         assert len(h) == 64
 
     def test_not_differs_from_plain(self) -> None:
@@ -541,12 +537,8 @@ class TestFilterHash:
         assert filter_hash(plain) != filter_hash(negated)
 
     def test_not_same_child_same_hash(self) -> None:
-        n1 = FilterNot(
-            child=Filter(path="$.x", op="eq", value=1)
-        )
-        n2 = FilterNot(
-            child=Filter(path="$.x", op="eq", value=1)
-        )
+        n1 = FilterNot(child=Filter(path="$.x", op="eq", value=1))
+        n2 = FilterNot(child=Filter(path="$.x", op="eq", value=1))
         assert filter_hash(n1) == filter_hash(n2)
 
 
@@ -634,17 +626,13 @@ class TestParseFilterDict:
         assert params == ["$.name", "alice", "$.age", 30]
 
     def test_in_operator(self) -> None:
-        f = parse_filter_dict(
-            {"path": "$.x", "op": "in", "value": [1, 2, 3]}
-        )
+        f = parse_filter_dict({"path": "$.x", "op": "in", "value": [1, 2, 3]})
         sql, params = compile_filter(f)
         assert "IN" in sql
         assert params == ["$.x", 1, 2, 3]
 
     def test_not_filter(self) -> None:
-        f = parse_filter_dict(
-            {"not": {"path": "$.x", "op": "eq", "value": 1}}
-        )
+        f = parse_filter_dict({"not": {"path": "$.x", "op": "eq", "value": 1}})
         assert isinstance(f, FilterNot)
         assert isinstance(f.child, Filter)
         assert f.child.op == "eq"
@@ -697,15 +685,11 @@ class TestParseFilterDict:
 
     def test_malformed_path_rejected(self) -> None:
         with pytest.raises(ValueError, match="invalid filter path"):
-            parse_filter_dict(
-                {"path": "not a path", "op": "eq", "value": 1}
-            )
+            parse_filter_dict({"path": "not a path", "op": "eq", "value": 1})
 
     def test_wildcard_path_rejected(self) -> None:
         with pytest.raises(ValueError, match="wildcard"):
-            parse_filter_dict(
-                {"path": "$.items[*].id", "op": "eq", "value": 1}
-            )
+            parse_filter_dict({"path": "$.items[*].id", "op": "eq", "value": 1})
 
 
 # ── NULL with ordering operators ────────────────────────────────
@@ -716,12 +700,8 @@ class TestCompileNullOrdering:
 
     @pytest.mark.parametrize("op", ["gt", "gte", "lt", "lte"])
     def test_ordering_op_rejects_none(self, op: str) -> None:
-        with pytest.raises(
-            ValueError, match="NULL value not supported"
-        ):
-            compile_filter(
-                Filter(path="$.x", op=op, value=None)
-            )
+        with pytest.raises(ValueError, match="NULL value not supported"):
+            compile_filter(Filter(path="$.x", op=op, value=None))
 
 
 # ── array_contains on non-array values ──────────────────────────
@@ -747,13 +727,13 @@ class TestArrayContainsNonArray:
         ]
         for i, rec in enumerate(records):
             self.conn.execute(
-                "INSERT INTO artifact_records"
-                " VALUES (?, ?, ?, ?, ?)",
+                "INSERT INTO artifact_records VALUES (?, ?, ?, ?, ?)",
                 ("local", "art_1", "$", i, json.dumps(rec)),
             )
 
     def _query(
-        self, f: Filter | FilterGroup | FilterNot,
+        self,
+        f: Filter | FilterGroup | FilterNot,
     ) -> list[dict[str, object]]:
         sql, params = compile_filter(f)
         full_sql = (
@@ -764,9 +744,7 @@ class TestArrayContainsNonArray:
             " ORDER BY idx"
         )
         full_params = ["local", "art_1", "$", *params]
-        rows = self.conn.execute(
-            full_sql, full_params
-        ).fetchall()
+        rows = self.conn.execute(full_sql, full_params).fetchall()
         return [json.loads(row[0]) for row in rows]
 
     def test_matches_only_array_rows(self) -> None:

@@ -28,7 +28,7 @@ Current controls:
 4. Code runtime can be disabled globally:
 
 ```bash
-export SIFT_MCP_CODE_QUERY_ENABLED=false
+export SIFT_GATEWAY_CODE_QUERY_ENABLED=false
 ```
 
 Operational guidance:

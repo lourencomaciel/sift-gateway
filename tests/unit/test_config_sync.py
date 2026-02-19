@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from sift_mcp.config.sync import run_sync
+from sift_gateway.config.sync import run_sync
 
 
 def _write_json(path: Path, data: dict) -> None:
@@ -64,7 +64,7 @@ class TestRunSync:
             gateway_servers={},
             source_servers={
                 "artifact-gateway": {
-                    "command": "sift-mcp",
+                    "command": "sift-gateway",
                 },
                 "github": {
                     "command": "npx",
@@ -92,7 +92,7 @@ class TestRunSync:
             gateway_servers={},
             source_servers={
                 "artifact-gateway": {
-                    "command": "sift-mcp",
+                    "command": "sift-gateway",
                 },
                 "github": {
                     "command": "npx",
@@ -108,7 +108,7 @@ class TestRunSync:
         source = json.loads(source_path.read_text(encoding="utf-8"))
         assert list(source["mcpServers"].keys()) == ["artifact-gateway"]
         gw_entry = source["mcpServers"]["artifact-gateway"]
-        assert gw_entry["command"] == "sift-mcp"
+        assert gw_entry["command"] == "sift-gateway"
         assert gw_entry["args"] == ["--data-dir", str(data_dir.resolve())]
 
     def test_sync_idempotent_when_no_new_entries(self, tmp_path: Path) -> None:
@@ -119,7 +119,7 @@ class TestRunSync:
             },
             source_servers={
                 "artifact-gateway": {
-                    "command": "sift-mcp",
+                    "command": "sift-gateway",
                 },
                 "github": {
                     "command": "npx",
@@ -172,7 +172,7 @@ class TestRunSync:
             gateway_servers={},
             source_servers={
                 "artifact-gateway": {
-                    "command": "sift-mcp",
+                    "command": "sift-gateway",
                 },
                 "github": {
                     "command": "npx",
@@ -222,7 +222,7 @@ class TestRunSync:
                 "context_servers": {
                     "artifact-gateway": {
                         "source": "custom",
-                        "command": "sift-mcp",
+                        "command": "sift-gateway",
                     },
                     "github": {
                         "source": "custom",
@@ -240,7 +240,7 @@ class TestRunSync:
         assert "context_servers" in source
         assert list(source["context_servers"].keys()) == ["artifact-gateway"]
         assert source["context_servers"]["artifact-gateway"]["command"] == (
-            "sift-mcp"
+            "sift-gateway"
         )
 
     def test_sync_uses_metadata_data_dir_for_rewrite_and_gateway_updates(
@@ -251,7 +251,7 @@ class TestRunSync:
             tmp_path,
             gateway_servers={},
             source_servers={
-                "artifact-gateway": {"command": "sift-mcp"},
+                "artifact-gateway": {"command": "sift-gateway"},
                 "github": {
                     "command": "npx",
                     "env": {"GITHUB_TOKEN": "ghp_secret"},
@@ -309,7 +309,7 @@ class TestRunSync:
             tmp_path,
             gateway_servers={},
             source_servers={
-                "artifact-gateway": {"command": "sift-mcp"},
+                "artifact-gateway": {"command": "sift-gateway"},
                 "github": {
                     "command": "npx",
                     "env": {"GITHUB_TOKEN": "ghp_secret"},
@@ -352,7 +352,7 @@ class TestRunSync:
             tmp_path,
             gateway_servers={},
             source_servers={
-                "artifact-gateway": {"command": "sift-mcp"},
+                "artifact-gateway": {"command": "sift-gateway"},
                 "only-in-source-a": {"command": "a-tool"},
             },
             extra_gw_keys={
@@ -368,7 +368,7 @@ class TestRunSync:
             source_b,
             {
                 "mcpServers": {
-                    "artifact-gateway": {"command": "sift-mcp"},
+                    "artifact-gateway": {"command": "sift-gateway"},
                     "only-in-source-b": {"command": "b-tool"},
                 }
             },
@@ -404,6 +404,7 @@ class TestRunSync:
         source_b_after = json.loads(source_b.read_text(encoding="utf-8"))
         assert list(source_b_after["mcpServers"]) == ["artifact-gateway"]
 
+
 class TestSyncDisabled:
     def test_sync_skipped_when_disabled(self, tmp_path: Path) -> None:
         data_dir, _config_path, _source_path = _setup_gateway_and_source(
@@ -411,7 +412,7 @@ class TestSyncDisabled:
             gateway_servers={},
             source_servers={
                 "artifact-gateway": {
-                    "command": "sift-mcp",
+                    "command": "sift-gateway",
                 },
                 "github": {"command": "npx"},
             },
@@ -431,7 +432,7 @@ class TestSyncDisabled:
 
 class TestIsGatewayEntry:
     def test_matches_by_name(self) -> None:
-        from sift_mcp.config.sync import (
+        from sift_gateway.config.sync import (
             _is_gateway_entry,
         )
 
@@ -442,19 +443,19 @@ class TestIsGatewayEntry:
         )
 
     def test_matches_by_command(self) -> None:
-        from sift_mcp.config.sync import (
+        from sift_gateway.config.sync import (
             _is_gateway_entry,
         )
 
         assert _is_gateway_entry(
             "some-name",
-            {"command": "sift-mcp"},
+            {"command": "sift-gateway"},
             "artifact-gateway",
         )
 
     def test_url_with_sift_is_not_gateway(self) -> None:
         """URL substring no longer identifies gateway entries."""
-        from sift_mcp.config.sync import (
+        from sift_gateway.config.sync import (
             _is_gateway_entry,
         )
 
@@ -465,7 +466,7 @@ class TestIsGatewayEntry:
         )
 
     def test_non_gateway_entry(self) -> None:
-        from sift_mcp.config.sync import (
+        from sift_gateway.config.sync import (
             _is_gateway_entry,
         )
 

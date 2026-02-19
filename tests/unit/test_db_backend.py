@@ -7,8 +7,8 @@ import sqlite3
 
 import pytest
 
-from sift_mcp.db.backend import SqliteBackend
-from sift_mcp.db.migrate import apply_migrations, load_migrations
+from sift_gateway.db.backend import SqliteBackend
+from sift_gateway.db.migrate import apply_migrations, load_migrations
 
 
 class TestSqliteBackend:
@@ -102,7 +102,7 @@ class TestSqliteMigrationFiles:
         migrations_dir = (
             Path(__file__).resolve().parents[2]
             / "src"
-            / "sift_mcp"
+            / "sift_gateway"
             / "db"
             / "migrations_sqlite"
         )
@@ -112,7 +112,7 @@ class TestSqliteMigrationFiles:
         migrations_dir = (
             Path(__file__).resolve().parents[2]
             / "src"
-            / "sift_mcp"
+            / "sift_gateway"
             / "db"
             / "migrations_sqlite"
         )
@@ -131,7 +131,7 @@ class TestSqliteMigrationIntegration:
         migrations_dir = (
             Path(__file__).resolve().parents[2]
             / "src"
-            / "sift_mcp"
+            / "sift_gateway"
             / "db"
             / "migrations_sqlite"
         )
@@ -164,7 +164,7 @@ class TestSqliteMigrationIntegration:
         migrations_dir = (
             Path(__file__).resolve().parents[2]
             / "src"
-            / "sift_mcp"
+            / "sift_gateway"
             / "db"
             / "migrations_sqlite"
         )

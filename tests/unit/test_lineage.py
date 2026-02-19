@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from sift_mcp.mcp.lineage import (
+from sift_gateway.mcp.lineage import (
     build_lineage_root_catalog,
     compute_related_set_hash,
     resolve_related_artifacts,

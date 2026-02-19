@@ -1,31 +1,31 @@
 # Quick Start Guide
 
-Complete walkthrough for installing and configuring Sift MCP.
+Complete walkthrough for installing and configuring Sift Gateway.
 
 ## Installation
 
 ### Using pipx (Recommended)
 
 ```bash
-pipx install sift-mcp
+pipx install sift-gateway
 ```
 
 To upgrade:
 
 ```bash
-pipx upgrade sift-mcp
+pipx upgrade sift-gateway
 ```
 
 ### Using uv
 
 ```bash
-uv tool install sift-mcp
+uv tool install sift-gateway
 ```
 
 To upgrade:
 
 ```bash
-uv tool upgrade sift-mcp
+uv tool upgrade sift-gateway
 ```
 
 ### Development Setup
@@ -33,8 +33,8 @@ uv tool upgrade sift-mcp
 If you're contributing to Sift or want to run from source:
 
 ```bash
-git clone https://github.com/lourencomaciel/sift-mcp.git
-cd sift-mcp
+git clone https://github.com/lourencomaciel/sift-gateway.git
+cd sift-gateway
 uv sync
 ```
 
@@ -55,7 +55,7 @@ Sift can import your existing MCP server configuration from Claude Desktop, Clau
 ### Basic Import
 
 ```bash
-sift-mcp init \
+sift-gateway init \
   --from claude
 ```
 
@@ -64,7 +64,7 @@ sift-mcp init \
 
 This command:
 
-1. Copies your `mcpServers` configuration into `{data_dir}/state/config.json` (default data dir: `.sift-mcp`)
+1. Copies your `mcpServers` configuration into `{data_dir}/state/config.json` (default data dir: `.sift-gateway`)
 2. Configures the SQLite database backend (no setup required)
 3. Externalizes inline `env` and `headers` into per-upstream secret files under `{data_dir}/state/upstream_secrets/`
 4. Creates a backup of your original config at `<source>.backup`
@@ -76,7 +76,7 @@ This command:
 To see what changes will be made without applying them:
 
 ```bash
-sift-mcp init \
+sift-gateway init \
   --from claude \
   --dry-run
 ```
@@ -86,7 +86,7 @@ sift-mcp init \
 If you need to undo the import and restore your original config:
 
 ```bash
-sift-mcp init \
+sift-gateway init \
   --from claude \
   --revert
 ```
@@ -102,16 +102,16 @@ libraries. These are not included in the base install to keep Sift lightweight.
 
 ```bash
 # Using pipx
-pipx install "sift-mcp[code]"
+pipx install "sift-gateway[code]"
 
 # Using uv
-uv tool install "sift-mcp[code]"
+uv tool install "sift-gateway[code]"
 ```
 
 Backward-compatible alias:
 
 ```bash
-pipx install "sift-mcp[data-science]"
+pipx install "sift-gateway[data-science]"
 ```
 
 ### Install individual packages
@@ -119,19 +119,19 @@ pipx install "sift-mcp[data-science]"
 You can install any pip package into Sift's environment:
 
 ```bash
-sift-mcp install pandas scipy matplotlib
+sift-gateway install pandas scipy matplotlib
 ```
 
 This installs the package and updates the instance allowlist so the import
 is permitted in code queries. To remove:
 
 ```bash
-sift-mcp uninstall scipy
+sift-gateway uninstall scipy
 ```
 
 > **Note:** Sift runs in an isolated Python environment. Packages installed
 > in your system Python are not available to code queries — use
-> `sift-mcp install` instead of `pip install`.
+> `sift-gateway install` instead of `pip install`.
 
 ## Adding MCP Servers After Initial Setup
 
@@ -143,8 +143,8 @@ After running `init`, your source config file contains only the Sift gateway ent
 {
   "mcpServers": {
     "artifact-gateway": {
-      "command": "sift-mcp",
-      "args": ["--data-dir", "/absolute/path/to/.sift-mcp"]
+      "command": "sift-gateway",
+      "args": ["--data-dir", "/absolute/path/to/.sift-gateway"]
     },
     "new-server": {
       "command": "npx",
@@ -163,11 +163,11 @@ On startup, Sift reads the `_gateway_sync` metadata, detects new non-gateway ent
 You can also add servers directly to the selected instance:
 
 ```bash
-sift-mcp upstream add '{"new-server":{"command":"npx","args":["-y","@modelcontextprotocol/server-example"]}}' --from claude
+sift-gateway upstream add '{"new-server":{"command":"npx","args":["-y","@modelcontextprotocol/server-example"]}}' --from claude
 ```
 
 Optional targeting overrides:
-- `sift-mcp upstream add '<json>' --from claude --data-dir /abs/path/to/data-dir`
+- `sift-gateway upstream add '<json>' --from claude --data-dir /abs/path/to/data-dir`
 
 ## Manual Configuration
 
@@ -235,7 +235,7 @@ To pass the full parent process environment to a specific upstream:
 Check Sift's health and configuration at any time:
 
 ```bash
-sift-mcp --check
+sift-gateway --check
 ```
 
 This validates:
@@ -277,7 +277,7 @@ When a handle is returned:
 
 If your mirrored call returned raw payload, use `query_kind="search"` to find
 the persisted artifact for your session or set
-`SIFT_MCP_PASSTHROUGH_MAX_BYTES=0` to force handle responses.
+`SIFT_GATEWAY_PASSTHROUGH_MAX_BYTES=0` to force handle responses.
 
 ```python
 # Get metadata
@@ -303,7 +303,7 @@ See [Recipes & Examples](recipes.md) for more usage patterns.
 
 ### Sift isn't starting
 
-- Check `sift-mcp --check` for configuration errors
+- Check `sift-gateway --check` for configuration errors
 - Verify Python version: `python --version` (requires >= 3.11)
 - Inspect stderr output from your MCP client process for startup/runtime errors
 
@@ -315,7 +315,7 @@ See [Recipes & Examples](recipes.md) for more usage patterns.
 
 ### Artifacts not being created
 
-- Check `sift-mcp --check` for DB/FS health errors
+- Check `sift-gateway --check` for DB/FS health errors
 - Verify upstream calls succeed and return content
 - See [Configuration Reference](config.md) for artifact and mapping budgets
 

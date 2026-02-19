@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from decimal import Decimal
 
-from sift_mcp.retrieval.response import apply_output_budgets
+from sift_gateway.retrieval.response import apply_output_budgets
 
 
 def test_apply_output_budgets_truncates() -> None:

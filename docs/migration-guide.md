@@ -5,7 +5,7 @@ CLI surfaces share one execution core.
 
 ## Who should read this
 
-1. Existing `sift-mcp` users upgrading in place.
+1. Existing `sift-gateway` users upgrading in place.
 2. Teams adopting `sift` CLI workflows alongside MCP.
 3. Maintainers preparing release cutover notes.
 
@@ -23,10 +23,10 @@ CLI surfaces share one execution core.
 
 ## Packaging and Extras
 
-1. Keep installing `sift-mcp` for current MCP setups.
+1. Keep installing `sift-gateway` for current MCP setups.
 2. CLI-first path includes `sift` command entrypoint.
 3. Code runtime dependencies are optional:
-   - `pip install "sift-mcp[code]"`
+   - `pip install "sift-gateway[code]"`
 4. `data-science` remains as a compatibility alias for now.
 
 ## Data and Migrations

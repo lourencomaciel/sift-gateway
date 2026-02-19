@@ -22,25 +22,25 @@ import tempfile
 import time
 from typing import Any
 
-from sift_mcp.config import load_gateway_config
-from sift_mcp.constants import (
+from sift_gateway.config import load_gateway_config
+from sift_gateway.constants import (
     CAPTURE_KIND_CLI_COMMAND,
 )
-from sift_mcp.core.artifact_capture import execute_artifact_capture
-from sift_mcp.core.artifact_get import execute_artifact_get
-from sift_mcp.core.artifact_select import execute_artifact_select
-from sift_mcp.db.backend import SqliteBackend
-from sift_mcp.db.migrate import apply_migrations
-from sift_mcp.mcp.adapters.artifact_query_runtime import (
+from sift_gateway.core.artifact_capture import execute_artifact_capture
+from sift_gateway.core.artifact_get import execute_artifact_get
+from sift_gateway.core.artifact_select import execute_artifact_select
+from sift_gateway.db.backend import SqliteBackend
+from sift_gateway.db.migrate import apply_migrations
+from sift_gateway.mcp.adapters.artifact_query_runtime import (
     GatewayArtifactQueryRuntime,
 )
-from sift_mcp.mcp.server import GatewayServer
-from sift_mcp.obs.logging import configure_logging
+from sift_gateway.mcp.server import GatewayServer
+from sift_gateway.obs.logging import configure_logging
 
 _MIGRATIONS_DIR = (
     Path(__file__).resolve().parents[1]
     / "src"
-    / "sift_mcp"
+    / "sift_gateway"
     / "db"
     / "migrations_sqlite"
 )

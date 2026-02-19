@@ -6,7 +6,7 @@ from typing import Any
 
 import pytest
 
-from sift_mcp.core.artifact_code import execute_artifact_code
+from sift_gateway.core.artifact_code import execute_artifact_code
 
 
 class _FakeCursor:
@@ -31,7 +31,9 @@ class _SeqConnection:
         self._cursors = cursors
         self.committed = False
 
-    def execute(self, _sql: str, _params: tuple[Any, ...] | list[Any]) -> _FakeCursor:
+    def execute(
+        self, _sql: str, _params: tuple[Any, ...] | list[Any]
+    ) -> _FakeCursor:
         if not self._cursors:
             return _FakeCursor()
         return self._cursors.pop(0)
@@ -250,7 +252,10 @@ class _Runtime:
         return "art_derived", None
 
     def not_implemented(self, tool_name: str) -> dict[str, Any]:
-        return {"code": "NOT_IMPLEMENTED", "message": f"{tool_name} unavailable"}
+        return {
+            "code": "NOT_IMPLEMENTED",
+            "message": f"{tool_name} unavailable",
+        }
 
 
 def _meta_row() -> tuple[Any, ...]:
@@ -321,7 +326,7 @@ def test_execute_artifact_code_returns_items_and_persists_derived(
     runtime = _Runtime(db_pool=_SeqPool(conn))
 
     monkeypatch.setattr(
-        "sift_mcp.core.artifact_code.execute_code_in_subprocess",
+        "sift_gateway.core.artifact_code.execute_code_in_subprocess",
         lambda **kwargs: kwargs["data"],
     )
 
@@ -365,7 +370,7 @@ def test_execute_artifact_code_rejects_input_records_exceeded(
         return []
 
     monkeypatch.setattr(
-        "sift_mcp.core.artifact_code.execute_code_in_subprocess",
+        "sift_gateway.core.artifact_code.execute_code_in_subprocess",
         _fake_exec,
     )
 

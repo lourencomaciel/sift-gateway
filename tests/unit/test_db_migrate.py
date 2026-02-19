@@ -6,12 +6,12 @@ from typing import ClassVar
 
 import pytest
 
-from sift_mcp.db.migrate import apply_migrations, list_migrations
+from sift_gateway.db.migrate import apply_migrations, list_migrations
 
 # ---------------------------------------------------------------------------
 # Helpers for schema content auditing
 # ---------------------------------------------------------------------------
-_MIGRATIONS_DIR = Path("src/sift_mcp/db/migrations_sqlite").resolve()
+_MIGRATIONS_DIR = Path("src/sift_gateway/db/migrations_sqlite").resolve()
 
 
 def _read_sql(filename: str) -> str:
@@ -56,7 +56,7 @@ class _FakeConnection:
 
 def test_list_migrations_includes_sql_files() -> None:
     migration_paths = list_migrations(
-        Path("src/sift_mcp/db/migrations_sqlite").resolve()
+        Path("src/sift_gateway/db/migrations_sqlite").resolve()
     )
     names = [path.name for path in migration_paths]
     assert "001_init.sql" in names
@@ -64,7 +64,7 @@ def test_list_migrations_includes_sql_files() -> None:
 
 def test_apply_migrations_idempotent() -> None:
     connection = _FakeConnection()
-    migrations_dir = Path("src/sift_mcp/db/migrations_sqlite").resolve()
+    migrations_dir = Path("src/sift_gateway/db/migrations_sqlite").resolve()
 
     first = apply_migrations(connection, migrations_dir)
     second = apply_migrations(connection, migrations_dir)
@@ -405,7 +405,9 @@ class TestPayloadBlobStorageColumns:
         sql = _read_sql("001_init.sql").lower()
         assert "payload_fs_path text not null" in sql
 
-    def test_payload_blobs_does_not_include_canonical_blob_columns(self) -> None:
+    def test_payload_blobs_does_not_include_canonical_blob_columns(
+        self,
+    ) -> None:
         sql = _read_sql("001_init.sql").lower()
         assert "envelope_canonical_bytes" not in sql
         assert "envelope_canonical_bytes_len" not in sql
@@ -416,7 +418,9 @@ class TestArtifactsFtsSchema:
 
     def test_artifacts_fts_table_exists(self) -> None:
         sql = _normalize(_read_sql("001_init.sql")).lower()
-        assert "create virtual table if not exists artifacts_fts using fts5" in sql
+        assert (
+            "create virtual table if not exists artifacts_fts using fts5" in sql
+        )
 
     def test_artifacts_fts_triggers_exist(self) -> None:
         sql = _normalize(_read_sql("001_init.sql")).lower()
@@ -445,9 +449,7 @@ class TestArtifactRecordsTable:
         assert "idx" in pk_cols
 
     def test_fk_to_artifacts(self) -> None:
-        assert (
-            "references artifacts (workspace_id, artifact_id)" in self.sql
-        )
+        assert "references artifacts (workspace_id, artifact_id)" in self.sql
 
     def test_on_delete_cascade(self) -> None:
         assert "on delete cascade" in self.sql

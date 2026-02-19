@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock
 
-from sift_mcp.mcp.resolve_refs import (
+from sift_gateway.mcp.resolve_refs import (
     ParsedRef,
     ResolveError,
     is_artifact_ref,

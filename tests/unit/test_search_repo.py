@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from sift_mcp.constants import WORKSPACE_ID
-from sift_mcp.db.repos.search_repo import (
+from sift_gateway.constants import WORKSPACE_ID
+from sift_gateway.db.repos.search_repo import (
     LIST_ARTIFACTS_SQL,
     LIST_DERIVED_SQL,
     SEARCH_ARTIFACTS_FTS_SQL,
@@ -11,7 +11,9 @@ from sift_mcp.db.repos.search_repo import (
 )
 
 
-def test_search_artifacts_fts_sql_is_workspace_scoped_without_artifact_refs() -> None:
+def test_search_artifacts_fts_sql_is_workspace_scoped_without_artifact_refs() -> (
+    None
+):
     sql = SEARCH_ARTIFACTS_FTS_SQL.lower()
     assert "from artifacts_fts" in sql
     assert "join artifacts a" in sql

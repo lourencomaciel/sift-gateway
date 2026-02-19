@@ -2,20 +2,20 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from sift_mcp.constants import WORKSPACE_ID
-from sift_mcp.db.backend import SqliteBackend
-from sift_mcp.db.migrate import apply_migrations
-from sift_mcp.jobs.hard_delete import run_hard_delete_batch
-from sift_mcp.jobs.quota import enforce_quota
-from sift_mcp.jobs.reconcile_fs import run_reconcile
-from sift_mcp.jobs.soft_delete import run_soft_delete_expired
+from sift_gateway.constants import WORKSPACE_ID
+from sift_gateway.db.backend import SqliteBackend
+from sift_gateway.db.migrate import apply_migrations
+from sift_gateway.jobs.hard_delete import run_hard_delete_batch
+from sift_gateway.jobs.quota import enforce_quota
+from sift_gateway.jobs.reconcile_fs import run_reconcile
+from sift_gateway.jobs.soft_delete import run_soft_delete_expired
 
 _CANONICALIZER_VERSION = "jcs_rfc8785_v1"
 _MAPPER_VERSION = "mapper_v1"
 _MIGRATIONS_DIR = (
     Path(__file__).resolve().parents[2]
     / "src"
-    / "sift_mcp"
+    / "sift_gateway"
     / "db"
     / "migrations_sqlite"
 )
@@ -200,8 +200,12 @@ def test_cleanup_lifecycle_expired_then_hard_delete_then_reconcile(
     blobs_payload_dir = tmp_path / "blobs" / "payload"
 
     try:
-        payload_hash = "a1b2c3d4e5f6deadbeef00112233445566778899aabbccddeeff001122334455"
-        binary_hash = "ddee11223344556677889900aabbccddeeff00112233445566778899aabbccdd"
+        payload_hash = (
+            "a1b2c3d4e5f6deadbeef00112233445566778899aabbccddeeff001122334455"
+        )
+        binary_hash = (
+            "ddee11223344556677889900aabbccddeeff00112233445566778899aabbccdd"
+        )
         payload_path = _payload_path(blobs_payload_dir, payload_hash)
         binary_path = _binary_path(blobs_bin_dir, binary_hash)
         payload_path.parent.mkdir(parents=True, exist_ok=True)
@@ -264,10 +268,16 @@ def test_cleanup_lifecycle_expired_then_hard_delete_then_reconcile(
         assert not payload_path.exists()
         assert not binary_path.exists()
 
-        orphan_binary_hash = "ff00112233445566778899aabbccddeeff00112233445566778899aabbccddee"
-        orphan_payload_hash = "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff"
+        orphan_binary_hash = (
+            "ff00112233445566778899aabbccddeeff00112233445566778899aabbccddee"
+        )
+        orphan_payload_hash = (
+            "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff"
+        )
         orphan_binary_path = _binary_path(blobs_bin_dir, orphan_binary_hash)
-        orphan_payload_path = _payload_path(blobs_payload_dir, orphan_payload_hash)
+        orphan_payload_path = _payload_path(
+            blobs_payload_dir, orphan_payload_hash
+        )
         orphan_binary_path.parent.mkdir(parents=True, exist_ok=True)
         orphan_payload_path.parent.mkdir(parents=True, exist_ok=True)
         orphan_binary_path.write_bytes(b"orphan-bin")
@@ -307,8 +317,12 @@ def test_cleanup_lifecycle_quota_enforcement_clears_usage(
     blobs_payload_dir = tmp_path / "blobs" / "payload"
 
     try:
-        old_payload_hash = "111122223333444455556666777788889999aaaabbbbccccddddeeeeffff0000"
-        new_payload_hash = "aaaa22223333444455556666777788889999aaaabbbbccccddddeeeeffff1111"
+        old_payload_hash = (
+            "111122223333444455556666777788889999aaaabbbbccccddddeeeeffff0000"
+        )
+        new_payload_hash = (
+            "aaaa22223333444455556666777788889999aaaabbbbccccddddeeeeffff1111"
+        )
         old_payload_path = _payload_path(blobs_payload_dir, old_payload_hash)
         new_payload_path = _payload_path(blobs_payload_dir, new_payload_hash)
         old_payload_path.parent.mkdir(parents=True, exist_ok=True)

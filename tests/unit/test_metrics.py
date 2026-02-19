@@ -5,7 +5,7 @@ import threading
 
 import pytest
 
-from sift_mcp.obs.metrics import (
+from sift_gateway.obs.metrics import (
     GatewayMetrics,
     Histogram,
     counter_reset,
@@ -204,7 +204,7 @@ def test_get_metrics_returns_singleton() -> None:
 def test_get_metrics_thread_safe_singleton_creation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import sift_mcp.obs.metrics as metrics_module
+    import sift_gateway.obs.metrics as metrics_module
 
     monkeypatch.setattr(metrics_module, "_metrics", None)
 

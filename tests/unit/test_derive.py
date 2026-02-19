@@ -6,12 +6,12 @@ from typing import Any
 
 import pytest
 
-from sift_mcp.artifacts import derive as derive_mod
-from sift_mcp.artifacts.create import ArtifactHandle
-from sift_mcp.canon.rfc8785 import canonical_bytes
-from sift_mcp.config.settings import GatewayConfig
-from sift_mcp.constants import KIND_DERIVED_QUERY
-from sift_mcp.util.hashing import sha256_hex
+from sift_gateway.artifacts import derive as derive_mod
+from sift_gateway.artifacts.create import ArtifactHandle
+from sift_gateway.canon.rfc8785 import canonical_bytes
+from sift_gateway.config.settings import GatewayConfig
+from sift_gateway.constants import KIND_DERIVED_QUERY
+from sift_gateway.util.hashing import sha256_hex
 
 
 class _Cursor:
@@ -135,7 +135,9 @@ def test_create_derived_artifact_sources_parent_metadata_and_recipe(
     assert input_data.upstream_tool_schema_hash == "schema_hash_parent"
     assert result.envelope.content[0].value == [{"id": 1}]
     lineage_inserts = [
-        query for query, _params in connection.calls if "artifact_lineage_edges" in query
+        query
+        for query, _params in connection.calls
+        if "artifact_lineage_edges" in query
     ]
     assert len(lineage_inserts) == 2
 

@@ -18,8 +18,8 @@ from __future__ import annotations
 from pathlib import Path
 import re
 
-from sift_mcp.config.settings import GatewayConfig, UpstreamConfig
-from sift_mcp.obs.logging import LogEvents
+from sift_gateway.config.settings import GatewayConfig, UpstreamConfig
+from sift_gateway.obs.logging import LogEvents
 
 ROOT = Path(__file__).resolve().parents[1]
 README_PATH = ROOT / "README.md"

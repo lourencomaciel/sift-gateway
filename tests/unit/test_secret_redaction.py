@@ -5,7 +5,7 @@ from typing import Any
 
 import pytest
 
-from sift_mcp.security.redaction import (
+from sift_gateway.security.redaction import (
     DetectSecretsScanner,
     RedactionResult,
     ResponseSecretRedactor,

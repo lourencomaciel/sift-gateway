@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-from sift_mcp.config.settings import GatewayConfig, UpstreamConfig
-from sift_mcp.envelope.model import (
+from sift_gateway.config.settings import GatewayConfig, UpstreamConfig
+from sift_gateway.envelope.model import (
     Envelope,
     JsonContentPart,
     TextContentPart,
 )
-from sift_mcp.pagination.auto import (
+from sift_gateway.pagination.auto import (
     _count_json_records,
     _count_json_value_records,
     _extract_json_content,
@@ -16,11 +16,11 @@ from sift_mcp.pagination.auto import (
     merge_envelopes,
     resolve_auto_paginate_limits,
 )
-from sift_mcp.pagination.contract import (
+from sift_gateway.pagination.contract import (
     RETRIEVAL_STATUS_COMPLETE,
     RETRIEVAL_STATUS_PARTIAL,
 )
-from sift_mcp.pagination.extract import (
+from sift_gateway.pagination.extract import (
     PaginationAssessment,
     PaginationState,
 )

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from sift_mcp.codegen.ast_guard import (
+from sift_gateway.codegen.ast_guard import (
     CodeValidationError,
     allowed_import_roots,
     validate_code_ast,

@@ -122,7 +122,7 @@ def _build_steps(args: argparse.Namespace) -> list[Step]:
                 ),
                 Step(
                     name="smoke_mcp_check",
-                    command=["uv", "run", "sift-mcp", "--check"],
+                    command=["uv", "run", "sift-gateway", "--check"],
                 ),
             ]
         )

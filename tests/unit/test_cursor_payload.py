@@ -4,7 +4,7 @@ import datetime as dt
 
 import pytest
 
-from sift_mcp.cursor.payload import build_cursor_payload
+from sift_gateway.cursor.payload import build_cursor_payload
 
 
 def test_cursor_payload_has_required_fields() -> None:
@@ -24,9 +24,7 @@ def test_cursor_payload_has_required_fields() -> None:
 
 
 def test_cursor_payload_rejects_extra_reserved_field_override() -> None:
-    with pytest.raises(
-        ValueError, match="reserved cursor fields"
-    ) as exc_info:
+    with pytest.raises(ValueError, match="reserved cursor fields") as exc_info:
         build_cursor_payload(
             tool="artifact.search",
             artifact_id="art_1",

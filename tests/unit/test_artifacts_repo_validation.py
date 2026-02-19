@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from sift_mcp.db.repos.artifacts_repo import validate_artifact_row
+from sift_gateway.db.repos.artifacts_repo import validate_artifact_row
 
 
 def _valid_row() -> dict[str, object]:
@@ -48,7 +48,9 @@ def test_artifacts_repo_validation_accepts_valid_kind() -> None:
     row = _valid_row()
     row["kind"] = "derived_codegen"
     row["parent_artifact_id"] = "art_parent"
-    row["derivation"] = '{"query_kind":"code","artifact_ids":["art_parent"],"expression":{"code_hash":"sha256:x"}}'
+    row["derivation"] = (
+        '{"query_kind":"code","artifact_ids":["art_parent"],"expression":{"code_hash":"sha256:x"}}'
+    )
     validate_artifact_row(row)
 
 
@@ -81,7 +83,9 @@ def test_artifacts_repo_validation_rejects_derived_without_parent() -> None:
         validate_artifact_row(row)
 
 
-def test_artifacts_repo_validation_rejects_derived_bad_derivation_json() -> None:
+def test_artifacts_repo_validation_rejects_derived_bad_derivation_json() -> (
+    None
+):
     row = _valid_row()
     row["kind"] = "derived_query"
     row["parent_artifact_id"] = "art_parent"

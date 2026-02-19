@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from sift_mcp.canon.compress import compress_bytes, decompress_bytes
+from sift_gateway.canon.compress import compress_bytes, decompress_bytes
 
 
 def test_gzip_roundtrip() -> None:
@@ -39,9 +39,7 @@ def test_zstd_decompress_missing_package(
 
     real_import = builtins.__import__
 
-    def _block_zstandard(
-        name: str, *args: object, **kwargs: object
-    ) -> object:
+    def _block_zstandard(name: str, *args: object, **kwargs: object) -> object:
         if name == "zstandard":
             raise ModuleNotFoundError(name)
         return real_import(name, *args, **kwargs)

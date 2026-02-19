@@ -3,7 +3,7 @@
 **MCP Artifact Gateway** — Keep large MCP responses out of your context window. Query them.
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
-[![PyPI](https://img.shields.io/pypi/v/sift-mcp.svg)](https://pypi.org/project/sift-mcp/)
+[![PyPI](https://img.shields.io/pypi/v/sift-gateway.svg)](https://pypi.org/project/sift-gateway/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
 ---
@@ -38,13 +38,13 @@ Sift is the first tool in the MCP ecosystem to treat tool responses as first-cla
 **1. Install**
 
 ```bash
-pipx install sift-mcp
+pipx install sift-gateway
 ```
 
 **2. Import your MCP config**
 
 ```bash
-sift-mcp init --from claude
+sift-gateway init --from claude
 ```
 
 This reads your existing MCP client config, moves your servers behind Sift, and writes everything back. One command. Shortcuts: `claude`, `claude-code`, `cursor`, `vscode`, `windsurf`, `zed`, `auto`, or pass an explicit file path.
@@ -53,7 +53,7 @@ This reads your existing MCP client config, moves your servers behind Sift, and 
 
 That's it. Sift is now proxying your upstream servers. Mirrored responses are persisted as queryable artifacts; small responses return raw, larger/continuation responses return artifact handles.
 
-> **Note:** Your MCP client (Claude Desktop, Claude Code, Cursor, VS Code, Windsurf, Zed) launches Sift automatically via the config. Use `sift-mcp --check` to verify health without starting the server.
+> **Note:** Your MCP client (Claude Desktop, Claude Code, Cursor, VS Code, Windsurf, Zed) launches Sift automatically via the config. Use `sift-gateway --check` to verify health without starting the server.
 
 ## How It Works
 
@@ -63,7 +63,7 @@ That's it. Sift is now proxying your upstream servers. Mirrored responses are pe
 4. Before returning tool output, Sift applies outbound secret redaction (enabled by default, configurable).
 5. If the serialized response is small (default <= 8 KB), Sift returns the raw upstream result directly; otherwise it returns a lightweight **artifact handle** with `artifact_id`, schemas, and usage hints.
 6. You query persisted artifacts using `artifact(action="query", query_kind=...)` with bounded responses and explicit pagination metadata.
-7. Raw passthrough responses omit `artifact_id`; set `SIFT_MCP_PASSTHROUGH_MAX_BYTES=0` when you need deterministic handle returns.
+7. Raw passthrough responses omit `artifact_id`; set `SIFT_GATEWAY_PASSTHROUGH_MAX_BYTES=0` when you need deterministic handle returns.
 
 ## What You Can Do With Artifacts
 
@@ -86,7 +86,7 @@ Results come back paginated. Continue with the returned cursor until `pagination
 
 ### Code queries
 
-Run Python against stored data without loading it into context. Install libraries with `sift-mcp install pandas` (or `pipx install "sift-mcp[code]"` for the bundle; `data-science` remains a backward-compatible alias):
+Run Python against stored data without loading it into context. Install libraries with `sift-gateway install pandas` (or `pipx install "sift-gateway[code]"` for the bundle; `data-science` remains a backward-compatible alias):
 
 ```python
 artifact(
@@ -155,7 +155,7 @@ Code queries execute model-generated Python in a subprocess with AST-level valid
 For production environments where untrusted models generate code, consider running Sift inside a container or disabling code queries entirely:
 
 ```bash
-export SIFT_MCP_CODE_QUERY_ENABLED=false
+export SIFT_GATEWAY_CODE_QUERY_ENABLED=false
 ```
 
 ### Outbound response redaction
@@ -165,13 +165,13 @@ Sift scans outbound tool responses for likely secrets and replaces matches with 
 Disable redaction:
 
 ```bash
-export SIFT_MCP_SECRET_REDACTION_ENABLED=false
+export SIFT_GATEWAY_SECRET_REDACTION_ENABLED=false
 ```
 
 Fail closed when redaction cannot run (for example scanner runtime/import issues):
 
 ```bash
-export SIFT_MCP_SECRET_REDACTION_FAIL_CLOSED=true
+export SIFT_GATEWAY_SECRET_REDACTION_FAIL_CLOSED=true
 ```
 
 See [SECURITY.md](SECURITY.md) for reporting vulnerabilities.
@@ -199,8 +199,8 @@ See [SECURITY.md](SECURITY.md) for reporting vulnerabilities.
 ## Development
 
 ```bash
-git clone https://github.com/lourencomaciel/sift-mcp.git
-cd sift-mcp
+git clone https://github.com/lourencomaciel/sift-gateway.git
+cd sift-gateway
 uv sync --extra dev
 
 # Tests

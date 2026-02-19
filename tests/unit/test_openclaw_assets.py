@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from sift_mcp.openclaw import read_asset, skill_text
-from sift_mcp.openclaw.cli import cli
+from sift_gateway.openclaw import read_asset, skill_text
+from sift_gateway.openclaw.cli import cli
 
 
 def test_skill_text_loads_packaged_asset() -> None:

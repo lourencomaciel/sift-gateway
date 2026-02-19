@@ -9,17 +9,17 @@ from __future__ import annotations
 
 from decimal import Decimal
 
-from sift_mcp.canon.rfc8785 import canonical_bytes
-from sift_mcp.envelope.model import (
+from sift_gateway.canon.rfc8785 import canonical_bytes
+from sift_gateway.envelope.model import (
     BinaryRefContentPart,
     Envelope,
     JsonContentPart,
     TextContentPart,
 )
-from sift_mcp.envelope.normalize import normalize_envelope
-from sift_mcp.envelope.oversize import replace_oversized_json_parts
-from sift_mcp.fs.blob_store import BlobStore
-from sift_mcp.util.hashing import sha256_hex
+from sift_gateway.envelope.normalize import normalize_envelope
+from sift_gateway.envelope.oversize import replace_oversized_json_parts
+from sift_gateway.fs.blob_store import BlobStore
+from sift_gateway.util.hashing import sha256_hex
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -328,7 +328,7 @@ def test_oversize_blob_with_decimal_value(tmp_path) -> None:
 
 def test_full_pipeline_normalize_oversize_store_reconstruct(tmp_path) -> None:
     """Full pipeline: normalize with oversize -> prepare_payload -> reconstruct."""
-    from sift_mcp.storage.payload_store import (
+    from sift_gateway.storage.payload_store import (
         prepare_payload,
         reconstruct_envelope,
     )
@@ -381,7 +381,7 @@ def test_full_pipeline_normalize_oversize_store_reconstruct(tmp_path) -> None:
 
 def test_full_pipeline_small_content_no_oversize(tmp_path) -> None:
     """Small content goes through normalize and payload_store without oversize."""
-    from sift_mcp.storage.payload_store import (
+    from sift_gateway.storage.payload_store import (
         prepare_payload,
         reconstruct_envelope,
     )

@@ -20,7 +20,7 @@ Common log fields:
 
 ## Event naming
 
-Use `LogEvents` constants from `src/sift_mcp/obs/logging.py`.
+Use `LogEvents` constants from `src/sift_gateway/obs/logging.py`.
 
 ### Startup
 

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from sift_mcp.cursor.sample_set_hash import (
+from sift_gateway.cursor.sample_set_hash import (
     SampleSetHashBindingError,
     assert_sample_set_hash_binding,
 )

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from sift_mcp.query.select_paths import (
+from sift_gateway.query.select_paths import (
     canonicalize_select_paths,
     select_paths_hash,
 )

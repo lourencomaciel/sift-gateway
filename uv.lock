@@ -2006,7 +2006,7 @@ wheels = [
 ]
 
 [[package]]
-name = "sift-mcp"
+name = "sift-gateway"
 version = "0.2.1"
 source = { editable = "." }
 dependencies = [
@@ -2060,7 +2060,7 @@ requires-dist = [
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.24.0" },
     { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=6.0.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.8.0" },
-    { name = "sift-mcp", extras = ["code"], marker = "extra == 'dev'" },
+    { name = "sift-gateway", extras = ["code"], marker = "extra == 'dev'" },
     { name = "structlog", specifier = ">=24.0.0" },
 ]
 provides-extras = ["code", "data-science", "dev"]

@@ -9,6 +9,6 @@
 /scripts/check_docs_consistency.py @zmaciel
 
 # CLI and CI guardrails
-/src/sift_mcp/main.py @zmaciel
-/src/sift_mcp/docs*.py @zmaciel
+/src/sift_gateway/main.py @zmaciel
+/src/sift_gateway/docs*.py @zmaciel
 /.github/workflows/** @zmaciel

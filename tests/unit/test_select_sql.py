@@ -7,7 +7,7 @@ import sqlite3
 
 import pytest
 
-from sift_mcp.query.select_sql import compile_select
+from sift_gateway.query.select_sql import compile_select
 
 # ── compile_select ───────────────────────────────────────────────
 
@@ -65,15 +65,12 @@ class TestSQLiteSelectIntegration:
         ]
         for i, rec in enumerate(records):
             self.conn.execute(
-                "INSERT INTO artifact_records VALUES"
-                " (?, ?, ?, ?, ?)",
+                "INSERT INTO artifact_records VALUES (?, ?, ?, ?, ?)",
                 ("local", "art_1", "$", i, json.dumps(rec)),
             )
 
     def test_select_projection(self) -> None:
-        select_expr, select_params = compile_select(
-            ["$.name", "$.age"]
-        )
+        select_expr, select_params = compile_select(["$.name", "$.age"])
         full_sql = (
             f"SELECT {select_expr} FROM artifact_records"
             " WHERE workspace_id = ? AND artifact_id = ?"

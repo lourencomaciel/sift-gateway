@@ -4,14 +4,18 @@ import asyncio
 from types import SimpleNamespace
 from typing import Any
 
-from sift_mcp.config.settings import PaginationConfig, UpstreamConfig
-from sift_mcp.envelope.model import Envelope, JsonContentPart, TextContentPart
-from sift_mcp.mcp.handlers.mirrored_tool import (
+from sift_gateway.config.settings import PaginationConfig, UpstreamConfig
+from sift_gateway.envelope.model import (
+    Envelope,
+    JsonContentPart,
+    TextContentPart,
+)
+from sift_gateway.mcp.handlers.mirrored_tool import (
     _auto_paginate_loop,
     _inject_pagination_state,
 )
-from sift_mcp.pagination.auto import _extract_json_content
-from sift_mcp.pagination.extract import PaginationAssessment
+from sift_gateway.pagination.auto import _extract_json_content
+from sift_gateway.pagination.extract import PaginationAssessment
 
 
 def _page_value(

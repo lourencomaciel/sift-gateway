@@ -1,5 +1,5 @@
 name: Bug report
-description: Report a reproducible problem in Sift MCP.
+description: Report a reproducible problem in Sift Gateway.
 title: "[Bug]: "
 labels:
   - bug
@@ -58,8 +58,8 @@ body:
     id: version
     attributes:
       label: Sift version
-      description: Output of `sift-mcp --version`
-      placeholder: sift-mcp 0.x.y
+      description: Output of `sift-gateway --version`
+      placeholder: sift-gateway 0.x.y
     validations:
       required: true
 

@@ -38,4 +38,4 @@ Use this checklist for the CLI-agnostic release candidate.
    - `sift --version`
    - `sift list`
 3. Smoke MCP status path:
-   - `sift-mcp --check`
+   - `sift-gateway --check`

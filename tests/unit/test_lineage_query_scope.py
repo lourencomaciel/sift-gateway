@@ -8,9 +8,9 @@ from typing import Any
 
 import pytest
 
-from sift_mcp.config.settings import GatewayConfig
-from sift_mcp.mcp.server import GatewayServer
-from sift_mcp.query.select_paths import select_paths_hash
+from sift_gateway.config.settings import GatewayConfig
+from sift_gateway.mcp.server import GatewayServer
+from sift_gateway.query.select_paths import select_paths_hash
 
 
 class _SeqCursor:
@@ -136,7 +136,7 @@ def _schema_root_row(
 @pytest.fixture(autouse=True)
 def _stub_select_derived_persistence(monkeypatch) -> None:
     monkeypatch.setattr(
-        "sift_mcp.mcp.adapters.artifact_query_runtime.GatewayArtifactQueryRuntime.persist_select_derived",
+        "sift_gateway.mcp.adapters.artifact_query_runtime.GatewayArtifactQueryRuntime.persist_select_derived",
         lambda self, **_kwargs: ("art_derived_select", None),
     )
 
@@ -158,7 +158,7 @@ def test_select_all_related_merges_records_with_artifact_locator(
     )
     server = _server(tmp_path, conn)
     monkeypatch.setattr(
-        "sift_mcp.mcp.adapters.artifact_query_runtime.resolve_related_artifacts",
+        "sift_gateway.mcp.adapters.artifact_query_runtime.resolve_related_artifacts",
         lambda *_args, **_kwargs: [
             {"artifact_id": "art_1", "generation": 1},
             {"artifact_id": "art_2", "generation": 1},
@@ -207,7 +207,7 @@ def test_select_all_related_fails_fast_on_incompatible_signatures(
     )
     server = _server(tmp_path, conn)
     monkeypatch.setattr(
-        "sift_mcp.mcp.adapters.artifact_query_runtime.resolve_related_artifacts",
+        "sift_gateway.mcp.adapters.artifact_query_runtime.resolve_related_artifacts",
         lambda *_args, **_kwargs: [
             {"artifact_id": "art_1", "generation": 1},
             {"artifact_id": "art_2", "generation": 1},
@@ -246,7 +246,7 @@ def test_select_all_related_cursor_stale_on_related_set_change(
     )
     server = _server(tmp_path, conn)
     monkeypatch.setattr(
-        "sift_mcp.mcp.adapters.artifact_query_runtime.resolve_related_artifacts",
+        "sift_gateway.mcp.adapters.artifact_query_runtime.resolve_related_artifacts",
         lambda *_args, **_kwargs: [
             {"artifact_id": "art_1", "generation": 1},
             {"artifact_id": "art_2", "generation": 1},
@@ -296,7 +296,7 @@ def test_select_all_related_respects_related_artifact_limit(
         db_pool=_SeqPool(_SeqConnection([])),  # type: ignore[arg-type]
     )
     monkeypatch.setattr(
-        "sift_mcp.mcp.adapters.artifact_query_runtime.resolve_related_artifacts",
+        "sift_gateway.mcp.adapters.artifact_query_runtime.resolve_related_artifacts",
         lambda *_args, **_kwargs: [
             {"artifact_id": "art_1", "generation": 1},
             {"artifact_id": "art_2", "generation": 1},
@@ -354,7 +354,7 @@ def test_get_all_related_jsonpath_merges_values_with_provenance(
     )
     server = _server(tmp_path, conn)
     monkeypatch.setattr(
-        "sift_mcp.mcp.adapters.artifact_query_runtime.resolve_related_artifacts",
+        "sift_gateway.mcp.adapters.artifact_query_runtime.resolve_related_artifacts",
         lambda *_args, **_kwargs: [
             {"artifact_id": "art_1", "generation": 1},
             {"artifact_id": "art_2", "generation": 1},
@@ -451,7 +451,7 @@ def test_describe_all_related_returns_lineage_root_catalog(
     )
     server = _server(tmp_path, conn)
     monkeypatch.setattr(
-        "sift_mcp.mcp.adapters.artifact_query_runtime.resolve_related_artifacts",
+        "sift_gateway.mcp.adapters.artifact_query_runtime.resolve_related_artifacts",
         lambda *_args, **_kwargs: [
             {"artifact_id": "art_1", "generation": 1},
             {"artifact_id": "art_2", "generation": 1},

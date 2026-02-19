@@ -5,7 +5,7 @@ from __future__ import annotations
 import io
 import json
 
-from sift_mcp.mapping.partial import (
+from sift_gateway.mapping.partial import (
     PartialMappingBudgets,
     PartialMappingConfig,
     compute_map_backend_id,

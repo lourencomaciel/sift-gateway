@@ -25,14 +25,14 @@ queryability, and keep agent context small.
 
 ### 4.1 Layering
 
-1. `sift_mcp/core/*`
+1. `sift_gateway/core/*`
    - Protocol-agnostic capture, artifact, query, cursor, lifecycle services.
    - Runtime protocols defining required host capabilities.
-2. `sift_mcp/mcp/*`
+2. `sift_gateway/mcp/*`
    - MCP schemas, request validation, adapter implementations, thin handlers.
-3. `sift_mcp/cli/*`
+3. `sift_gateway/cli/*`
    - CLI command parsing, output formatting, adapter implementations.
-4. `sift_mcp/db/*` and `sift_mcp/fs/*`
+4. `sift_gateway/db/*` and `sift_gateway/fs/*`
    - Shared persistence backends used by core services.
 
 ### 4.2 Core service boundaries
@@ -159,7 +159,7 @@ Status: complete as of February 19, 2026.
 
 ### 7.5 Phase 4: CLI foundation (4-6 days)
 
-1. Add `sift` CLI entrypoint alongside `sift-mcp` (done).
+1. Add `sift` CLI entrypoint alongside `sift-gateway` (done).
 2. Implement core-driven commands (done):
    - `sift query`
    - `sift schema`
@@ -311,7 +311,7 @@ Status: complete as of February 19, 2026.
 ## 12. Decision log needed before Phase 4
 
 Resolved:
-1. CLI executable includes `sift` (with `sift-mcp` compatibility retained).
+1. CLI executable includes `sift` (with `sift-gateway` compatibility retained).
 2. `--where` uses structured JSON object in v1.
 3. `sift code` is available in CLI; heavier runtime deps are optional via `code` extra.
 4. Default CLI TTL behavior is implemented with explicit override support (`--ttl` / env).
