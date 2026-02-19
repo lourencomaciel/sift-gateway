@@ -97,6 +97,17 @@ Use `LogEvents` constants from `src/sift_mcp/obs/logging.py`.
 
 Use `gateway_status` for health snapshots and logs for event timelines.
 
+## Metrics additions for outbound secret redaction
+
+`GatewayMetrics` exports redaction counters under the `security` section of
+`snapshot()` / `reset()`:
+
+- `secret_redaction_matches`
+- `secret_redaction_failures`
+
+When a fail-closed redaction attempt errors, Sift logs a warning with message
+`tool response redaction failed` and `error_type` context.
+
 ## Metrics additions for code queries
 
 `GatewayMetrics` exports code-query counters/histogram under the `codegen`

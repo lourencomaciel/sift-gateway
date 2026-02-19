@@ -236,6 +236,10 @@ _SNAPSHOT_LAYOUT: dict[str, dict[str, Any]] = {
         "breaches": "quota_breaches",
         "prune_triggered": "quota_prune_triggered",
     },
+    "security": {
+        "secret_redaction_matches": "secret_redaction_matches",
+        "secret_redaction_failures": "secret_redaction_failures",
+    },
     "codegen": {
         "executions": "codegen_executions",
         "success": "codegen_success",
@@ -362,6 +366,8 @@ class GatewayMetrics:
     quota_checks: Counter
     quota_breaches: Counter
     quota_prune_triggered: Counter
+    secret_redaction_matches: Counter
+    secret_redaction_failures: Counter
     codegen_executions: Counter
     codegen_success: Counter
     codegen_failure: Counter

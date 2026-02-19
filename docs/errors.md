@@ -51,7 +51,7 @@ Notes:
 
 | Code | Meaning |
 |------|---------|
-| `INTERNAL` | Unexpected gateway-side failure (DB/runtime corruption/reconstruction failure/etc.) |
+| `INTERNAL` | Unexpected gateway-side failure (DB/runtime corruption/reconstruction failure/redaction fail-closed failure/etc.) |
 | `DERIVED_PERSISTENCE_FAILED` | Derived artifact could not be persisted after query execution |
 
 ## Upstream/runtime failure codes
@@ -98,4 +98,6 @@ Some handlers include a secondary machine code in `details.code`.
 ## Compatibility notes
 
 - Prefer handling `INTERNAL` for gateway internal failures.
+- If outbound redaction is configured fail-closed and redaction fails, tool
+  responses return `INTERNAL` with message `response redaction failed`.
 - `artifact(action="query", query_kind=...)` is the canonical retrieval surface; legacy handler entrypoints exist only for compatibility wrappers.

@@ -594,6 +594,34 @@ class GatewayConfig(BaseSettings):
         ),
     )
 
+    # --------------- Outbound secret redaction ---------------
+    secret_redaction_enabled: bool = Field(
+        True,
+        description=(
+            "When true, inspect outbound tool responses and redact "
+            "detected secrets before they are returned to the MCP client."
+        ),
+    )
+    secret_redaction_fail_closed: bool = Field(
+        False,
+        description=(
+            "When true, fail tool responses with INTERNAL error if secret "
+            "redaction cannot run."
+        ),
+    )
+    secret_redaction_max_scan_bytes: int = Field(
+        32_768,
+        ge=1,
+        description=(
+            "Maximum UTF-8 byte size of an individual string value scanned "
+            "for secrets in outbound responses."
+        ),
+    )
+    secret_redaction_placeholder: str = Field(
+        "[REDACTED_SECRET]",
+        description="Replacement token used when a secret is redacted.",
+    )
+
     # --------------- Code query runtime ---------------
     code_query_enabled: bool = Field(True)
     code_query_allowed_import_roots: list[str] | None = Field(
@@ -742,6 +770,18 @@ class GatewayConfig(BaseSettings):
                 continue
             seen.add(root)
             cleaned.append(root)
+        return cleaned
+
+    @field_validator("secret_redaction_placeholder")
+    @classmethod
+    def _validate_secret_redaction_placeholder(
+        cls, value: str
+    ) -> str:
+        """Validate outbound secret redaction replacement token."""
+        cleaned = value.strip()
+        if not cleaned:
+            msg = "secret_redaction_placeholder must be non-empty"
+            raise ValueError(msg)
         return cleaned
 
 

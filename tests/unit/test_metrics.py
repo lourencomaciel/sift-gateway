@@ -126,6 +126,8 @@ def test_gateway_metrics_snapshot_returns_complete_dict() -> None:
     m.upstream_calls.inc(3)
     m.upstream_calls.inc(1)
     m.prune_soft_deletes.inc(5)
+    m.secret_redaction_matches.inc(2)
+    m.secret_redaction_failures.inc(1)
 
     snap = m.snapshot()
 
@@ -136,11 +138,14 @@ def test_gateway_metrics_snapshot_returns_complete_dict() -> None:
     assert "cursor" in snap
     assert "locks" in snap
     assert "pruning" in snap
+    assert "security" in snap
     assert "codegen" in snap
 
     # Check specific values
     assert snap["upstream"]["calls"] == 4
     assert snap["pruning"]["soft_deletes"] == 5
+    assert snap["security"]["secret_redaction_matches"] == 2
+    assert snap["security"]["secret_redaction_failures"] == 1
 
     # Check nested structures
     assert "stop_reasons" in snap["mapping"]
@@ -229,6 +234,8 @@ def test_gateway_metrics_reset_returns_snapshot_and_clears() -> None:
     m.cursor_stale_sample_set.inc(7)
     m.advisory_lock_timeouts.inc(4)
     m.oversize_json_count.inc(6)
+    m.secret_redaction_matches.inc(3)
+    m.secret_redaction_failures.inc(2)
 
     snap = m.reset()
 
@@ -241,6 +248,8 @@ def test_gateway_metrics_reset_returns_snapshot_and_clears() -> None:
     assert snap["cursor"]["stale"]["sample_set"] == 7
     assert snap["locks"]["timeouts"] == 4
     assert snap["ingest"]["oversize_json"] == 6
+    assert snap["security"]["secret_redaction_matches"] == 3
+    assert snap["security"]["secret_redaction_failures"] == 2
 
     # Verify all counters are zeroed after reset
     post_snap = m.snapshot()
@@ -251,6 +260,8 @@ def test_gateway_metrics_reset_returns_snapshot_and_clears() -> None:
     assert post_snap["cursor"]["stale"]["sample_set"] == 0
     assert post_snap["locks"]["timeouts"] == 0
     assert post_snap["ingest"]["oversize_json"] == 0
+    assert post_snap["security"]["secret_redaction_matches"] == 0
+    assert post_snap["security"]["secret_redaction_failures"] == 0
 
 
 def test_gateway_metrics_reset_has_same_keys_as_snapshot() -> None:

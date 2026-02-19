@@ -108,6 +108,21 @@ Runtime behavior:
 | `max_compute_steps` | int | `1000000` | `SIFT_MCP_MAX_COMPUTE_STEPS` | Max retrieval compute steps |
 | `passthrough_max_bytes` | int | `8192` | `SIFT_MCP_PASSTHROUGH_MAX_BYTES` | Max serialized mirrored-response size to return raw (`0` disables) |
 
+## Outbound secret redaction
+
+| Key | Type | Default | Env var | Description |
+|-----|------|---------|---------|-------------|
+| `secret_redaction_enabled` | bool | `true` | `SIFT_MCP_SECRET_REDACTION_ENABLED` | Enable outbound response secret redaction |
+| `secret_redaction_fail_closed` | bool | `false` | `SIFT_MCP_SECRET_REDACTION_FAIL_CLOSED` | Return INTERNAL when redaction cannot run |
+| `secret_redaction_max_scan_bytes` | int | `32768` | `SIFT_MCP_SECRET_REDACTION_MAX_SCAN_BYTES` | Max UTF-8 bytes scanned per string value |
+| `secret_redaction_placeholder` | string | `[REDACTED_SECRET]` | `SIFT_MCP_SECRET_REDACTION_PLACEHOLDER` | Replacement token for redacted values |
+
+Disable outbound redaction:
+
+```bash
+export SIFT_MCP_SECRET_REDACTION_ENABLED=false
+```
+
 ## JSONPath
 
 | Key | Type | Default | Env var | Description |
