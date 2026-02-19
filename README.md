@@ -105,6 +105,10 @@ sift-gateway schema art_123
 sift-gateway get art_123
 sift-gateway query art_123 '$.items' --select id,name --limit 50
 sift-gateway code art_123 '$.items' --expr 'len(df)'
+sift-gateway query art_123 '$.items' --scope single --select id,name
+sift-gateway code art_123 '$.items' --scope single --expr 'len(df)'
+sift-gateway code --artifact-id art_users --artifact-id art_orders --root-path '$.items' --expr 'len(df)'
+sift-gateway code --artifact-id art_users --artifact-id art_orders --root-path '$.users' --root-path '$.orders' --file ./join.py
 sift-gateway diff art_left art_right
 ```
 

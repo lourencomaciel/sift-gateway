@@ -18,7 +18,7 @@ Argument routing rules:
 - `query_kind="describe"|"get"|"select"` requires `artifact_id`
 - `query_kind="code"` requires `artifact_id` (single) or `artifact_ids` (multi)
 - `query_kind="search"` rejects `artifact_id` and `scope`
-- `scope` applies to `describe|get|select`; code queries always run all-related
+- `scope` applies to `describe|get|select|code` (default: `all_related`)
 
 ## Pagination Contract
 
@@ -200,6 +200,9 @@ Notes:
 - Scalar/dict return values are normalized to a one-item list.
 - Output is bounded by `max_bytes_out` and overflow fails with `RESPONSE_TOO_LARGE`.
 - `limit`/`cursor` are not pagination controls for code queries.
+- `scope=all_related` (default) merges lineage from each requested anchor.
+- `scope=single` restricts to the anchor artifact (`artifact_id`) or to each
+  explicitly requested ID (`artifact_ids`) without lineage expansion.
 
 ### `query_kind="search"`
 

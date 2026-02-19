@@ -30,7 +30,9 @@ from sift_gateway.constants import (
 from sift_gateway.core.artifact_get import ENVELOPE_COLUMNS, extract_json_target
 from sift_gateway.core.lineage_roots import (
     resolve_all_related_root_candidates,
+    resolve_single_root_candidate,
 )
+from sift_gateway.core.query_scope import resolve_scope
 from sift_gateway.core.rows import row_to_dict, rows_to_dicts
 from sift_gateway.core.runtime import ArtifactCodeRuntime
 from sift_gateway.core.schema_payload import build_schema_payload
@@ -58,6 +60,7 @@ _SCHEMA_FIELD_COLUMNS = [
 
 _logger = get_logger(component="artifact.codegen")
 SAMPLE_COLUMNS = ["sample_index", "record", "record_bytes", "record_hash"]
+_CodeCandidateRow = tuple[str, dict[str, Any], dict[str, Any], dict[str, Any]]
 
 
 def _hash_text(value: str) -> str:
@@ -231,6 +234,7 @@ class _ParsedCodeArgs:
     """Normalized and validated inputs for code queries."""
 
     session_id: str
+    scope: str
     artifact_ids: list[str]
     root_paths: dict[str, str]
     code: str
@@ -242,6 +246,7 @@ class _CodeRequest:
     """Normalized request state for code queries."""
 
     session_id: str
+    scope: str
     requested_artifact_ids: list[str]
     requested_root_paths: dict[str, str]
     anchor_artifact_id: str
@@ -276,6 +281,16 @@ class _CodeCollectionState:
     input_serialization_error: dict[str, Any] | None = None
 
 
+@dataclass(frozen=True)
+class _RequestedCodeCandidates:
+    """Resolved candidate set for one requested code artifact."""
+
+    candidate_rows: list[_CodeCandidateRow]
+    missing_root_artifacts: list[str]
+    related_ids: list[str]
+    related_set_hash: str
+
+
 def _resolve_code_request(
     parsed_args: _ParsedCodeArgs,
 ) -> tuple[_CodeRequest | None, dict[str, Any] | None]:
@@ -300,6 +315,7 @@ def _resolve_code_request(
     return (
         _CodeRequest(
             session_id=parsed_args.session_id,
+            scope=parsed_args.scope,
             requested_artifact_ids=requested_artifact_ids,
             requested_root_paths=requested_root_paths,
             anchor_artifact_id=anchor_artifact_id,
@@ -718,30 +734,24 @@ def _collect_code_inputs_for_requested_artifact(
     root_path_for_requested = request.requested_root_paths[
         requested_artifact_id
     ]
-    resolved_candidates = resolve_all_related_root_candidates(
-        connection,
-        session_id=request.session_id,
-        anchor_artifact_id=requested_artifact_id,
-        root_path=root_path_for_requested,
-        max_related_artifacts=runtime.related_query_max_artifacts,
-        resolve_related_fn=runtime.resolve_related_artifacts,
-        compute_related_set_hash_fn=runtime.compute_related_set_hash,
+    resolved_candidates, resolve_err = _resolve_requested_code_candidates(
+        runtime=runtime,
+        connection=connection,
+        request=request,
+        requested_artifact_id=requested_artifact_id,
+        root_path_for_requested=root_path_for_requested,
     )
-    if isinstance(resolved_candidates, dict):
-        return False, resolved_candidates
+    if resolve_err is not None:
+        return False, resolve_err
+    resolved_candidates = cast(_RequestedCodeCandidates, resolved_candidates)
 
     all_related_ids.update(resolved_candidates.related_ids)
-    state.related_set_hashes[requested_artifact_id] = (
-        resolved_candidates.related_set_hash
-    )
-    if requested_artifact_id == request.anchor_artifact_id:
-        state.related_set_hash = resolved_candidates.related_set_hash
-    _append_missing_root_warning(
+    _record_requested_code_lineage_state(
         state=state,
+        request=request,
         requested_artifact_id=requested_artifact_id,
-        requested_artifact_count=len(request.requested_artifact_ids),
         root_path_for_requested=root_path_for_requested,
-        missing_root_artifacts=resolved_candidates.missing_root_artifacts,
+        resolved_candidates=resolved_candidates,
     )
 
     requested_schema, schema_hash, schema_err = (
@@ -755,12 +765,13 @@ def _collect_code_inputs_for_requested_artifact(
         return False, schema_err
     if requested_schema is None:
         return False, gateway_error("INTERNAL", "schema resolution failed")
-    state.schema_by_artifact[requested_artifact_id] = requested_schema
-    if schema_hash:
-        state.schema_hashes[requested_artifact_id] = schema_hash
-    if requested_artifact_id == request.anchor_artifact_id:
-        state.schema_obj = requested_schema
-        state.schema_hash = schema_hash
+    _store_requested_code_schema(
+        state=state,
+        request=request,
+        requested_artifact_id=requested_artifact_id,
+        requested_schema=requested_schema,
+        schema_hash=schema_hash,
+    )
 
     stop_collection, collect_err = _collect_requested_candidate_rows(
         runtime=runtime,
@@ -782,6 +793,116 @@ def _collect_code_inputs_for_requested_artifact(
     if state.input_limit_reason or state.input_serialization_error:
         return True, None
     return False, None
+
+
+def _single_scope_related_set_hash(
+    *,
+    runtime: ArtifactCodeRuntime,
+    requested_artifact_id: str,
+    anchor_meta: dict[str, Any] | None,
+) -> str:
+    """Build related-set hash for scope=single code queries."""
+    generation = None
+    if isinstance(anchor_meta, dict):
+        raw_generation = anchor_meta.get("generation")
+        if isinstance(raw_generation, int):
+            generation = raw_generation
+    return runtime.compute_related_set_hash(
+        [{"artifact_id": requested_artifact_id, "generation": generation}]
+    )
+
+
+def _resolve_requested_code_candidates(
+    *,
+    runtime: ArtifactCodeRuntime,
+    connection: Any,
+    request: _CodeRequest,
+    requested_artifact_id: str,
+    root_path_for_requested: str,
+) -> tuple[_RequestedCodeCandidates | None, dict[str, Any] | None]:
+    """Resolve candidate rows and related-set metadata for one request."""
+    if request.scope == "single":
+        resolved_single = resolve_single_root_candidate(
+            connection,
+            anchor_artifact_id=requested_artifact_id,
+            root_path=root_path_for_requested,
+        )
+        if isinstance(resolved_single, dict):
+            return None, resolved_single
+        return (
+            _RequestedCodeCandidates(
+                candidate_rows=resolved_single.candidate_rows,
+                missing_root_artifacts=resolved_single.missing_root_artifacts,
+                related_ids=resolved_single.related_ids,
+                related_set_hash=_single_scope_related_set_hash(
+                    runtime=runtime,
+                    requested_artifact_id=requested_artifact_id,
+                    anchor_meta=resolved_single.anchor_meta,
+                ),
+            ),
+            None,
+        )
+
+    resolved_candidates = resolve_all_related_root_candidates(
+        connection,
+        session_id=request.session_id,
+        anchor_artifact_id=requested_artifact_id,
+        root_path=root_path_for_requested,
+        max_related_artifacts=runtime.related_query_max_artifacts,
+        resolve_related_fn=runtime.resolve_related_artifacts,
+        compute_related_set_hash_fn=runtime.compute_related_set_hash,
+    )
+    if isinstance(resolved_candidates, dict):
+        return None, resolved_candidates
+    return (
+        _RequestedCodeCandidates(
+            candidate_rows=resolved_candidates.candidate_rows,
+            missing_root_artifacts=resolved_candidates.missing_root_artifacts,
+            related_ids=resolved_candidates.related_ids,
+            related_set_hash=resolved_candidates.related_set_hash,
+        ),
+        None,
+    )
+
+
+def _record_requested_code_lineage_state(
+    *,
+    state: _CodeCollectionState,
+    request: _CodeRequest,
+    requested_artifact_id: str,
+    root_path_for_requested: str,
+    resolved_candidates: _RequestedCodeCandidates,
+) -> None:
+    """Store related-set metadata and missing-root warnings for one request."""
+    state.related_set_hashes[requested_artifact_id] = (
+        resolved_candidates.related_set_hash
+    )
+    if requested_artifact_id == request.anchor_artifact_id:
+        state.related_set_hash = resolved_candidates.related_set_hash
+    _append_missing_root_warning(
+        state=state,
+        requested_artifact_id=requested_artifact_id,
+        requested_artifact_count=len(request.requested_artifact_ids),
+        root_path_for_requested=root_path_for_requested,
+        missing_root_artifacts=resolved_candidates.missing_root_artifacts,
+    )
+
+
+def _store_requested_code_schema(
+    *,
+    state: _CodeCollectionState,
+    request: _CodeRequest,
+    requested_artifact_id: str,
+    requested_schema: dict[str, Any],
+    schema_hash: str,
+) -> None:
+    """Persist resolved schema payload and hashes for one request."""
+    state.schema_by_artifact[requested_artifact_id] = requested_schema
+    if schema_hash:
+        state.schema_hashes[requested_artifact_id] = schema_hash
+    if requested_artifact_id == request.anchor_artifact_id:
+        state.schema_obj = requested_schema
+        state.schema_hash = schema_hash
 
 
 def _append_sampled_warning(state: _CodeCollectionState) -> None:
@@ -1070,14 +1191,14 @@ def _build_code_lineage(
     """Build lineage metadata for code-query responses."""
     if len(request.requested_artifact_ids) == 1:
         return {
-            "scope": "all_related",
+            "scope": request.scope,
             "anchor_artifact_id": request.anchor_artifact_id,
             "artifact_count": len(state.related_ids),
             "artifact_ids": state.related_ids,
             "related_set_hash": state.related_set_hash,
         }
     return {
-        "scope": "all_related",
+        "scope": request.scope,
         "anchor_artifact_ids": request.requested_artifact_ids,
         "root_paths": request.requested_root_paths,
         "artifact_count": len(state.related_ids),
@@ -1112,7 +1233,7 @@ def _build_code_response(
         },
         determinism=determinism,
     )
-    response["scope"] = "all_related"
+    response["scope"] = request.scope
     response["lineage"] = _build_code_lineage(request=request, state=state)
     if state.warnings:
         response["warnings"] = state.warnings
@@ -1128,6 +1249,9 @@ def _parse_code_args(
         return None, gateway_error(
             "INVALID_ARGUMENT", "missing _gateway_context.session_id"
         )
+    scope, scope_err = resolve_scope(raw_scope=arguments.get("scope"))
+    if scope_err is not None:
+        return None, scope_err
 
     artifact_ids, artifact_ids_err = _normalize_code_artifact_ids(arguments)
     if artifact_ids_err is not None:
@@ -1154,6 +1278,7 @@ def _parse_code_args(
     return (
         _ParsedCodeArgs(
             session_id=str(ctx["session_id"]),
+            scope=scope,
             artifact_ids=artifact_ids,
             root_paths=root_paths,
             code=code,
@@ -1174,24 +1299,22 @@ def _with_locator(record: Any, locator: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def execute_artifact_code(
+def _prepare_code_request_state(
+    *,
     runtime: ArtifactCodeRuntime,
     arguments: dict[str, Any],
-) -> dict[str, Any]:
-    """Execute deterministic generated Python over mapped root datasets."""
-    if not runtime.code_query_enabled:
-        return gateway_error("NOT_IMPLEMENTED", "query_kind=code is disabled")
-
-    parsed_args, err = _parse_code_args(arguments)
-    if err is not None:
-        return err
+) -> tuple[_CodeRequest | None, _CodeCollectionState | None, dict[str, Any] | None]:
+    """Parse inputs and collect query state required for code execution."""
+    parsed_args, args_err = _parse_code_args(arguments)
+    if args_err is not None:
+        return None, None, args_err
     parsed_args = cast(_ParsedCodeArgs, parsed_args)
     if runtime.db_pool is None:
-        return runtime.not_implemented("artifact.code")
+        return None, None, runtime.not_implemented("artifact.code")
 
     request, request_err = _resolve_code_request(parsed_args)
     if request_err is not None:
-        return request_err
+        return None, None, request_err
     request = cast(_CodeRequest, request)
 
     state, collect_err = _collect_code_inputs(
@@ -1202,11 +1325,36 @@ def execute_artifact_code(
         fetch_samples_sql=FETCH_SAMPLES_SQL,
     )
     if collect_err is not None:
-        return collect_err
+        return None, None, collect_err
     state = cast(_CodeCollectionState, state)
-
     if state.schema_obj is None:
-        return gateway_error("INTERNAL", "schema resolution failed")
+        return None, None, gateway_error("INTERNAL", "schema resolution failed")
+    return request, state, None
+
+
+def _normalize_runtime_items(runtime_result: Any) -> list[Any]:
+    """Normalize runtime outputs to list payload expected by responses."""
+    if isinstance(runtime_result, list):
+        return list(runtime_result)
+    return [runtime_result]
+
+
+def execute_artifact_code(
+    runtime: ArtifactCodeRuntime,
+    arguments: dict[str, Any],
+) -> dict[str, Any]:
+    """Execute deterministic generated Python over mapped root datasets."""
+    if not runtime.code_query_enabled:
+        return gateway_error("NOT_IMPLEMENTED", "query_kind=code is disabled")
+
+    request, state, prepare_err = _prepare_code_request_state(
+        runtime=runtime,
+        arguments=arguments,
+    )
+    if prepare_err is not None:
+        return prepare_err
+    request = cast(_CodeRequest, request)
+    state = cast(_CodeCollectionState, state)
 
     _append_overlapping_dataset_warning(state=state, request=request)
     _append_sampled_warning(state)
@@ -1251,11 +1399,7 @@ def execute_artifact_code(
     if runtime_err is not None:
         return runtime_err
 
-    normalized_items = (
-        list(runtime_result)
-        if isinstance(runtime_result, list)
-        else [runtime_result]
-    )
+    normalized_items = _normalize_runtime_items(runtime_result)
     total_matched = len(normalized_items)
     runtime.increment_metric("codegen_output_records", total_matched)
     used_bytes, output_err = _validate_code_output_size(

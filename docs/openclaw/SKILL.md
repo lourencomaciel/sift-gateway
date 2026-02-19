@@ -58,6 +58,10 @@ sift-gateway code <artifact_id> '$.items' --expr "df.groupby('owner').size().to_
 - `--expr "<python_expr>"` for quick DataFrame expressions (`df` is preloaded).
 - `--code "<python_source>"` for inline source defining `run(data, schema, params)`.
 - `--file <path.py>` to load source from a file defining `run(data, schema, params)`.
+- `--scope single` to restrict processing to the anchor artifact(s) only.
+- Multi-artifact input:
+  - shared root path: repeat `--artifact-id` and provide one `--root-path`.
+  - per-artifact root paths: repeat both `--artifact-id` and `--root-path` in matching order.
 
 Pass runtime parameters with `--params '<json_object>'`; the object is available as
 `params` inside `run`.
@@ -65,6 +69,7 @@ Pass runtime parameters with `--params '<json_object>'`; the object is available
 ```bash
 # Quick expression mode
 sift-gateway code <artifact_id> '$.items' --expr "df['status'].value_counts().to_dict()"
+sift-gateway code <artifact_id> '$.items' --scope single --expr "df['status'].value_counts().to_dict()"
 
 # Inline function mode
 sift-gateway code <artifact_id> '$.items' \
@@ -73,6 +78,12 @@ sift-gateway code <artifact_id> '$.items' \
 
 # File mode
 sift-gateway code <artifact_id> '$.items' --file ./analysis.py --params '{"owner":"alice"}'
+
+# Multi-artifact mode (shared root path)
+sift-gateway code --artifact-id art_users --artifact-id art_orders --root-path '$.items' --expr "len(df)"
+
+# Multi-artifact mode (per-artifact root paths)
+sift-gateway code --artifact-id art_users --artifact-id art_orders --root-path '$.users' --root-path '$.orders' --file ./join.py
 ```
 
 ## Commands
@@ -83,7 +94,7 @@ sift-gateway code <artifact_id> '$.items' --file ./analysis.py --params '{"owner
 | `sift-gateway run --continue-from <id> -- <cmd>` | Capture next upstream page and link lineage |
 | `sift-gateway run --stdin` | Capture piped stdin |
 | `sift-gateway query <id> <root_path>` | Filter/project rows from mapped roots |
-| `sift-gateway code <id> <root_path>` | Run sandboxed Python over root data |
+| `sift-gateway code <id> <root_path>` or `sift-gateway code --artifact-id ... --root-path ...` | Run sandboxed Python over one or multiple artifact roots |
 | `sift-gateway schema <id>` | Inspect structure before querying |
 | `sift-gateway list` | List recent artifacts |
 | `sift-gateway get <id>` | Retrieve envelope or mapped payload |

@@ -108,7 +108,7 @@ def test_query_select_rejects_target_and_jsonpath(tmp_path: Path) -> None:
     assert "only supported with query_kind=get" in response["message"]
 
 
-def test_query_code_ignores_scope_single(tmp_path: Path) -> None:
+def test_query_code_accepts_scope_single(tmp_path: Path) -> None:
     server = _server(tmp_path)
     response = asyncio.run(
         server.handle_artifact(
@@ -124,6 +124,25 @@ def test_query_code_ignores_scope_single(tmp_path: Path) -> None:
         )
     )
     assert response["code"] == "NOT_IMPLEMENTED"
+
+
+def test_query_code_rejects_invalid_scope(tmp_path: Path) -> None:
+    server = _server(tmp_path)
+    response = asyncio.run(
+        server.handle_artifact(
+            {
+                "action": "query",
+                "query_kind": "code",
+                "_gateway_context": {"session_id": "sess_1"},
+                "artifact_id": "art_1",
+                "scope": "tenant",
+                "root_path": "$.items",
+                "code": "def run(data, schema, params): return []",
+            }
+        )
+    )
+    assert response["code"] == "INVALID_ARGUMENT"
+    assert "scope must be one of: all_related, single" in response["message"]
 
 
 def test_query_code_accepts_artifact_ids_argument(tmp_path: Path) -> None:
