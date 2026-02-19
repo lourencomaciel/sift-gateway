@@ -17,6 +17,7 @@
 - Long-run cleanup lifecycle tests covering TTL soft-delete, quota prune, hard-delete, and reconcile
 - RC preflight runner: `scripts/run_rc_preflight.py`
 - Published benchmark baseline artifacts under `docs/benchmarks/`
+- Packaged OpenClaw integration files in the PyPI distribution and added `sift-openclaw-skill` helper command
 
 ### Changed
 - Rebranded from "MCP Artifact Gateway" to "Sift"
