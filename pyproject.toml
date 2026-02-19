@@ -1,6 +1,6 @@
 [project]
 name = "sift-mcp"
-version = "0.2.0"
+version = "0.2.1"
 description = "Keep big MCP responses out of your context window. Query them."
 readme = "README.md"
 license = "MIT"
@@ -71,6 +71,7 @@ dev = [
 [project.scripts]
 sift-mcp = "sift_mcp.main:cli"
 sift = "sift_mcp.cli_main:cli"
+sift-openclaw-skill = "sift_mcp.openclaw.cli:main"
 
 [build-system]
 requires = ["uv_build>=0.10.0,<0.11.0"]
