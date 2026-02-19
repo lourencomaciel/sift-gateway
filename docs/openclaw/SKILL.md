@@ -42,6 +42,30 @@ sift query <artifact_id> '$.items' --where '{"path":"$.state","op":"eq","value":
 sift code <artifact_id> '$.items' --expr "df.groupby('owner').size().to_dict()"
 ```
 
+### Code Methods (`sift code`)
+
+`sift code` accepts three code input modes:
+
+- `--expr "<python_expr>"` for quick DataFrame expressions (`df` is preloaded).
+- `--code "<python_source>"` for inline source defining `run(data, schema, params)`.
+- `--file <path.py>` to load source from a file defining `run(data, schema, params)`.
+
+Pass runtime parameters with `--params '<json_object>'`; the object is available as
+`params` inside `run`.
+
+```bash
+# Quick expression mode
+sift code <artifact_id> '$.items' --expr "df['status'].value_counts().to_dict()"
+
+# Inline function mode
+sift code <artifact_id> '$.items' \
+  --code "def run(data, schema, params): return {'rows': len(data), 'tag': params.get('tag')}" \
+  --params '{"tag":"daily"}'
+
+# File mode
+sift code <artifact_id> '$.items' --file ./analysis.py --params '{"owner":"alice"}'
+```
+
 ## Commands
 
 | Command | Purpose |

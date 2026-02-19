@@ -38,6 +38,21 @@ sift code <artifact_id> '$' --expr "df.shape[0]"
 When command output may exceed ~4KB, capture with `sift run` and query incrementally.
 ```
 
+## `sift code` Methods
+
+Use one of these modes depending on complexity:
+
+- `--expr "<python_expr>"` for fast DataFrame expressions.
+- `--code "<python_source>"` for inline `run(data, schema, params)`.
+- `--file <path.py>` for file-based `run(data, schema, params)`.
+- `--params '<json_object>'` to pass runtime parameters into `params`.
+
+```bash
+sift code <artifact_id> '$.items' --expr "df.shape[0]"
+sift code <artifact_id> '$.items' --code "def run(data, schema, params): return {'rows': len(data)}"
+sift code <artifact_id> '$.items' --file ./analysis.py --params '{"window":"7d"}'
+```
+
 ## Capture vs Inline Decision Rule
 
 - Inline: expected output < 4KB and used once.

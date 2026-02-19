@@ -41,6 +41,20 @@ Fix:
 sift query <artifact_id> '$.items' --select "id,name,status" --limit 20
 ```
 
+## Symptom: `sift code` Fails Immediately
+
+Cause:
+- Missing code input mode or invalid JSON in `--params`.
+
+Fix:
+- Provide exactly one code source: `--expr`, `--code`, or `--file`.
+- Ensure `--params` decodes to a JSON object.
+
+```bash
+sift code <artifact_id> '$.items' --expr "df.shape[0]"
+sift code <artifact_id> '$.items' --file ./analysis.py --params '{"team":"infra"}'
+```
+
 ## Symptom: Artifact Not Found / Gone
 
 Cause:
