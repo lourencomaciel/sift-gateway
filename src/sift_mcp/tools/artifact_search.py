@@ -29,6 +29,8 @@ SEARCH_FILTERS = {
     "kind",
     "upstream_instance_id",
     "request_key",
+    "capture_kind",
+    "capture_key",
     "payload_hash_full",
     "parent_artifact_id",
     "has_binary_refs",
@@ -41,6 +43,24 @@ SEARCH_FILTERS = {
 _VALID_ORDER_BY = ("created_seq_desc", "last_seen_desc", "chain_seq_asc")
 _VALID_STATUS = ("ok", "error")
 _VALID_KIND = ("data", "derived_query", "derived_codegen")
+_VALID_CAPTURE_KIND = (
+    "mcp_tool",
+    "cli_command",
+    "stdin_pipe",
+    "file_ingest",
+    "derived_query",
+    "derived_codegen",
+)
+
+_CAPTURE_KIND_EXPR = (
+    "COALESCE(a.capture_kind, "
+    "CASE "
+    "WHEN a.kind = 'derived_query' THEN 'derived_query' "
+    "WHEN a.kind = 'derived_codegen' THEN 'derived_codegen' "
+    "ELSE 'mcp_tool' "
+    "END)"
+)
+_CAPTURE_KEY_EXPR = "COALESCE(a.capture_key, a.request_key)"
 
 
 def _invalid_arg(message: str) -> dict[str, Any]:
@@ -139,6 +159,16 @@ def _validate_kind_filter(
     return None
 
 
+def _validate_capture_kind_filter(
+    filters: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Validate the ``capture_kind`` filter value."""
+    capture_kind = filters.get("capture_kind")
+    if capture_kind is not None and capture_kind not in _VALID_CAPTURE_KIND:
+        return _invalid_arg(f"invalid capture_kind filter: {capture_kind}")
+    return None
+
+
 def _validate_limit(
     arguments: dict[str, Any], *, max_limit: int
 ) -> int | dict[str, Any]:
@@ -204,6 +234,9 @@ def validate_search_args(
     err = _validate_kind_filter(filters)
     if err is not None:
         return err
+    err = _validate_capture_kind_filter(filters)
+    if err is not None:
+        return err
 
     limit_result = _validate_limit(arguments, max_limit=max_limit)
     if isinstance(limit_result, dict):
@@ -256,6 +289,8 @@ def _collect_simple_equality_conditions(
         ("kind", "a.kind = %s"),
         ("upstream_instance_id", "a.upstream_instance_id = %s"),
         ("request_key", "a.request_key = %s"),
+        ("capture_kind", _CAPTURE_KIND_EXPR + " = %s"),
+        ("capture_key", _CAPTURE_KEY_EXPR + " = %s"),
         ("payload_hash_full", "a.payload_hash_full = %s"),
     )
     for key, sql_fragment in simple_eq_filters:
@@ -382,7 +417,8 @@ def build_search_query(
         base = """
     SELECT a.artifact_id, a.created_seq, a.created_at,
            a.last_referenced_at AS last_seen_at, a.source_tool,
-           a.upstream_instance_id,
+           a.upstream_instance_id, """ + _CAPTURE_KIND_EXPR + """ AS capture_kind,
+           """ + _CAPTURE_KEY_EXPR + """ AS capture_key,
            CASE WHEN a.error_summary IS NULL
                 THEN 'ok' ELSE 'error'
            END AS status,
@@ -400,7 +436,8 @@ def build_search_query(
         base = """
     SELECT a.artifact_id, a.created_seq, a.created_at,
            a.last_referenced_at AS last_seen_at, a.source_tool,
-           a.upstream_instance_id,
+           a.upstream_instance_id, """ + _CAPTURE_KIND_EXPR + """ AS capture_kind,
+           """ + _CAPTURE_KEY_EXPR + """ AS capture_key,
            CASE WHEN a.error_summary IS NULL
                 THEN 'ok' ELSE 'error'
            END AS status,

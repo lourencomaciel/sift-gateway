@@ -48,13 +48,19 @@ Issues = "https://github.com/lourencomaciel/sift-mcp/issues"
 Changelog = "https://github.com/lourencomaciel/sift-mcp/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
+code = [
+    "pandas>=2.2.0",
+    "numpy>=1.26.0",
+    "jmespath>=1.0.1",
+]
+# Backward-compatible alias retained during transition.
 data-science = [
     "pandas>=2.2.0",
     "numpy>=1.26.0",
     "jmespath>=1.0.1",
 ]
 dev = [
-    "sift-mcp[data-science]",
+    "sift-mcp[code]",
     "pytest>=8.0.0",
     "pytest-asyncio>=0.24.0",
     "pytest-cov>=6.0.0",
@@ -64,6 +70,7 @@ dev = [
 
 [project.scripts]
 sift-mcp = "sift_mcp.main:cli"
+sift = "sift_mcp.cli_main:cli"
 
 [build-system]
 requires = ["uv_build>=0.10.0,<0.11.0"]
@@ -109,6 +116,7 @@ known-first-party = ["sift_mcp"]
 
 [tool.ruff.lint.per-file-ignores]
 "src/sift_mcp/main.py" = ["T201"]
+"src/sift_mcp/cli_main.py" = ["T201"]
 "src/sift_mcp/config/init.py" = ["T201"]
 "src/sift_mcp/config/upstream_add.py" = ["T201"]
 "src/sift_mcp/config/package_install.py" = ["T201"]

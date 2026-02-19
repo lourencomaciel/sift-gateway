@@ -86,7 +86,7 @@ Results come back paginated. Continue with the returned cursor until `pagination
 
 ### Code queries
 
-Run Python against stored data without loading it into context. Install libraries with `sift-mcp install pandas` (or `pipx install "sift-mcp[data-science]"` for the bundle):
+Run Python against stored data without loading it into context. Install libraries with `sift-mcp install pandas` (or `pipx install "sift-mcp[code]"` for the bundle; `data-science` remains a backward-compatible alias):
 
 ```python
 artifact(
@@ -181,7 +181,14 @@ See [SECURITY.md](SECURITY.md) for reporting vulnerabilities.
 | Doc | What it covers |
 |---|---|
 | **[Quick Start Guide](docs/quickstart.md)** | Detailed setup: install, init, first artifact |
+| **[OpenClaw Integration Pack](docs/openclaw/README.md)** | Skill setup, quickstart, troubleshooting, response templates |
 | **[Configuration Reference](docs/config.md)** | Every setting, env var, and default |
+| **[Migration Guide](docs/migration-guide.md)** | MCP compatibility, CLI adoption path, release migration checklist |
+| **[Packaging Transition](docs/packaging-transition.md)** | CLI-first naming strategy and extras policy |
+| **[Performance Benchmarks](docs/performance-benchmarks.md)** | Large-payload benchmark workflow and baseline matrix |
+| **[Benchmark Baselines](docs/benchmarks/README.md)** | Versioned benchmark output artifacts used for trend tracking |
+| **[Security Hardening](docs/security-hardening.md)** | Capture/code execution safeguards and release validation checks |
+| **[Release Checklist](docs/release-checklist.md)** | RC gates for tests, docs, benchmarks, and packaging |
 | **[Recipes & Examples](docs/recipes.md)** | Pagination loops, tool chaining, code queries, search |
 | **[API Contracts](docs/api_contracts.md)** | Response shapes, pagination layers, handle format |
 | **[Deployment Guide](docs/deployment.md)** | Transport modes, multi-process, monitoring |
