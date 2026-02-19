@@ -10,6 +10,12 @@ SEARCH_ARTIFACTS_FTS_SQL = """
 SELECT a.artifact_id, a.created_seq, a.created_at,
        a.last_referenced_at AS last_seen_at, a.source_tool,
        a.upstream_instance_id,
+       COALESCE(a.capture_kind, CASE
+           WHEN a.kind = 'derived_query' THEN 'derived_query'
+           WHEN a.kind = 'derived_codegen' THEN 'derived_codegen'
+           ELSE 'mcp_tool'
+       END) AS capture_kind,
+       COALESCE(a.capture_key, a.request_key) AS capture_key,
        CASE WHEN a.error_summary IS NULL
             THEN 'ok' ELSE 'error'
        END AS status,
@@ -30,6 +36,12 @@ LIST_ARTIFACTS_SQL = """
 SELECT a.artifact_id, a.created_seq, a.created_at,
        a.last_referenced_at AS last_seen_at, a.source_tool,
        a.upstream_instance_id,
+       COALESCE(a.capture_kind, CASE
+           WHEN a.kind = 'derived_query' THEN 'derived_query'
+           WHEN a.kind = 'derived_codegen' THEN 'derived_codegen'
+           ELSE 'mcp_tool'
+       END) AS capture_kind,
+       COALESCE(a.capture_key, a.request_key) AS capture_key,
        CASE WHEN a.error_summary IS NULL
             THEN 'ok' ELSE 'error'
        END AS status,

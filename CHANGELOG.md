@@ -11,6 +11,12 @@
 - Code-query runtime tracebacks in error details (`details.traceback`, up to 2000 chars)
 - Multi-artifact code queries via `artifact_ids`
 - Sample-based schema enum metadata: `distinct_values` (max 10) and `cardinality`
+- `sift code` CLI command with `--code`, `--file`, and `--expr` modes
+- Phase 8 hardening docs: benchmark guide, security checklist, migration guide, and release checklist
+- Large payload benchmark runner: `scripts/benchmark_large_payloads.py`
+- Long-run cleanup lifecycle tests covering TTL soft-delete, quota prune, hard-delete, and reconcile
+- RC preflight runner: `scripts/run_rc_preflight.py`
+- Published benchmark baseline artifacts under `docs/benchmarks/`
 
 ### Changed
 - Rebranded from "MCP Artifact Gateway" to "Sift"
@@ -19,6 +25,7 @@
 - `query_kind=code` ignores `scope` (always all-related semantics)
 - Documented return normalization for code queries (non-list values auto-wrap to one-item lists)
 - Mirrored tool responses are always persisted; passthrough now controls only whether callers receive raw payloads or gateway handles
+- `docs/cli-agnostic-roadmap.md` now marks Phase 8 complete and tracks RC cut as next action
 
 ## [0.1.0] - 2025
 

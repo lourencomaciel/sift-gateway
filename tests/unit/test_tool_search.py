@@ -47,6 +47,15 @@ def test_validate_search_args_rejects_bad_status_filter() -> None:
     assert "status" in result["message"]
 
 
+def test_validate_search_args_rejects_bad_capture_kind_filter() -> None:
+    result = validate_search_args(
+        {"filters": {"capture_kind": "bad"}},
+        max_limit=200,
+    )
+    assert result["code"] == "INVALID_ARGUMENT"
+    assert "capture_kind" in result["message"]
+
+
 def test_validate_search_args_rejects_unknown_filter_key() -> None:
     result = validate_search_args(
         {"filters": {"unknown": 1}},
@@ -97,6 +106,21 @@ def test_build_search_query_applies_filters() -> None:
     assert "rk_1" in params
     assert "ph_1" in params
     assert "art_parent" in params
+
+
+def test_build_search_query_applies_capture_filters() -> None:
+    sql, params = build_search_query(
+        {
+            "capture_kind": "mcp_tool",
+            "capture_key": "ck_1",
+        },
+        "created_seq_desc",
+        25,
+    )
+    assert "COALESCE(a.capture_kind" in sql
+    assert "COALESCE(a.capture_key, a.request_key) = %s" in sql
+    assert "mcp_tool" in params
+    assert "ck_1" in params
 
 
 def test_build_search_query_order_by_last_seen_desc() -> None:

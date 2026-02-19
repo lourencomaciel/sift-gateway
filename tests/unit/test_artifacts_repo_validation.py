@@ -16,6 +16,13 @@ def _valid_row() -> dict[str, object]:
         "payload_json_bytes": 1,
         "payload_binary_bytes_total": 0,
         "payload_total_bytes": 1,
+        "capture_kind": "mcp_tool",
+        "capture_origin": {
+            "prefix": "demo",
+            "tool": "echo",
+            "upstream_instance_id": "inst_demo",
+        },
+        "capture_key": "rk_1",
     }
 
 
@@ -49,6 +56,13 @@ def test_artifacts_repo_validation_rejects_invalid_kind() -> None:
     row = _valid_row()
     row["kind"] = "invalid"
     with pytest.raises(ValueError, match="kind"):
+        validate_artifact_row(row)
+
+
+def test_artifacts_repo_validation_rejects_invalid_capture_kind() -> None:
+    row = _valid_row()
+    row["capture_kind"] = "invalid"
+    with pytest.raises(ValueError, match="capture_kind"):
         validate_artifact_row(row)
 
 

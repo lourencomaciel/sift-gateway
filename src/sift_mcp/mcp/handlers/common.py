@@ -2,67 +2,27 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
-import logging
+from collections.abc import Sequence
 from typing import Any
 
-_logger = logging.getLogger(__name__)
+from sift_mcp.core.rows import row_to_dict, rows_to_dicts
+
+__all__ = [
+    "ARTIFACT_META_COLUMNS",
+    "ENVELOPE_COLUMNS",
+    "FETCH_ARTIFACT_META_SQL",
+    "ROOT_COLUMNS",
+    "SAMPLE_COLUMNS",
+    "VISIBLE_ARTIFACT_SQL",
+    "extract_json_target",
+    "row_to_dict",
+    "rows_to_dicts",
+    "touch_retrieval_artifacts",
+]
 
 # ---------------------------------------------------------------------------
 # Row mapping helpers
 # ---------------------------------------------------------------------------
-
-
-def row_to_dict(
-    row: tuple[object, ...] | Mapping[str, Any] | None,
-    columns: list[str],
-) -> dict[str, Any] | None:
-    """Convert a database row to a column-keyed dictionary.
-
-    Args:
-        row: A tuple, mapping, or ``None`` from a database fetch.
-        columns: Column names corresponding to tuple positions.
-
-    Returns:
-        A dict mapping column names to values, or ``None`` when
-        *row* is ``None``.
-    """
-    if row is None:
-        return None
-    if isinstance(row, Mapping):
-        return dict(row)
-    if len(row) < len(columns):
-        _logger.warning(
-            "row has %d values but %d columns expected;"
-            " missing columns will be None",
-            len(row),
-            len(columns),
-        )
-    return {
-        column: row[index] if index < len(row) else None
-        for index, column in enumerate(columns)
-    }
-
-
-def rows_to_dicts(
-    rows: list[tuple[object, ...] | Mapping[str, Any]],
-    columns: list[str],
-) -> list[dict[str, Any]]:
-    """Convert a list of database rows to column-keyed dicts.
-
-    Args:
-        rows: Sequence of tuples or mappings from a fetchall call.
-        columns: Column names corresponding to tuple positions.
-
-    Returns:
-        List of dicts, one per non-``None`` row.
-    """
-    out: list[dict[str, Any]] = []
-    for row in rows:
-        mapped = row_to_dict(row, columns)
-        if mapped is not None:
-            out.append(mapped)
-    return out
 
 
 # ---------------------------------------------------------------------------

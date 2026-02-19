@@ -179,12 +179,12 @@ def _patch_schema_ready_describe(monkeypatch) -> None:
 def _stub_derived_artifact_persistence(monkeypatch) -> None:
     """Keep generic server tests focused on query behavior, not persistence internals."""
     monkeypatch.setattr(
-        "sift_mcp.mcp.handlers.artifact_select._persist_select_derived_artifact",
-        lambda **_kwargs: ("art_derived_select", None),
+        "sift_mcp.mcp.adapters.artifact_query_runtime.GatewayArtifactQueryRuntime.persist_select_derived",
+        lambda self, **_kwargs: ("art_derived_select", None),
     )
     monkeypatch.setattr(
-        "sift_mcp.mcp.handlers.artifact_code._persist_code_derived_artifact",
-        lambda **_kwargs: ("art_derived_code", None),
+        "sift_mcp.mcp.adapters.artifact_query_runtime.GatewayArtifactQueryRuntime.persist_code_derived",
+        lambda self, **_kwargs: ("art_derived_code", None),
     )
 
 
@@ -1253,6 +1253,8 @@ def test_artifact_search_db_runtime_returns_items(
                         "2026-01-01T00:00:00Z",
                         "demo.echo",
                         "inst_demo",
+                        "mcp_tool",
+                        "rk_demo",
                         "ok",
                         123,
                         None,
@@ -1302,6 +1304,8 @@ def test_artifact_search_touches_session_when_not_mocked(
                         "2026-01-01T00:00:00Z",
                         "demo.echo",
                         "inst_demo",
+                        "mcp_tool",
+                        "rk_demo",
                         "ok",
                         123,
                         None,

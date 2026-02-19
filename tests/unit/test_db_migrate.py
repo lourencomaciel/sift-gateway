@@ -471,3 +471,27 @@ class TestNoAlterTableIn002ForColumnsNowIn001:
             "002_indexes.sql should not contain ALTER TABLE statements "
             "now that columns are in 001_init.sql"
         )
+
+
+class TestCaptureIdentityMigration:
+    """007_capture_identity.sql adds neutral capture identity fields."""
+
+    @pytest.fixture(autouse=True)
+    def _load_sql(self) -> None:
+        self.sql = _normalize(_read_sql("007_capture_identity.sql")).lower()
+
+    def test_adds_capture_columns(self) -> None:
+        assert "add column capture_kind text" in self.sql
+        assert "add column capture_origin json" in self.sql
+        assert "add column capture_key text" in self.sql
+
+    def test_backfills_existing_rows(self) -> None:
+        assert "update artifacts" in self.sql
+        assert "set capture_kind = case" in self.sql
+        assert "set capture_key = request_key" in self.sql
+        assert "set capture_origin = json_object" in self.sql
+
+    def test_adds_capture_indexes(self) -> None:
+        assert "idx_artifacts_capture_kind_created_seq" in self.sql
+        assert "idx_artifacts_capture_key_created_seq" in self.sql
+        assert "idx_artifacts_capture_kind_last_seen" in self.sql

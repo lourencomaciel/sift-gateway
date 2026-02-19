@@ -38,6 +38,7 @@ from sift_mcp.artifacts.create import (
 )
 from sift_mcp.config.settings import GatewayConfig
 from sift_mcp.constants import WORKSPACE_ID
+from sift_mcp.core.capture_identity import build_capture_identity
 from sift_mcp.cursor.payload import (
     CursorStaleError,
     build_cursor_payload,
@@ -1477,6 +1478,16 @@ class GatewayServer:
         payload_json_bytes, payload_binary_bytes_total, payload_total_bytes = (
             compute_payload_sizes(input_data.envelope)
         )
+        capture_identity = build_capture_identity(
+            artifact_kind=input_data.kind,
+            request_key=input_data.request_key,
+            prefix=input_data.prefix,
+            tool_name=input_data.tool_name,
+            upstream_instance_id=input_data.upstream_instance_id,
+            capture_kind=input_data.capture_kind,
+            capture_origin=input_data.capture_origin,
+            capture_key=input_data.capture_key,
+        )
         return ArtifactHandle(
             artifact_id=generate_artifact_id(),
             created_seq=None,
@@ -1485,6 +1496,9 @@ class GatewayServer:
             source_tool=f"{input_data.prefix}.{input_data.tool_name}",
             upstream_instance_id=input_data.upstream_instance_id,
             request_key=input_data.request_key,
+            capture_kind=capture_identity.capture_kind,
+            capture_origin=capture_identity.capture_origin,
+            capture_key=capture_identity.capture_key,
             payload_hash_full=payload_hash,
             payload_json_bytes=payload_json_bytes,
             payload_binary_bytes_total=payload_binary_bytes_total,
