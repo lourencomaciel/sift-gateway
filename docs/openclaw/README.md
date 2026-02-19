@@ -32,6 +32,12 @@ sift-gateway query <artifact_id> '$' --limit 1
 sift-gateway code <artifact_id> '$' --expr "df.shape[0]"
 ```
 
+If the first `run` shows `pagination.has_next_page=true`, continue manually with:
+
+```bash
+sift-gateway run --continue-from <artifact_id> -- <next-command-with-next_params-applied>
+```
+
 4. Add one short system instruction in your OpenClaw profile:
 
 ```text
@@ -63,6 +69,7 @@ sift-gateway code <artifact_id> '$.items' --file ./analysis.py --params '{"windo
 
 - `sift-gateway run -- <cmd>` returns an artifact summary.
 - `sift-gateway query <id> '$' --limit 5` returns bounded data.
+- Paginated captures can continue with `run --continue-from <id> -- <cmd>`.
 - `sift-gateway run` always captures a fresh run result.
 - `sift-gateway run --stdin` works from a pipe.
 - `sift-gateway diff <id1> <id2>` reports equality or bounded diff lines.

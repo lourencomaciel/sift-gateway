@@ -155,3 +155,85 @@ def test_execute_artifact_capture_rejects_invalid_capture_kind() -> None:
     )
 
     assert payload["code"] == "INVALID_ARGUMENT"
+
+
+def test_execute_artifact_capture_rejects_chain_seq_without_parent() -> None:
+    runtime = _Runtime(_Connection(rows_by_sql={}))
+
+    payload = artifact_capture.execute_artifact_capture(
+        runtime,
+        arguments={
+            "_gateway_context": {"session_id": "cli"},
+            "capture_kind": "cli_command",
+            "capture_origin": {"cwd": "/tmp"},
+            "capture_key": "rk_x",
+            "prefix": "cli",
+            "tool_name": "run",
+            "upstream_instance_id": "cli_local",
+            "request_key": "rk_x",
+            "request_args_hash": "args_x",
+            "request_args_prefix": "{}",
+            "payload": {"k": "v"},
+            "chain_seq": 1,
+        },
+    )
+
+    assert payload["code"] == "INVALID_ARGUMENT"
+    assert "chain_seq requires parent_artifact_id" in payload["message"]
+
+
+def test_execute_artifact_capture_passes_parent_chain_to_persistence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    connection = _Connection(
+        rows_by_sql={
+            "SELECT map_status": ("ready",),
+        }
+    )
+    runtime = _Runtime(connection)
+    persisted: dict[str, Any] = {}
+
+    def _fake_persist_artifact(**kwargs: Any) -> Any:
+        persisted.update(kwargs)
+        return SimpleNamespace(
+            artifact_id="art_new",
+            created_seq=99,
+            status="ok",
+            kind="data",
+            capture_kind="cli_command",
+            capture_key="rk_new",
+            payload_json_bytes=21,
+            payload_binary_bytes_total=0,
+            payload_total_bytes=21,
+            map_status="pending",
+        )
+
+    monkeypatch.setattr(
+        artifact_capture,
+        "persist_artifact",
+        _fake_persist_artifact,
+    )
+
+    payload = artifact_capture.execute_artifact_capture(
+        runtime,
+        arguments={
+            "_gateway_context": {"session_id": "cli"},
+            "capture_kind": "cli_command",
+            "capture_origin": {"cwd": "/tmp"},
+            "capture_key": "rk_new",
+            "prefix": "cli",
+            "tool_name": "run",
+            "upstream_instance_id": "cli_local",
+            "request_key": "rk_new",
+            "request_args_hash": "args_new",
+            "request_args_prefix": "{}",
+            "payload": {"items": [1]},
+            "parent_artifact_id": "art_parent",
+            "chain_seq": 1,
+        },
+    )
+
+    assert payload["artifact_id"] == "art_new"
+    input_data = persisted["input_data"]
+    assert input_data.parent_artifact_id == "art_parent"
+    assert input_data.chain_seq == 1

@@ -24,19 +24,28 @@ sift-gateway run -- <command>
 ```
 
 2. Read summary and keep only the artifact id in context.
-3. Query only needed slices:
+3. If pagination is available (`pagination.has_next_page=true`), continue manually:
+
+```bash
+sift-gateway run --continue-from <artifact_id> -- <next-command-with-next_params-applied>
+```
+
+Use `pagination.next_params` from the previous result to set continuation args
+(`after`, `cursor`, `page_token`, etc.) on `<next-command-with-next_params-applied>`.
+
+4. Query only needed slices:
 
 ```bash
 sift-gateway query <artifact_id> '$' --limit 20
 ```
 
-4. Narrow fields/rows:
+5. Narrow fields/rows:
 
 ```bash
 sift-gateway query <artifact_id> '$.items' --where '{"path":"$.state","op":"eq","value":"open"}' --select "id,title"
 ```
 
-5. Run Python analysis when selection logic is not enough:
+6. Run Python analysis when selection logic is not enough:
 
 ```bash
 sift-gateway code <artifact_id> '$.items' --expr "df.groupby('owner').size().to_dict()"
@@ -71,6 +80,7 @@ sift-gateway code <artifact_id> '$.items' --file ./analysis.py --params '{"owner
 | Command | Purpose |
 | --- | --- |
 | `sift-gateway run -- <cmd>` | Capture command output as an artifact |
+| `sift-gateway run --continue-from <id> -- <cmd>` | Capture next upstream page and link lineage |
 | `sift-gateway run --stdin` | Capture piped stdin |
 | `sift-gateway query <id> <root_path>` | Filter/project rows from mapped roots |
 | `sift-gateway code <id> <root_path>` | Run sandboxed Python over root data |
@@ -85,6 +95,9 @@ sift-gateway code <artifact_id> '$.items' --file ./analysis.py --params '{"owner
 # GitHub PRs
 sift-gateway run -- gh api repos/org/repo/pulls
 
+# GitHub PRs next page (example)
+sift-gateway run --continue-from art_page_1 -- gh api repos/org/repo/pulls --after CUR_2 --limit 100
+
 # Kubernetes inventory
 kubectl get pods -A -o json | sift-gateway run --stdin --tag k8s
 
@@ -98,6 +111,7 @@ sift-gateway code art_abc123 '$.items' --expr "df['status'].value_counts().to_di
 ## Context Budget Rules
 
 - Keep raw output out of context; keep artifact IDs and small summaries.
+- For upstream pagination, keep `next_params` and issue explicit `run --continue-from` calls.
 - Query in pages (`--limit`) and only required fields (`--select`).
 - Use `sift-gateway code` for complex aggregation/join logic.
 - Repeated commands always produce fresh captures; compare runs with `sift-gateway diff`.

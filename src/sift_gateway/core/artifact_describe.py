@@ -2,14 +2,23 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from sift_gateway.constants import WORKSPACE_ID
+from sift_gateway.core.artifact_next_page import _extract_pagination_state
 from sift_gateway.core.rows import row_to_dict, rows_to_dicts
 from sift_gateway.core.runtime import ArtifactGetRuntime
 from sift_gateway.core.schema_payload import build_schema_payload
 from sift_gateway.envelope.responses import gateway_error
+from sift_gateway.pagination.contract import (
+    PAGINATION_WARNING_INCOMPLETE_RESULT_SET,
+    RETRIEVAL_STATUS_PARTIAL,
+    UPSTREAM_PARTIAL_REASON_MORE_PAGES_AVAILABLE,
+    build_upstream_pagination_meta,
+)
 from sift_gateway.schema_compact import SCHEMA_LEGEND, compact_schema_payload
+from sift_gateway.storage.payload_store import reconstruct_envelope
 from sift_gateway.tools.artifact_describe import (
     FETCH_DESCRIBE_SQL,
     FETCH_ROOTS_SQL,
@@ -66,6 +75,26 @@ _SCHEMA_FIELD_COLUMNS = [
     "distinct_values",
     "cardinality",
 ]
+
+_DESCRIBE_ENVELOPE_COLUMNS = [
+    "artifact_id",
+    "payload_hash_full",
+    "envelope",
+    "envelope_canonical_encoding",
+    "payload_fs_path",
+]
+
+_FETCH_DESCRIBE_ENVELOPE_SQL = """
+SELECT a.artifact_id, a.payload_hash_full,
+       pb.envelope, pb.envelope_canonical_encoding,
+       pb.payload_fs_path
+FROM artifacts a
+JOIN payload_blobs pb
+  ON pb.workspace_id = a.workspace_id
+ AND pb.payload_hash_full = a.payload_hash_full
+WHERE a.workspace_id = %s
+  AND a.artifact_id = %s
+"""
 
 
 def _resolve_describe_scope(
@@ -315,6 +344,7 @@ def _build_describe_response(
     roots: list[dict[str, Any]],
     has_root_schema: bool,
     compact_anchor_schemas: list[dict[str, Any]],
+    pagination: dict[str, Any] | None,
 ) -> dict[str, Any]:
     """Build final describe response payload."""
     lineage: dict[str, Any] = {
@@ -339,7 +369,90 @@ def _build_describe_response(
         response["schema_legend"] = SCHEMA_LEGEND
     if scope == "single" and compact_anchor_schemas:
         response["schemas"] = compact_anchor_schemas
+    if isinstance(pagination, dict):
+        response["pagination"] = pagination
     return response
+
+
+def _describe_envelope_dict(
+    *,
+    runtime: ArtifactGetRuntime,
+    row: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Load envelope dict for describe metadata lookups."""
+    envelope_raw = row.get("envelope")
+    if isinstance(envelope_raw, dict):
+        return envelope_raw
+    if isinstance(envelope_raw, str):
+        try:
+            decoded = json.loads(envelope_raw)
+        except (json.JSONDecodeError, ValueError):
+            return None
+        if isinstance(decoded, dict):
+            return decoded
+        return None
+    payload_fs_path = row.get("payload_fs_path")
+    if not isinstance(payload_fs_path, str) or not payload_fs_path:
+        return None
+    try:
+        return reconstruct_envelope(
+            payload_fs_path=payload_fs_path,
+            blobs_payload_dir=runtime.blobs_payload_dir,
+            encoding=str(row.get("envelope_canonical_encoding", "none")),
+            expected_hash=str(row.get("payload_hash_full", "")),
+        )
+    except ValueError:
+        return None
+
+
+def _describe_pagination_meta(
+    *,
+    runtime: ArtifactGetRuntime,
+    connection: Any,
+    anchor_artifact_id: str,
+) -> dict[str, Any] | None:
+    """Build upstream pagination metadata for describe responses."""
+    envelope_row = row_to_dict(
+        connection.execute(
+            _FETCH_DESCRIBE_ENVELOPE_SQL,
+            (WORKSPACE_ID, anchor_artifact_id),
+        ).fetchone(),
+        _DESCRIBE_ENVELOPE_COLUMNS,
+    )
+    if envelope_row is None:
+        return None
+    envelope = _describe_envelope_dict(runtime=runtime, row=envelope_row)
+    if envelope is None:
+        return None
+    state = _extract_pagination_state(envelope)
+    if state is None or not state.next_params:
+        return None
+    has_next_page = not (
+        state.upstream_prefix == "cli" and state.tool_name == "run"
+    )
+    meta = build_upstream_pagination_meta(
+        artifact_id=anchor_artifact_id,
+        page_number=state.page_number,
+        retrieval_status=RETRIEVAL_STATUS_PARTIAL,
+        has_more=True,
+        partial_reason=UPSTREAM_PARTIAL_REASON_MORE_PAGES_AVAILABLE,
+        warning=PAGINATION_WARNING_INCOMPLETE_RESULT_SET,
+        has_next_page=has_next_page,
+        next_params=state.next_params,
+        original_args=state.original_args,
+    )
+    if not has_next_page:
+        # Preserve discovered continuation parameters for interface layers
+        # that support manual continuation without artifact.next_page replay.
+        meta["next_params"] = state.next_params
+        if len(state.next_params) == 1:
+            cursor_param, cursor_value = next(
+                iter(state.next_params.items())
+            )
+            if isinstance(cursor_param, str) and cursor_param:
+                meta["next_cursor_param"] = cursor_param
+                meta["next_cursor"] = cursor_value
+    return meta
 
 
 def _touch_retrieval_artifacts(
@@ -428,6 +541,11 @@ def execute_artifact_describe(
             session_id=session_id,
             artifact_ids=related_ids,
         )
+        pagination_meta = _describe_pagination_meta(
+            runtime=runtime,
+            connection=connection,
+            anchor_artifact_id=anchor_artifact_id,
+        )
 
     roots, has_root_schema = _compact_root_schemas(runtime, root_entries)
     compact_anchor_schemas = compact_schema_payload(anchor_schemas)
@@ -442,4 +560,5 @@ def execute_artifact_describe(
         roots=roots,
         has_root_schema=has_root_schema,
         compact_anchor_schemas=compact_anchor_schemas,
+        pagination=pagination_meta,
     )
