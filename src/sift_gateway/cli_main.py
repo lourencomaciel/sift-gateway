@@ -33,6 +33,7 @@ from sift_gateway.core.artifact_search import execute_artifact_search
 from sift_gateway.core.artifact_select import execute_artifact_select
 from sift_gateway.db.backend import SqliteBackend
 from sift_gateway.db.migrate import apply_migrations
+from sift_gateway.lifecycle import ensure_data_dirs
 from sift_gateway.mcp.adapters.artifact_query_runtime import (
     GatewayArtifactQueryRuntime,
 )
@@ -124,10 +125,13 @@ def _load_code_source(args: argparse.Namespace) -> str:
 
 def _parse_ttl_seconds(raw_ttl: str | None) -> int | None:
     """Parse CLI TTL values (e.g., ``30m``, ``24h``, ``7d``)."""
+    env_ttl = os.environ.get("SIFT_GATEWAY_TTL")
+    if env_ttl is None:
+        env_ttl = os.environ.get("SIFT_TTL", _DEFAULT_TTL_RAW)
     candidate = (
         raw_ttl.strip().lower()
         if isinstance(raw_ttl, str) and raw_ttl.strip()
-        else os.environ.get("SIFT_TTL", _DEFAULT_TTL_RAW).strip().lower()
+        else env_ttl.strip().lower()
     )
     if candidate in {"none", "off", "0"}:
         return None
@@ -179,7 +183,7 @@ def _environment_fingerprint() -> str:
 
 
 def _normalize_command_argv(raw_argv: list[str]) -> list[str]:
-    """Normalize remainder argv for ``sift run -- <cmd>``."""
+    """Normalize remainder argv for ``sift-gateway run -- <cmd>``."""
     argv = list(raw_argv)
     if argv and argv[0] == "--":
         return argv[1:]
@@ -303,6 +307,8 @@ def _runtime_context(
 ) -> Generator[GatewayArtifactQueryRuntime, None, None]:
     """Build and yield a query runtime for CLI retrieval commands."""
     config = load_gateway_config(data_dir_override=data_dir_override)
+    # Allow CLI-only workflows to bootstrap from an empty data dir.
+    ensure_data_dirs(config)
     backend = SqliteBackend(
         db_path=config.sqlite_path,
         busy_timeout_ms=config.sqlite_busy_timeout_ms,
@@ -378,7 +384,7 @@ def _emit_json(payload: dict[str, Any]) -> None:
 
 
 def _emit_human_list(payload: dict[str, Any]) -> None:
-    """Emit compact human-readable output for ``sift list``."""
+    """Emit compact human-readable output for ``sift-gateway list``."""
     items = payload.get("items")
     if not isinstance(items, list) or not items:
         _write_line("no artifacts")
@@ -405,7 +411,7 @@ def _emit_human_list(payload: dict[str, Any]) -> None:
 
 
 def _emit_human_schema(payload: dict[str, Any]) -> None:
-    """Emit compact human-readable output for ``sift schema``."""
+    """Emit compact human-readable output for ``sift-gateway schema``."""
     _write_line(f"artifact: {payload.get('artifact_id')}")
     _write_line(f"scope: {payload.get('scope')}")
     artifacts = payload.get("artifacts")
@@ -462,7 +468,9 @@ def _emit_human_run(payload: dict[str, Any]) -> None:
     if isinstance(command_exit_code, int):
         _write_line(f"exit:     {command_exit_code}")
     if isinstance(artifact_id, str):
-        _write_line(f"hint:     use `sift query {artifact_id} '$'` to explore")
+        _write_line(
+            f"hint:     use `sift-gateway query {artifact_id} '$'` to explore"
+        )
 
 
 def _emit_human_diff(payload: dict[str, Any]) -> None:
@@ -492,7 +500,7 @@ def _execute_list(
     runtime: GatewayArtifactQueryRuntime,
     args: argparse.Namespace,
 ) -> dict[str, Any]:
-    """Execute ``sift list`` against core search service."""
+    """Execute ``sift-gateway list`` against core search service."""
     return execute_artifact_search(
         runtime,
         arguments={
@@ -510,7 +518,7 @@ def _execute_schema(
     runtime: GatewayArtifactQueryRuntime,
     args: argparse.Namespace,
 ) -> dict[str, Any]:
-    """Execute ``sift schema`` against core describe service."""
+    """Execute ``sift-gateway schema`` against core describe service."""
     return execute_artifact_describe(
         runtime,
         arguments={
@@ -525,7 +533,7 @@ def _execute_get(
     runtime: GatewayArtifactQueryRuntime,
     args: argparse.Namespace,
 ) -> dict[str, Any]:
-    """Execute ``sift get`` against core get service."""
+    """Execute ``sift-gateway get`` against core get service."""
     return execute_artifact_get(
         runtime,
         arguments={
@@ -544,7 +552,7 @@ def _execute_query(
     runtime: GatewayArtifactQueryRuntime,
     args: argparse.Namespace,
 ) -> dict[str, Any]:
-    """Execute ``sift query`` against core select service."""
+    """Execute ``sift-gateway query`` against core select service."""
     where_expr = _parse_where_json(args.where)
     payload: dict[str, Any] = {
         "_gateway_context": _build_gateway_context(),
@@ -567,7 +575,7 @@ def _execute_code(
     runtime: GatewayArtifactQueryRuntime,
     args: argparse.Namespace,
 ) -> dict[str, Any]:
-    """Execute ``sift code`` against the core code-query service."""
+    """Execute ``sift-gateway code`` against the core code-query service."""
     code_source = _load_code_source(args)
     params_obj = _parse_params_json(args.params)
     return execute_artifact_code(
@@ -586,7 +594,7 @@ def _execute_run(
     runtime: GatewayArtifactQueryRuntime,
     args: argparse.Namespace,
 ) -> dict[str, Any]:
-    """Execute ``sift run`` by capturing command output or stdin."""
+    """Execute ``sift-gateway run`` by capturing command output or stdin."""
     tags = _normalize_tags(args.tag)
     ttl_seconds = _parse_ttl_seconds(args.ttl)
     cwd = str(Path.cwd())
@@ -719,7 +727,7 @@ def _execute_diff(
     runtime: GatewayArtifactQueryRuntime,
     args: argparse.Namespace,
 ) -> dict[str, Any]:
-    """Execute ``sift diff`` by comparing reconstructed envelopes."""
+    """Execute ``sift-gateway diff`` by comparing envelopes."""
     max_lines = args.max_lines
     if max_lines <= 0:
         msg = "--max-lines must be > 0"
@@ -792,9 +800,9 @@ def _add_common_json_flag(parser: argparse.ArgumentParser) -> None:
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    """Build the ``sift`` CLI parser."""
+    """Build the artifact-mode parser for ``sift-gateway``."""
     parser = argparse.ArgumentParser(
-        prog="sift",
+        prog="sift-gateway",
         description="Protocol-agnostic artifact retrieval CLI",
     )
     parser.add_argument(
@@ -971,7 +979,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def serve(argv: list[str] | None = None) -> int:
-    """Run the ``sift`` CLI and return an exit code."""
+    """Run artifact CLI mode and return an exit code."""
     args = _build_parser().parse_args(argv)
     try:
         with _runtime_context(data_dir_override=args.data_dir) as runtime:
@@ -980,7 +988,7 @@ def serve(argv: list[str] | None = None) -> int:
         _write_line(str(exc), stream=sys.stderr)
         return 1
     except Exception as exc:
-        _write_line(f"sift failed: {exc}", stream=sys.stderr)
+        _write_line(f"sift-gateway failed: {exc}", stream=sys.stderr)
         return 1
 
     if _is_error_response(payload):
@@ -1020,7 +1028,7 @@ def serve(argv: list[str] | None = None) -> int:
 
 
 def cli() -> None:
-    """Entrypoint used by the ``sift`` console script."""
+    """Entrypoint used for artifact-mode execution."""
     raise SystemExit(serve())
 
 

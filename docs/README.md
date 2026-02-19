@@ -7,7 +7,7 @@ maintainer-only guide.
 
 - `quickstart.md` — install, init, and first artifact query
 - `openclaw/README.md` — OpenClaw-first quickstart and skill pack
-- `cli-output-format.md` — stable human and JSON output contract for `sift`
+- `cli-output-format.md` — stable human and JSON output contract for `sift-gateway`
 - `config.md` — all config keys, env vars, defaults, and runtime flags
 - `api_contracts.md` — tool contract and response shapes
 - `migration-guide.md` — MCP-to-CLI-agnostic migration steps and compatibility

@@ -12,7 +12,7 @@ from sift_gateway.openclaw import skill_text
 def _build_parser() -> argparse.ArgumentParser:
     """Build CLI parser for OpenClaw skill export."""
     parser = argparse.ArgumentParser(
-        prog="sift-openclaw-skill",
+        prog="sift-gateway-openclaw-skill",
         description="Print or write packaged OpenClaw SKILL.md",
     )
     parser.add_argument(

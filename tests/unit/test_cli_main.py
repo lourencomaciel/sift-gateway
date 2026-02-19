@@ -453,7 +453,7 @@ def test_serve_run_human_output_snapshot(
         "bytes:    12\n"
         "capture:  cli_command\n"
         "exit:     0\n"
-        "hint:     use `sift query art_new '$'` to explore\n"
+        "hint:     use `sift-gateway query art_new '$'` to explore\n"
     )
 
 

@@ -11,13 +11,13 @@
 - Code-query runtime tracebacks in error details (`details.traceback`, up to 2000 chars)
 - Multi-artifact code queries via `artifact_ids`
 - Sample-based schema enum metadata: `distinct_values` (max 10) and `cardinality`
-- `sift code` CLI command with `--code`, `--file`, and `--expr` modes
+- `sift-gateway code` CLI command with `--code`, `--file`, and `--expr` modes
 - Phase 8 hardening docs: benchmark guide, security checklist, migration guide, and release checklist
 - Large payload benchmark runner: `scripts/benchmark_large_payloads.py`
 - Long-run cleanup lifecycle tests covering TTL soft-delete, quota prune, hard-delete, and reconcile
 - RC preflight runner: `scripts/run_rc_preflight.py`
 - Published benchmark baseline artifacts under `docs/benchmarks/`
-- Packaged OpenClaw integration files in the PyPI distribution and added `sift-openclaw-skill` helper command
+- Packaged OpenClaw integration files in the PyPI distribution and added `sift-gateway-openclaw-skill` helper command
 
 ### Changed
 - Rebranded from "MCP Artifact Gateway" to "Sift"

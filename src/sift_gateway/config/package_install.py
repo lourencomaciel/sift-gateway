@@ -1,6 +1,6 @@
 """Install and uninstall Python packages for code queries.
 
-Manages packages in sift's own Python environment and updates
+Manages packages in sift-gateway's own Python environment and updates
 the instance config allowlist so newly installed packages are
 permitted in ``query_kind=code`` execution.
 """
@@ -86,7 +86,7 @@ def install_packages(
     *,
     data_dir: Path | None = None,
 ) -> int:
-    """Install packages into sift's Python environment.
+    """Install packages into sift-gateway's Python environment.
 
     Runs ``pip install`` via the current interpreter, then adds
     each package root to the instance's ``code_query_allowed_import_roots``
