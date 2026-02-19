@@ -119,26 +119,32 @@ Recommended setup path (rulesets):
 
 ## Maintainer Release Workflow
 
-1. Update `pyproject.toml` version and move release notes from
+1. Run local preflight checks:
+
+```bash
+UV_CACHE_DIR=/tmp/uv-cache uv run python scripts/run_rc_preflight.py
+```
+
+2. Update `pyproject.toml` version and move release notes from
    `Unreleased` in `CHANGELOG.md`.
-2. Merge release changes to `main`.
-3. Create and push a tag that matches `v*` (for example `v0.1.1`):
+3. Merge release changes to `main`.
+4. Create and push a tag that matches `v*` (for example `v0.1.1`):
 
 ```bash
 git tag v0.1.1
 git push origin v0.1.1
 ```
 
-4. Push the tag and let GitHub Actions run
+5. Push the tag and let GitHub Actions run
    `.github/workflows/release.yml`:
    - `verify_build` runs lint, type checks, unit tests, build, twine check,
      and wheel smoke commands.
    - `publish_testpypi` publishes to TestPyPI (`testpypi` environment).
    - `publish_pypi` publishes to PyPI (`pypi` environment) after
      `publish_testpypi` succeeds.
-5. Validate `publish_testpypi` output before approving the `pypi`
+6. Validate `publish_testpypi` output before approving the `pypi`
    environment deployment.
-6. Confirm TestPyPI and PyPI install/upgrade paths:
+7. Confirm TestPyPI and PyPI install/upgrade paths:
    - `pipx install sift-mcp`
    - `uv tool install sift-mcp`
 

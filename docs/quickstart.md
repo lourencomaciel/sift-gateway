@@ -40,6 +40,14 @@ uv sync
 
 See [CONTRIBUTING.md](../CONTRIBUTING.md) for full development guide.
 
+## OpenClaw Users
+
+If your main goal is preventing context overflow in OpenClaw, start with the
+dedicated pack:
+
+- [OpenClaw Integration Pack](openclaw/README.md)
+- [Installable skill file](openclaw/SKILL.md)
+
 ## Importing Your MCP Configuration
 
 Sift can import your existing MCP server configuration from Claude Desktop, Claude Code, Cursor, VS Code, Windsurf, or Zed.
@@ -85,19 +93,25 @@ sift-mcp init \
 
 This restores the `.backup` file.
 
-## Data-Science Packages (Optional)
+## Code Query Packages (Optional)
 
 Code queries (`query_kind="code"`) can use pandas, NumPy, jmespath, and other
 libraries. These are not included in the base install to keep Sift lightweight.
 
-### Install the data-science bundle
+### Install the code bundle
 
 ```bash
 # Using pipx
-pipx install "sift-mcp[data-science]"
+pipx install "sift-mcp[code]"
 
 # Using uv
-uv tool install "sift-mcp[data-science]"
+uv tool install "sift-mcp[code]"
+```
+
+Backward-compatible alias:
+
+```bash
+pipx install "sift-mcp[data-science]"
 ```
 
 ### Install individual packages

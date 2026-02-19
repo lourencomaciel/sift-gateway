@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from sift_mcp.mcp.handlers.artifact_select import _distinct_key
+from sift_mcp.core.artifact_select import _distinct_key
 from sift_mcp.tools.artifact_select import (
     SelectOrderBy,
     _apply_select_sort,

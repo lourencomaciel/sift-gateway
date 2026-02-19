@@ -2020,6 +2020,11 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
+code = [
+    { name = "jmespath" },
+    { name = "numpy" },
+    { name = "pandas" },
+]
 data-science = [
     { name = "jmespath" },
     { name = "numpy" },
@@ -2041,10 +2046,13 @@ requires-dist = [
     { name = "detect-secrets", specifier = ">=1.5.0" },
     { name = "fastmcp", specifier = ">=2.0.0" },
     { name = "ijson", specifier = ">=3.3.0" },
+    { name = "jmespath", marker = "extra == 'code'", specifier = ">=1.0.1" },
     { name = "jmespath", marker = "extra == 'data-science'", specifier = ">=1.0.1" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.13.0" },
+    { name = "numpy", marker = "extra == 'code'", specifier = ">=1.26.0" },
     { name = "numpy", marker = "extra == 'data-science'", specifier = ">=1.26.0" },
     { name = "orjson", specifier = ">=3.10.0" },
+    { name = "pandas", marker = "extra == 'code'", specifier = ">=2.2.0" },
     { name = "pandas", marker = "extra == 'data-science'", specifier = ">=2.2.0" },
     { name = "pydantic", specifier = ">=2.0.0" },
     { name = "pydantic-settings", specifier = ">=2.0.0" },
@@ -2052,10 +2060,10 @@ requires-dist = [
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.24.0" },
     { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=6.0.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.8.0" },
-    { name = "sift-mcp", extras = ["data-science"], marker = "extra == 'dev'" },
+    { name = "sift-mcp", extras = ["code"], marker = "extra == 'dev'" },
     { name = "structlog", specifier = ">=24.0.0" },
 ]
-provides-extras = ["data-science", "dev"]
+provides-extras = ["code", "data-science", "dev"]
 
 [[package]]
 name = "six"

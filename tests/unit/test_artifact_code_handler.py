@@ -13,7 +13,7 @@ from sift_mcp.codegen.runtime import (
     CodeRuntimeMemoryLimitError,
 )
 from sift_mcp.config.settings import GatewayConfig
-from sift_mcp.mcp.handlers.artifact_code import (
+from sift_mcp.core.artifact_code import (
     _enrich_install_hint,
     _module_to_dist,
 )
@@ -181,8 +181,8 @@ def _artifact_row(
 @pytest.fixture(autouse=True)
 def _mock_derived_persistence(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
-        "sift_mcp.mcp.handlers.artifact_code._persist_code_derived_artifact",
-        lambda **_kwargs: ("art_derived", None),
+        "sift_mcp.mcp.adapters.artifact_query_runtime.GatewayArtifactQueryRuntime.persist_code_derived",
+        lambda self, **_kwargs: ("art_derived", None),
     )
 
 
@@ -229,7 +229,7 @@ def test_code_query_all_related_merges_records(
     server = _server(tmp_path, conn)
 
     monkeypatch.setattr(
-        "sift_mcp.mcp.handlers.artifact_code.resolve_related_artifacts",
+        "sift_mcp.mcp.adapters.artifact_query_runtime.GatewayArtifactQueryRuntime.resolve_related_artifacts",
         lambda *_args, **_kwargs: [
             {"artifact_id": "art_1", "generation": 1},
             {"artifact_id": "art_2", "generation": 1},
@@ -241,7 +241,7 @@ def test_code_query_all_related_merges_records(
         lambda *args, **kwargs: None,
     )
     monkeypatch.setattr(
-        "sift_mcp.mcp.handlers.artifact_code.execute_code_in_subprocess",
+        "sift_mcp.core.artifact_code.execute_code_in_subprocess",
         lambda **kwargs: [
             {
                 "id": item["id"],
@@ -302,12 +302,12 @@ def test_code_query_normalizes_scalar_return_to_list(
     server = _server(tmp_path, conn)
 
     monkeypatch.setattr(
-        "sift_mcp.mcp.handlers.artifact_code.resolve_related_artifacts",
+        "sift_mcp.mcp.adapters.artifact_query_runtime.GatewayArtifactQueryRuntime.resolve_related_artifacts",
         lambda *_args, **_kwargs: [{"artifact_id": "art_1", "generation": 1}],
     )
     monkeypatch.setattr(
-        "sift_mcp.mcp.handlers.artifact_code.compute_related_set_hash",
-        lambda _rows: "related_hash_1",
+        "sift_mcp.mcp.adapters.artifact_query_runtime.GatewayArtifactQueryRuntime.compute_related_set_hash",
+        lambda self, _rows: "related_hash_1",
     )
     monkeypatch.setattr(
         server,
@@ -315,7 +315,7 @@ def test_code_query_normalizes_scalar_return_to_list(
         lambda *args, **kwargs: None,
     )
     monkeypatch.setattr(
-        "sift_mcp.mcp.handlers.artifact_code.execute_code_in_subprocess",
+        "sift_mcp.core.artifact_code.execute_code_in_subprocess",
         lambda **_kwargs: {"ok": True},
     )
 
@@ -379,7 +379,7 @@ def test_code_query_accepts_float_params(tmp_path: Path, monkeypatch) -> None:
     server = _server(tmp_path, conn)
 
     monkeypatch.setattr(
-        "sift_mcp.mcp.handlers.artifact_code.resolve_related_artifacts",
+        "sift_mcp.mcp.adapters.artifact_query_runtime.GatewayArtifactQueryRuntime.resolve_related_artifacts",
         lambda *_args, **_kwargs: [{"artifact_id": "art_1", "generation": 1}],
     )
     monkeypatch.setattr(
@@ -388,7 +388,7 @@ def test_code_query_accepts_float_params(tmp_path: Path, monkeypatch) -> None:
         lambda *args, **kwargs: None,
     )
     monkeypatch.setattr(
-        "sift_mcp.mcp.handlers.artifact_code.execute_code_in_subprocess",
+        "sift_mcp.core.artifact_code.execute_code_in_subprocess",
         lambda **_kwargs: [],
     )
 
@@ -437,7 +437,7 @@ def test_code_query_ignores_cursor_parameter(
     server = _server(tmp_path, conn)
 
     monkeypatch.setattr(
-        "sift_mcp.mcp.handlers.artifact_code.resolve_related_artifacts",
+        "sift_mcp.mcp.adapters.artifact_query_runtime.GatewayArtifactQueryRuntime.resolve_related_artifacts",
         lambda *_args, **_kwargs: [{"artifact_id": "art_1", "generation": 1}],
     )
     monkeypatch.setattr(
@@ -446,7 +446,7 @@ def test_code_query_ignores_cursor_parameter(
         lambda *args, **kwargs: None,
     )
     monkeypatch.setattr(
-        "sift_mcp.mcp.handlers.artifact_code.execute_code_in_subprocess",
+        "sift_mcp.core.artifact_code.execute_code_in_subprocess",
         lambda **kwargs: kwargs["data"],
     )
 
@@ -487,7 +487,7 @@ def test_code_query_partial_mapping_marks_sampled_only(
     server = _server(tmp_path, conn)
 
     monkeypatch.setattr(
-        "sift_mcp.mcp.handlers.artifact_code.resolve_related_artifacts",
+        "sift_mcp.mcp.adapters.artifact_query_runtime.GatewayArtifactQueryRuntime.resolve_related_artifacts",
         lambda *_args, **_kwargs: [{"artifact_id": "art_1", "generation": 1}],
     )
     monkeypatch.setattr(
@@ -496,7 +496,7 @@ def test_code_query_partial_mapping_marks_sampled_only(
         lambda *args, **kwargs: None,
     )
     monkeypatch.setattr(
-        "sift_mcp.mcp.handlers.artifact_code.execute_code_in_subprocess",
+        "sift_mcp.core.artifact_code.execute_code_in_subprocess",
         lambda **kwargs: kwargs["data"],
     )
 
@@ -547,7 +547,7 @@ def test_code_query_rejects_when_input_records_exceed_limit(
     server = _server(tmp_path, conn, code_query_max_input_records=1)
 
     monkeypatch.setattr(
-        "sift_mcp.mcp.handlers.artifact_code.resolve_related_artifacts",
+        "sift_mcp.mcp.adapters.artifact_query_runtime.GatewayArtifactQueryRuntime.resolve_related_artifacts",
         lambda *_args, **_kwargs: [{"artifact_id": "art_1", "generation": 1}],
     )
     monkeypatch.setattr(
@@ -563,7 +563,7 @@ def test_code_query_rejects_when_input_records_exceed_limit(
         return []
 
     monkeypatch.setattr(
-        "sift_mcp.mcp.handlers.artifact_code.execute_code_in_subprocess",
+        "sift_mcp.core.artifact_code.execute_code_in_subprocess",
         _fake_exec,
     )
 
@@ -614,7 +614,7 @@ def test_code_query_rejects_when_input_bytes_exceed_limit(
     server = _server(tmp_path, conn, code_query_max_input_bytes=120)
 
     monkeypatch.setattr(
-        "sift_mcp.mcp.handlers.artifact_code.resolve_related_artifacts",
+        "sift_mcp.mcp.adapters.artifact_query_runtime.GatewayArtifactQueryRuntime.resolve_related_artifacts",
         lambda *_args, **_kwargs: [{"artifact_id": "art_1", "generation": 1}],
     )
     monkeypatch.setattr(
@@ -630,7 +630,7 @@ def test_code_query_rejects_when_input_bytes_exceed_limit(
         return []
 
     monkeypatch.setattr(
-        "sift_mcp.mcp.handlers.artifact_code.execute_code_in_subprocess",
+        "sift_mcp.core.artifact_code.execute_code_in_subprocess",
         _fake_exec,
     )
 
@@ -680,7 +680,7 @@ def test_code_query_maps_memory_limit_error(
     server = _server(tmp_path, conn)
 
     monkeypatch.setattr(
-        "sift_mcp.mcp.handlers.artifact_code.resolve_related_artifacts",
+        "sift_mcp.mcp.adapters.artifact_query_runtime.GatewayArtifactQueryRuntime.resolve_related_artifacts",
         lambda *_args, **_kwargs: [{"artifact_id": "art_1", "generation": 1}],
     )
     monkeypatch.setattr(
@@ -689,7 +689,7 @@ def test_code_query_maps_memory_limit_error(
         lambda *args, **kwargs: None,
     )
     monkeypatch.setattr(
-        "sift_mcp.mcp.handlers.artifact_code.execute_code_in_subprocess",
+        "sift_mcp.core.artifact_code.execute_code_in_subprocess",
         lambda **_kwargs: (_ for _ in ()).throw(
             CodeRuntimeMemoryLimitError(
                 code="CODE_RUNTIME_MEMORY_LIMIT",
@@ -745,7 +745,7 @@ def test_code_query_passes_import_allowlist_from_configured_roots(
     )
 
     monkeypatch.setattr(
-        "sift_mcp.mcp.handlers.artifact_code.resolve_related_artifacts",
+        "sift_mcp.mcp.adapters.artifact_query_runtime.GatewayArtifactQueryRuntime.resolve_related_artifacts",
         lambda *_args, **_kwargs: [{"artifact_id": "art_1", "generation": 1}],
     )
     monkeypatch.setattr(
@@ -760,7 +760,7 @@ def test_code_query_passes_import_allowlist_from_configured_roots(
         return [{"ok": 1}]
 
     monkeypatch.setattr(
-        "sift_mcp.mcp.handlers.artifact_code.execute_code_in_subprocess",
+        "sift_mcp.core.artifact_code.execute_code_in_subprocess",
         _fake_exec,
     )
 
@@ -811,7 +811,7 @@ def test_code_query_passes_custom_import_allowlist(
     )
 
     monkeypatch.setattr(
-        "sift_mcp.mcp.handlers.artifact_code.resolve_related_artifacts",
+        "sift_mcp.mcp.adapters.artifact_query_runtime.GatewayArtifactQueryRuntime.resolve_related_artifacts",
         lambda *_args, **_kwargs: [{"artifact_id": "art_1", "generation": 1}],
     )
     monkeypatch.setattr(
@@ -826,7 +826,7 @@ def test_code_query_passes_custom_import_allowlist(
         return [{"ok": 1}]
 
     monkeypatch.setattr(
-        "sift_mcp.mcp.handlers.artifact_code.execute_code_in_subprocess",
+        "sift_mcp.core.artifact_code.execute_code_in_subprocess",
         _fake_exec,
     )
 
@@ -873,7 +873,7 @@ def test_code_query_rejects_output_above_transport_budget(
     server = _server(tmp_path, conn, max_bytes_out=30)
 
     monkeypatch.setattr(
-        "sift_mcp.mcp.handlers.artifact_code.resolve_related_artifacts",
+        "sift_mcp.mcp.adapters.artifact_query_runtime.GatewayArtifactQueryRuntime.resolve_related_artifacts",
         lambda *_args, **_kwargs: [{"artifact_id": "art_1", "generation": 1}],
     )
     monkeypatch.setattr(
@@ -882,7 +882,7 @@ def test_code_query_rejects_output_above_transport_budget(
         lambda *args, **kwargs: None,
     )
     monkeypatch.setattr(
-        "sift_mcp.mcp.handlers.artifact_code.execute_code_in_subprocess",
+        "sift_mcp.core.artifact_code.execute_code_in_subprocess",
         lambda **_kwargs: [{"value": "x" * 200}],
     )
 
@@ -929,7 +929,7 @@ def test_code_query_runtime_error_includes_traceback_details(
     server = _server(tmp_path, conn)
 
     monkeypatch.setattr(
-        "sift_mcp.mcp.handlers.artifact_code.resolve_related_artifacts",
+        "sift_mcp.mcp.adapters.artifact_query_runtime.GatewayArtifactQueryRuntime.resolve_related_artifacts",
         lambda *_args, **_kwargs: [{"artifact_id": "art_1", "generation": 1}],
     )
     monkeypatch.setattr(
@@ -938,7 +938,7 @@ def test_code_query_runtime_error_includes_traceback_details(
         lambda *args, **kwargs: None,
     )
     monkeypatch.setattr(
-        "sift_mcp.mcp.handlers.artifact_code.execute_code_in_subprocess",
+        "sift_mcp.core.artifact_code.execute_code_in_subprocess",
         lambda **_kwargs: (_ for _ in ()).throw(
             CodeRuntimeError(
                 code="CODE_RUNTIME_EXCEPTION",
@@ -1009,7 +1009,7 @@ def test_code_query_multi_artifact_passes_artifacts_payload(
     server = _server(tmp_path, conn)
 
     monkeypatch.setattr(
-        "sift_mcp.mcp.handlers.artifact_code.resolve_related_artifacts",
+        "sift_mcp.mcp.adapters.artifact_query_runtime.GatewayArtifactQueryRuntime.resolve_related_artifacts",
         lambda *_args, **kwargs: [
             {"artifact_id": kwargs["anchor_artifact_id"], "generation": 1}
         ],
@@ -1026,7 +1026,7 @@ def test_code_query_multi_artifact_passes_artifacts_payload(
         return [{"records": 2}]
 
     monkeypatch.setattr(
-        "sift_mcp.mcp.handlers.artifact_code.execute_code_in_subprocess",
+        "sift_mcp.core.artifact_code.execute_code_in_subprocess",
         _fake_exec,
     )
 
@@ -1101,7 +1101,7 @@ def test_code_query_multi_artifact_supports_per_artifact_root_paths(
     server = _server(tmp_path, conn)
 
     monkeypatch.setattr(
-        "sift_mcp.mcp.handlers.artifact_code.resolve_related_artifacts",
+        "sift_mcp.mcp.adapters.artifact_query_runtime.GatewayArtifactQueryRuntime.resolve_related_artifacts",
         lambda *_args, **kwargs: [
             {"artifact_id": kwargs["anchor_artifact_id"], "generation": 1}
         ],
@@ -1118,7 +1118,7 @@ def test_code_query_multi_artifact_supports_per_artifact_root_paths(
         return [{"records": 2}]
 
     monkeypatch.setattr(
-        "sift_mcp.mcp.handlers.artifact_code.execute_code_in_subprocess",
+        "sift_mcp.core.artifact_code.execute_code_in_subprocess",
         _fake_exec,
     )
 
@@ -1198,7 +1198,7 @@ def test_enrich_install_hint_import_not_allowed_third_party(
     monkeypatch,
 ) -> None:
     # Simulate runtime metadata returning the dist name.
-    import sift_mcp.mcp.handlers.artifact_code as _ac_mod
+    import sift_mcp.core.artifact_code as _ac_mod
 
     monkeypatch.setattr(
         _ac_mod,
@@ -1232,7 +1232,7 @@ def test_enrich_install_hint_unrelated_message() -> None:
 def test_module_to_dist_static_map(monkeypatch) -> None:
     """Static map resolves well-known mismatches."""
     # Disable runtime metadata so the static map is exercised.
-    import sift_mcp.mcp.handlers.artifact_code as _ac_mod
+    import sift_mcp.core.artifact_code as _ac_mod
 
     monkeypatch.setattr(
         _ac_mod,
@@ -1248,7 +1248,7 @@ def test_module_to_dist_static_map(monkeypatch) -> None:
 
 def test_module_to_dist_runtime_metadata(monkeypatch) -> None:
     """Runtime metadata takes precedence over static map."""
-    import sift_mcp.mcp.handlers.artifact_code as _ac_mod
+    import sift_mcp.core.artifact_code as _ac_mod
 
     monkeypatch.setattr(
         _ac_mod,

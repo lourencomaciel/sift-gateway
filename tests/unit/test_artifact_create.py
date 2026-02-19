@@ -279,6 +279,9 @@ def test_build_artifact_row_contains_required_fields(tmp_path: Path) -> None:
         "upstream_instance_id",
         "upstream_tool_schema_hash",
         "request_key",
+        "capture_kind",
+        "capture_origin",
+        "capture_key",
         "request_args_hash",
         "request_args_prefix",
         "payload_hash_full",
@@ -286,6 +289,7 @@ def test_build_artifact_row_contains_required_fields(tmp_path: Path) -> None:
         "payload_json_bytes",
         "payload_binary_bytes_total",
         "payload_total_bytes",
+        "expires_at",
         "last_referenced_at",
         "generation",
         "parent_artifact_id",
@@ -303,6 +307,8 @@ def test_build_artifact_row_contains_required_fields(tmp_path: Path) -> None:
     assert row["artifact_id"] == "art_test123"
     assert row["session_id"] == "sess_1"
     assert row["source_tool"] == "github.search_issues"
+    assert row["capture_kind"] == "mcp_tool"
+    assert row["capture_key"] == "rk_abc"
     assert row["canonicalizer_version"] == CANONICALIZER_VERSION
     assert row["mapper_version"] == MAPPER_VERSION
     assert row["generation"] == 1

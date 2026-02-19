@@ -6,12 +6,29 @@ from collections.abc import Mapping
 import json
 from typing import Any
 
-from sift_mcp.constants import ARTIFACT_ID_PREFIX, WORKSPACE_ID
+from sift_mcp.constants import (
+    ARTIFACT_ID_PREFIX,
+    CAPTURE_KIND_CLI_COMMAND,
+    CAPTURE_KIND_DERIVED_CODEGEN,
+    CAPTURE_KIND_DERIVED_QUERY,
+    CAPTURE_KIND_FILE_INGEST,
+    CAPTURE_KIND_MCP_TOOL,
+    CAPTURE_KIND_STDIN_PIPE,
+    WORKSPACE_ID,
+)
 
 _VALID_MAP_KINDS = {"none", "full", "partial"}
 _VALID_MAP_STATUS = {"pending", "ready", "failed", "stale"}
 _VALID_INDEX_STATUS = {"off", "pending", "ready", "partial", "failed"}
 _VALID_KINDS = {"data", "derived_query", "derived_codegen"}
+_VALID_CAPTURE_KINDS = {
+    CAPTURE_KIND_MCP_TOOL,
+    CAPTURE_KIND_CLI_COMMAND,
+    CAPTURE_KIND_STDIN_PIPE,
+    CAPTURE_KIND_FILE_INGEST,
+    CAPTURE_KIND_DERIVED_QUERY,
+    CAPTURE_KIND_DERIVED_CODEGEN,
+}
 
 
 def _validate_workspace_id(row: Mapping[str, Any]) -> None:
@@ -86,6 +103,24 @@ def _validate_payload_sizes(row: Mapping[str, Any]) -> None:
             raise ValueError(msg)
 
 
+def _validate_capture_fields(row: Mapping[str, Any]) -> None:
+    """Validate protocol-neutral capture identity fields."""
+    capture_kind = row.get("capture_kind")
+    if capture_kind not in _VALID_CAPTURE_KINDS:
+        msg = f"invalid capture_kind: {capture_kind}"
+        raise ValueError(msg)
+
+    capture_key = row.get("capture_key")
+    if not isinstance(capture_key, str) or not capture_key:
+        msg = "capture_key must be a non-empty string"
+        raise ValueError(msg)
+
+    capture_origin = row.get("capture_origin")
+    if not isinstance(capture_origin, Mapping):
+        msg = "capture_origin must be an object"
+        raise ValueError(msg)
+
+
 def validate_artifact_row(row: Mapping[str, Any]) -> None:
     """Validate an artifact row against invariant constraints.
 
@@ -124,3 +159,4 @@ def validate_artifact_row(row: Mapping[str, Any]) -> None:
         valid_values=_VALID_INDEX_STATUS,
     )
     _validate_payload_sizes(row)
+    _validate_capture_fields(row)

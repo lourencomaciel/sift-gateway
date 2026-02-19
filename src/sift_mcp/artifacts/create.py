@@ -26,6 +26,7 @@ from sift_mcp.constants import (
     MAPPER_VERSION,
     WORKSPACE_ID,
 )
+from sift_mcp.core.capture_identity import build_capture_identity
 from sift_mcp.db.protocols import (
     ConnectionLike,
     increment_metric,
@@ -74,6 +75,9 @@ class ArtifactHandle:
         source_tool: Fully qualified tool name (prefix.tool).
         upstream_instance_id: Identity of the upstream server.
         request_key: Content-addressed request fingerprint.
+        capture_kind: Protocol-neutral capture source kind.
+        capture_origin: Protocol-neutral capture provenance object.
+        capture_key: Protocol-neutral capture identity key.
         payload_hash_full: SHA-256 hex of canonical payload.
         payload_json_bytes: Total bytes of JSON content parts.
         payload_binary_bytes_total: Total bytes of binary refs.
@@ -104,6 +108,9 @@ class ArtifactHandle:
     status: str  # "ok" | "error"
     error_summary: str | None
     kind: str = KIND_DATA
+    capture_kind: str | None = None
+    capture_origin: dict[str, Any] | None = None
+    capture_key: str | None = None
 
 
 @dataclass(frozen=True)
@@ -125,6 +132,13 @@ class CreateArtifactInput:
         envelope: Normalized envelope with tool results.
         parent_artifact_id: Parent artifact for chained calls.
         chain_seq: Position in a chain sequence, or None.
+        capture_kind: Optional explicit protocol-neutral capture
+            kind override.
+        capture_origin: Optional explicit protocol-neutral capture
+            provenance object override.
+        capture_key: Optional explicit protocol-neutral capture
+            identity key override.
+        expires_at: Optional absolute expiration timestamp.
     """
 
     session_id: str
@@ -140,6 +154,10 @@ class CreateArtifactInput:
     chain_seq: int | None = None
     kind: str = KIND_DATA
     derivation: str | None = None
+    capture_kind: str | None = None
+    capture_origin: dict[str, Any] | None = None
+    capture_key: str | None = None
+    expires_at: dt.datetime | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -258,6 +276,16 @@ def build_artifact_row(
     ):
         err = input_data.envelope.error
         error_summary = f"{err.code}: {err.message}"
+    capture_identity = build_capture_identity(
+        artifact_kind=input_data.kind,
+        request_key=input_data.request_key,
+        prefix=input_data.prefix,
+        tool_name=input_data.tool_name,
+        upstream_instance_id=input_data.upstream_instance_id,
+        capture_kind=input_data.capture_kind,
+        capture_origin=input_data.capture_origin,
+        capture_key=input_data.capture_key,
+    )
 
     return {
         "workspace_id": WORKSPACE_ID,
@@ -267,6 +295,9 @@ def build_artifact_row(
         "upstream_instance_id": input_data.upstream_instance_id,
         "upstream_tool_schema_hash": input_data.upstream_tool_schema_hash,
         "request_key": input_data.request_key,
+        "capture_kind": capture_identity.capture_kind,
+        "capture_origin": capture_identity.capture_origin,
+        "capture_key": capture_identity.capture_key,
         "request_args_hash": input_data.request_args_hash,
         "request_args_prefix": input_data.request_args_prefix,
         "payload_hash_full": payload_hash,
@@ -274,6 +305,7 @@ def build_artifact_row(
         "payload_json_bytes": payload_json_bytes,
         "payload_binary_bytes_total": payload_binary_bytes_total,
         "payload_total_bytes": payload_total_bytes,
+        "expires_at": input_data.expires_at,
         "last_referenced_at": dt.datetime.now(dt.UTC),
         "generation": 1,
         "parent_artifact_id": input_data.parent_artifact_id,
@@ -295,18 +327,20 @@ INSERT_ARTIFACT_SQL = """
 INSERT INTO artifacts (
     workspace_id, artifact_id, session_id, source_tool,
     upstream_instance_id, upstream_tool_schema_hash,
-    request_key, request_args_hash, request_args_prefix,
+    request_key, capture_kind, capture_origin, capture_key,
+    request_args_hash, request_args_prefix,
     payload_hash_full, canonicalizer_version,
     payload_json_bytes, payload_binary_bytes_total, payload_total_bytes,
+    expires_at,
     last_referenced_at, generation,
     parent_artifact_id, chain_seq,
     map_kind, map_status, mapper_version,
     kind, derivation,
     index_status, error_summary
 ) VALUES (
-    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-    %s, %s, %s
+    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+    %s, %s, %s, %s, %s, %s, %s, %s, %s
 )
 RETURNING created_seq
 """
@@ -345,6 +379,9 @@ def _artifact_insert_params(
         row["upstream_instance_id"],
         row["upstream_tool_schema_hash"],
         row["request_key"],
+        row["capture_kind"],
+        row["capture_origin"],
+        row["capture_key"],
         row["request_args_hash"],
         row["request_args_prefix"],
         row["payload_hash_full"],
@@ -352,6 +389,7 @@ def _artifact_insert_params(
         row["payload_json_bytes"],
         row["payload_binary_bytes_total"],
         row["payload_total_bytes"],
+        row["expires_at"],
         row["last_referenced_at"],
         row["generation"],
         row["parent_artifact_id"],
@@ -562,6 +600,13 @@ def persist_artifact(
         source_tool=f"{input_data.prefix}.{input_data.tool_name}",
         upstream_instance_id=input_data.upstream_instance_id,
         request_key=input_data.request_key,
+        capture_kind=str(row["capture_kind"]),
+        capture_origin=(
+            row["capture_origin"]
+            if isinstance(row.get("capture_origin"), dict)
+            else None
+        ),
+        capture_key=str(row["capture_key"]),
         payload_hash_full=payload_hash,
         payload_json_bytes=payload_json_bytes,
         payload_binary_bytes_total=payload_binary_bytes_total,

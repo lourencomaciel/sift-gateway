@@ -64,6 +64,16 @@ KIND_DERIVED_QUERY: str = "derived_query"
 KIND_DERIVED_CODEGEN: str = "derived_codegen"
 
 # ---------------------------------------------------------------------------
+# Capture kinds (protocol-neutral provenance)
+# ---------------------------------------------------------------------------
+CAPTURE_KIND_MCP_TOOL: str = "mcp_tool"
+CAPTURE_KIND_CLI_COMMAND: str = "cli_command"
+CAPTURE_KIND_STDIN_PIPE: str = "stdin_pipe"
+CAPTURE_KIND_FILE_INGEST: str = "file_ingest"
+CAPTURE_KIND_DERIVED_QUERY: str = "derived_query"
+CAPTURE_KIND_DERIVED_CODEGEN: str = "derived_codegen"
+
+# ---------------------------------------------------------------------------
 # Envelope constants (§5)
 # ---------------------------------------------------------------------------
 ENVELOPE_TYPE: str = "mcp_envelope"
