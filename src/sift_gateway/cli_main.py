@@ -14,7 +14,7 @@ import re
 import subprocess
 import sys
 import textwrap
-from typing import Any
+from typing import Any, cast
 
 from sift_gateway import __version__
 from sift_gateway.config import load_gateway_config
@@ -795,7 +795,9 @@ def _sanitize_cli_payload(runtime: Any, payload: dict[str, Any]) -> dict[str, An
     gateway = getattr(runtime, "gateway", None)
     sanitize = getattr(gateway, "_sanitize_tool_result", None)
     if callable(sanitize):
-        return sanitize(payload)
+        sanitized = sanitize(payload)
+        if isinstance(sanitized, dict):
+            return cast(dict[str, Any], sanitized)
     return payload
 
 
