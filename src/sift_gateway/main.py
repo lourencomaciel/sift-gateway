@@ -24,6 +24,34 @@ from sift_gateway import __version__
 from sift_gateway.config import load_gateway_config
 from sift_gateway.lifecycle import run_startup_check
 
+_ARTIFACT_COMMANDS = {
+    "list",
+    "schema",
+    "get",
+    "query",
+    "code",
+    "run",
+    "diff",
+}
+_SHARED_FLAGS_WITH_VALUE = {
+    "--data-dir",
+}
+_SHARED_FLAGS = {
+    "--version",
+}
+_SERVER_FLAGS_WITH_VALUE = {
+    "--transport",
+    "--host",
+    "--port",
+    "--path",
+    "--auth-token",
+}
+_SERVER_FLAGS = {
+    "--check",
+}
+_GLOBAL_FLAGS_WITH_VALUE = _SHARED_FLAGS_WITH_VALUE | _SERVER_FLAGS_WITH_VALUE
+_GLOBAL_FLAGS = _SHARED_FLAGS | _SERVER_FLAGS
+
 
 def _add_init_mode_group(
     init_parser: argparse.ArgumentParser,
@@ -241,6 +269,39 @@ def _parse_args() -> argparse.Namespace:
     _add_upstream_subcommand(sub)
     _add_install_subcommand(sub)
     return parser.parse_args()
+
+
+def _first_positional_command(raw_argv: list[str]) -> str | None:
+    """Return the first positional token from raw CLI args."""
+    idx = 0
+    while idx < len(raw_argv):
+        token = raw_argv[idx]
+        if token in _GLOBAL_FLAGS_WITH_VALUE:
+            idx += 2
+            continue
+        if token in _GLOBAL_FLAGS:
+            idx += 1
+            continue
+        if token.startswith("-"):
+            return None
+        return token
+    return None
+
+
+def _has_server_only_flags(raw_argv: list[str]) -> bool:
+    """Return whether argv includes flags reserved for server mode."""
+    for token in raw_argv:
+        if token in _SERVER_FLAGS or token in _SERVER_FLAGS_WITH_VALUE:
+            return True
+    return False
+
+
+def _is_artifact_cli_invocation(raw_argv: list[str]) -> bool:
+    """Return whether argv targets artifact CLI mode."""
+    if _has_server_only_flags(raw_argv):
+        return False
+    command = _first_positional_command(raw_argv)
+    return isinstance(command, str) and command in _ARTIFACT_COMMANDS
 
 
 def _run_upstream_add(args: argparse.Namespace) -> int:
@@ -536,7 +597,9 @@ def _run_server(
             "  sift-gateway --transport sse   "
             "Run with HTTP transport\n"
             "  sift-gateway init --from claude  "
-            "Import MCP config",
+            "Import MCP config\n"
+            "  sift-gateway run -- <command>  "
+            "Capture and query CLI artifacts",
             file=sys.stderr,
         )
         return 1
@@ -600,6 +663,12 @@ def serve() -> int:
     Returns:
         ``0`` on success, ``1`` on failure.
     """
+    raw_argv = sys.argv[1:]
+    if _is_artifact_cli_invocation(raw_argv):
+        from sift_gateway import cli_main as artifact_cli
+
+        return artifact_cli.serve(raw_argv)
+
     args = _parse_args()
 
     if args.command == "init":

@@ -70,8 +70,7 @@ dev = [
 
 [project.scripts]
 sift-gateway = "sift_gateway.main:cli"
-sift = "sift_gateway.cli_main:cli"
-sift-openclaw-skill = "sift_gateway.openclaw.cli:main"
+sift-gateway-openclaw-skill = "sift_gateway.openclaw.cli:main"
 
 [build-system]
 requires = ["uv_build>=0.10.0,<0.11.0"]

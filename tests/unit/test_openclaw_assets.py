@@ -9,15 +9,15 @@ from sift_gateway.openclaw.cli import cli
 def test_skill_text_loads_packaged_asset() -> None:
     text = skill_text()
     assert text == read_asset("SKILL.md")
-    assert "name: sift" in text
-    assert "sift code" in text
+    assert "name: sift-gateway" in text
+    assert "sift-gateway code" in text
 
 
 def test_cli_prints_skill_to_stdout(capsys) -> None:
     exit_code = cli([])
     captured = capsys.readouterr()
     assert exit_code == 0
-    assert "name: sift" in captured.out
+    assert "name: sift-gateway" in captured.out
     assert captured.err == ""
 
 

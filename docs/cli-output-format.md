@@ -1,6 +1,6 @@
 # CLI Output Format
 
-Stable output contract for the `sift` CLI.
+Stable output contract for the `sift-gateway` CLI.
 
 ## Goals
 
@@ -10,7 +10,7 @@ Stable output contract for the `sift` CLI.
 
 ## Default Human Output
 
-### `sift list`
+### `sift-gateway list`
 
 One line per artifact:
 
@@ -24,7 +24,7 @@ Optional pagination line:
 next_cursor: <cursor>
 ```
 
-### `sift schema <artifact_id>`
+### `sift-gateway schema <artifact_id>`
 
 ```text
 artifact: <artifact_id>
@@ -34,7 +34,7 @@ roots: <count>
 - <root_path> count=<count_estimate>
 ```
 
-### `sift get`, `sift query`, and `sift code`
+### `sift-gateway get`, `sift-gateway query`, and `sift-gateway code`
 
 Summary header plus formatted JSON payload:
 
@@ -47,7 +47,7 @@ next_cursor: <cursor>
 
 Only present fields are emitted.
 
-### `sift run`
+### `sift-gateway run`
 
 ```text
 artifact: <artifact_id>
@@ -57,12 +57,12 @@ capture:  <capture_kind>
 expires:  <iso_timestamp>
 tags:     <tag1>, <tag2>, ...
 exit:     <command_exit_code>
-hint:     use `sift query <artifact_id> '$'` to explore
+hint:     use `sift-gateway query <artifact_id> '$'` to explore
 ```
 
 Only present fields are emitted.
 
-### `sift diff`
+### `sift-gateway diff`
 
 ```text
 left:    <artifact_id>
@@ -78,7 +78,7 @@ If not equal, bounded unified diff lines are appended.
 
 - Always emits one JSON object to stdout.
 - Keys are sorted (`sort_keys=True`) for deterministic diffs.
-- `sift run` returns command exit code as process exit code even in JSON mode.
+- `sift-gateway run` returns command exit code as process exit code even in JSON mode.
 
 ## Compatibility Notes
 

@@ -1,27 +1,29 @@
 # Sift
 
-Sift is the gateway layer for agent tool work. It solves context bloat by
-capturing tool outputs as artifacts and letting agents retrieve only what they
-need.
+Sift is a local, single-tenant gateway for AI agent tool work.
+It fixes context bloat by storing large tool outputs as artifacts and returning
+only the slices an agent needs.
+
+Use it with agents that talk through MCP, or run it directly in CLI workflows.
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![PyPI](https://img.shields.io/pypi/v/sift-gateway.svg)](https://pypi.org/project/sift-gateway/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-## The Two Modes
+## One Command, Two Modes
 
-Sift has two independent operating modes:
+Sift uses one command handle: `sift-gateway`.
 
-| Mode | CLI | What it does |
+| Mode | How you run it | What it does |
 |---|---|---|
-| MCP gateway mode | `sift-gateway` | Runs between MCP clients and upstream MCP servers |
-| CLI mode | `sift` | Captures, queries, and computes over artifacts directly in terminal workflows |
+| MCP gateway mode | `sift-gateway` (default server behavior) | Proxies MCP traffic and persists tool outputs as artifacts |
+| CLI mode | `sift-gateway <artifact-command>` | Captures, queries, and computes over artifacts directly |
 
-You can use either mode by itself, or both together.
+These modes are independent. You can run only MCP mode, only CLI mode, or both.
 
-## Mode 1: MCP Gateway Mode (`sift-gateway`)
+## MCP Gateway Mode
 
-Use this when an agent/client talks to tools via MCP.
+Use this when an agent/client talks to tools over MCP.
 
 ### Quick start
 
@@ -53,40 +55,40 @@ sift-gateway --transport sse --host 127.0.0.1 --port 8080
 - Persists mirrored outputs as artifacts.
 - Returns small responses inline and larger responses as handles.
 
-## Mode 2: CLI Mode (`sift`)
+## CLI Mode
 
-Use this when you want Sift without MCP clients/upstreams.
+Use this when you want artifact workflows directly in terminal automation.
 
 ### Quick start
 
 ```bash
 pipx install sift-gateway
-sift run -- echo '{"items":[{"id":1,"name":"a"}]}'
-sift list --limit 10
+sift-gateway run -- echo '{"items":[{"id":1,"name":"a"}]}'
+sift-gateway list --limit 10
 ```
 
 ### Capture sources
 
 ```bash
 # Capture command output
-sift run -- git status --porcelain
+sift-gateway run -- git status --porcelain
 
 # Capture stdin
-cat payload.json | sift run --stdin
+cat payload.json | sift-gateway run --stdin
 ```
 
 ### Query and inspect artifacts
 
 ```bash
-sift schema art_123
-sift get art_123
-sift query art_123 '$.items' --select id,name --limit 50
-sift code art_123 '$.items' --expr 'len(df)'
-sift diff art_left art_right
+sift-gateway schema art_123
+sift-gateway get art_123
+sift-gateway query art_123 '$.items' --select id,name --limit 50
+sift-gateway code art_123 '$.items' --expr 'len(df)'
+sift-gateway diff art_left art_right
 ```
 
-This mode uses local state in `.sift-gateway` by default.
-Use `--data-dir` on both CLIs to target a different instance.
+CLI mode uses local state in `.sift-gateway` by default.
+Use `--data-dir` to target a different instance.
 
 ## MCP Artifact Query Model
 

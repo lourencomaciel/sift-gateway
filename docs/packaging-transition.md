@@ -1,52 +1,41 @@
-# Packaging Transition Plan
+# Packaging Strategy
 
-This document tracks the CLI-first naming transition while preserving MCP compatibility.
+This document records the final packaging and command decision for Sift.
 
-## Goals
+## Decision
 
-1. Publish CLI-focused distribution identity (`sift-data`) without breaking existing users.
-2. Keep `sift-gateway` install and command path stable during transition.
-3. Keep base install lean; heavy compute dependencies remain optional extras.
+1. Keep a single published package: `sift-gateway`.
+2. Keep a single primary command handle: `sift-gateway`.
+3. Run both operating modes from the same executable:
+   - MCP gateway mode (default server behavior)
+   - Artifact CLI mode (`list`, `schema`, `get`, `query`, `code`, `run`, `diff`)
+4. Keep optional dependency extras for heavier compute features.
+
+## Rationale
+
+1. Avoid command-handle ambiguity for users and docs.
+2. Avoid PyPI name collisions on short handles such as `sift`.
+3. Keep installation, onboarding, and support paths consistent.
 
 ## Current State (February 19, 2026)
 
 - Package name: `sift-gateway`
-- Entrypoints:
-  - `sift-gateway` (gateway/MCP flows)
-  - `sift` (CLI artifact workflows)
+- Primary command: `sift-gateway`
+- Additional helper command: `sift-gateway-openclaw-skill`
 - Optional extras:
   - `code` (`pandas`, `numpy`, `jmespath`)
-  - `data-science` (backward-compatible alias)
+  - `data-science` (compatibility alias)
 
-## Transition Strategy
+## Non-Goals
 
-### Phase 1: Compatibility-first
-
-- Keep `sift-gateway` as authoritative package.
-- Keep both CLI and MCP entrypoints in one distribution.
-- Use docs and quickstarts to position `sift` command as primary for CLI workflows.
-
-### Phase 2: Alias distribution
-
-- Publish `sift-data` as a thin wrapper distribution that depends on `sift-gateway`.
-- Ensure `sift` command behavior is identical.
-- Preserve all MCP behavior and docs under `sift-gateway`.
-
-### Phase 3: Long-term branding
-
-- Evaluate making `sift-data` primary distribution name.
-- Keep `sift-gateway` as compatibility package for at least one major cycle.
-- Announce migration windows and deprecation policy in changelog/release notes.
-
-## Extras Policy
-
-- Base install must not auto-install data-science dependencies.
-- `code` extra is the canonical way to enable code-query dependencies.
-- `data-science` remains as alias during transition to avoid breakage.
+1. No separate `sift` command distribution.
+2. No `sift-data` wrapper package plan.
+3. No dual-handle documentation strategy.
 
 ## Validation Checklist
 
 - `uv build` succeeds.
-- `sift` and `sift-gateway` console scripts are generated from package metadata.
-- Installing base package does not require pandas/numpy/jmespath.
-- Installing `.[code]` enables code-query data-science stack.
+- Package metadata exposes `sift-gateway` and `sift-gateway-openclaw-skill`.
+- `uv run sift-gateway --version` succeeds.
+- `uv run sift-gateway list --limit 1 --json` succeeds.
+- `uv run sift-gateway --check` succeeds.

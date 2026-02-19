@@ -403,6 +403,34 @@ def test_serve_dispatches_init_command(
     assert json.loads(source.read_text())["mcpServers"]["gh"]["command"] == "gh"
 
 
+def test_serve_dispatches_artifact_cli_mode(monkeypatch) -> None:
+    seen: dict[str, object] = {}
+
+    def _fake_cli_serve(argv: list[str] | None = None) -> int:
+        seen["argv"] = argv
+        return 23
+
+    monkeypatch.setattr(
+        "sift_gateway.cli_main.serve",
+        _fake_cli_serve,
+    )
+    monkeypatch.setattr(
+        "sys.argv",
+        ["sift-gateway", "--data-dir", "/tmp/demo", "list", "--limit", "1"],
+    )
+
+    exit_code = serve()
+
+    assert exit_code == 23
+    assert seen["argv"] == [
+        "--data-dir",
+        "/tmp/demo",
+        "list",
+        "--limit",
+        "1",
+    ]
+
+
 def test_serve_dispatches_init_command_with_source_shortcut(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:

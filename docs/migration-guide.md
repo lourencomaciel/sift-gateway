@@ -6,7 +6,7 @@ CLI surfaces share one execution core.
 ## Who should read this
 
 1. Existing `sift-gateway` users upgrading in place.
-2. Teams adopting `sift` CLI workflows alongside MCP.
+2. Teams adopting `sift-gateway` CLI workflows alongside MCP.
 3. Maintainers preparing release cutover notes.
 
 ## Compatibility Summary
@@ -24,7 +24,7 @@ CLI surfaces share one execution core.
 ## Packaging and Extras
 
 1. Keep installing `sift-gateway` for current MCP setups.
-2. CLI-first path includes `sift` command entrypoint.
+2. CLI-first path includes `sift-gateway` command entrypoint.
 3. Code runtime dependencies are optional:
    - `pip install "sift-gateway[code]"`
 4. `data-science` remains as a compatibility alias for now.
@@ -41,22 +41,22 @@ CLI surfaces share one execution core.
 2. Start with retrieval on existing artifacts:
 
 ```bash
-sift list
-sift schema <artifact_id>
-sift query <artifact_id> '$'
+sift-gateway list
+sift-gateway schema <artifact_id>
+sift-gateway query <artifact_id> '$'
 ```
 
 3. Add capture workflows:
 
 ```bash
-sift run -- gh api repos/org/repo/pulls
-kubectl get pods -o json | sift run --stdin --tag k8s
+sift-gateway run -- gh api repos/org/repo/pulls
+kubectl get pods -o json | sift-gateway run --stdin --tag k8s
 ```
 
 4. Add code analysis only when needed:
 
 ```bash
-sift code <artifact_id> '$' --expr "df['state'].value_counts().to_dict()"
+sift-gateway code <artifact_id> '$' --expr "df['state'].value_counts().to_dict()"
 ```
 
 ## Rollback and Safety
