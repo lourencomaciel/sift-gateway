@@ -27,8 +27,8 @@ Sift changes that default:
 | MCP gateway mode | `sift-gateway` | The agent uses MCP clients + upstream MCP servers |
 | Artifact CLI mode | `sift` | You want direct artifact operations in terminal workflows |
 
-These modes are complementary: run Sift as an MCP gateway, then inspect/query
-artifacts with the CLI.
+These modes are independent. You can run Sift fully in MCP gateway mode,
+fully in artifact CLI mode, or combine both in the same workflow.
 
 ## MCP Gateway Mode (`sift-gateway`)
 
