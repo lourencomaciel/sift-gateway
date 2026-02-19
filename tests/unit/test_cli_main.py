@@ -111,6 +111,41 @@ def test_serve_query_passes_where_object_to_select(
     }
 
 
+def test_serve_query_scope_single_sets_scope_single(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "sift_gateway.cli_main._runtime_context",
+        _fake_runtime_context,
+    )
+    captured_args: dict[str, Any] = {}
+
+    def _fake_select(runtime: Any, arguments: dict[str, Any]) -> dict[str, Any]:
+        del runtime
+        captured_args.update(arguments)
+        return {"items": [], "truncated": False, "cursor": None}
+
+    monkeypatch.setattr(
+        "sift_gateway.cli_main.execute_artifact_select", _fake_select
+    )
+
+    exit_code = cli_main.serve(
+        [
+            "query",
+            "art_1",
+            "$.items",
+            "--scope",
+            "single",
+            "--select",
+            "id",
+            "--json",
+        ]
+    )
+
+    assert exit_code == 0
+    assert captured_args["scope"] == "single"
+
+
 def test_serve_query_rejects_invalid_where_json(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -207,6 +242,91 @@ def test_serve_code_loads_file(
     assert "rows" in captured_args["code"]
 
 
+def test_serve_code_supports_multi_artifact_shared_root_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "sift_gateway.cli_main._runtime_context",
+        _fake_runtime_context,
+    )
+    captured_args: dict[str, Any] = {}
+
+    def _fake_code(runtime: Any, arguments: dict[str, Any]) -> dict[str, Any]:
+        del runtime
+        captured_args.update(arguments)
+        return {"items": [], "truncated": False}
+
+    monkeypatch.setattr(
+        "sift_gateway.cli_main.execute_artifact_code", _fake_code
+    )
+
+    exit_code = cli_main.serve(
+        [
+            "code",
+            "--artifact-id",
+            "art_users",
+            "--artifact-id",
+            "art_orders",
+            "--root-path",
+            "$.items",
+            "--expr",
+            "len(df)",
+            "--json",
+        ]
+    )
+
+    assert exit_code == 0
+    assert captured_args["artifact_ids"] == ["art_users", "art_orders"]
+    assert captured_args["root_paths"] == {
+        "art_users": "$.items",
+        "art_orders": "$.items",
+    }
+    assert "artifact_id" not in captured_args
+
+
+def test_serve_code_supports_multi_artifact_per_artifact_root_paths(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "sift_gateway.cli_main._runtime_context",
+        _fake_runtime_context,
+    )
+    captured_args: dict[str, Any] = {}
+
+    def _fake_code(runtime: Any, arguments: dict[str, Any]) -> dict[str, Any]:
+        del runtime
+        captured_args.update(arguments)
+        return {"items": [], "truncated": False}
+
+    monkeypatch.setattr(
+        "sift_gateway.cli_main.execute_artifact_code", _fake_code
+    )
+
+    exit_code = cli_main.serve(
+        [
+            "code",
+            "--artifact-id",
+            "art_users",
+            "--artifact-id",
+            "art_orders",
+            "--root-path",
+            "$.users",
+            "--root-path",
+            "$.orders",
+            "--expr",
+            "len(df)",
+            "--json",
+        ]
+    )
+
+    assert exit_code == 0
+    assert captured_args["artifact_ids"] == ["art_users", "art_orders"]
+    assert captured_args["root_paths"] == {
+        "art_users": "$.users",
+        "art_orders": "$.orders",
+    }
+
+
 def test_serve_code_expr_builds_dataframe_wrapper(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -265,6 +385,124 @@ def test_serve_code_rejects_invalid_params_json(
 
     assert exit_code == 1
     assert "invalid --params JSON" in err
+
+
+def test_serve_code_scope_single_sets_scope_single(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "sift_gateway.cli_main._runtime_context",
+        _fake_runtime_context,
+    )
+    captured_args: dict[str, Any] = {}
+
+    def _fake_code(runtime: Any, arguments: dict[str, Any]) -> dict[str, Any]:
+        del runtime
+        captured_args.update(arguments)
+        return {"items": [], "truncated": False}
+
+    monkeypatch.setattr(
+        "sift_gateway.cli_main.execute_artifact_code", _fake_code
+    )
+
+    exit_code = cli_main.serve(
+        [
+            "code",
+            "art_1",
+            "$.items",
+            "--scope",
+            "single",
+            "--expr",
+            "len(df)",
+            "--json",
+        ]
+    )
+
+    assert exit_code == 0
+    assert captured_args["scope"] == "single"
+
+
+def test_serve_code_rejects_mixed_positional_and_multi_flags(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr(
+        "sift_gateway.cli_main._runtime_context",
+        _fake_runtime_context,
+    )
+
+    exit_code = cli_main.serve(
+        [
+            "code",
+            "art_1",
+            "$.items",
+            "--artifact-id",
+            "art_2",
+            "--root-path",
+            "$.items",
+            "--expr",
+            "len(df)",
+        ]
+    )
+    err = capsys.readouterr().err
+
+    assert exit_code == 1
+    assert "cannot mix positional artifact_id/root_path" in err
+
+
+def test_serve_code_rejects_mismatched_multi_root_path_count(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr(
+        "sift_gateway.cli_main._runtime_context",
+        _fake_runtime_context,
+    )
+
+    exit_code = cli_main.serve(
+        [
+            "code",
+            "--artifact-id",
+            "art_1",
+            "--artifact-id",
+            "art_2",
+            "--root-path",
+            "$.one",
+            "--root-path",
+            "$.two",
+            "--root-path",
+            "$.three",
+            "--expr",
+            "len(df)",
+        ]
+    )
+    err = capsys.readouterr().err
+
+    assert exit_code == 1
+    assert "provide one --root-path or repeat --root-path" in err
+
+
+def test_serve_code_rejects_partial_positional_mode(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr(
+        "sift_gateway.cli_main._runtime_context",
+        _fake_runtime_context,
+    )
+
+    exit_code = cli_main.serve(
+        [
+            "code",
+            "art_1",
+            "--expr",
+            "len(df)",
+        ]
+    )
+    err = capsys.readouterr().err
+
+    assert exit_code == 1
+    assert "requires both artifact_id and root_path" in err
 
 
 def test_serve_non_json_list_emits_compact_lines(

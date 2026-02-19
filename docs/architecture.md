@@ -147,11 +147,12 @@ Conditional update: `deleted_at IS NULL AND map_status IN (pending, stale) AND g
 
 #### Scope model
 
-- `scope` applies to `query_kind=describe|get|select` and defaults to `all_related`.
+- `scope` applies to `query_kind=describe|get|select|code` and defaults to `all_related`.
 - `all_related` resolves the full visible lineage component (anchor + ancestors + descendants).
 - `single` restricts execution to the anchor artifact only.
 - `query_kind=search` does not accept `artifact_id` or `scope`.
-- `query_kind=code` always executes with all-related lineage semantics; provided `scope` is ignored.
+- For `query_kind=code`, `scope=single` restricts each requested anchor to
+  itself; `scope=all_related` expands each anchor through lineage.
 
 #### `query_kind=code` execution contract
 

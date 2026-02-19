@@ -149,6 +149,115 @@ def _parse_params_json(raw_params: str | None) -> dict[str, Any]:
     return _parse_json_object(raw_params, flag="--params")
 
 
+def _normalize_code_flag_values(
+    raw_values: list[str] | None,
+    *,
+    flag: str,
+) -> list[str]:
+    """Normalize repeatable ``code`` flags and enforce non-empty values."""
+    values = raw_values or []
+    normalized: list[str] = []
+    for raw_value in values:
+        value = raw_value.strip()
+        if not value:
+            msg = f"{flag} values must be non-empty strings"
+            raise ValueError(msg)
+        normalized.append(value)
+    return normalized
+
+
+def _resolve_code_target_arguments(
+    args: argparse.Namespace,
+) -> dict[str, Any]:
+    """Resolve code-target args into single-artifact or multi-artifact shape."""
+    raw_positional_artifact_id = getattr(args, "artifact_id", None)
+    positional_artifact_id = (
+        raw_positional_artifact_id.strip()
+        if isinstance(raw_positional_artifact_id, str)
+        and raw_positional_artifact_id.strip()
+        else None
+    )
+    raw_positional_root_path = getattr(args, "root_path", None)
+    positional_root_path = (
+        raw_positional_root_path.strip()
+        if isinstance(raw_positional_root_path, str)
+        and raw_positional_root_path.strip()
+        else None
+    )
+    raw_flag_artifact_ids = getattr(args, "artifact_ids", None)
+    raw_flag_root_paths = getattr(args, "root_paths", None)
+    flag_artifact_ids = _normalize_code_flag_values(
+        raw_flag_artifact_ids
+        if isinstance(raw_flag_artifact_ids, list)
+        else None,
+        flag="--artifact-id",
+    )
+    flag_root_paths = _normalize_code_flag_values(
+        raw_flag_root_paths if isinstance(raw_flag_root_paths, list) else None,
+        flag="--root-path",
+    )
+
+    has_positional_artifact = positional_artifact_id is not None
+    has_positional_root = positional_root_path is not None
+    uses_positionals = has_positional_artifact or has_positional_root
+    uses_flags = bool(flag_artifact_ids or flag_root_paths)
+
+    if uses_positionals and uses_flags:
+        msg = (
+            "cannot mix positional artifact_id/root_path with "
+            "--artifact-id/--root-path"
+        )
+        raise ValueError(msg)
+
+    if uses_positionals:
+        if not (has_positional_artifact and has_positional_root):
+            msg = "code positional mode requires both artifact_id and root_path"
+            raise ValueError(msg)
+        return {
+            "artifact_id": positional_artifact_id,
+            "root_path": positional_root_path,
+        }
+
+    if not flag_artifact_ids:
+        msg = (
+            "missing artifact target; provide positional artifact_id/root_path "
+            "or --artifact-id/--root-path"
+        )
+        raise ValueError(msg)
+    if not flag_root_paths:
+        msg = (
+            "missing root path; provide positional artifact_id/root_path "
+            "or --root-path"
+        )
+        raise ValueError(msg)
+    if len(set(flag_artifact_ids)) != len(flag_artifact_ids):
+        msg = "duplicate --artifact-id values are not supported"
+        raise ValueError(msg)
+
+    root_paths: dict[str, str]
+    if len(flag_root_paths) == 1:
+        root_paths = dict.fromkeys(flag_artifact_ids, flag_root_paths[0])
+    elif len(flag_root_paths) == len(flag_artifact_ids):
+        root_paths = dict(
+            zip(
+                flag_artifact_ids,
+                flag_root_paths,
+                strict=True,
+            )
+        )
+    else:
+        msg = (
+            "when using multiple --artifact-id values, provide one --root-path "
+            "or repeat --root-path once per --artifact-id"
+        )
+        raise ValueError(msg)
+
+    return {
+        "artifact_ids": flag_artifact_ids,
+        "root_paths": root_paths,
+    }
+
+
 def _load_code_source(args: argparse.Namespace) -> str:
     """Load Python source from ``--code``, ``--file``, or ``--expr``."""
     if args.code_expr is not None:
@@ -1012,12 +1121,13 @@ def _execute_code(
     """Execute ``sift-gateway code`` against the core code-query service."""
     code_source = _load_code_source(args)
     params_obj = _parse_params_json(args.params)
+    target_args = _resolve_code_target_arguments(args)
     return execute_artifact_code(
         runtime,
         arguments={
             "_gateway_context": _build_gateway_context(),
-            "artifact_id": args.artifact_id,
-            "root_path": args.root_path,
+            "scope": args.scope,
+            **target_args,
             "code": code_source,
             "params": params_obj,
         },
@@ -1543,8 +1653,49 @@ def _build_parser() -> argparse.ArgumentParser:
         "code",
         help="Run sandboxed Python over artifact root data",
     )
-    code_parser.add_argument("artifact_id")
-    code_parser.add_argument("root_path")
+    code_parser.add_argument(
+        "artifact_id",
+        nargs="?",
+        help=(
+            "Artifact id in single-artifact mode. "
+            "Omit when using repeated --artifact-id."
+        ),
+    )
+    code_parser.add_argument(
+        "root_path",
+        nargs="?",
+        help=(
+            "Root path in single-artifact mode. "
+            "Omit when using --root-path flag mode."
+        ),
+    )
+    code_parser.add_argument(
+        "--artifact-id",
+        dest="artifact_ids",
+        action="append",
+        default=[],
+        help=(
+            "Artifact id for multi-artifact code queries. "
+            "Repeat to include multiple artifacts."
+        ),
+    )
+    code_parser.add_argument(
+        "--root-path",
+        dest="root_paths",
+        action="append",
+        default=[],
+        help=(
+            "Root path for --artifact-id mode. "
+            "Provide once for all artifacts, or repeat once per artifact "
+            "in order."
+        ),
+    )
+    code_parser.add_argument(
+        "--scope",
+        choices=["all_related", "single"],
+        default="all_related",
+        help="Lineage scope (default: all_related)",
+    )
     code_source_group = code_parser.add_mutually_exclusive_group(required=True)
     code_source_group.add_argument(
         "--code",

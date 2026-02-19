@@ -51,6 +51,11 @@ next_cursor: <cursor>
 
 Only present fields are emitted.
 
+`sift-gateway code` supports:
+- single target: `sift-gateway code <artifact_id> <root_path> ...`
+- multi target: repeat `--artifact-id` and use one `--root-path` (shared) or one `--root-path` per artifact (ordered)
+- scope control: default `all_related`; pass `--scope single` to restrict to anchor artifact(s)
+
 ### `sift-gateway run`
 
 ```text

@@ -143,10 +143,11 @@ Lineage query rules for `artifact(action="query")`:
 - `query_kind` is required and must be one of `describe|get|select|search|code`.
 - `query_kind=describe|get|select` requires `artifact_id`.
 - `query_kind=code` requires `artifact_id` (single) or `artifact_ids` (multi).
-- `scope` applies only to `describe|get|select` and defaults to `all_related`.
+- `scope` applies to `describe|get|select|code` and defaults to `all_related`.
 - `scope=single` restricts execution to the anchor artifact.
 - `query_kind=search` rejects `artifact_id` and `scope`.
-- `query_kind=code` ignores `scope` and always uses all-related semantics.
+- For `query_kind=code`, `scope=single` restricts inputs to the requested
+  anchor(s) without lineage expansion.
 - `query_kind=code` returns all results in a single response (no pagination); output is bounded by `max_bytes_out`.
 - `query_kind=code` runtime failures can include `details.traceback` (up to 2000 chars).
 

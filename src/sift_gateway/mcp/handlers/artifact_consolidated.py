@@ -9,7 +9,7 @@ Query behavior is explicit:
 
 - ``query_kind`` is required and must be one of
   ``describe|get|select|search|code``.
-- ``scope`` is supported for ``describe|get|select`` and defaults
+- ``scope`` is supported for ``describe|get|select|code`` and defaults
   to ``all_related``.
 """
 
@@ -104,8 +104,16 @@ def _validate_query_artifact_scope(
                 "INVALID_ARGUMENT",
                 "artifact_id or artifact_ids is required for query_kind=code",
             )
-        # Preserve backward compatibility: ignore scope for code queries.
-        query_args.pop("scope", None)
+        raw_scope = query_args.get("scope")
+        if raw_scope is None:
+            query_args["scope"] = "all_related"
+            return None
+        if not isinstance(raw_scope, str) or raw_scope not in _QUERY_SCOPES:
+            return gateway_error(
+                "INVALID_ARGUMENT",
+                "scope must be one of: all_related, single",
+            )
+        query_args["scope"] = raw_scope
         return None
 
     if not query_args.get("artifact_id"):

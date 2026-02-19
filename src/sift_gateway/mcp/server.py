@@ -160,11 +160,12 @@ _BUILTIN_TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
                 "type": "string",
                 "enum": ["all_related", "single"],
                 "description": (
-                    "For query_kind describe/get/select: "
+                    "For query_kind describe/get/select/code: "
                     "all_related (default) queries the full lineage "
                     "component of artifact_id; single queries only "
-                    "artifact_id. Ignored for query_kind=code; "
-                    "not valid for query_kind=search."
+                    "artifact_id (or only each requested id for "
+                    "query_kind=code with artifact_ids). "
+                    "Not valid for query_kind=search."
                 ),
             },
             "artifact_id": {
