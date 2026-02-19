@@ -1,62 +1,41 @@
 # Sift
 
-Sift is the gateway layer for AI agents working with external tools.
-It fixes context bloat by turning large tool outputs into durable artifacts,
-then letting agents retrieve only the needed slices.
+Sift is the gateway layer for agent tool work. It solves context bloat by
+capturing tool outputs as artifacts and letting agents retrieve only what they
+need.
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![PyPI](https://img.shields.io/pypi/v/sift-gateway.svg)](https://pypi.org/project/sift-gateway/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-## Why Sift
+## The Two Modes
 
-Without a gateway, agents ingest raw tool payloads directly into prompt context.
-That causes avoidable token burn, weaker reasoning over long runs, and brittle
-multi-step flows.
+Sift has two independent operating modes:
 
-Sift changes that default:
-
-- Captures tool outputs as artifacts.
-- Returns small outputs inline and large outputs as handles.
-- Provides retrieval/query/compute paths over stored artifacts.
-
-## Two Operating Modes
-
-| Mode | CLI | Use it when |
+| Mode | CLI | What it does |
 |---|---|---|
-| MCP gateway mode | `sift-gateway` | The agent uses MCP clients + upstream MCP servers |
-| Artifact CLI mode | `sift` | You want direct artifact operations in terminal workflows |
+| MCP gateway mode | `sift-gateway` | Runs between MCP clients and upstream MCP servers |
+| CLI mode | `sift` | Captures, queries, and computes over artifacts directly in terminal workflows |
 
-These modes are independent. You can run Sift fully in MCP gateway mode,
-fully in artifact CLI mode, or combine both in the same workflow.
+You can use either mode by itself, or both together.
 
-## MCP Gateway Mode (`sift-gateway`)
+## Mode 1: MCP Gateway Mode (`sift-gateway`)
 
-### Install
+Use this when an agent/client talks to tools via MCP.
+
+### Quick start
 
 ```bash
 pipx install sift-gateway
-```
-
-### Import MCP client config
-
-```bash
 sift-gateway init --from claude
-```
-
-`--from` supports shortcuts:
-`claude`, `claude-code`, `cursor`, `vscode`, `windsurf`, `zed`, `auto`
-or an explicit file path.
-
-### Check gateway health
-
-```bash
 sift-gateway --check
 ```
 
-### Restart your MCP client
+Then restart your MCP client.
 
-After restart, tool calls route through Sift.
+`--from` shortcuts:
+`claude`, `claude-code`, `cursor`, `vscode`, `windsurf`, `zed`, `auto`
+(or pass an explicit config path).
 
 ### Common gateway commands
 
@@ -68,50 +47,51 @@ sift-gateway uninstall pandas
 sift-gateway --transport sse --host 127.0.0.1 --port 8080
 ```
 
-## Artifact CLI Mode (`sift`)
+### Runtime behavior
 
-### Inspect recent artifacts
+- Mirrors upstream MCP tools with original schemas.
+- Persists mirrored outputs as artifacts.
+- Returns small responses inline and larger responses as handles.
+
+## Mode 2: CLI Mode (`sift`)
+
+Use this when you want Sift without MCP clients/upstreams.
+
+### Quick start
 
 ```bash
+pipx install sift-gateway
+sift run -- echo '{"items":[{"id":1,"name":"a"}]}'
 sift list --limit 10
 ```
 
-### Inspect an artifact schema
+### Capture sources
+
+```bash
+# Capture command output
+sift run -- git status --porcelain
+
+# Capture stdin
+cat payload.json | sift run --stdin
+```
+
+### Query and inspect artifacts
 
 ```bash
 sift schema art_123
-```
-
-### Select fields from a root path
-
-```bash
-sift query art_123 '$.items' --select id,name,status --limit 50
-```
-
-### Run code against stored data
-
-```bash
-sift code art_123 '$.items' --expr 'len(df)'
-```
-
-### Capture command output as artifact
-
-```bash
-sift run -- git status --porcelain
-```
-
-### Common artifact commands
-
-```bash
-sift --help
 sift get art_123
+sift query art_123 '$.items' --select id,name --limit 50
+sift code art_123 '$.items' --expr 'len(df)'
 sift diff art_left art_right
 ```
 
-## Artifact Query Model (MCP)
+This mode uses local state in `.sift-gateway` by default.
+Use `--data-dir` on both CLIs to target a different instance.
 
-For MCP agents, retrieval is done via the `artifact` tool with
-`action="query"` and a `query_kind`.
+## MCP Artifact Query Model
+
+In MCP workflows, retrieval happens through the `artifact` tool with
+`action="query"`.
 
 Supported `query_kind` values:
 
@@ -119,7 +99,7 @@ Supported `query_kind` values:
 |---|---|
 | `describe` | Schema and metadata |
 | `get` | Full payload retrieval |
-| `select` | Field projection/filtering from a root path |
+| `select` | Projection/filtering from a root path |
 | `search` | Search and list session artifacts in the current workspace |
 | `code` | Execute constrained Python over artifact data |
 
@@ -149,17 +129,17 @@ artifact(
 
 ## Context-Bloat Controls
 
-- `SIFT_GATEWAY_PASSTHROUGH_MAX_BYTES` controls inline vs handle behavior.
-- Default is `8192` bytes.
-- Set `SIFT_GATEWAY_PASSTHROUGH_MAX_BYTES=0` to force handle-first behavior.
+- `SIFT_GATEWAY_PASSTHROUGH_MAX_BYTES` controls inline-vs-handle threshold.
+- Default: `8192` bytes.
+- Set to `0` to force handle-first behavior.
 
 ## Configuration Highlights
 
 | Env var | Default | Description |
 |---|---|---|
-| `SIFT_GATEWAY_DATA_DIR` | `.sift-gateway` | Gateway state directory |
+| `SIFT_GATEWAY_DATA_DIR` | `.sift-gateway` | Instance root directory |
 | `SIFT_GATEWAY_PASSTHROUGH_MAX_BYTES` | `8192` | Inline response threshold |
-| `SIFT_GATEWAY_CODE_QUERY_ENABLED` | `true` | Enable code query execution |
+| `SIFT_GATEWAY_CODE_QUERY_ENABLED` | `true` | Enable code queries |
 | `SIFT_GATEWAY_SECRET_REDACTION_ENABLED` | `true` | Redact likely outbound secrets |
 | `SIFT_GATEWAY_AUTH_TOKEN` | unset | Required for non-local HTTP binds |
 
@@ -167,7 +147,7 @@ Full reference: [`docs/config.md`](docs/config.md)
 
 ## Security Notes
 
-- Code queries use AST/import/time/memory guardrails, but not full OS sandboxing.
+- Code queries use AST/import/time/memory guardrails, not full OS sandboxing.
 - Outbound secret redaction is enabled by default.
 
 Disable code queries if needed:

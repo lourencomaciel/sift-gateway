@@ -33,6 +33,7 @@ from sift_gateway.core.artifact_search import execute_artifact_search
 from sift_gateway.core.artifact_select import execute_artifact_select
 from sift_gateway.db.backend import SqliteBackend
 from sift_gateway.db.migrate import apply_migrations
+from sift_gateway.lifecycle import ensure_data_dirs
 from sift_gateway.mcp.adapters.artifact_query_runtime import (
     GatewayArtifactQueryRuntime,
 )
@@ -303,6 +304,8 @@ def _runtime_context(
 ) -> Generator[GatewayArtifactQueryRuntime, None, None]:
     """Build and yield a query runtime for CLI retrieval commands."""
     config = load_gateway_config(data_dir_override=data_dir_override)
+    # Allow CLI-only workflows to bootstrap from an empty data dir.
+    ensure_data_dirs(config)
     backend = SqliteBackend(
         db_path=config.sqlite_path,
         busy_timeout_ms=config.sqlite_busy_timeout_ms,
