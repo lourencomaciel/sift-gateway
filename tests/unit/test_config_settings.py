@@ -83,6 +83,45 @@ def test_passthrough_max_bytes_rejects_negative(
         GatewayConfig(data_dir=tmp_path, passthrough_max_bytes=-1)
 
 
+def test_secret_redaction_defaults(tmp_path: Path) -> None:
+    config = GatewayConfig(data_dir=tmp_path)
+    assert config.secret_redaction_enabled is True
+    assert config.secret_redaction_fail_closed is False
+    assert config.secret_redaction_max_scan_bytes == 32_768
+    assert config.secret_redaction_placeholder == "[REDACTED_SECRET]"
+
+
+def test_secret_redaction_env_overrides(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setenv("SIFT_MCP_SECRET_REDACTION_ENABLED", "false")
+    monkeypatch.setenv("SIFT_MCP_SECRET_REDACTION_FAIL_CLOSED", "true")
+    monkeypatch.setenv("SIFT_MCP_SECRET_REDACTION_MAX_SCAN_BYTES", "4096")
+    monkeypatch.setenv(
+        "SIFT_MCP_SECRET_REDACTION_PLACEHOLDER",
+        "  [MASKED]  ",
+    )
+    config = load_gateway_config(data_dir_override=str(tmp_path))
+    assert config.secret_redaction_enabled is False
+    assert config.secret_redaction_fail_closed is True
+    assert config.secret_redaction_max_scan_bytes == 4096
+    assert config.secret_redaction_placeholder == "[MASKED]"
+
+
+def test_secret_redaction_max_scan_bytes_rejects_zero(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(ValidationError):
+        GatewayConfig(data_dir=tmp_path, secret_redaction_max_scan_bytes=0)
+
+
+def test_secret_redaction_placeholder_rejects_blank(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(ValidationError):
+        GatewayConfig(data_dir=tmp_path, secret_redaction_placeholder="   ")
+
+
 def test_code_query_allowed_import_roots_env_override(
     tmp_path: Path, monkeypatch
 ) -> None:

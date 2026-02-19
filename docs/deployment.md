@@ -63,6 +63,27 @@ sift-mcp --transport sse --host 0.0.0.0
 
 **Important:** The process exits with a security error if binding to a non-local address without an auth token.
 
+### Outbound secret redaction
+
+Outbound tool responses are redacted by default before they are returned to the
+MCP client. This helps prevent accidental leakage of API keys/tokens from
+upstream payloads.
+
+```bash
+# Enabled by default
+export SIFT_MCP_SECRET_REDACTION_ENABLED=true
+
+# Optional: fail requests with INTERNAL if redaction cannot run
+export SIFT_MCP_SECRET_REDACTION_FAIL_CLOSED=false
+
+# Optional tuning
+export SIFT_MCP_SECRET_REDACTION_MAX_SCAN_BYTES=32768
+export SIFT_MCP_SECRET_REDACTION_PLACEHOLDER='[REDACTED_SECRET]'
+```
+
+Set `SIFT_MCP_SECRET_REDACTION_ENABLED=false` only in trusted environments that
+explicitly need raw upstream payloads.
+
 ### Client Configuration
 
 When using URL mode, configure your MCP client with the gateway URL:
@@ -119,7 +140,7 @@ See [Observability](observability.md) for full event catalog.
 
 ### Metrics
 
-Sift records Prometheus-style counters and histograms internally for gateway operations (cache, upstream calls, mapping, cursor outcomes, pruning, and code queries). There is currently no configurable standalone `/metrics` HTTP endpoint.
+Sift records Prometheus-style counters and histograms internally for gateway operations (cache, upstream calls, mapping, cursor outcomes, pruning, outbound redaction, and code queries). There is currently no configurable standalone `/metrics` HTTP endpoint.
 
 ## Performance Tuning
 
