@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from sift_mcp.envelope.jsonb import envelope_to_jsonb
-from sift_mcp.envelope.model import Envelope, JsonContentPart
+from sift_gateway.envelope.jsonb import envelope_to_jsonb
+from sift_gateway.envelope.model import Envelope, JsonContentPart
 
 
 def _sample_envelope() -> Envelope:

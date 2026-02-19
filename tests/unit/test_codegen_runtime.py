@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from sift_mcp.codegen.runtime import (
+from sift_gateway.codegen.runtime import (
     CodeRuntimeConfig,
     CodeRuntimeError,
     CodeRuntimeTimeoutError,

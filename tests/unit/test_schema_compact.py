@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from sift_mcp.schema_compact import SCHEMA_LEGEND, compact_schema_payload
+from sift_gateway.schema_compact import SCHEMA_LEGEND, compact_schema_payload
 
 
 def _schema(fields: list[dict]) -> dict:

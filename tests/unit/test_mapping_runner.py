@@ -6,8 +6,8 @@ import io
 import json
 from pathlib import Path
 
-from sift_mcp.config.settings import GatewayConfig
-from sift_mcp.mapping.runner import (
+from sift_gateway.config.settings import GatewayConfig
+from sift_gateway.mapping.runner import (
     MappingInput,
     RecordRow,
     RootInventory,
@@ -438,7 +438,7 @@ def test_sampled_schema_distinct_values_reflect_sampled_records(
 
 
 def test_schema_distinct_values_skips_unhashable_scalars() -> None:
-    from sift_mcp.mapping.schema import _build_fields
+    from sift_gateway.mapping.schema import _build_fields
 
     fields, observed = _build_fields([{"raw": {1, 2, 3}}])
     assert observed == 1
@@ -448,7 +448,7 @@ def test_schema_distinct_values_skips_unhashable_scalars() -> None:
 
 
 def test_schema_distinct_values_preserve_boolean_vs_number_identity() -> None:
-    from sift_mcp.mapping.schema import _build_fields
+    from sift_gateway.mapping.schema import _build_fields
 
     fields, observed = _build_fields(
         [
@@ -465,7 +465,7 @@ def test_schema_distinct_values_preserve_boolean_vs_number_identity() -> None:
 
 
 def test_schema_distinct_values_handle_large_integers() -> None:
-    from sift_mcp.mapping.schema import _build_fields
+    from sift_gateway.mapping.schema import _build_fields
 
     huge = 10**309
     fields, observed = _build_fields([{"id": huge}, {"id": 1}])
@@ -540,9 +540,7 @@ def test_partial_mapping_populates_record_rows(tmp_path: Path) -> None:
     assert len(result.record_rows) > 0
     # Each record_row should match a sample
     assert result.samples is not None
-    for row, sample in zip(
-        result.record_rows, result.samples, strict=True
-    ):
+    for row, sample in zip(result.record_rows, result.samples, strict=True):
         assert row.root_path == sample.root_path
         assert row.idx == sample.sample_index
         assert row.record == sample.record

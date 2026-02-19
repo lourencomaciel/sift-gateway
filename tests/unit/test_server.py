@@ -6,35 +6,35 @@ import socket
 
 import pytest
 
-from sift_mcp.artifacts.create import ArtifactHandle
-from sift_mcp.config.settings import (
+from sift_gateway.artifacts.create import ArtifactHandle
+from sift_gateway.config.settings import (
     GatewayConfig,
     PaginationConfig,
     UpstreamConfig,
 )
-from sift_mcp.constants import BLOBS_PAYLOAD_SUBDIR
-from sift_mcp.cursor.payload import CursorStaleError
-from sift_mcp.cursor.sample_set_hash import compute_sample_set_hash
-from sift_mcp.cursor.token import CursorExpiredError
-from sift_mcp.mcp.handlers.common import VISIBLE_ARTIFACT_SQL
-from sift_mcp.mcp.server import (
+from sift_gateway.constants import BLOBS_PAYLOAD_SUBDIR
+from sift_gateway.cursor.payload import CursorStaleError
+from sift_gateway.cursor.sample_set_hash import compute_sample_set_hash
+from sift_gateway.cursor.token import CursorExpiredError
+from sift_gateway.mcp.handlers.common import VISIBLE_ARTIFACT_SQL
+from sift_gateway.mcp.server import (
     GatewayServer,
     RuntimeTool,
     _check_sample_corruption,
 )
-from sift_mcp.mcp.upstream import (
+from sift_gateway.mcp.upstream import (
     UpstreamInstance,
     UpstreamToolSchema,
 )
-from sift_mcp.obs.metrics import GatewayMetrics, counter_value
-from sift_mcp.pagination.extract import PaginationState
-from sift_mcp.query.filters import filter_hash, parse_filter_dict
-from sift_mcp.query.select_paths import select_paths_hash
-from sift_mcp.security.redaction import (
+from sift_gateway.obs.metrics import GatewayMetrics, counter_value
+from sift_gateway.pagination.extract import PaginationState
+from sift_gateway.query.filters import filter_hash, parse_filter_dict
+from sift_gateway.query.select_paths import select_paths_hash
+from sift_gateway.security.redaction import (
     RedactionResult,
     SecretRedactionError,
 )
-from sift_mcp.storage.payload_store import prepare_payload
+from sift_gateway.storage.payload_store import prepare_payload
 
 
 def _server(tmp_path: Path) -> GatewayServer:
@@ -170,7 +170,7 @@ def _schema_ready_inline_describe(
 
 def _patch_schema_ready_describe(monkeypatch) -> None:
     monkeypatch.setattr(
-        "sift_mcp.mcp.handlers.mirrored_tool._fetch_inline_describe",
+        "sift_gateway.mcp.handlers.mirrored_tool._fetch_inline_describe",
         _schema_ready_inline_describe,
     )
 
@@ -179,11 +179,11 @@ def _patch_schema_ready_describe(monkeypatch) -> None:
 def _stub_derived_artifact_persistence(monkeypatch) -> None:
     """Keep generic server tests focused on query behavior, not persistence internals."""
     monkeypatch.setattr(
-        "sift_mcp.mcp.adapters.artifact_query_runtime.GatewayArtifactQueryRuntime.persist_select_derived",
+        "sift_gateway.mcp.adapters.artifact_query_runtime.GatewayArtifactQueryRuntime.persist_select_derived",
         lambda self, **_kwargs: ("art_derived_select", None),
     )
     monkeypatch.setattr(
-        "sift_mcp.mcp.adapters.artifact_query_runtime.GatewayArtifactQueryRuntime.persist_code_derived",
+        "sift_gateway.mcp.adapters.artifact_query_runtime.GatewayArtifactQueryRuntime.persist_code_derived",
         lambda self, **_kwargs: ("art_derived_code", None),
     )
 
@@ -368,7 +368,9 @@ def test_sanitize_tool_result_returns_internal_on_fail_closed(
 
 def test_sanitize_tool_result_uses_redacted_payload(tmp_path: Path) -> None:
     class _FixedRedactor:
-        def redact_payload(self, _payload: dict[str, object]) -> RedactionResult:
+        def redact_payload(
+            self, _payload: dict[str, object]
+        ) -> RedactionResult:
             return RedactionResult(
                 payload={"token": "[REDACTED_SECRET]"},
                 redacted_count=1,
@@ -387,9 +389,7 @@ def test_sanitize_tool_result_preserves_protocol_cursor_fields(
     tmp_path: Path,
 ) -> None:
     class _FixedRedactor:
-        def redact_payload(
-            self, payload: dict[str, object]
-        ) -> RedactionResult:
+        def redact_payload(self, payload: dict[str, object]) -> RedactionResult:
             mutated = {
                 **payload,
                 "cursor": "[REDACTED_SECRET]",
@@ -892,7 +892,9 @@ def test_handle_mirrored_tool_requires_db_for_schema_first_response(
             "meta": {"trace_id": "abc"},
         }
 
-    monkeypatch.setattr("sift_mcp.mcp.server.call_upstream_tool", _fake_call)
+    monkeypatch.setattr(
+        "sift_gateway.mcp.server.call_upstream_tool", _fake_call
+    )
 
     response = asyncio.run(
         server.handle_mirrored_tool(
@@ -932,7 +934,9 @@ def test_handle_mirrored_tool_without_db_returns_not_implemented(
             "meta": {"trace_id": "abc"},
         }
 
-    monkeypatch.setattr("sift_mcp.mcp.server.call_upstream_tool", _fake_call)
+    monkeypatch.setattr(
+        "sift_gateway.mcp.server.call_upstream_tool", _fake_call
+    )
 
     response = asyncio.run(
         server.handle_mirrored_tool(
@@ -966,9 +970,11 @@ def test_handle_mirrored_tool_sets_stable_upstream_error_code(
     async def _dns_failure(*_args, **_kwargs):
         raise socket.gaierror("nodename nor servname provided")
 
-    monkeypatch.setattr("sift_mcp.mcp.server.call_upstream_tool", _dns_failure)
     monkeypatch.setattr(
-        "sift_mcp.mcp.handlers.mirrored_tool.persist_artifact",
+        "sift_gateway.mcp.server.call_upstream_tool", _dns_failure
+    )
+    monkeypatch.setattr(
+        "sift_gateway.mcp.handlers.mirrored_tool.persist_artifact",
         lambda **_kwargs: _persisted_handle(),
     )
     monkeypatch.setattr(
@@ -1021,10 +1027,10 @@ def test_handle_mirrored_tool_passthroughs_small_response(
         return upstream_payload
 
     monkeypatch.setattr(
-        "sift_mcp.mcp.server.call_upstream_tool", _small_response
+        "sift_gateway.mcp.server.call_upstream_tool", _small_response
     )
     monkeypatch.setattr(
-        "sift_mcp.mcp.handlers.mirrored_tool.persist_artifact",
+        "sift_gateway.mcp.handlers.mirrored_tool.persist_artifact",
         lambda **_kwargs: _persisted_handle(),
     )
     monkeypatch.setattr(
@@ -1075,15 +1081,15 @@ def test_handle_mirrored_tool_does_not_passthrough_with_pagination_warnings(
         }
 
     monkeypatch.setattr(
-        "sift_mcp.mcp.server.call_upstream_tool",
+        "sift_gateway.mcp.server.call_upstream_tool",
         _terminal_page_response,
     )
     monkeypatch.setattr(
-        "sift_mcp.mcp.handlers.mirrored_tool.persist_artifact",
+        "sift_gateway.mcp.handlers.mirrored_tool.persist_artifact",
         lambda **_kwargs: _persisted_handle(),
     )
     monkeypatch.setattr(
-        "sift_mcp.mcp.handlers.mirrored_tool._safe_duplicate_page_warning",
+        "sift_gateway.mcp.handlers.mirrored_tool._safe_duplicate_page_warning",
         lambda **_kwargs: {
             "code": "PAGINATION_DUPLICATE_PAGE",
             "message": "duplicate page detected",
@@ -1149,10 +1155,10 @@ def test_handle_mirrored_tool_does_not_passthrough_partial_pagination(
         }
 
     monkeypatch.setattr(
-        "sift_mcp.mcp.server.call_upstream_tool", _paged_response
+        "sift_gateway.mcp.server.call_upstream_tool", _paged_response
     )
     monkeypatch.setattr(
-        "sift_mcp.mcp.handlers.mirrored_tool.persist_artifact",
+        "sift_gateway.mcp.handlers.mirrored_tool.persist_artifact",
         lambda **_kwargs: _persisted_handle(),
     )
     monkeypatch.setattr(
@@ -1208,11 +1214,11 @@ def test_handle_mirrored_tool_does_not_passthrough_missing_next_token(
         }
 
     monkeypatch.setattr(
-        "sift_mcp.mcp.server.call_upstream_tool",
+        "sift_gateway.mcp.server.call_upstream_tool",
         _paged_response_missing_cursor,
     )
     monkeypatch.setattr(
-        "sift_mcp.mcp.handlers.mirrored_tool.persist_artifact",
+        "sift_gateway.mcp.handlers.mirrored_tool.persist_artifact",
         lambda **_kwargs: _persisted_handle(),
     )
     monkeypatch.setattr(
@@ -2340,7 +2346,7 @@ def test_artifact_next_page_uses_canonical_envelope_when_jsonb_missing(
         return {"type": "gateway_tool_result", "artifact_id": "art_2"}
 
     monkeypatch.setattr(
-        "sift_mcp.mcp.handlers.mirrored_tool.handle_mirrored_tool",
+        "sift_gateway.mcp.handlers.mirrored_tool.handle_mirrored_tool",
         _fake_next_page_call,
     )
 
@@ -2462,7 +2468,9 @@ def test_handle_mirrored_tool_recovers_db_ok_on_successful_probe(
             "meta": {},
         }
 
-    monkeypatch.setattr("sift_mcp.mcp.server.call_upstream_tool", _fake_call)
+    monkeypatch.setattr(
+        "sift_gateway.mcp.server.call_upstream_tool", _fake_call
+    )
 
     _fake_handle = ArtifactHandle(
         artifact_id="art_recovered",
@@ -2485,7 +2493,7 @@ def test_handle_mirrored_tool_recovers_db_ok_on_successful_probe(
     )
 
     monkeypatch.setattr(
-        "sift_mcp.mcp.handlers.mirrored_tool.persist_artifact",
+        "sift_gateway.mcp.handlers.mirrored_tool.persist_artifact",
         lambda **_kw: _fake_handle,
     )
     monkeypatch.setattr(
@@ -2604,7 +2612,9 @@ def test_handle_mirrored_tool_returns_internal_on_db_persist_failure(
             "meta": {},
         }
 
-    monkeypatch.setattr("sift_mcp.mcp.server.call_upstream_tool", _fake_call)
+    monkeypatch.setattr(
+        "sift_gateway.mcp.server.call_upstream_tool", _fake_call
+    )
     # Proceed to persist on the first DB checkout.
     response = asyncio.run(
         server.handle_mirrored_tool(
@@ -2647,13 +2657,15 @@ def test_handle_mirrored_tool_keeps_db_ok_on_integrity_error(
             "meta": {},
         }
 
-    monkeypatch.setattr("sift_mcp.mcp.server.call_upstream_tool", _fake_call)
+    monkeypatch.setattr(
+        "sift_gateway.mcp.server.call_upstream_tool", _fake_call
+    )
 
     def _fk_persist(**_kw):
         raise sqlite3.IntegrityError("violates foreign key constraint")
 
     monkeypatch.setattr(
-        "sift_mcp.mcp.handlers.mirrored_tool.persist_artifact",
+        "sift_gateway.mcp.handlers.mirrored_tool.persist_artifact",
         _fk_persist,
     )
 
@@ -2696,13 +2708,15 @@ def test_handle_mirrored_tool_returns_internal_on_non_db_persist_failure(
             "meta": {},
         }
 
-    monkeypatch.setattr("sift_mcp.mcp.server.call_upstream_tool", _fake_call)
+    monkeypatch.setattr(
+        "sift_gateway.mcp.server.call_upstream_tool", _fake_call
+    )
 
     def _bad_persist(**_kw):
         raise ValueError("canonicalization rejected float")
 
     monkeypatch.setattr(
-        "sift_mcp.mcp.handlers.mirrored_tool.persist_artifact",
+        "sift_gateway.mcp.handlers.mirrored_tool.persist_artifact",
         _bad_persist,
     )
 
@@ -2747,9 +2761,11 @@ def test_handle_mirrored_tool_falls_back_when_inline_describe_errors(
             "meta": {},
         }
 
-    monkeypatch.setattr("sift_mcp.mcp.server.call_upstream_tool", _fake_call)
     monkeypatch.setattr(
-        "sift_mcp.mcp.handlers.mirrored_tool.persist_artifact",
+        "sift_gateway.mcp.server.call_upstream_tool", _fake_call
+    )
+    monkeypatch.setattr(
+        "sift_gateway.mcp.handlers.mirrored_tool.persist_artifact",
         lambda **_kw: _persisted_handle(),
     )
     monkeypatch.setattr(
@@ -2762,7 +2778,7 @@ def test_handle_mirrored_tool_falls_back_when_inline_describe_errors(
         raise RuntimeError("column distinct_values does not exist")
 
     monkeypatch.setattr(
-        "sift_mcp.mcp.handlers.mirrored_tool._fetch_inline_describe",
+        "sift_gateway.mcp.handlers.mirrored_tool._fetch_inline_describe",
         _boom_inline_describe,
     )
 
@@ -2805,7 +2821,9 @@ def test_handle_mirrored_tool_returns_internal_when_mapping_fails(
             "meta": {},
         }
 
-    monkeypatch.setattr("sift_mcp.mcp.server.call_upstream_tool", _fake_call)
+    monkeypatch.setattr(
+        "sift_gateway.mcp.server.call_upstream_tool", _fake_call
+    )
 
     _fake_handle = ArtifactHandle(
         artifact_id="art_mapping_fail",
@@ -2828,7 +2846,7 @@ def test_handle_mirrored_tool_returns_internal_when_mapping_fails(
     )
 
     monkeypatch.setattr(
-        "sift_mcp.mcp.handlers.mirrored_tool.persist_artifact",
+        "sift_gateway.mcp.handlers.mirrored_tool.persist_artifact",
         lambda **_kw: _fake_handle,
     )
     monkeypatch.setattr(
@@ -2894,7 +2912,9 @@ def test_handle_mirrored_tool_triggers_mapping_on_single_connection(
             "meta": {},
         }
 
-    monkeypatch.setattr("sift_mcp.mcp.server.call_upstream_tool", _fake_call)
+    monkeypatch.setattr(
+        "sift_gateway.mcp.server.call_upstream_tool", _fake_call
+    )
     _fake_handle = ArtifactHandle(
         artifact_id="art_single_conn",
         created_seq=1,
@@ -2916,7 +2936,7 @@ def test_handle_mirrored_tool_triggers_mapping_on_single_connection(
     )
 
     monkeypatch.setattr(
-        "sift_mcp.mcp.handlers.mirrored_tool.persist_artifact",
+        "sift_gateway.mcp.handlers.mirrored_tool.persist_artifact",
         lambda **_kw: _fake_handle,
     )
 
@@ -2976,7 +2996,9 @@ def test_handle_mirrored_tool_does_not_run_quota_preflight(
             "meta": {},
         }
 
-    monkeypatch.setattr("sift_mcp.mcp.server.call_upstream_tool", _fake_call)
+    monkeypatch.setattr(
+        "sift_gateway.mcp.server.call_upstream_tool", _fake_call
+    )
 
     # The handler no longer imports quota preflight helpers. If someone
     # injects one, it must not be consulted on request flow.
@@ -2986,7 +3008,7 @@ def test_handle_mirrored_tool_does_not_run_quota_preflight(
         raise AssertionError("quota preflight should not run")
 
     monkeypatch.setattr(
-        "sift_mcp.mcp.handlers.mirrored_tool.enforce_quota",
+        "sift_gateway.mcp.handlers.mirrored_tool.enforce_quota",
         _forbidden_quota,
         raising=False,
     )
@@ -3011,7 +3033,7 @@ def test_handle_mirrored_tool_does_not_run_quota_preflight(
         error_summary=None,
     )
     monkeypatch.setattr(
-        "sift_mcp.mcp.handlers.mirrored_tool.persist_artifact",
+        "sift_gateway.mcp.handlers.mirrored_tool.persist_artifact",
         lambda **_kw: _fake_handle,
     )
     monkeypatch.setattr(
@@ -3380,7 +3402,7 @@ def test_artifact_select_distinct_embeds_in_cursor(
 
 
 def test_artifact_select_rejects_wildcard_star() -> None:
-    from sift_mcp.tools.artifact_select import (
+    from sift_gateway.tools.artifact_select import (
         validate_select_args,
     )
 
@@ -3427,7 +3449,7 @@ def test_artifact_get_rejects_where_param(
 def test_jsonpath_rejects_union_syntax() -> None:
     import pytest
 
-    from sift_mcp.query.jsonpath import (
+    from sift_gateway.query.jsonpath import (
         JsonPathError,
         parse_jsonpath,
     )

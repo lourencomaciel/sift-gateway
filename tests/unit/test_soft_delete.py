@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import pytest
 
-from sift_mcp.constants import WORKSPACE_ID
-from sift_mcp.jobs.soft_delete import (
+from sift_gateway.constants import WORKSPACE_ID
+from sift_gateway.jobs.soft_delete import (
     SOFT_DELETE_BATCH_SQL,
     SOFT_DELETE_UNREFERENCED_SQL,
     run_soft_delete_expired,
@@ -11,7 +11,7 @@ from sift_mcp.jobs.soft_delete import (
     soft_delete_expired_params,
     soft_delete_unreferenced_params,
 )
-from sift_mcp.obs.metrics import GatewayMetrics, counter_value
+from sift_gateway.obs.metrics import GatewayMetrics, counter_value
 
 
 class _FakeCursor:

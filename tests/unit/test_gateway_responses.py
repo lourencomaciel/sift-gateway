@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from sift_mcp.envelope.responses import (
+from sift_gateway.envelope.responses import (
     gateway_error,
     gateway_tool_result,
 )

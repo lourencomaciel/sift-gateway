@@ -4,8 +4,8 @@ from typing import ClassVar
 
 import pytest
 
-from sift_mcp.config.settings import UpstreamConfig
-from sift_mcp.mcp.upstream import (
+from sift_gateway.config.settings import UpstreamConfig
+from sift_gateway.mcp.upstream import (
     UpstreamInstance,
     _build_stdio_env,
     call_upstream_tool,
@@ -241,7 +241,7 @@ async def test_discover_tools_fetches_and_hashes_tool_schemas(
             {"type": "object", "properties": {}},
         ),
     ]
-    monkeypatch.setattr("sift_mcp.mcp.upstream.Client", _FakeClient)
+    monkeypatch.setattr("sift_gateway.mcp.upstream.Client", _FakeClient)
 
     cfg = _stdio_config()
     tools = await discover_tools(cfg)
@@ -261,7 +261,7 @@ async def test_discover_tools_fetches_and_hashes_tool_schemas(
 async def test_call_upstream_tool_normalizes_result(monkeypatch) -> None:
     _FakeClient.instances.clear()
     _FakeClient.tools = []
-    monkeypatch.setattr("sift_mcp.mcp.upstream.Client", _FakeClient)
+    monkeypatch.setattr("sift_gateway.mcp.upstream.Client", _FakeClient)
 
     cfg = _http_config()
     instance = UpstreamInstance(config=cfg, instance_id="inst1", tools=[])
@@ -285,7 +285,7 @@ async def test_call_upstream_tool_normalizes_result(monkeypatch) -> None:
 async def test_connect_upstream_builds_instance(monkeypatch) -> None:
     _FakeClient.instances.clear()
     _FakeClient.tools = [_FakeTool("search", "Search", {"type": "object"})]
-    monkeypatch.setattr("sift_mcp.mcp.upstream.Client", _FakeClient)
+    monkeypatch.setattr("sift_gateway.mcp.upstream.Client", _FakeClient)
 
     cfg = _stdio_config()
     instance = await connect_upstream(cfg)
@@ -299,7 +299,7 @@ async def test_connect_upstream_builds_instance(monkeypatch) -> None:
 async def test_connect_upstreams_preserves_config_order(monkeypatch) -> None:
     _FakeClient.instances.clear()
     _FakeClient.tools = [_FakeTool("search", "Search", {"type": "object"})]
-    monkeypatch.setattr("sift_mcp.mcp.upstream.Client", _FakeClient)
+    monkeypatch.setattr("sift_gateway.mcp.upstream.Client", _FakeClient)
 
     cfg1 = _stdio_config(prefix="gh")
     cfg2 = _http_config(prefix="jira")
@@ -361,10 +361,10 @@ async def test_stdio_transport_always_gets_env_dict(
     """Stdio transport env is always a dict, never None."""
     _FakeClient.instances.clear()
     _FakeClient.tools = []
-    monkeypatch.setattr("sift_mcp.mcp.upstream.Client", _FakeClient)
+    monkeypatch.setattr("sift_gateway.mcp.upstream.Client", _FakeClient)
 
     cfg = _stdio_config(env={})
-    from sift_mcp.mcp.upstream import _client_transport
+    from sift_gateway.mcp.upstream import _client_transport
 
     transport = _client_transport(cfg)
 
@@ -543,7 +543,7 @@ def test_stdio_transport_injects_external_user_id(
     (tmp_path / "state").mkdir()
     cfg = _stdio_config(external_user_id="test-user")
 
-    from sift_mcp.mcp.upstream import _client_transport
+    from sift_gateway.mcp.upstream import _client_transport
 
     transport = _client_transport(cfg, data_dir)
     assert "--external-user-id" in transport.args
@@ -559,7 +559,7 @@ def test_stdio_transport_uses_pre_resolved_user_id(
     (tmp_path / "state").mkdir()
     cfg = _stdio_config(external_user_id="auto")
 
-    from sift_mcp.mcp.upstream import _client_transport
+    from sift_gateway.mcp.upstream import _client_transport
 
     transport = _client_transport(cfg, data_dir, resolved_user_id="pinned-id")
     idx = transport.args.index("--external-user-id")
@@ -573,7 +573,7 @@ def test_stdio_transport_no_duplicate_flag_separate() -> None:
         external_user_id="other-value",
     )
 
-    from sift_mcp.mcp.upstream import _client_transport
+    from sift_gateway.mcp.upstream import _client_transport
 
     transport = _client_transport(cfg)
     count = transport.args.count("--external-user-id")
@@ -589,7 +589,7 @@ def test_stdio_transport_no_duplicate_flag_equals() -> None:
         external_user_id="other-value",
     )
 
-    from sift_mcp.mcp.upstream import _client_transport
+    from sift_gateway.mcp.upstream import _client_transport
 
     transport = _client_transport(cfg)
     assert len(transport.args) == 1
@@ -620,7 +620,7 @@ def test_stdio_transport_no_injection_when_none() -> None:
     """Args unchanged when external_user_id is None."""
     cfg = _stdio_config(external_user_id=None)
 
-    from sift_mcp.mcp.upstream import _client_transport
+    from sift_gateway.mcp.upstream import _client_transport
 
     transport = _client_transport(cfg)
     assert "--external-user-id" not in transport.args

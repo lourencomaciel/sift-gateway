@@ -4,15 +4,15 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from sift_mcp.config.settings import GatewayConfig
-from sift_mcp.constants import (
+from sift_gateway.config.settings import GatewayConfig
+from sift_gateway.constants import (
     CANONICALIZER_VERSION,
     CURSOR_VERSION,
     MAPPER_VERSION,
     PRNG_VERSION,
     TRAVERSAL_CONTRACT_VERSION,
 )
-from sift_mcp.tools.status import (
+from sift_gateway.tools.status import (
     build_status_response,
     build_status_response_with_runtime,
     probe_db,

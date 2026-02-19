@@ -6,8 +6,8 @@ from pathlib import Path
 
 import pytest
 
-from sift_mcp.db.backend import SqliteBackend
-from sift_mcp.db.migrate import apply_migrations
+from sift_gateway.db.backend import SqliteBackend
+from sift_gateway.db.migrate import apply_migrations
 
 
 @pytest.fixture
@@ -17,7 +17,7 @@ def sqlite_backend(tmp_path: Path) -> SqliteBackend:
     migrations_dir = (
         Path(__file__).resolve().parents[2]
         / "src"
-        / "sift_mcp"
+        / "sift_gateway"
         / "db"
         / "migrations_sqlite"
     )

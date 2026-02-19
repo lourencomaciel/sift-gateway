@@ -1,6 +1,6 @@
 # Deployment Guide
 
-Running Sift MCP in production environments.
+Running Sift Gateway in production environments.
 
 ## Transport Modes
 
@@ -10,14 +10,14 @@ Sift supports multiple transport protocols for connecting to MCP clients.
 
 The default mode where Sift communicates via standard input/output. This is the standard for MCP servers launched by desktop clients like Claude Desktop, Cursor, and Claude Code.
 
-**No configuration needed** — this is the default when you run `sift-mcp` without transport flags.
+**No configuration needed** — this is the default when you run `sift-gateway` without transport flags.
 
 ### SSE (Server-Sent Events)
 
 Expose Sift over HTTP using Server-Sent Events for real-time updates.
 
 ```bash
-sift-mcp --transport sse --host 127.0.0.1 --port 8080
+sift-gateway --transport sse --host 127.0.0.1 --port 8080
 ```
 
 **Use cases:**
@@ -30,10 +30,10 @@ sift-mcp --transport sse --host 127.0.0.1 --port 8080
 Full HTTP transport with streaming support.
 
 ```bash
-sift-mcp \
+sift-gateway \
   --transport streamable-http \
   --host 0.0.0.0 --port 9090 --path /mcp \
-  --auth-token "$SIFT_MCP_AUTH_TOKEN"
+  --auth-token "$SIFT_GATEWAY_AUTH_TOKEN"
 ```
 
 **Use cases:**
@@ -54,11 +54,11 @@ sift-mcp \
 
 ```bash
 # Option 1: Command-line flag
-sift-mcp --transport sse --host 0.0.0.0 --auth-token "your-secret-token"
+sift-gateway --transport sse --host 0.0.0.0 --auth-token "your-secret-token"
 
 # Option 2: Environment variable
-export SIFT_MCP_AUTH_TOKEN="your-secret-token"
-sift-mcp --transport sse --host 0.0.0.0
+export SIFT_GATEWAY_AUTH_TOKEN="your-secret-token"
+sift-gateway --transport sse --host 0.0.0.0
 ```
 
 **Important:** The process exits with a security error if binding to a non-local address without an auth token.
@@ -71,17 +71,17 @@ upstream payloads.
 
 ```bash
 # Enabled by default
-export SIFT_MCP_SECRET_REDACTION_ENABLED=true
+export SIFT_GATEWAY_SECRET_REDACTION_ENABLED=true
 
 # Optional: fail requests with INTERNAL if redaction cannot run
-export SIFT_MCP_SECRET_REDACTION_FAIL_CLOSED=false
+export SIFT_GATEWAY_SECRET_REDACTION_FAIL_CLOSED=false
 
 # Optional tuning
-export SIFT_MCP_SECRET_REDACTION_MAX_SCAN_BYTES=32768
-export SIFT_MCP_SECRET_REDACTION_PLACEHOLDER='[REDACTED_SECRET]'
+export SIFT_GATEWAY_SECRET_REDACTION_MAX_SCAN_BYTES=32768
+export SIFT_GATEWAY_SECRET_REDACTION_PLACEHOLDER='[REDACTED_SECRET]'
 ```
 
-Set `SIFT_MCP_SECRET_REDACTION_ENABLED=false` only in trusted environments that
+Set `SIFT_GATEWAY_SECRET_REDACTION_ENABLED=false` only in trusted environments that
 explicitly need raw upstream payloads.
 
 ### Client Configuration
@@ -89,7 +89,7 @@ explicitly need raw upstream payloads.
 When using URL mode, configure your MCP client with the gateway URL:
 
 ```bash
-sift-mcp init \
+sift-gateway init \
   --from claude \
   --gateway-url http://localhost:8080/mcp
 ```
@@ -104,19 +104,19 @@ Sift automatically runs SQLite migrations on startup. No manual intervention nee
 To check migration status:
 
 ```bash
-sift-mcp --check
+sift-gateway --check
 ```
 
 ## Monitoring and Observability
 
 ### Health Checks
 
-Use `sift-mcp --check` as a CLI health check:
+Use `sift-gateway --check` as a CLI health check:
 
 ```bash
 #!/bin/bash
 # health_check.sh
-sift-mcp --check
+sift-gateway --check
 if [ $? -eq 0 ]; then
   echo "HEALTHY"
   exit 0
@@ -134,7 +134,7 @@ This validates:
 
 ### Logging
 
-Sift emits structured logs to stderr (JSON format, INFO level by default). The current release does not expose a dedicated `SIFT_MCP_LOG_LEVEL` setting.
+Sift emits structured logs to stderr (JSON format, INFO level by default). The current release does not expose a dedicated `SIFT_GATEWAY_LOG_LEVEL` setting.
 
 See [Observability](observability.md) for full event catalog.
 
@@ -150,7 +150,7 @@ Mirrored upstream responses are always persisted as artifacts. Return shape is
 controlled by passthrough size settings.
 
 ```bash
-export SIFT_MCP_PASSTHROUGH_MAX_BYTES=8192  # Default: 8 KB
+export SIFT_GATEWAY_PASSTHROUGH_MAX_BYTES=8192  # Default: 8 KB
 ```
 
 - Small responses at or under this threshold may return raw upstream payloads.
@@ -161,8 +161,8 @@ export SIFT_MCP_PASSTHROUGH_MAX_BYTES=8192  # Default: 8 KB
 To limit disk growth, tune storage quota settings instead:
 
 ```bash
-export SIFT_MCP_MAX_TOTAL_STORAGE_BYTES=10000000000
-export SIFT_MCP_QUOTA_ENFORCEMENT_ENABLED=true
+export SIFT_GATEWAY_MAX_TOTAL_STORAGE_BYTES=10000000000
+export SIFT_GATEWAY_QUOTA_ENFORCEMENT_ENABLED=true
 ```
 
 ### Response Budgets
@@ -170,8 +170,8 @@ export SIFT_MCP_QUOTA_ENFORCEMENT_ENABLED=true
 Limit retrieval response sizes to prevent memory exhaustion:
 
 ```bash
-export SIFT_MCP_MAX_ITEMS=1000        # Max items per query response
-export SIFT_MCP_MAX_BYTES_OUT=5000000 # Max bytes per query response (5 MB)
+export SIFT_GATEWAY_MAX_ITEMS=1000        # Max items per query response
+export SIFT_GATEWAY_MAX_BYTES_OUT=5000000 # Max bytes per query response (5 MB)
 ```
 
 ### Cursor TTL
@@ -179,7 +179,7 @@ export SIFT_MCP_MAX_BYTES_OUT=5000000 # Max bytes per query response (5 MB)
 Control how long pagination cursors remain valid:
 
 ```bash
-export SIFT_MCP_CURSOR_TTL_MINUTES=60  # Default: 60 minutes
+export SIFT_GATEWAY_CURSOR_TTL_MINUTES=60  # Default: 60 minutes
 ```
 
 Shorter TTLs reduce storage overhead but may break long-running pagination workflows.
@@ -189,10 +189,10 @@ Shorter TTLs reduce storage overhead but may break long-running pagination workf
 Configure Python code query execution:
 
 ```bash
-export SIFT_MCP_CODE_QUERY_ENABLED=true
-export SIFT_MCP_CODE_QUERY_TIMEOUT_SECONDS=30
-export SIFT_MCP_CODE_QUERY_MAX_INPUT_RECORDS=10000
-export SIFT_MCP_CODE_QUERY_ALLOWED_IMPORT_ROOTS='["math","json","jmespath","numpy","pandas"]'
+export SIFT_GATEWAY_CODE_QUERY_ENABLED=true
+export SIFT_GATEWAY_CODE_QUERY_TIMEOUT_SECONDS=30
+export SIFT_GATEWAY_CODE_QUERY_MAX_INPUT_RECORDS=10000
+export SIFT_GATEWAY_CODE_QUERY_ALLOWED_IMPORT_ROOTS='["math","json","jmespath","numpy","pandas"]'
 ```
 
 See [Configuration Reference](config.md) for all available settings.
@@ -203,19 +203,19 @@ See [Configuration Reference](config.md) for all available settings.
 
 ```bash
 # Backup
-cp .sift-mcp/state/gateway.db .sift-mcp/state/gateway.db.backup
+cp .sift-gateway/state/gateway.db .sift-gateway/state/gateway.db.backup
 
 # Restore
-cp .sift-mcp/state/gateway.db.backup .sift-mcp/state/gateway.db
+cp .sift-gateway/state/gateway.db.backup .sift-gateway/state/gateway.db
 ```
 
 ### Blob Storage Backups
 
-Artifact blobs are stored in `.sift-mcp/blobs/` (content-addressed):
+Artifact blobs are stored in `.sift-gateway/blobs/` (content-addressed):
 
 ```bash
 # Backup
-tar -czf blobs_backup.tar.gz .sift-mcp/blobs/
+tar -czf blobs_backup.tar.gz .sift-gateway/blobs/
 
 # Restore
 tar -xzf blobs_backup.tar.gz
@@ -227,22 +227,22 @@ tar -xzf blobs_backup.tar.gz
 
 ### Connection refused errors
 
-- Check that Sift is running: `ps aux | grep sift-mcp`
+- Check that Sift is running: `ps aux | grep sift-gateway`
 - Verify port is open: `netstat -an | grep 8080`
 - Check firewall rules if accessing remotely
 
 ### Performance degradation
 
-- Check database size: `du -sh .sift-mcp/state/gateway.db`
+- Check database size: `du -sh .sift-gateway/state/gateway.db`
 - Monitor query performance through structured stderr events (see [Observability](observability.md))
-- Review blob storage usage: `du -sh .sift-mcp/blobs/`
+- Review blob storage usage: `du -sh .sift-gateway/blobs/`
 - Tune retrieval budgets (`max_items`, `max_bytes_out`) and mapping budgets in `state/config.json`
 
 ### Authentication failures
 
 - Verify auth token matches between server and client
 - Check token isn't expired or rotated
-- Ensure environment variable is set: `echo $SIFT_MCP_AUTH_TOKEN`
+- Ensure environment variable is set: `echo $SIFT_GATEWAY_AUTH_TOKEN`
 
 ## Next Steps
 

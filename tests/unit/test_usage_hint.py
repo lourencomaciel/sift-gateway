@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from sift_mcp.tools.usage_hint import build_usage_hint
+from sift_gateway.tools.usage_hint import build_usage_hint
 
 
 def _describe(

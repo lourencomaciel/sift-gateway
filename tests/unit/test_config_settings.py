@@ -6,7 +6,7 @@ from pathlib import Path
 from pydantic import ValidationError
 import pytest
 
-from sift_mcp.config.settings import (
+from sift_gateway.config.settings import (
     GatewayConfig,
     PaginationConfig,
     UpstreamConfig,
@@ -27,7 +27,7 @@ def test_max_in_memory_mapping_bytes_derived_from_capacity(
     tmp_path: Path, monkeypatch
 ) -> None:
     monkeypatch.setattr(
-        "sift_mcp.config.settings._detect_memory_capacity_bytes",
+        "sift_gateway.config.settings._detect_memory_capacity_bytes",
         lambda: 2_000_000_000,
     )
     config = GatewayConfig(data_dir=tmp_path)
@@ -38,7 +38,7 @@ def test_max_in_memory_mapping_bytes_clamped_to_floor(
     tmp_path: Path, monkeypatch
 ) -> None:
     monkeypatch.setattr(
-        "sift_mcp.config.settings._detect_memory_capacity_bytes",
+        "sift_gateway.config.settings._detect_memory_capacity_bytes",
         lambda: 400_000_000,
     )
     config = GatewayConfig(data_dir=tmp_path)
@@ -49,7 +49,7 @@ def test_max_in_memory_mapping_bytes_clamped_to_ceiling(
     tmp_path: Path, monkeypatch
 ) -> None:
     monkeypatch.setattr(
-        "sift_mcp.config.settings._detect_memory_capacity_bytes",
+        "sift_gateway.config.settings._detect_memory_capacity_bytes",
         lambda: 20_000_000_000,
     )
     config = GatewayConfig(data_dir=tmp_path)
@@ -71,7 +71,7 @@ def test_passthrough_max_bytes_default(tmp_path: Path) -> None:
 def test_passthrough_max_bytes_env_override(
     tmp_path: Path, monkeypatch
 ) -> None:
-    monkeypatch.setenv("SIFT_MCP_PASSTHROUGH_MAX_BYTES", "2048")
+    monkeypatch.setenv("SIFT_GATEWAY_PASSTHROUGH_MAX_BYTES", "2048")
     config = load_gateway_config(data_dir_override=str(tmp_path))
     assert config.passthrough_max_bytes == 2_048
 
@@ -91,14 +91,12 @@ def test_secret_redaction_defaults(tmp_path: Path) -> None:
     assert config.secret_redaction_placeholder == "[REDACTED_SECRET]"
 
 
-def test_secret_redaction_env_overrides(
-    tmp_path: Path, monkeypatch
-) -> None:
-    monkeypatch.setenv("SIFT_MCP_SECRET_REDACTION_ENABLED", "false")
-    monkeypatch.setenv("SIFT_MCP_SECRET_REDACTION_FAIL_CLOSED", "true")
-    monkeypatch.setenv("SIFT_MCP_SECRET_REDACTION_MAX_SCAN_BYTES", "4096")
+def test_secret_redaction_env_overrides(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("SIFT_GATEWAY_SECRET_REDACTION_ENABLED", "false")
+    monkeypatch.setenv("SIFT_GATEWAY_SECRET_REDACTION_FAIL_CLOSED", "true")
+    monkeypatch.setenv("SIFT_GATEWAY_SECRET_REDACTION_MAX_SCAN_BYTES", "4096")
     monkeypatch.setenv(
-        "SIFT_MCP_SECRET_REDACTION_PLACEHOLDER",
+        "SIFT_GATEWAY_SECRET_REDACTION_PLACEHOLDER",
         "  [MASKED]  ",
     )
     config = load_gateway_config(data_dir_override=str(tmp_path))
@@ -126,7 +124,7 @@ def test_code_query_allowed_import_roots_env_override(
     tmp_path: Path, monkeypatch
 ) -> None:
     monkeypatch.setenv(
-        "SIFT_MCP_CODE_QUERY_ALLOWED_IMPORT_ROOTS",
+        "SIFT_GATEWAY_CODE_QUERY_ALLOWED_IMPORT_ROOTS",
         '["math","json","jmespath"]',
     )
     config = load_gateway_config(data_dir_override=str(tmp_path))
@@ -191,16 +189,18 @@ def test_env_overrides_state_config(tmp_path: Path, monkeypatch) -> None:
         json.dumps({"max_items": 777}),
         encoding="utf-8",
     )
-    monkeypatch.setenv("SIFT_MCP_MAX_ITEMS", "888")
+    monkeypatch.setenv("SIFT_GATEWAY_MAX_ITEMS", "888")
 
     config = load_gateway_config(data_dir_override=str(tmp_path))
     assert config.max_items == 888
 
 
 def test_nested_env_overrides_state_config(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setenv("SIFT_MCP_UPSTREAMS__0__PREFIX", "gh")
-    monkeypatch.setenv("SIFT_MCP_UPSTREAMS__0__TRANSPORT", "http")
-    monkeypatch.setenv("SIFT_MCP_UPSTREAMS__0__URL", "https://from-env.example")
+    monkeypatch.setenv("SIFT_GATEWAY_UPSTREAMS__0__PREFIX", "gh")
+    monkeypatch.setenv("SIFT_GATEWAY_UPSTREAMS__0__TRANSPORT", "http")
+    monkeypatch.setenv(
+        "SIFT_GATEWAY_UPSTREAMS__0__URL", "https://from-env.example"
+    )
 
     config = load_gateway_config(data_dir_override=str(tmp_path))
     assert len(config.upstreams) == 1
@@ -211,11 +211,11 @@ def test_nested_env_overrides_state_config(tmp_path: Path, monkeypatch) -> None:
 def test_nested_env_json_leaf_values_are_decoded(
     tmp_path: Path, monkeypatch
 ) -> None:
-    monkeypatch.setenv("SIFT_MCP_UPSTREAMS__0__PREFIX", "gh")
-    monkeypatch.setenv("SIFT_MCP_UPSTREAMS__0__TRANSPORT", "stdio")
-    monkeypatch.setenv("SIFT_MCP_UPSTREAMS__0__COMMAND", "gh")
+    monkeypatch.setenv("SIFT_GATEWAY_UPSTREAMS__0__PREFIX", "gh")
+    monkeypatch.setenv("SIFT_GATEWAY_UPSTREAMS__0__TRANSPORT", "stdio")
+    monkeypatch.setenv("SIFT_GATEWAY_UPSTREAMS__0__COMMAND", "gh")
     monkeypatch.setenv(
-        "SIFT_MCP_UPSTREAMS__0__ARGS", '["api","/repos/example"]'
+        "SIFT_GATEWAY_UPSTREAMS__0__ARGS", '["api","/repos/example"]'
     )
 
     config = load_gateway_config(data_dir_override=str(tmp_path))
@@ -223,10 +223,12 @@ def test_nested_env_json_leaf_values_are_decoded(
 
 
 def test_nested_env_map_keys_preserve_case(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setenv("SIFT_MCP_UPSTREAMS__0__PREFIX", "gh")
-    monkeypatch.setenv("SIFT_MCP_UPSTREAMS__0__TRANSPORT", "stdio")
-    monkeypatch.setenv("SIFT_MCP_UPSTREAMS__0__COMMAND", "gh")
-    monkeypatch.setenv("SIFT_MCP_UPSTREAMS__0__ENV__OPENAI_API_KEY", "secret")
+    monkeypatch.setenv("SIFT_GATEWAY_UPSTREAMS__0__PREFIX", "gh")
+    monkeypatch.setenv("SIFT_GATEWAY_UPSTREAMS__0__TRANSPORT", "stdio")
+    monkeypatch.setenv("SIFT_GATEWAY_UPSTREAMS__0__COMMAND", "gh")
+    monkeypatch.setenv(
+        "SIFT_GATEWAY_UPSTREAMS__0__ENV__OPENAI_API_KEY", "secret"
+    )
 
     config = load_gateway_config(data_dir_override=str(tmp_path))
     assert config.upstreams[0].env == {"OPENAI_API_KEY": "secret"}
@@ -235,10 +237,12 @@ def test_nested_env_map_keys_preserve_case(tmp_path: Path, monkeypatch) -> None:
 def test_nested_env_map_leaf_json_like_string_stays_string(
     tmp_path: Path, monkeypatch
 ) -> None:
-    monkeypatch.setenv("SIFT_MCP_UPSTREAMS__0__PREFIX", "gh")
-    monkeypatch.setenv("SIFT_MCP_UPSTREAMS__0__TRANSPORT", "http")
-    monkeypatch.setenv("SIFT_MCP_UPSTREAMS__0__URL", "https://api.example")
-    monkeypatch.setenv("SIFT_MCP_UPSTREAMS__0__HEADERS__X_CONFIG", '{"k":"v"}')
+    monkeypatch.setenv("SIFT_GATEWAY_UPSTREAMS__0__PREFIX", "gh")
+    monkeypatch.setenv("SIFT_GATEWAY_UPSTREAMS__0__TRANSPORT", "http")
+    monkeypatch.setenv("SIFT_GATEWAY_UPSTREAMS__0__URL", "https://api.example")
+    monkeypatch.setenv(
+        "SIFT_GATEWAY_UPSTREAMS__0__HEADERS__X_CONFIG", '{"k":"v"}'
+    )
 
     config = load_gateway_config(data_dir_override=str(tmp_path))
     assert config.upstreams[0].headers == {"X_CONFIG": '{"k":"v"}'}
@@ -255,7 +259,7 @@ def test_env_top_level_list_override_replaces_file_list(
     tmp_path: Path, monkeypatch
 ) -> None:
     monkeypatch.setenv(
-        "SIFT_MCP_UPSTREAMS",
+        "SIFT_GATEWAY_UPSTREAMS",
         '[{"prefix":"c","transport":"http","url":"https://c.example"}]',
     )
 
@@ -266,10 +270,10 @@ def test_env_top_level_list_override_replaces_file_list(
 def test_nested_env_list_field_override_replaces_file_list(
     tmp_path: Path, monkeypatch
 ) -> None:
-    monkeypatch.setenv("SIFT_MCP_UPSTREAMS__0__PREFIX", "gh")
-    monkeypatch.setenv("SIFT_MCP_UPSTREAMS__0__TRANSPORT", "stdio")
-    monkeypatch.setenv("SIFT_MCP_UPSTREAMS__0__COMMAND", "gh")
-    monkeypatch.setenv("SIFT_MCP_UPSTREAMS__0__ARGS", '["api","/new/path"]')
+    monkeypatch.setenv("SIFT_GATEWAY_UPSTREAMS__0__PREFIX", "gh")
+    monkeypatch.setenv("SIFT_GATEWAY_UPSTREAMS__0__TRANSPORT", "stdio")
+    monkeypatch.setenv("SIFT_GATEWAY_UPSTREAMS__0__COMMAND", "gh")
+    monkeypatch.setenv("SIFT_GATEWAY_UPSTREAMS__0__ARGS", '["api","/new/path"]')
 
     config = load_gateway_config(data_dir_override=str(tmp_path))
     assert config.upstreams[0].args == ["api", "/new/path"]
@@ -318,7 +322,7 @@ def test_env_upstream_overrides_mcp_servers_format(
         encoding="utf-8",
     )
     monkeypatch.setenv(
-        "SIFT_MCP_UPSTREAMS__0__URL",
+        "SIFT_GATEWAY_UPSTREAMS__0__URL",
         "https://from-env.example",
     )
 
@@ -347,7 +351,7 @@ def test_env_upstream_env_var_overrides_mcp_servers_env(
         encoding="utf-8",
     )
     monkeypatch.setenv(
-        "SIFT_MCP_UPSTREAMS__0__ENV__GITHUB_TOKEN",
+        "SIFT_GATEWAY_UPSTREAMS__0__ENV__GITHUB_TOKEN",
         "tok_from_env",
     )
 

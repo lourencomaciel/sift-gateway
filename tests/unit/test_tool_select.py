@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from sift_mcp.core.artifact_select import _distinct_key
-from sift_mcp.tools.artifact_select import (
+from sift_gateway.core.artifact_select import _distinct_key
+from sift_gateway.tools.artifact_select import (
     SelectOrderBy,
     _apply_select_sort,
     _sort_key_for_item,

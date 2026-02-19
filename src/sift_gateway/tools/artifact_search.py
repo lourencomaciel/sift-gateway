@@ -1,0 +1,491 @@
+"""Validate arguments and build SQL for ``artifact.search``.
+
+Discover artifacts across the local workspace with support for
+filtering by status, source tool, timestamps, and other metadata
+columns. Exports ``validate_search_args`` and ``build_search_query``.
+
+Typical usage example::
+
+    validated = validate_search_args(arguments, max_limit=200)
+    sql, params = build_search_query(
+        validated["filters"],
+        validated["order_by"],
+        validated["limit"],
+    )
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+from sift_gateway.constants import WORKSPACE_ID
+
+# All Addendum B filters
+SEARCH_FILTERS = {
+    "include_deleted",
+    "status",
+    "source_tool_prefix",
+    "source_tool",
+    "kind",
+    "upstream_instance_id",
+    "request_key",
+    "capture_kind",
+    "capture_key",
+    "payload_hash_full",
+    "parent_artifact_id",
+    "has_binary_refs",
+    "created_seq_min",
+    "created_seq_max",
+    "created_at_after",
+    "created_at_before",
+}
+
+_VALID_ORDER_BY = ("created_seq_desc", "last_seen_desc", "chain_seq_asc")
+_VALID_STATUS = ("ok", "error")
+_VALID_KIND = ("data", "derived_query", "derived_codegen")
+_VALID_CAPTURE_KIND = (
+    "mcp_tool",
+    "cli_command",
+    "stdin_pipe",
+    "file_ingest",
+    "derived_query",
+    "derived_codegen",
+)
+
+_CAPTURE_KIND_EXPR = (
+    "COALESCE(a.capture_kind, "
+    "CASE "
+    "WHEN a.kind = 'derived_query' THEN 'derived_query' "
+    "WHEN a.kind = 'derived_codegen' THEN 'derived_codegen' "
+    "ELSE 'mcp_tool' "
+    "END)"
+)
+_CAPTURE_KEY_EXPR = "COALESCE(a.capture_key, a.request_key)"
+
+
+def _invalid_arg(message: str) -> dict[str, Any]:
+    """Build an INVALID_ARGUMENT error response.
+
+    Args:
+        message: Human-readable error description.
+
+    Returns:
+        Error dict with ``code`` and ``message`` keys.
+    """
+    return {
+        "code": "INVALID_ARGUMENT",
+        "message": message,
+    }
+
+
+def _extract_session_id(arguments: dict[str, Any]) -> str:
+    """Best-effort session ID extraction for cursor identity."""
+    ctx = arguments.get("_gateway_context")
+    if not isinstance(ctx, dict):
+        return "local"
+    session_id = ctx.get("session_id")
+    if isinstance(session_id, str) and session_id:
+        return session_id
+    return "local"
+
+
+def _validate_filters(
+    arguments: dict[str, Any],
+) -> dict[str, Any] | tuple[dict[str, Any], None]:
+    """Extract and validate the filters dict.
+
+    Args:
+        arguments: Raw tool arguments potentially containing
+            a ``filters`` key.
+
+    Returns:
+        Validated filters dict, or a ``(error_dict, None)``
+        tuple when validation fails.
+    """
+    filters = arguments.get("filters", {})
+    if filters is None:
+        return {}
+    if not isinstance(filters, dict):
+        return _invalid_arg("filters must be an object"), None
+    unknown = set(filters.keys()) - SEARCH_FILTERS
+    if unknown:
+        return _invalid_arg(
+            f"unknown filter keys: {', '.join(sorted(unknown))}"
+        ), None
+    return filters
+
+
+def _validate_order_by(
+    order_by: str,
+) -> dict[str, Any] | None:
+    """Validate the ``order_by`` field.
+
+    Args:
+        order_by: Requested ordering value.
+
+    Returns:
+        Error dict if the value is invalid, ``None`` otherwise.
+    """
+    if order_by not in _VALID_ORDER_BY:
+        return _invalid_arg(f"invalid order_by: {order_by}")
+    return None
+
+
+def _validate_status_filter(
+    filters: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Validate the ``status`` filter value.
+
+    Args:
+        filters: Filters dict potentially containing ``status``.
+
+    Returns:
+        Error dict if the status value is invalid, ``None``
+        otherwise.
+    """
+    status = filters.get("status")
+    if status is not None and status not in _VALID_STATUS:
+        return _invalid_arg(f"invalid status filter: {status}")
+    return None
+
+
+def _validate_kind_filter(
+    filters: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Validate the ``kind`` filter value."""
+    kind = filters.get("kind")
+    if kind is not None and kind not in _VALID_KIND:
+        return _invalid_arg(f"invalid kind filter: {kind}")
+    return None
+
+
+def _validate_capture_kind_filter(
+    filters: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Validate the ``capture_kind`` filter value."""
+    capture_kind = filters.get("capture_kind")
+    if capture_kind is not None and capture_kind not in _VALID_CAPTURE_KIND:
+        return _invalid_arg(f"invalid capture_kind filter: {capture_kind}")
+    return None
+
+
+def _validate_limit(
+    arguments: dict[str, Any], *, max_limit: int
+) -> int | dict[str, Any]:
+    """Validate and normalize the ``limit`` field.
+
+    Accept integer values and numeric strings. Reject booleans,
+    non-numeric strings, and non-positive values.
+
+    Args:
+        arguments: Raw tool arguments.
+        max_limit: Upper bound for the normalized limit.
+
+    Returns:
+        Normalized integer limit, or an INVALID_ARGUMENT error dict.
+    """
+    raw_limit = arguments.get("limit", 50)
+    if isinstance(raw_limit, bool):
+        return _invalid_arg("limit must be a positive integer")
+    if isinstance(raw_limit, int):
+        limit = raw_limit
+    elif isinstance(raw_limit, str):
+        try:
+            limit = int(raw_limit)
+        except ValueError:
+            return _invalid_arg("limit must be a positive integer")
+    else:
+        return _invalid_arg("limit must be a positive integer")
+    if limit <= 0:
+        return _invalid_arg("limit must be a positive integer")
+    return min(limit, max_limit)
+
+
+def validate_search_args(
+    arguments: dict[str, Any], *, max_limit: int
+) -> dict[str, Any]:
+    """Validate and normalize ``artifact.search`` arguments.
+
+    Args:
+        arguments: Raw tool arguments including gateway context,
+            optional filters, ordering, limit, and cursor.
+        max_limit: Upper bound for the ``limit`` parameter.
+
+    Returns:
+        Validated dict with ``session_id``, ``filters``,
+        ``order_by``, ``limit``, and ``cursor`` keys, or an
+        error dict with ``code`` and ``message`` on failure.
+    """
+    session_id = _extract_session_id(arguments)
+
+    filters_result = _validate_filters(arguments)
+    if isinstance(filters_result, tuple):
+        return filters_result[0]
+    filters = filters_result
+
+    order_by = arguments.get("order_by", "created_seq_desc")
+    err = _validate_order_by(order_by)
+    if err is not None:
+        return err
+
+    err = _validate_status_filter(filters)
+    if err is not None:
+        return err
+    err = _validate_kind_filter(filters)
+    if err is not None:
+        return err
+    err = _validate_capture_kind_filter(filters)
+    if err is not None:
+        return err
+
+    limit_result = _validate_limit(arguments, max_limit=max_limit)
+    if isinstance(limit_result, dict):
+        return limit_result
+    limit = limit_result
+    cursor = arguments.get("cursor")
+    query = arguments.get("query")
+    if query is not None and (not isinstance(query, str) or not query.strip()):
+        return _invalid_arg("query must be a non-empty string when provided")
+
+    return {
+        "session_id": session_id,
+        "filters": filters,
+        "order_by": order_by,
+        "limit": limit,
+        "cursor": cursor,
+        "query": query.strip() if isinstance(query, str) else None,
+    }
+
+
+def _status_condition(status: Any) -> str | None:
+    """Return status SQL condition for validated status filter."""
+    if status == "error":
+        return "a.error_summary IS NOT NULL"
+    if status == "ok":
+        return "a.error_summary IS NULL"
+    return None
+
+
+def _escaped_source_tool_prefix(prefix: str) -> str:
+    """Escape user prefix for a LIKE pattern."""
+    escaped = (
+        prefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    )
+    return f"{escaped}.%"
+
+
+def _collect_simple_equality_conditions(
+    filters: dict[str, Any],
+) -> tuple[list[str], list[Any]]:
+    """Collect simple equality filter conditions and params."""
+    conditions: list[str] = []
+    params: list[Any] = []
+    simple_eq_filters: tuple[tuple[str, str], ...] = (
+        ("source_tool", "a.source_tool = %s"),
+        ("kind", "a.kind = %s"),
+        ("upstream_instance_id", "a.upstream_instance_id = %s"),
+        ("request_key", "a.request_key = %s"),
+        ("capture_kind", _CAPTURE_KIND_EXPR + " = %s"),
+        ("capture_key", _CAPTURE_KEY_EXPR + " = %s"),
+        ("payload_hash_full", "a.payload_hash_full = %s"),
+    )
+    for key, sql_fragment in simple_eq_filters:
+        value = filters.get(key)
+        if not value:
+            continue
+        conditions.append(sql_fragment)
+        params.append(value)
+    return conditions, params
+
+
+def _collect_range_and_time_conditions(
+    filters: dict[str, Any],
+) -> tuple[list[str], list[Any]]:
+    """Collect range/time filter conditions and params."""
+    conditions: list[str] = []
+    params: list[Any] = []
+    range_filters: tuple[tuple[str, str], ...] = (
+        ("created_seq_min", "a.created_seq >= %s"),
+        ("created_seq_max", "a.created_seq <= %s"),
+    )
+    for key, sql_fragment in range_filters:
+        value = filters.get(key)
+        if value is None:
+            continue
+        conditions.append(sql_fragment)
+        params.append(value)
+    timestamp_filters: tuple[tuple[str, str], ...] = (
+        ("created_at_after", "a.created_at >= %s"),
+        ("created_at_before", "a.created_at <= %s"),
+    )
+    for key, sql_fragment in timestamp_filters:
+        value = filters.get(key)
+        if not value:
+            continue
+        conditions.append(sql_fragment)
+        params.append(value)
+    return conditions, params
+
+
+def _collect_search_filter_conditions(
+    filters: dict[str, Any],
+) -> tuple[list[str], list[Any]]:
+    """Build filter WHERE fragments and bound params."""
+    conditions: list[str] = []
+    params: list[Any] = []
+
+    if not filters.get("include_deleted", False):
+        conditions.append("a.deleted_at IS NULL")
+
+    status_condition = _status_condition(filters.get("status"))
+    if status_condition is not None:
+        conditions.append(status_condition)
+
+    source_tool_prefix = filters.get("source_tool_prefix")
+    if source_tool_prefix:
+        conditions.append("a.source_tool LIKE %s")
+        params.append(_escaped_source_tool_prefix(str(source_tool_prefix)))
+
+    eq_conditions, eq_params = _collect_simple_equality_conditions(filters)
+    conditions.extend(eq_conditions)
+    params.extend(eq_params)
+
+    parent_artifact_id = filters.get("parent_artifact_id")
+    if parent_artifact_id:
+        conditions.append(
+            "("
+            "a.parent_artifact_id = %s "
+            "OR EXISTS ("
+            "SELECT 1 FROM artifact_lineage_edges ale "
+            "WHERE ale.workspace_id = a.workspace_id "
+            "AND ale.child_artifact_id = a.artifact_id "
+            "AND ale.parent_artifact_id = %s"
+            ")"
+            ")"
+        )
+        params.extend([parent_artifact_id, parent_artifact_id])
+
+    has_binary_refs = filters.get("has_binary_refs")
+    if has_binary_refs is not None:
+        conditions.append(
+            "EXISTS (SELECT 1 FROM payload_blobs pb"
+            " WHERE pb.workspace_id = a.workspace_id"
+            " AND pb.payload_hash_full"
+            " = a.payload_hash_full"
+            " AND pb.contains_binary_refs = %s)"
+        )
+        params.append(has_binary_refs)
+
+    range_conditions, range_params = _collect_range_and_time_conditions(filters)
+    conditions.extend(range_conditions)
+    params.extend(range_params)
+    return conditions, params
+
+
+def build_search_query(
+    filters: dict[str, Any],
+    order_by: str,
+    limit: int,
+    *,
+    query: str | None = None,
+    offset: int = 0,
+) -> tuple[str, list[Any]]:
+    """Build SQL query for artifact search.
+
+    One extra row is fetched to detect whether a next page exists.
+
+    Args:
+        filters: Validated filter dict (Addendum B columns).
+        order_by: Sort key (``created_seq_desc`` or
+            ``last_seen_desc``).
+        limit: Maximum rows to return (before +1 overfetch).
+        query: Optional FTS query text for indexed search.
+        offset: Number of rows to skip for pagination.
+
+    Returns:
+        A ``(sql, params)`` tuple ready for execution.
+    """
+    params: list[Any] = [WORKSPACE_ID]
+
+    if query:
+        base = (
+            """
+    SELECT a.artifact_id, a.created_seq, a.created_at,
+           a.last_referenced_at AS last_seen_at, a.source_tool,
+           a.upstream_instance_id, """
+            + _CAPTURE_KIND_EXPR
+            + """ AS capture_kind,
+           """
+            + _CAPTURE_KEY_EXPR
+            + """ AS capture_key,
+           CASE WHEN a.error_summary IS NULL
+                THEN 'ok' ELSE 'error'
+           END AS status,
+           a.payload_total_bytes, a.error_summary,
+           a.map_kind, a.map_status,
+           a.chain_seq, a.kind
+    FROM artifacts_fts fts
+    JOIN artifacts a
+      ON a.artifact_id = fts.artifact_id
+     AND a.workspace_id = %s
+    WHERE artifacts_fts MATCH %s
+    """
+        )
+        params.append(query)
+    else:
+        base = (
+            """
+    SELECT a.artifact_id, a.created_seq, a.created_at,
+           a.last_referenced_at AS last_seen_at, a.source_tool,
+           a.upstream_instance_id, """
+            + _CAPTURE_KIND_EXPR
+            + """ AS capture_kind,
+           """
+            + _CAPTURE_KEY_EXPR
+            + """ AS capture_key,
+           CASE WHEN a.error_summary IS NULL
+                THEN 'ok' ELSE 'error'
+           END AS status,
+           a.payload_total_bytes, a.error_summary,
+           a.map_kind, a.map_status,
+           a.chain_seq, a.kind
+    FROM artifacts a
+    WHERE a.workspace_id = %s
+    """
+        )
+
+    conditions, filter_params = _collect_search_filter_conditions(filters)
+    params.extend(filter_params)
+
+    if conditions:
+        base += " AND " + " AND ".join(conditions)
+
+    # Ordering
+    if order_by == "created_seq_desc":
+        base += (
+            " ORDER BY bm25(artifacts_fts), a.created_seq DESC"
+            if query
+            else " ORDER BY a.created_seq DESC"
+        )
+    elif order_by == "chain_seq_asc":
+        base += (
+            " ORDER BY bm25(artifacts_fts),"
+            " a.chain_seq ASC NULLS LAST, a.created_seq ASC"
+            if query
+            else " ORDER BY a.chain_seq ASC NULLS LAST, a.created_seq ASC"
+        )
+    else:
+        base += (
+            " ORDER BY bm25(artifacts_fts), a.last_referenced_at DESC"
+            if query
+            else " ORDER BY a.last_referenced_at DESC"
+        )
+
+    base += " LIMIT %s"
+    # fetch one extra for pagination detection
+    params.append(limit + 1)
+    if offset > 0:
+        base += " OFFSET %s"
+        params.append(offset)
+
+    return base, params

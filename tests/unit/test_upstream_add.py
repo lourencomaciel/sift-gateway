@@ -1,4 +1,4 @@
-"""Tests for sift-mcp upstream add command."""
+"""Tests for sift-gateway upstream add command."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 import pytest
 
-from sift_mcp.config.upstream_add import (
+from sift_gateway.config.upstream_add import (
     print_add_summary,
     run_upstream_add,
 )
@@ -193,11 +193,11 @@ class TestRunUpstreamAdd:
         state_dir = tmp_path / "state"
         assert not state_dir.exists()
 
-    def test_honors_sift_mcp_data_dir_env(
+    def test_honors_sift_gateway_data_dir_env(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         env_dir = tmp_path / "from-env"
-        monkeypatch.setenv("SIFT_MCP_DATA_DIR", str(env_dir))
+        monkeypatch.setenv("SIFT_GATEWAY_DATA_DIR", str(env_dir))
 
         servers = {
             "github": {"command": "npx", "args": ["-y", "@mcp/github"]},
@@ -215,7 +215,7 @@ class TestRunUpstreamAdd:
     ) -> None:
         env_dir = tmp_path / "from-env"
         explicit_dir = tmp_path / "explicit"
-        monkeypatch.setenv("SIFT_MCP_DATA_DIR", str(env_dir))
+        monkeypatch.setenv("SIFT_GATEWAY_DATA_DIR", str(env_dir))
 
         servers = {
             "github": {"command": "npx", "args": ["-y", "@mcp/github"]},
@@ -542,12 +542,12 @@ class TestPrintAddSummary:
 
 class TestCLIArgParsing:
     def test_upstream_add_parses(self) -> None:
-        from sift_mcp.main import _parse_args
+        from sift_gateway.main import _parse_args
 
         snippet = '{"gh": {"command": "npx", "args": []}}'
         with patch(
             "sys.argv",
-            ["sift-mcp", "upstream", "add", snippet],
+            ["sift-gateway", "upstream", "add", snippet],
         ):
             args = _parse_args()
 
@@ -557,25 +557,25 @@ class TestCLIArgParsing:
         assert args.dry_run is False
 
     def test_upstream_add_dry_run(self) -> None:
-        from sift_mcp.main import _parse_args
+        from sift_gateway.main import _parse_args
 
         snippet = '{"gh": {"command": "npx", "args": []}}'
         with patch(
             "sys.argv",
-            ["sift-mcp", "upstream", "add", "--dry-run", snippet],
+            ["sift-gateway", "upstream", "add", "--dry-run", snippet],
         ):
             args = _parse_args()
 
         assert args.dry_run is True
 
     def test_upstream_add_data_dir_global(self) -> None:
-        from sift_mcp.main import _parse_args
+        from sift_gateway.main import _parse_args
 
         snippet = '{"gh": {"command": "npx", "args": []}}'
         with patch(
             "sys.argv",
             [
-                "sift-mcp",
+                "sift-gateway",
                 "--data-dir",
                 "/custom",
                 "upstream",
@@ -588,13 +588,13 @@ class TestCLIArgParsing:
         assert args.data_dir == "/custom"
 
     def test_upstream_add_data_dir_subcommand(self) -> None:
-        from sift_mcp.main import _parse_args
+        from sift_gateway.main import _parse_args
 
         snippet = '{"gh": {"command": "npx", "args": []}}'
         with patch(
             "sys.argv",
             [
-                "sift-mcp",
+                "sift-gateway",
                 "upstream",
                 "add",
                 "--data-dir",
@@ -608,13 +608,13 @@ class TestCLIArgParsing:
 
     def test_upstream_add_data_dir_not_shadowed(self) -> None:
         """Global --data-dir is preserved when not repeated."""
-        from sift_mcp.main import _parse_args
+        from sift_gateway.main import _parse_args
 
         snippet = '{"gh": {"command": "npx", "args": []}}'
         with patch(
             "sys.argv",
             [
-                "sift-mcp",
+                "sift-gateway",
                 "--data-dir",
                 "/global",
                 "upstream",

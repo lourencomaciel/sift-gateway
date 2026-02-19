@@ -6,7 +6,7 @@ from typing import Any
 
 import pytest
 
-from sift_mcp.core import artifact_capture
+from sift_gateway.core import artifact_capture
 
 
 class _Cursor:
@@ -18,7 +18,9 @@ class _Cursor:
 
 
 class _Connection:
-    def __init__(self, rows_by_sql: dict[str, tuple[object, ...] | None]) -> None:
+    def __init__(
+        self, rows_by_sql: dict[str, tuple[object, ...] | None]
+    ) -> None:
         self.rows_by_sql = rows_by_sql
         self.calls: list[tuple[str, tuple[object, ...] | None]] = []
         self.committed = False

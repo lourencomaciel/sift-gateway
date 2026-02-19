@@ -6,8 +6,8 @@ from typing import Any
 
 import pytest
 
-from sift_mcp.core.artifact_next_page import execute_artifact_next_page
-from sift_mcp.pagination.extract import PaginationState
+from sift_gateway.core.artifact_next_page import execute_artifact_next_page
+from sift_gateway.pagination.extract import PaginationState
 
 
 class _FakeCursor:
@@ -79,7 +79,10 @@ class _Runtime:
         return {"type": "gateway_tool_result", "artifact_id": "art_next"}
 
     def not_implemented(self, tool_name: str) -> dict[str, Any]:
-        return {"code": "NOT_IMPLEMENTED", "message": f"{tool_name} unavailable"}
+        return {
+            "code": "NOT_IMPLEMENTED",
+            "message": f"{tool_name} unavailable",
+        }
 
 
 def _row_with_pagination() -> tuple[Any, ...]:
@@ -122,7 +125,9 @@ async def test_execute_artifact_next_page_replays_next_upstream_call() -> None:
 
 
 @pytest.mark.asyncio
-async def test_execute_artifact_next_page_rejects_missing_pagination_state() -> None:
+async def test_execute_artifact_next_page_rejects_missing_pagination_state() -> (
+    None
+):
     row = ("art_1", None, "hash_1", {"meta": {"warnings": []}}, "none", "")
     conn = _SeqConnection([row])
     runtime = _Runtime(
@@ -140,4 +145,3 @@ async def test_execute_artifact_next_page_rejects_missing_pagination_state() -> 
 
     assert result["code"] == "INVALID_ARGUMENT"
     assert "no upstream pagination state" in result["message"]
-

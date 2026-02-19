@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from sift_mcp.core.artifact_search import execute_artifact_search
+from sift_gateway.core.artifact_search import execute_artifact_search
 
 
 class _FakeCursor:
@@ -54,7 +54,9 @@ class _Runtime:
     db_pool: _FakePool | None
     artifact_search_max_limit: int = 2
     cursor_verify_error: Exception | None = None
-    cursor_positions: dict[str, Any] = field(default_factory=lambda: {"offset": 0})
+    cursor_positions: dict[str, Any] = field(
+        default_factory=lambda: {"offset": 0}
+    )
     cursor_errors: list[str] = field(default_factory=list)
     issued_cursors: list[dict[str, Any]] = field(default_factory=list)
     touches: list[tuple[str, list[str]]] = field(default_factory=list)
@@ -133,7 +135,9 @@ def _row(artifact_id: str, created_seq: int) -> tuple[Any, ...]:
 
 
 def test_execute_artifact_search_returns_items_and_cursor() -> None:
-    conn = _FakeConnection(rows=[_row("art_1", 1), _row("art_2", 2), _row("art_3", 3)])
+    conn = _FakeConnection(
+        rows=[_row("art_1", 1), _row("art_2", 2), _row("art_3", 3)]
+    )
     runtime = _Runtime(db_pool=_FakePool(conn), artifact_search_max_limit=2)
 
     result = execute_artifact_search(

@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 import structlog
 
-from sift_mcp.obs.logging import (
+from sift_gateway.obs.logging import (
     LogEvents,
     configure_logging,
     get_logger,

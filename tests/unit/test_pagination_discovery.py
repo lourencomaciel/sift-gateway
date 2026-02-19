@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from sift_mcp.pagination.discovery import discover_pagination
+from sift_gateway.pagination.discovery import discover_pagination
 
 
 def test_discover_pagination_next_url_query_params() -> None:

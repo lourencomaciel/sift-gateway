@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from sift_mcp.core.artifact_select import execute_artifact_select
+from sift_gateway.core.artifact_select import execute_artifact_select
 
 
 class _FakeCursor:
@@ -30,7 +30,9 @@ class _SeqConnection:
         self._cursors = cursors
         self.committed = False
 
-    def execute(self, _sql: str, _params: tuple[Any, ...] | list[Any]) -> _FakeCursor:
+    def execute(
+        self, _sql: str, _params: tuple[Any, ...] | list[Any]
+    ) -> _FakeCursor:
         if not self._cursors:
             return _FakeCursor()
         return self._cursors.pop(0)
@@ -223,7 +225,10 @@ class _Runtime:
         return "art_derived", None
 
     def not_implemented(self, tool_name: str) -> dict[str, Any]:
-        return {"code": "NOT_IMPLEMENTED", "message": f"{tool_name} unavailable"}
+        return {
+            "code": "NOT_IMPLEMENTED",
+            "message": f"{tool_name} unavailable",
+        }
 
 
 def _meta_row() -> tuple[Any, ...]:
@@ -305,4 +310,3 @@ def test_execute_artifact_select_count_only_persists_count_derived() -> None:
     assert result["count"] == 3
     assert result["derived_artifact_id"] == "art_derived"
     assert runtime.persisted_calls[0]["result_data"] == {"count": 3}
-

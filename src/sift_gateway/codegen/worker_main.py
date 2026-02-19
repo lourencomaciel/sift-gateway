@@ -1,0 +1,298 @@
+"""Worker subprocess entrypoint for executing generated code queries."""
+
+from __future__ import annotations
+
+import builtins as _builtins
+import inspect
+import sys
+import traceback
+from typing import Any
+
+from sift_gateway.codegen.ast_guard import (
+    ALLOWED_IMPORT_ROOTS,
+    CodeValidationError,
+    validate_code_ast,
+)
+from sift_gateway.codegen.runtime import decode_json_bytes, encode_json_bytes
+
+_ALLOWED_IMPORT_ROOTS: frozenset[str] = ALLOWED_IMPORT_ROOTS
+
+_BLOCKED_BUILTINS = frozenset(
+    {
+        "eval",
+        "exec",
+        "compile",
+        "open",
+        "input",
+        "globals",
+        "locals",
+        "vars",
+        "dir",
+        "getattr",
+        "setattr",
+        "delattr",
+        "breakpoint",
+        "quit",
+        "exit",
+    }
+)
+
+
+_ALLOWED_URLLIB_MODULES = frozenset({"urllib", "urllib.parse"})
+
+
+def _safe_import(
+    name: str,
+    globals: dict[str, Any] | None = None,
+    locals: dict[str, Any] | None = None,
+    fromlist: tuple[str, ...] | list[str] = (),
+    level: int = 0,
+) -> Any:
+    if level != 0:
+        raise ImportError("relative imports are not allowed")
+    root = name.split(".", 1)[0]
+    if root not in _ALLOWED_IMPORT_ROOTS:
+        raise ImportError(f"import not allowed: {name}")
+    if root == "urllib" and name not in _ALLOWED_URLLIB_MODULES:
+        raise ImportError(
+            f"import not allowed: {name} (only urllib.parse is permitted)"
+        )
+    return _builtins.__import__(name, globals, locals, fromlist, level)
+
+
+def _safe_builtins() -> dict[str, Any]:
+    allowed = dict(_builtins.__dict__)
+    for name in _BLOCKED_BUILTINS:
+        allowed.pop(name, None)
+    allowed["__import__"] = _safe_import
+    return allowed
+
+
+def _worker_error(
+    code: str,
+    message: str,
+    *,
+    tb: str | None = None,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "ok": False,
+        "error": {
+            "code": code,
+            "message": message,
+        },
+    }
+    if tb:
+        payload["error"]["traceback"] = tb[:2000]
+    return payload
+
+
+def _validate_run_callable(
+    run_fn: Any,
+) -> tuple[str, CodeValidationError | None]:
+    if not callable(run_fn):
+        return "invalid", CodeValidationError(
+            code="CODE_ENTRYPOINT_MISSING",
+            message=(
+                "run(artifacts, schemas, params) "
+                "or run(data, schema, params) is not callable"
+            ),
+        )
+    sig = inspect.signature(run_fn)
+    names = list(sig.parameters.keys())
+    if names == ["artifacts", "schemas", "params"]:
+        return "multi", None
+    if names == ["data", "schema", "params"]:
+        return "legacy", None
+    return "invalid", CodeValidationError(
+        code="CODE_ENTRYPOINT_MISSING",
+        message=(
+            "run must have signature "
+            "run(artifacts, schemas, params) "
+            "or run(data, schema, params)"
+        ),
+    )
+    return "invalid", None
+
+
+def _execute(payload: dict[str, Any]) -> dict[str, Any]:
+    global _ALLOWED_IMPORT_ROOTS
+
+    code_val = payload.get("code")
+    artifacts_val = payload.get("artifacts")
+    schemas_val = payload.get("schemas")
+    params_val = payload.get("params")
+    allowed_roots_val = payload.get("allowed_import_roots")
+
+    if not isinstance(code_val, str):
+        return _worker_error("CODE_AST_REJECTED", "missing code string")
+    if not isinstance(params_val, dict):
+        return _worker_error("CODE_AST_REJECTED", "params must be an object")
+
+    if artifacts_val is None and schemas_val is None:
+        legacy_data = payload.get("data")
+        legacy_schema = payload.get("schema")
+        if isinstance(legacy_data, list) and isinstance(legacy_schema, dict):
+            artifacts_val = {"__single__": legacy_data}
+            schemas_val = {"__single__": legacy_schema}
+
+    if not isinstance(artifacts_val, dict):
+        return _worker_error("CODE_AST_REJECTED", "artifacts must be an object")
+    if not isinstance(schemas_val, dict):
+        return _worker_error("CODE_AST_REJECTED", "schemas must be an object")
+
+    for artifact_id, rows in artifacts_val.items():
+        if not isinstance(artifact_id, str):
+            return _worker_error(
+                "CODE_AST_REJECTED",
+                "artifacts keys must be strings",
+            )
+        if not isinstance(rows, list):
+            return _worker_error(
+                "CODE_AST_REJECTED",
+                "artifacts values must be lists",
+            )
+
+    for artifact_id, schema in schemas_val.items():
+        if not isinstance(artifact_id, str):
+            return _worker_error(
+                "CODE_AST_REJECTED",
+                "schemas keys must be strings",
+            )
+        if not isinstance(schema, dict):
+            return _worker_error(
+                "CODE_AST_REJECTED",
+                "schemas values must be objects",
+            )
+
+    allowed_roots: frozenset[str]
+    if allowed_roots_val is None:
+        allowed_roots = ALLOWED_IMPORT_ROOTS
+    elif isinstance(allowed_roots_val, list) and all(
+        isinstance(item, str) for item in allowed_roots_val
+    ):
+        allowed_roots = frozenset(allowed_roots_val)
+    else:
+        return _worker_error(
+            "CODE_AST_REJECTED",
+            "allowed_import_roots must be a list of strings",
+        )
+
+    _ALLOWED_IMPORT_ROOTS = allowed_roots
+
+    try:
+        module = validate_code_ast(
+            code_val,
+            allowed_import_roots_set=allowed_roots,
+        )
+    except CodeValidationError as exc:
+        return _worker_error(exc.code, exc.message)
+
+    globals_dict: dict[str, Any] = {"__builtins__": _safe_builtins()}
+
+    try:
+        compiled = compile(module, "<generated_code>", "exec")
+        exec(compiled, globals_dict, globals_dict)
+    except MemoryError:
+        return _worker_error(
+            "CODE_RUNTIME_MEMORY_LIMIT",
+            "code execution exceeded memory limit",
+        )
+    except Exception as exc:  # pragma: no cover - defensive
+        return _worker_error(
+            "CODE_RUNTIME_EXCEPTION",
+            str(exc),
+            tb=traceback.format_exc(),
+        )
+
+    run_fn = globals_dict.get("run")
+    run_mode, run_err = _validate_run_callable(run_fn)
+    if run_err is not None:
+        return _worker_error(run_err.code, run_err.message)
+    assert callable(run_fn)
+
+    data_arg: list[Any] | None = None
+    schema_arg: dict[str, Any] | None = None
+    if len(artifacts_val) == 1:
+        single_key = next(iter(artifacts_val))
+        single_rows = artifacts_val.get(single_key)
+        single_schema = schemas_val.get(single_key)
+        if isinstance(single_rows, list):
+            data_arg = single_rows
+        if isinstance(single_schema, dict):
+            schema_arg = single_schema
+
+    try:
+        if run_mode == "legacy":
+            if data_arg is None or schema_arg is None:
+                return _worker_error(
+                    "CODE_ENTRYPOINT_MISSING",
+                    (
+                        "run(data, schema, params) requires exactly one "
+                        "artifact input; use run(artifacts, schemas, params) "
+                        "for multi-artifact queries"
+                    ),
+                )
+            result = run_fn(data_arg, schema_arg, params_val)
+        else:
+            result = run_fn(artifacts_val, schemas_val, params_val)
+    except MemoryError:
+        return _worker_error(
+            "CODE_RUNTIME_MEMORY_LIMIT",
+            "code execution exceeded memory limit",
+        )
+    except Exception as exc:
+        return _worker_error(
+            "CODE_RUNTIME_EXCEPTION",
+            str(exc),
+            tb=traceback.format_exc(),
+        )
+
+    try:
+        # Assert output is JSON-serializable under runtime serializer.
+        encode_json_bytes(result)
+    except Exception as exc:
+        return _worker_error(
+            "CODE_RUNTIME_EXCEPTION",
+            f"result is not JSON-serializable: {exc}",
+            tb=traceback.format_exc(),
+        )
+
+    return {"ok": True, "result": result}
+
+
+def main() -> int:
+    """Run worker protocol: read request JSON, execute, write response JSON."""
+    raw = sys.stdin.buffer.read()
+    if not raw:
+        sys.stdout.buffer.write(
+            encode_json_bytes(_worker_error("CODE_AST_REJECTED", "empty input"))
+        )
+        return 0
+
+    try:
+        payload = decode_json_bytes(raw)
+    except Exception as exc:
+        sys.stdout.buffer.write(
+            encode_json_bytes(
+                _worker_error("CODE_AST_REJECTED", f"invalid input json: {exc}")
+            )
+        )
+        return 0
+
+    if not isinstance(payload, dict):
+        sys.stdout.buffer.write(
+            encode_json_bytes(
+                _worker_error(
+                    "CODE_AST_REJECTED", "input payload must be object"
+                )
+            )
+        )
+        return 0
+
+    response = _execute(payload)
+    sys.stdout.buffer.write(encode_json_bytes(response))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

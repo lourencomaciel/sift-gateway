@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from sift_mcp.tools.artifact_search import (
+from sift_gateway.tools.artifact_search import (
     build_search_query,
     validate_search_args,
 )
@@ -77,7 +77,9 @@ def test_build_search_query_base() -> None:
 
 
 def test_build_search_query_include_deleted() -> None:
-    sql, _ = build_search_query({"include_deleted": True}, "created_seq_desc", 10)
+    sql, _ = build_search_query(
+        {"include_deleted": True}, "created_seq_desc", 10
+    )
     assert "a.deleted_at IS NULL" not in sql
 
 

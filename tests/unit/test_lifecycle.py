@@ -3,8 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 import sqlite3
 
-from sift_mcp.config.settings import GatewayConfig, UpstreamConfig
-from sift_mcp.lifecycle import (
+from sift_gateway.config.settings import GatewayConfig, UpstreamConfig
+from sift_gateway.lifecycle import (
     _check_db,
     ensure_data_dirs,
     run_startup_check,

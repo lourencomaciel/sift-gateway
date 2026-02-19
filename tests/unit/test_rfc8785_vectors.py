@@ -4,7 +4,7 @@ from decimal import Decimal
 
 import pytest
 
-from sift_mcp.canon.rfc8785 import canonical_text
+from sift_gateway.canon.rfc8785 import canonical_text
 
 
 def test_canonical_orders_keys_and_removes_whitespace() -> None:
