@@ -51,6 +51,7 @@ _SERVER_FLAGS = {
 }
 _GLOBAL_FLAGS_WITH_VALUE = _SHARED_FLAGS_WITH_VALUE | _SERVER_FLAGS_WITH_VALUE
 _GLOBAL_FLAGS = _SHARED_FLAGS | _SERVER_FLAGS
+_LOGS_FLAG = "--logs"
 
 
 def _add_init_mode_group(
@@ -207,7 +208,7 @@ def _add_install_subcommand(
     )
 
 
-def _parse_args() -> argparse.Namespace:
+def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     """Parse command-line arguments for the gateway CLI.
 
     Returns:
@@ -229,6 +230,11 @@ def _parse_args() -> argparse.Namespace:
         action="version",
         version=f"%(prog)s {__version__}",
         help="Show the installed version and exit",
+    )
+    parser.add_argument(
+        "--logs",
+        action="store_true",
+        help="Emit structured logs to stderr",
     )
     parser.add_argument(
         "--data-dir",
@@ -268,7 +274,7 @@ def _parse_args() -> argparse.Namespace:
     _add_init_subcommand(sub)
     _add_upstream_subcommand(sub)
     _add_install_subcommand(sub)
-    return parser.parse_args()
+    return parser.parse_args(argv)
 
 
 def _first_positional_command(raw_argv: list[str]) -> str | None:
@@ -302,6 +308,40 @@ def _is_artifact_cli_invocation(raw_argv: list[str]) -> bool:
         return False
     command = _first_positional_command(raw_argv)
     return isinstance(command, str) and command in _ARTIFACT_COMMANDS
+
+
+def _extract_logs_flag(raw_argv: list[str]) -> tuple[bool, list[str]]:
+    """Extract top-level ``--logs`` flag and return sanitized argv."""
+    logs_enabled = False
+    sanitized: list[str] = []
+    idx = 0
+    while idx < len(raw_argv):
+        token = raw_argv[idx]
+        if token == "--":
+            sanitized.extend(raw_argv[idx:])
+            break
+        if token in _GLOBAL_FLAGS_WITH_VALUE:
+            sanitized.append(token)
+            idx += 1
+            if idx < len(raw_argv):
+                sanitized.append(raw_argv[idx])
+            idx += 1
+            continue
+        if token == _LOGS_FLAG:
+            logs_enabled = True
+            idx += 1
+            continue
+        if token in _GLOBAL_FLAGS:
+            sanitized.append(token)
+            idx += 1
+            continue
+        if token.startswith("-"):
+            sanitized.append(token)
+            idx += 1
+            continue
+        sanitized.extend(raw_argv[idx:])
+        break
+    return logs_enabled, sanitized
 
 
 def _run_upstream_add(args: argparse.Namespace) -> int:
@@ -655,7 +695,7 @@ def _run_server(
     return 0
 
 
-def serve() -> int:
+def serve(argv: list[str] | None = None) -> int:
     """Dispatch CLI command and return an exit code.
 
     Handles ``init``, ``--check``, and the default server mode.
@@ -663,13 +703,17 @@ def serve() -> int:
     Returns:
         ``0`` on success, ``1`` on failure.
     """
-    raw_argv = sys.argv[1:]
-    if _is_artifact_cli_invocation(raw_argv):
+    raw_argv = list(sys.argv[1:] if argv is None else argv)
+    _, dispatch_argv = _extract_logs_flag(raw_argv)
+    if _is_artifact_cli_invocation(dispatch_argv):
         from sift_gateway import cli_main as artifact_cli
 
-        return artifact_cli.serve(raw_argv)
+        return artifact_cli.serve(dispatch_argv)
 
-    args = _parse_args()
+    if argv is None and dispatch_argv == raw_argv:
+        args = _parse_args()
+    else:
+        args = _parse_args(dispatch_argv)
 
     if args.command == "init":
         return _run_init(args)
@@ -723,10 +767,12 @@ def cli() -> None:
     """Run the gateway CLI and exit with the appropriate code."""
     from sift_gateway.obs.logging import configure_logging
 
-    configure_logging()
+    raw_argv = sys.argv[1:]
+    logs_enabled, dispatch_argv = _extract_logs_flag(raw_argv)
+    configure_logging(enabled=logs_enabled)
 
     try:
-        exit_code = serve()
+        exit_code = serve(dispatch_argv)
     except Exception as exc:
         print(f"sift-gateway failed: {exc}", file=sys.stderr)
         sys.exit(1)
