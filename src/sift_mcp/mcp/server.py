@@ -864,9 +864,9 @@ class GatewayServer:
         sanitized: dict[str, Any],
     ) -> dict[str, Any]:
         """Preserve control-plane fields that must remain protocol-stable."""
-        for field in ("cursor", "next_cursor"):
-            if field in original:
-                sanitized[field] = original[field]
+        for protocol_field in ("cursor", "next_cursor"):
+            if protocol_field in original:
+                sanitized[protocol_field] = original[protocol_field]
         if "pagination" in original:
             sanitized["pagination"] = original["pagination"]
         return sanitized
