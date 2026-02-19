@@ -134,7 +134,9 @@ This validates:
 
 ### Logging
 
-Sift emits structured logs to stderr (JSON format, INFO level by default). The current release does not expose a dedicated `SIFT_GATEWAY_LOG_LEVEL` setting.
+Sift emits structured logs to stderr (JSON format) only when `--logs` is passed.
+Without `--logs`, structured logs are suppressed by default. The current
+release does not expose a dedicated `SIFT_GATEWAY_LOG_LEVEL` setting.
 
 See [Observability](observability.md) for full event catalog.
 

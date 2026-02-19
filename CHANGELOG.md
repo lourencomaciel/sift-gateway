@@ -22,6 +22,7 @@
 ### Changed
 - Rebranded from "MCP Artifact Gateway" to "Sift"
 - Replaced silent `except Exception: pass` blocks with warning logs
+- Structured logs are now opt-in via top-level `--logs`; default CLI output suppresses structured stderr logs
 - **Breaking:** `query_kind=code` now returns all results without pagination/cursor
 - `query_kind=code` supports `scope` (`all_related` default, `single` anchor-only)
 - Documented return normalization for code queries (non-list values auto-wrap to one-item lists)

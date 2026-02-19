@@ -8,7 +8,7 @@ Sift uses `structlog` and emits structured events (JSON by default).
 
 Configuration entrypoints:
 
-- `configure_logging(json_output=True, level="INFO")`
+- `configure_logging(json_output=True, level="INFO", enabled=True)`
 - `get_logger(**initial_context)`
 
 Common log fields:

@@ -14,13 +14,19 @@ from typing import Any, cast
 import structlog
 
 
-def configure_logging(*, json_output: bool = True, level: str = "INFO") -> None:
+def configure_logging(
+    *,
+    json_output: bool = True,
+    level: str = "INFO",
+    enabled: bool = True,
+) -> None:
     """Configure structlog with JSON or console output.
 
     Args:
         json_output: If True, render logs as JSON; otherwise
             use human-readable console format.
         level: Minimum log level name (e.g. ``INFO``, ``DEBUG``).
+        enabled: If False, suppress all structured log emission.
     """
     shared_processors: list[structlog.types.Processor] = [
         structlog.contextvars.merge_contextvars,
@@ -36,6 +42,10 @@ def configure_logging(*, json_output: bool = True, level: str = "INFO") -> None:
     else:
         renderer = structlog.dev.ConsoleRenderer()
 
+    minimum_level = getattr(logging, level.upper(), logging.INFO)
+    if not enabled:
+        minimum_level = logging.CRITICAL
+
     structlog.configure(
         processors=[
             *shared_processors,
@@ -43,7 +53,7 @@ def configure_logging(*, json_output: bool = True, level: str = "INFO") -> None:
             renderer,
         ],
         wrapper_class=structlog.make_filtering_bound_logger(
-            getattr(logging, level.upper(), logging.INFO)
+            minimum_level
         ),
         context_class=dict,
         logger_factory=structlog.PrintLoggerFactory(file=sys.stderr),
