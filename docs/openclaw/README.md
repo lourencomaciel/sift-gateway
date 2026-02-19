@@ -52,11 +52,18 @@ Use one of these modes depending on complexity:
 - `--code "<python_source>"` for inline `run(data, schema, params)`.
 - `--file <path.py>` for file-based `run(data, schema, params)`.
 - `--params '<json_object>'` to pass runtime parameters into `params`.
+- `--scope single` to restrict processing to the anchor artifact(s) only.
+- Multi-artifact input:
+  - shared root path: repeat `--artifact-id` and provide one `--root-path`.
+  - per-artifact root paths: repeat both `--artifact-id` and `--root-path` in the same order.
 
 ```bash
 sift-gateway code <artifact_id> '$.items' --expr "df.shape[0]"
+sift-gateway code <artifact_id> '$.items' --scope single --expr "df.shape[0]"
 sift-gateway code <artifact_id> '$.items' --code "def run(data, schema, params): return {'rows': len(data)}"
 sift-gateway code <artifact_id> '$.items' --file ./analysis.py --params '{"window":"7d"}'
+sift-gateway code --artifact-id art_users --artifact-id art_orders --root-path '$.items' --expr "len(df)"
+sift-gateway code --artifact-id art_users --artifact-id art_orders --root-path '$.users' --root-path '$.orders' --file ./join.py
 ```
 
 ## Capture vs Inline Decision Rule
