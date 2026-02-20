@@ -252,7 +252,7 @@ def _normalize_code_root_paths(
         missing_keys: list[str] = []
         extra_keys: list[str] = []
         expected_keys = sorted(dict.fromkeys(artifact_ids))
-        provided_keys = sorted(str(key) for key in raw_root_paths.keys())
+        provided_keys = sorted(str(key) for key in raw_root_paths)
         for artifact_id in artifact_ids:
             value = raw_root_paths.get(artifact_id)
             if not isinstance(value, str) or not value.strip():
@@ -260,9 +260,11 @@ def _normalize_code_root_paths(
                 continue
             normalized[artifact_id] = value.strip()
         expected_key_set = set(artifact_ids)
-        for key in raw_root_paths.keys():
-            if not isinstance(key, str) or key not in expected_key_set:
-                extra_keys.append(str(key))
+        extra_keys = [
+            str(key)
+            for key in raw_root_paths
+            if not isinstance(key, str) or key not in expected_key_set
+        ]
         if missing_keys or extra_keys:
             return {}, gateway_error(
                 "INVALID_ARGUMENT",

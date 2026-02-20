@@ -3,6 +3,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 import json
 from pathlib import Path
+import re
 import subprocess
 from typing import Any
 
@@ -346,13 +347,14 @@ def test_serve_code_scope_single_sets_scope_single(
 def test_load_cli_continue_chain_seq_requires_database_backend() -> None:
     runtime = type("_Runtime", (), {"db_pool": None})()
 
-    with pytest.raises(ValueError) as exc_info:
+    with pytest.raises(
+        ValueError,
+        match="run --continue-from requires database backend",
+    ):
         cli_main._load_cli_continue_chain_seq(
             runtime,
             artifact_id="art_parent",
         )
-
-    assert str(exc_info.value) == "run --continue-from requires database backend"
 
 
 @pytest.mark.parametrize(
@@ -380,13 +382,11 @@ def test_load_cli_continue_chain_seq_rejects_invalid_parent(
         {"db_pool": _ContinuePool(connection)},
     )()
 
-    with pytest.raises(ValueError) as exc_info:
+    with pytest.raises(ValueError, match=re.escape(expected)):
         cli_main._load_cli_continue_chain_seq(
             runtime,
             artifact_id="art_parent",
         )
-
-    assert str(exc_info.value) == expected
 
 
 def test_load_cli_continue_chain_seq_returns_next_page_index() -> None:
