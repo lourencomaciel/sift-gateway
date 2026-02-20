@@ -45,10 +45,7 @@ from sift_gateway.pagination.extract import (
     assess_pagination,
 )
 from sift_gateway.request_identity import compute_request_identity
-from sift_gateway.schema_compact import (
-    SCHEMA_LEGEND,
-    normalize_compact_schema_payload,
-)
+from sift_gateway.schema_compact import SCHEMA_LEGEND, compact_schema_payload
 from sift_gateway.tools.usage_hint import (
     build_code_query_usage,
     compact_schema_primary_root_path,
@@ -985,7 +982,7 @@ def _resolve_run_schema_ref(
     if not isinstance(raw_schemas, list):
         return [], None
     schemas_full = [schema for schema in raw_schemas if isinstance(schema, dict)]
-    schemas_compact = normalize_compact_schema_payload(schemas_full)
+    schemas_compact = compact_schema_payload(schemas_full)
     if not schemas_compact:
         return [], None
     return schemas_compact, SCHEMA_LEGEND

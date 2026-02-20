@@ -410,49 +410,6 @@ def test_load_cli_continue_chain_seq_returns_next_page_index() -> None:
     assert connection.params == ("local", "art_parent")
 
 
-def test_resolve_run_schema_ref_accepts_compact_schema_payload(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(
-        "sift_gateway.cli_main.execute_artifact_describe",
-        lambda _runtime, *, arguments: {
-            "schemas": [
-                {
-                    "v": "schema_v1",
-                    "h": "sha256:derived",
-                    "rp": "$",
-                    "m": "exact",
-                    "cv": {"c": "complete", "or": 1},
-                    "fd": {"oc": 1},
-                    "f": [
-                        {
-                            "p": "$.id",
-                            "t": ["number"],
-                            "n": False,
-                            "r": True,
-                        }
-                    ],
-                    "d": {
-                        "dh": "sha256:dataset",
-                        "tv": "traversal_v1",
-                        "bf": None,
-                    },
-                }
-            ]
-        },
-    )
-
-    schemas_compact, schema_legend = cli_main._resolve_run_schema_ref(
-        _FakeRuntime(),
-        artifact_id="art_new",
-    )
-
-    assert schemas_compact[0]["rp"] == "$"
-    assert schemas_compact[0]["h"] == "sha256:derived"
-    assert schemas_compact[0]["cv"]["or"] == 1
-    assert schema_legend is not None
-
-
 def test_serve_code_rejects_mixed_positional_and_multi_flags(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
