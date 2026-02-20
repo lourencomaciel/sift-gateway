@@ -526,26 +526,6 @@ class GatewayConfig(BaseSettings):
         CanonicalEncoding.gzip
     )
 
-    @field_validator("envelope_canonical_encoding", mode="before")
-    @classmethod
-    def _coerce_legacy_zstd_encoding(cls, value: object) -> object:
-        """Accept legacy ``zstd`` config values gracefully.
-
-        Existing installations may have ``envelope_canonical_encoding:
-        "zstd"`` persisted in config or env vars.  Silently coerce to
-        ``gzip`` so upgrades don't hard-fail at startup.
-
-        Args:
-            value: Raw config value.
-
-        Returns:
-            ``"gzip"`` when the input was ``"zstd"``, otherwise
-            the original value.
-        """
-        if isinstance(value, str) and value.strip().lower() == "zstd":
-            return "gzip"
-        return value
-
     # --------------- Ingest caps (§16.1) ---------------
     max_inbound_request_bytes: int = Field(10_000_000, ge=1)
     max_upstream_error_capture_bytes: int = Field(100_000, ge=1)

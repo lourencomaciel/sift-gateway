@@ -45,15 +45,13 @@ We will coordinate disclosure timing with reporters when possible.
 Current controls:
 
 1. Command execution uses `subprocess.run(command_argv, shell=False)`.
-2. `--stdin` cannot be combined with command execution in the same invocation.
-3. Command failures are persisted as structured error metadata.
-4. Dedup identity uses hash keys, not raw shell strings.
+2. Command failures are persisted as structured error metadata.
+3. Dedup identity uses hash keys, not raw shell strings.
 
 Operational guidance:
 
 1. Treat `sift-gateway run` as trusted-local execution.
 2. Restrict who can invoke capture in shared environments.
-3. Prefer `--stdin` ingestion for external data when practical.
 
 ### Code Surface (`sift-gateway code` / `query_kind="code"`)
 

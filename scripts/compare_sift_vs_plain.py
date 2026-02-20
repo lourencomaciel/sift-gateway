@@ -185,8 +185,11 @@ def _rehydrate_schema_ref_bodies(
             "$",
             "--scope",
             "single",
-            "--expr",
-            "df[['body']].to_dict('records')",
+            "--code",
+            (
+                "def run(data, schema, params): "
+                "return [{'body': row.get('body')} for row in data if isinstance(row, dict)]"
+            ),
             "--json",
         ]
     )
@@ -267,10 +270,15 @@ def _sift_codegen_flow(*, sift_bin: str, url: str, needle: str) -> SiftFlowResul
 
     capture_payload_total_bytes = int(run_payload.get("payload_total_bytes", 0))
 
-    expr = (
-        "df[df['email'].astype(str).str.contains("
-        + json.dumps(needle)
-        + ", case=False, na=False)][['body']].to_dict('records')"
+    code_source = (
+        "def run(data, schema, params):\n"
+        f"    needle = {json.dumps(needle.lower())}\n"
+        "    return [\n"
+        "        {'body': row.get('body')}\n"
+        "        for row in data\n"
+        "        if isinstance(row, dict)\n"
+        "        and needle in str(row.get('email', '')).lower()\n"
+        "    ]"
     )
     code_stdout = _run_command(
         [
@@ -280,8 +288,8 @@ def _sift_codegen_flow(*, sift_bin: str, url: str, needle: str) -> SiftFlowResul
             "$",
             "--scope",
             "single",
-            "--expr",
-            expr,
+            "--code",
+            code_source,
             "--json",
         ]
     )
@@ -407,7 +415,7 @@ def _compute_token_metrics(
     sift_run_command = f"{sift_bin} run --json -- curl -s '{url}'"
     sift_code_command = (
         f"{sift_bin} code {sift.artifact_id} '$' --scope single "
-        f"--expr \"email contains {needle} then select body\" --json"
+        "--code \"def run(data, schema, params): return len(data)\" --json"
     )
 
     openclaw_fetch_tokens = _count_input_tokens(

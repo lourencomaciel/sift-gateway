@@ -1,93 +1,110 @@
 ---
-name: sift-gateway
-description: Store and analyze large command outputs without context bloat
-requirements:
-  - sift-gateway
+name: context-query-guard
+description: Capture large or paginated command output (gh api, curl, kubectl, logs) as artifacts and query them with Python instead of flooding context
+metadata: {"openclaw":{"requires":{"bins":["sift-gateway"]},"install":[{"id":"uv","kind":"uv","package":"sift-gateway","bins":["sift-gateway"],"label":"Install Sift Gateway (uv)"}]}}
 ---
 
-# Sift - Large Output Handler
+# Context Query Guard
 
-Use Sift when output may exceed ~4KB or when data will be reused.
+Capture large command output as artifacts, keep it out of the context window, then query it for compact answers.
 
-## When to use Sift
+## Activation rules
 
-- API list calls: `gh api`, `curl`, `kubectl ... -o json`
-- large logs or long tabular output
-- multi-step tasks where the same dataset is reused
+- Use for: API list calls (`gh api`, `curl`, `kubectl ... -o json`), large logs, long tables, repeated analysis.
+- Skip for: one-off output that is clearly small and does not need follow-up querying.
 
-## Core workflow
+## Default playbook
 
-1. Capture output:
+- Start with a single-artifact query and an explicit `root_path`.
+- Use `run(data, schema, params)` first; only switch to multi-artifact when you must combine artifacts.
+- Use pure Python first; do not assume `pandas` is installed.
+- Keep outputs compact (aggregates or top <= 20 rows).
+- Prefer `--scope single`; use pagination-chain expansion (`scope=all_related`) only when cross-artifact analysis is required.
+
+## Core flow
+
+1. Capture data:
 
 ```bash
-sift-gateway run -- <command>
+sift-gateway run --json -- <command>
 ```
 
-2. Keep `artifact_id` and short summary in context.
+2. Keep only `artifact_id` and a short summary in model context.
 3. If pagination exists (`pagination.next.kind=="command"`), continue explicitly:
 
 ```bash
-sift-gateway run --continue-from <artifact_id> -- <next-command-with-next_params-applied>
+sift-gateway run --json --continue-from <artifact_id> -- <next-command-with-next_params-applied>
 ```
 
-4. Run focused analysis with code:
+4. Query with narrow code outputs:
 
 ```bash
-sift-gateway code <artifact_id> '$' --expr "df.head(5).to_dict('records')"
+sift-gateway code --json <artifact_id> '$' --code "def run(data, schema, params): return [{'id': row.get('id'), 'status': row.get('status')} for row in data[:20]]"
 ```
 
-## Code methods
+## Output shape
+
+`sift-gateway run --json` returns a JSON object with:
+
+- `artifact_id`: use this for follow-up queries.
+- `response_mode`: `"full"` or `"schema_ref"`.
+- `status` and `command_exit_code`: capture health/status.
+- `pagination.next.kind`: if `"command"`, run a continuation capture.
+- `payload`: present in `"full"` mode.
+- `schemas_compact` and `schema_legend`: present in `"schema_ref"` mode.
+
+`sift-gateway code --json` returns:
+
+- `response_mode: "full"`: query output in `payload` and normalized rows in `items`.
+- `response_mode: "schema_ref"`: compact schema metadata (`schemas_compact`, `schema_legend`) without inline result rows.
+
+## Query methods
 
 `sift-gateway code` accepts:
 
-- `--expr "<python_expr>"` for quick DataFrame expressions.
-- `--code "<python_source>"` for inline `run(data, schema, params)`.
+- `--code "<python_source>"` for inline `run(data, schema, params)` (single artifact) or `run(artifacts, schemas, params)` (multi-artifact).
 - `--file <path.py>` for file-based `run(...)`.
 - `--params '<json_object>'` to pass runtime parameters.
-- `--scope single` to disable lineage expansion.
-- multi-artifact mode with repeated `--artifact-id` and optional `--root-path` mapping.
+- `--scope single` to disable pagination-chain expansion.
+- multi-artifact mode with repeated `--artifact-id` and required `--root-path` (one shared root path or one per artifact).
 
 ```bash
-# quick expression
-sift-gateway code <artifact_id> '$.items' --expr "df['status'].value_counts().to_dict()"
-
-# inline function mode
-sift-gateway code <artifact_id> '$.items' \
+# inline function mode (single artifact signature)
+sift-gateway code --json <artifact_id> '$.items' \
   --code "def run(data, schema, params): return {'rows': len(data), 'tag': params.get('tag')}" \
   --params '{"tag":"daily"}'
 
-# file mode
-sift-gateway code <artifact_id> '$.items' --file ./analysis.py --params '{"owner":"alice"}'
-
-# multi-artifact mode
-sift-gateway code --artifact-id art_users --artifact-id art_orders --root-path '$.items' --expr "len(df)"
+# multi-artifact inline mode (multi-artifact signature)
+sift-gateway code --json --artifact-id art_users --artifact-id art_orders --root-path '$.items' \
+  --code "def run(artifacts, schemas, params): return {k: len(v) for k, v in artifacts.items()}"
 ```
 
-## Commands
+## Command reference
 
 | Command | Purpose |
 | --- | --- |
-| `sift-gateway run -- <cmd>` | Capture command output as artifact |
-| `sift-gateway run --continue-from <id> -- <cmd>` | Capture next upstream page and link lineage |
-| `sift-gateway run --stdin` | Capture piped stdin |
-| `sift-gateway code ...` | Run sandboxed Python over one or multiple artifact roots |
+| `sift-gateway run --json -- <cmd>` | Capture command output as artifact and return machine-readable metadata |
+| `sift-gateway run --json --continue-from <id> -- <cmd>` | Capture next upstream page and link lineage |
+| `sift-gateway code --json ...` | Run sandboxed Python over one or multiple artifact roots |
 
-## High-signal patterns
+## High-signal capture patterns
 
 ```bash
 # GitHub PRs
-sift-gateway run -- gh api repos/org/repo/pulls
+sift-gateway run --json -- gh api repos/org/repo/pulls
 
 # Kubernetes inventory
-kubectl get pods -A -o json | sift-gateway run --stdin --tag k8s
+sift-gateway run --json --tag k8s -- kubectl get pods -A -o json
 
 # API dump with retention control
-curl -s https://api.example.com/events | sift-gateway run --stdin --ttl 8h --tag events
+sift-gateway run --json --ttl 8h --tag events -- curl -s https://api.example.com/events
 ```
 
-## Context budget rules
+## Guardrails
 
-- keep raw output out of context; keep `artifact_id` plus compact summary
-- for paginated APIs, keep `pagination.next.params` and issue explicit continuation
-- prefer narrow code outputs (counts, projections, aggregates)
-- each run capture is fresh by design; do not assume implicit dedupe
+- Never paste raw captured payloads back into context; keep `artifact_id` plus compact findings.
+- Use explicit continuation commands for partial pagination; do not assume auto-follow.
+- When `response_mode` is `"schema_ref"`, read `schemas_compact` field paths/types/examples before writing code queries.
+- If `status` is `"error"` or `command_exit_code` is non-zero, fix or rerun capture before normal analysis.
+- Return focused results (counts, grouped stats, selected columns), not full records.
+- Treat each `run` capture as a fresh artifact; do not assume implicit dedupe.

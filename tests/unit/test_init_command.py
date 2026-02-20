@@ -8,6 +8,8 @@ from pathlib import Path
 import pytest
 
 from sift_gateway.config.init import run_init, run_revert
+from sift_gateway.config.shared import resolve_sift_command
+from sift_gateway.constants import DEFAULT_GATEWAY_NAME
 
 
 def _claude_desktop_config() -> dict:
@@ -63,11 +65,33 @@ class TestRunInit:
 
         # Source should now have only the gateway
         rewritten = json.loads(source.read_text())
-        assert "artifact-gateway" in rewritten["mcpServers"]
+        assert DEFAULT_GATEWAY_NAME in rewritten["mcpServers"]
         assert len(rewritten["mcpServers"]) == 1
-        gw_entry = rewritten["mcpServers"]["artifact-gateway"]
-        assert gw_entry["command"] == "sift-gateway"
+        gw_entry = rewritten["mcpServers"][DEFAULT_GATEWAY_NAME]
+        assert gw_entry["command"] == resolve_sift_command()
         assert gw_entry["args"] == ["--data-dir", str(data_dir.resolve())]
+
+    def test_rewrites_source_uses_resolved_gateway_command(
+        self,
+        tmp_path: Path,
+        monkeypatch,
+    ) -> None:
+        source = tmp_path / "claude_desktop_config.json"
+        source.write_text(
+            json.dumps(_claude_desktop_config()), encoding="utf-8"
+        )
+        data_dir = tmp_path / "gateway"
+
+        monkeypatch.setattr(
+            "sift_gateway.config.init.resolve_sift_command",
+            lambda: "/opt/custom/sift-gateway",
+        )
+
+        run_init(source, data_dir=data_dir)
+
+        rewritten = json.loads(source.read_text())
+        gw_entry = rewritten["mcpServers"][DEFAULT_GATEWAY_NAME]
+        assert gw_entry["command"] == "/opt/custom/sift-gateway"
 
     def test_preserves_non_mcp_keys_in_source(self, tmp_path: Path) -> None:
         source = tmp_path / "config.json"
@@ -104,7 +128,7 @@ class TestRunInit:
 
         rewritten = json.loads(source.read_text())
         assert "my-gateway" in rewritten["mcpServers"]
-        assert "artifact-gateway" not in rewritten["mcpServers"]
+        assert DEFAULT_GATEWAY_NAME not in rewritten["mcpServers"]
 
     def test_dry_run_makes_no_changes(self, tmp_path: Path) -> None:
         source = tmp_path / "config.json"
@@ -176,7 +200,7 @@ class TestRunInit:
         # Rewritten source should preserve VS Code format
         rewritten = json.loads(source.read_text())
         assert "mcpServers" not in rewritten
-        assert "artifact-gateway" in rewritten["mcp"]["servers"]
+        assert DEFAULT_GATEWAY_NAME in rewritten["mcp"]["servers"]
 
     def test_zed_format_source(self, tmp_path: Path) -> None:
         source = tmp_path / "settings.json"
@@ -205,7 +229,7 @@ class TestRunInit:
         rewritten = json.loads(source.read_text())
         assert "mcpServers" not in rewritten
         assert "mcp" not in rewritten
-        assert "artifact-gateway" in rewritten["context_servers"]
+        assert DEFAULT_GATEWAY_NAME in rewritten["context_servers"]
 
     def test_tilde_expansion(self, tmp_path: Path, monkeypatch) -> None:
         monkeypatch.setenv("HOME", str(tmp_path))
@@ -297,7 +321,7 @@ class TestInitExternalizeSecrets:
         sync = gw_config["_gateway_sync"]
         assert sync["enabled"] is True
         assert sync["source_path"] == str(source.resolve())
-        assert sync["gateway_name"] == "artifact-gateway"
+        assert sync["gateway_name"] == DEFAULT_GATEWAY_NAME
         assert sync["data_dir"] == str(data_dir.resolve())
 
     def test_init_gateway_url_rewrites_source_to_url(
@@ -317,6 +341,6 @@ class TestInitExternalizeSecrets:
         )
 
         rewritten = json.loads(source.read_text())
-        gw_entry = rewritten["mcpServers"]["artifact-gateway"]
+        gw_entry = rewritten["mcpServers"][DEFAULT_GATEWAY_NAME]
         assert gw_entry["url"] == "http://localhost:8080/mcp"
         assert "command" not in gw_entry

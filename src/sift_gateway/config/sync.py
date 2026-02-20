@@ -19,10 +19,14 @@ from typing import Any
 from sift_gateway.config.mcp_servers import (
     extract_mcp_servers,
 )
-from sift_gateway.config.shared import is_sift_command
+from sift_gateway.config.shared import (
+    is_sift_command,
+    resolve_sift_command,
+)
 from sift_gateway.config.upstream_secrets import write_secret
 from sift_gateway.constants import (
     CONFIG_FILENAME,
+    DEFAULT_GATEWAY_NAME,
     STATE_SUBDIR,
 )
 
@@ -244,6 +248,7 @@ def _build_gateway_only_source_config(
         source_raw.get("mcp"), dict
     )
     is_zed = isinstance(source_raw.get("context_servers"), dict)
+    default_gateway_command = resolve_sift_command()
 
     gw_entry: dict[str, Any] | None = None
     for sname, sconf in source_servers.items():
@@ -253,7 +258,7 @@ def _build_gateway_only_source_config(
 
     if gw_entry is None:
         gw_entry = {
-            "command": "sift-gateway",
+            "command": default_gateway_command,
             "args": ["--data-dir", str(gateway_data_dir)],
         }
     else:
@@ -267,7 +272,7 @@ def _build_gateway_only_source_config(
         context_servers = source_raw.get("context_servers", {})
         zed_entry: dict[str, Any] = {
             "source": "custom",
-            "command": "sift-gateway",
+            "command": default_gateway_command,
             "args": [],
         }
         if isinstance(context_servers, dict) and isinstance(
@@ -306,7 +311,7 @@ def _load_sync_context(
     if not source_path_str:
         return {"synced": 0}
     source_path = Path(source_path_str)
-    gateway_name = sync_meta.get("gateway_name", "artifact-gateway")
+    gateway_name = sync_meta.get("gateway_name", DEFAULT_GATEWAY_NAME)
 
     normalized_sync_meta = dict(sync_meta)
     normalized_sync_meta["data_dir"] = str(gateway_data_dir)

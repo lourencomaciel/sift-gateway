@@ -111,6 +111,30 @@ class TestRunSync:
         assert gw_entry["command"] == "sift-gateway"
         assert gw_entry["args"] == ["--data-dir", str(data_dir.resolve())]
 
+    def test_sync_uses_resolved_command_when_gateway_entry_missing(
+        self,
+        tmp_path: Path,
+        monkeypatch,
+    ) -> None:
+        data_dir, _config_path, source_path = _setup_gateway_and_source(
+            tmp_path,
+            gateway_servers={},
+            source_servers={"github": {"command": "npx"}},
+        )
+
+        monkeypatch.setattr(
+            "sift_gateway.config.sync.resolve_sift_command",
+            lambda: "/opt/custom/sift-gateway",
+        )
+
+        result = run_sync(data_dir)
+
+        assert result == {"synced": 1}
+        source = json.loads(source_path.read_text(encoding="utf-8"))
+        gw_entry = source["mcpServers"]["artifact-gateway"]
+        assert gw_entry["command"] == "/opt/custom/sift-gateway"
+        assert gw_entry["args"] == ["--data-dir", str(data_dir.resolve())]
+
     def test_sync_idempotent_when_no_new_entries(self, tmp_path: Path) -> None:
         data_dir, _config_path, _source_path = _setup_gateway_and_source(
             tmp_path,

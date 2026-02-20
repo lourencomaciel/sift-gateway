@@ -86,7 +86,7 @@ def _insert_payload_blob(
         (
             WORKSPACE_ID,
             payload_hash_full,
-            "zstd",
+            "gzip",
             payload_fs_path,
             _CANONICALIZER_VERSION,
             payload_json_bytes,
@@ -174,7 +174,7 @@ def _insert_artifact(
 
 
 def _payload_relpath(payload_hash_full: str) -> str:
-    return f"{payload_hash_full[:2]}/{payload_hash_full[2:4]}/{payload_hash_full}.zst"
+    return f"{payload_hash_full[:2]}/{payload_hash_full[2:4]}/{payload_hash_full}.gz"
 
 
 def _payload_path(payload_root: Path, payload_hash_full: str) -> Path:

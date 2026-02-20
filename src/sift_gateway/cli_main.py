@@ -13,14 +13,12 @@ from pathlib import Path
 import re
 import subprocess
 import sys
-import textwrap
 from typing import Any, cast
 
 from sift_gateway import __version__
 from sift_gateway.config import load_gateway_config
 from sift_gateway.constants import (
     CAPTURE_KIND_CLI_COMMAND,
-    CAPTURE_KIND_STDIN_PIPE,
     RESPONSE_TYPE_ERROR,
     WORKSPACE_ID,
 )
@@ -60,25 +58,6 @@ _CLI_UPSTREAM_INSTANCE_ID = "cli_local"
 _DEFAULT_TTL_RAW = "24h"
 _TTL_PATTERN = re.compile(r"^([1-9][0-9]*)([smhd]?)$")
 _INT_PATTERN = re.compile(r"^[+-]?[0-9]+$")
-_CODE_EXPR_TEMPLATE = textwrap.dedent(
-    """
-    def run(artifacts, schemas, params):
-        import pandas as pd
-        artifact_frames = {{}}
-        for artifact_id, artifact_rows in artifacts.items():
-            rows = (
-                artifact_rows
-                if isinstance(artifact_rows, list)
-                else [artifact_rows]
-            )
-            artifact_frames[artifact_id] = pd.DataFrame(rows)
-        if artifact_frames:
-            df = pd.concat(artifact_frames.values(), ignore_index=True)
-        else:
-            df = pd.DataFrame()
-        return {expr}
-    """
-).strip()
 
 _FETCH_CLI_CONTINUE_PARENT_SQL = """
 SELECT artifact_id, deleted_at, capture_kind, chain_seq
@@ -245,9 +224,7 @@ def _resolve_code_target_arguments(
 
 
 def _load_code_source(args: argparse.Namespace) -> str:
-    """Load Python source from ``--code``, ``--file``, or ``--expr``."""
-    if args.code_expr is not None:
-        return _CODE_EXPR_TEMPLATE.format(expr=args.code_expr)
+    """Load Python source from ``--code`` or ``--file``."""
     if args.code_file is not None:
         code_path = Path(args.code_file)
         if not code_path.exists():
@@ -261,7 +238,7 @@ def _load_code_source(args: argparse.Namespace) -> str:
     code_inline = args.code_inline
     if isinstance(code_inline, str) and code_inline.strip():
         return code_inline
-    msg = "missing code source; provide --code, --file, or --expr"
+    msg = "missing code source; provide --code or --file"
     raise ValueError(msg)
 
 
@@ -751,16 +728,11 @@ def _execute_code(
 
 def _validate_run_mode_inputs(
     *,
-    use_stdin: bool,
     command_argv: list[str],
-    parent_artifact_id: str | None,
 ) -> None:
-    """Validate mutually exclusive run-mode flags before execution."""
-    if use_stdin and command_argv:
-        msg = "--stdin cannot be combined with a command"
-        raise ValueError(msg)
-    if use_stdin and parent_artifact_id is not None:
-        msg = "--stdin cannot be combined with --continue-from"
+    """Validate required run-mode inputs before execution."""
+    if not command_argv:
+        msg = "run requires a command"
         raise ValueError(msg)
 
 
@@ -830,45 +802,6 @@ def _run_error_block(command_exit_code: int) -> dict[str, Any] | None:
     }
 
 
-def _execute_run_stdin_capture(
-    *,
-    cwd: str,
-    env_fingerprint: str,
-) -> _RunCaptureExecution:
-    """Capture ``run --stdin`` payload and metadata."""
-    raw_stdin = sys.stdin.buffer.read()
-    stdin_text = raw_stdin.decode("utf-8", errors="replace")
-    payload, is_json = _parse_json_or_text_payload(stdin_text)
-    if not is_json:
-        payload = {"stdin": stdin_text}
-    stdin_hash = hashlib.sha256(raw_stdin).hexdigest()
-    identity = compute_request_identity(
-        upstream_instance_id=_CLI_UPSTREAM_INSTANCE_ID,
-        prefix=_CLI_PREFIX,
-        tool_name="stdin",
-        forwarded_args={
-            "cwd": cwd,
-            "env_fingerprint": env_fingerprint,
-            "stdin_hash": stdin_hash,
-        },
-    )
-    return _RunCaptureExecution(
-        payload=payload,
-        identity=identity,
-        capture_kind=CAPTURE_KIND_STDIN_PIPE,
-        capture_origin={
-            "cwd": cwd,
-            "env_fingerprint": env_fingerprint,
-            "stdin_hash": stdin_hash,
-        },
-        command_exit_code=0,
-        status="ok",
-        error_block=None,
-        pagination_meta={},
-        pagination_assessment=None,
-    )
-
-
 def _execute_run_command_capture(
     *,
     command_argv: list[str],
@@ -879,7 +812,7 @@ def _execute_run_command_capture(
 ) -> _RunCaptureExecution:
     """Execute command-backed run capture and derive pagination metadata."""
     if not command_argv:
-        msg = "run requires a command or --stdin"
+        msg = "run requires a command"
         raise ValueError(msg)
 
     identity = compute_request_identity(
@@ -942,7 +875,6 @@ def _execute_run_command_capture(
 def _build_run_capture_arguments(
     *,
     execution: _RunCaptureExecution,
-    use_stdin: bool,
     ttl_seconds: int | None,
     tags: list[str],
     parent_artifact_id: str | None,
@@ -950,12 +882,11 @@ def _build_run_capture_arguments(
 ) -> dict[str, Any]:
     """Build artifact.capture argument payload for run invocations."""
     capture_meta: dict[str, Any] = {
-        "capture_mode": "stdin" if use_stdin else "command",
+        "capture_mode": "command",
     }
     if parent_artifact_id is not None:
         capture_meta["continue_from_artifact_id"] = parent_artifact_id
-    if not use_stdin:
-        capture_meta.update(execution.pagination_meta)
+    capture_meta.update(execution.pagination_meta)
 
     capture_arguments: dict[str, Any] = {
         "_gateway_context": _build_gateway_context(),
@@ -963,7 +894,7 @@ def _build_run_capture_arguments(
         "capture_origin": execution.capture_origin,
         "capture_key": execution.identity.request_key,
         "prefix": _CLI_PREFIX,
-        "tool_name": "stdin" if use_stdin else "run",
+        "tool_name": "run",
         "upstream_instance_id": _CLI_UPSTREAM_INSTANCE_ID,
         "request_key": execution.identity.request_key,
         "request_args_hash": execution.identity.request_args_hash,
@@ -1087,9 +1018,7 @@ def _execute_run(
     parent_artifact_id: str | None = args.continue_from
     command_argv = _normalize_command_argv(args.command_argv)
     _validate_run_mode_inputs(
-        use_stdin=args.stdin,
         command_argv=command_argv,
-        parent_artifact_id=parent_artifact_id,
     )
 
     chain_seq: int | None = None
@@ -1099,19 +1028,12 @@ def _execute_run(
             artifact_id=parent_artifact_id,
         )
 
-    execution = (
-        _execute_run_stdin_capture(
-            cwd=cwd,
-            env_fingerprint=env_fingerprint,
-        )
-        if args.stdin
-        else _execute_run_command_capture(
-            command_argv=command_argv,
-            cwd=cwd,
-            env_fingerprint=env_fingerprint,
-            parent_artifact_id=parent_artifact_id,
-            chain_seq=chain_seq,
-        )
+    execution = _execute_run_command_capture(
+        command_argv=command_argv,
+        cwd=cwd,
+        env_fingerprint=env_fingerprint,
+        parent_artifact_id=parent_artifact_id,
+        chain_seq=chain_seq,
     )
     if tags:
         execution.capture_origin["tags"] = tags
@@ -1125,7 +1047,6 @@ def _execute_run(
 
     capture_arguments = _build_run_capture_arguments(
         execution=execution,
-        use_stdin=args.stdin,
         ttl_seconds=ttl_seconds,
         tags=tags,
         parent_artifact_id=parent_artifact_id,
@@ -1342,15 +1263,6 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Path to Python source defining run(...)",
     )
-    code_source_group.add_argument(
-        "--expr",
-        dest="code_expr",
-        default=None,
-        help=(
-            "Python expression evaluated with pandas DataFrame `df`; "
-            "also exposes `artifact_frames` keyed by artifact id"
-        ),
-    )
     code_parser.add_argument(
         "--params",
         default=None,
@@ -1359,11 +1271,6 @@ def _build_parser() -> argparse.ArgumentParser:
     _add_common_json_flag(code_parser)
 
     run_parser = sub.add_parser("run", help="Capture command output")
-    run_parser.add_argument(
-        "--stdin",
-        action="store_true",
-        help="Capture payload from stdin instead of running a command",
-    )
     run_parser.add_argument(
         "--ttl",
         default=None,

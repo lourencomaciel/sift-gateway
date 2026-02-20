@@ -136,13 +136,13 @@ export SIFT_GATEWAY_SECRET_REDACTION_ENABLED=false
 | Key | Type | Default | Env var | Description |
 |-----|------|---------|---------|-------------|
 | `artifact_search_max_limit` | int | `200` | `SIFT_GATEWAY_ARTIFACT_SEARCH_MAX_LIMIT` | Legacy compatibility limit retained for internal/runtime status fields |
-| `related_query_max_artifacts` | int | `256` | `SIFT_GATEWAY_RELATED_QUERY_MAX_ARTIFACTS` | Max artifacts in `scope=all_related` query |
+| `related_query_max_artifacts` | int | `256` | `SIFT_GATEWAY_RELATED_QUERY_MAX_ARTIFACTS` | Max artifacts in `scope=all_related` pagination-chain query |
 
 Lineage query rules for `artifact(action="query")`:
 
 - `query_kind` is required and must be `code`.
 - `query_kind=code` requires `artifact_id` (single) or `artifact_ids` (multi).
-- `scope` applies to `query_kind=code` and defaults to `all_related`.
+- `scope` applies to `query_kind=code` and defaults to `all_related` (pagination-chain related artifacts).
 - `scope=single` restricts inputs to the requested anchor artifact(s) only.
 - `query_kind=code` returns one response bounded by `max_bytes_out`.
 - `query_kind=code` runtime failures can include `details.traceback`

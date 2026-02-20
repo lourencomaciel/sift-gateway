@@ -9,10 +9,9 @@ Practical patterns for capturing, paginating, and analyzing artifacts.
 sift-gateway run -- curl -s 'https://jsonplaceholder.typicode.com/comments?_page=1&_limit=200'
 
 # analyze
-sift-gateway code <artifact_id> '$' --expr "df['email'].str.contains('joana', case=False, na=False).sum()"
+sift-gateway code <artifact_id> '$' --code "def run(data, schema, params): return sum(1 for row in data if 'joana' in str(row.get('email', '')).lower())"
 ```
-
-Use `--expr` for quick transforms and `--code` / `--file` for multi-step logic.
+Use `--code` for inline transforms and `--file` for multi-step logic.
 
 ## Pattern 2: Upstream pagination chain (CLI)
 

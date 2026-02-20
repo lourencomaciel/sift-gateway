@@ -28,9 +28,15 @@ from sift_gateway.config.mcp_servers import (
     extract_mcp_servers,
     read_config_file,
 )
-from sift_gateway.config.shared import ensure_gateway_config_path
+from sift_gateway.config.shared import (
+    ensure_gateway_config_path,
+    resolve_sift_command,
+)
 from sift_gateway.config.upstream_secrets import write_secret
-from sift_gateway.constants import DEFAULT_DATA_DIR
+from sift_gateway.constants import (
+    DEFAULT_DATA_DIR,
+    DEFAULT_GATEWAY_NAME,
+)
 
 
 @contextlib.contextmanager
@@ -57,7 +63,7 @@ def _gateway_server_entry(
     """
     if gateway_url:
         return {"url": gateway_url}
-    entry: dict[str, Any] = {"command": "sift-gateway"}
+    entry: dict[str, Any] = {"command": resolve_sift_command()}
     if data_dir is not None:
         entry["args"] = ["--data-dir", str(data_dir.expanduser().resolve())]
     return entry
@@ -155,7 +161,7 @@ def run_init(
     source_path: Path,
     *,
     data_dir: Path | None = None,
-    gateway_name: str = "artifact-gateway",
+    gateway_name: str = DEFAULT_GATEWAY_NAME,
     gateway_url: str | None = None,
     dry_run: bool = False,
 ) -> dict[str, Any]:
@@ -255,7 +261,7 @@ def run_init(
             new_source["context_servers"] = {
                 gateway_name: {
                     "source": "custom",
-                    "command": "sift-gateway",
+                    "command": resolve_sift_command(),
                     "args": [],
                 }
             }

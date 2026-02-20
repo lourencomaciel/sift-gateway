@@ -79,7 +79,7 @@ def test_run_mapping_fails_for_json_binary_ref_without_stream_support(
         "content": [
             {
                 "type": "binary_ref",
-                "mime": "application/json+zstd",
+                "mime": "application/json+gzip",
                 "binary_hash": "hash_json_blob",
                 "byte_count": 1024,
             }

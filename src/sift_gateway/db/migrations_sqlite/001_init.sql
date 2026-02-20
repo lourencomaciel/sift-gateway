@@ -37,7 +37,7 @@ CREATE TABLE IF NOT EXISTS payload_blobs (
     payload_hash_full TEXT NOT NULL,
     envelope JSON NULL,
     envelope_canonical_encoding TEXT NOT NULL CHECK (
-        envelope_canonical_encoding IN ('zstd', 'gzip', 'none')
+        envelope_canonical_encoding IN ('gzip', 'none')
     ),
     payload_fs_path TEXT NOT NULL,
     canonicalizer_version TEXT NOT NULL,

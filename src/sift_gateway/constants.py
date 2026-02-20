@@ -47,6 +47,7 @@ BLOB_ID_PREFIX: str = "bin_"
 # ---------------------------------------------------------------------------
 # Default filesystem layout (§17)
 # ---------------------------------------------------------------------------
+DEFAULT_GATEWAY_NAME: str = "sift-gateway"
 DEFAULT_DATA_DIR: str = ".sift-gateway"
 STATE_SUBDIR: str = "state"
 RESOURCES_SUBDIR: str = "resources"

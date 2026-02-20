@@ -83,7 +83,8 @@ sift-gateway init --from claude --revert
 ## Code query packages (optional)
 
 Code queries (`query_kind="code"`, `sift-gateway code`) can use pandas,
-NumPy, jmespath, and other libraries.
+NumPy, jmespath, and other libraries when those packages are installed in
+Sift's runtime environment.
 
 ### Install bundle
 
@@ -133,12 +134,8 @@ sift-gateway run -- echo '[{"id":1,"name":"a"},{"id":2,"name":"b"}]'
 Run analysis:
 
 ```bash
-sift-gateway code <artifact_id> '$' --expr 'len(df)'
+sift-gateway code <artifact_id> '$' --code "def run(data, schema, params): return len(data)"
 ```
-
-`--expr` evaluates against pandas `df`. For multi-artifact queries,
-`df` is combined across requested artifacts and `artifact_frames` maps
-`artifact_id` to each per-artifact DataFrame.
 
 If pagination is present (`pagination.next.kind=="command"`), continue with:
 

@@ -134,6 +134,7 @@ Supported entrypoints:
 Highlights:
 
 - inputs are loaded from persisted, redacted artifacts
+- `scope=all_related` resolves pagination-chain related artifacts
 - outputs must be JSON-serializable
 - output size bounded by `max_bytes_out`
 - runtime enforces AST/import/time/memory guardrails

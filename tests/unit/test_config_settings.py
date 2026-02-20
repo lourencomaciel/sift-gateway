@@ -145,29 +145,27 @@ def test_code_query_allowed_import_roots_reject_invalid_entries(
         )
 
 
-def test_legacy_zstd_encoding_coerced_to_gzip(
+def test_legacy_zstd_encoding_is_rejected(
     tmp_path: Path,
 ) -> None:
-    """Existing configs with zstd encoding upgrade gracefully."""
-    config = GatewayConfig(
-        data_dir=tmp_path,
-        envelope_canonical_encoding="zstd",
-    )
-    assert config.envelope_canonical_encoding.value == "gzip"
+    with pytest.raises(ValidationError):
+        GatewayConfig(
+            data_dir=tmp_path,
+            envelope_canonical_encoding="zstd",
+        )
 
 
-def test_legacy_zstd_encoding_from_state_file(
+def test_legacy_zstd_encoding_in_state_file_is_rejected(
     tmp_path: Path,
 ) -> None:
-    """State file with zstd encoding loads without error."""
     state_dir = tmp_path / "state"
     state_dir.mkdir(parents=True, exist_ok=True)
     (state_dir / "config.json").write_text(
         json.dumps({"envelope_canonical_encoding": "zstd"}),
         encoding="utf-8",
     )
-    config = load_gateway_config(data_dir_override=str(tmp_path))
-    assert config.envelope_canonical_encoding.value == "gzip"
+    with pytest.raises(ValidationError):
+        load_gateway_config(data_dir_override=str(tmp_path))
 
 
 def test_load_gateway_config_reads_state_config(tmp_path: Path) -> None:
