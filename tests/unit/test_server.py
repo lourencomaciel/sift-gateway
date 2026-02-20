@@ -386,14 +386,15 @@ def test_sanitize_tool_result_preserves_protocol_cursor_fields(
                 "cursor": "[REDACTED_SECRET]",
                 "next_cursor": "[REDACTED_SECRET]",
                 "pagination": {
-                    "next_cursor": "[REDACTED_SECRET]",
-                    "next_params": {"after": "[REDACTED_SECRET]"},
-                    "next_action": {
+                    "next": {
+                        "kind": "tool_call",
+                        "artifact_id": "[REDACTED_SECRET]",
                         "tool": "artifact",
                         "arguments": {
                             "action": "next_page",
                             "artifact_id": "[REDACTED_SECRET]",
                         },
+                        "params": {"after": "[REDACTED_SECRET]"},
                     },
                 },
                 "message": "[REDACTED_SECRET]",
@@ -405,14 +406,15 @@ def test_sanitize_tool_result_preserves_protocol_cursor_fields(
         "cursor": "cur1.top_level",
         "next_cursor": "cur1.next_level",
         "pagination": {
-            "next_cursor": "cur1.pagination",
-            "next_params": {"after": "cur1.after"},
-            "next_action": {
+            "next": {
+                "kind": "tool_call",
+                "artifact_id": "art_123",
                 "tool": "artifact",
                 "arguments": {
                     "action": "next_page",
                     "artifact_id": "art_123",
                 },
+                "params": {"after": "cur1.after"},
             },
         },
         "message": "token sk_live_123",
@@ -664,6 +666,10 @@ def test_build_fastmcp_app_includes_mirrored_tools(tmp_path: Path) -> None:
     assert "demo_echo" in tool_names
     assert "retrieval_status == COMPLETE" in tools["demo_echo"].description
     assert "retrieval_status == COMPLETE" in tools["artifact"].description
+    assert (
+        "Code-query packages: jmespath,numpy,pandas."
+        in tools["artifact"].description
+    )
     artifact_schema = tools["artifact"].parameters
     assert "scope" in artifact_schema["properties"]
     assert artifact_schema["properties"]["scope"]["enum"] == [
@@ -671,6 +677,29 @@ def test_build_fastmcp_app_includes_mirrored_tools(tmp_path: Path) -> None:
         "single",
     ]
     assert artifact_schema["properties"]["query_kind"]["enum"] == ["code"]
+
+
+def test_build_fastmcp_app_artifact_description_uses_configured_packages(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        "sift_gateway.tools.usage_hint._is_importable_root",
+        lambda root: root in {"scipy", "matplotlib"},
+    )
+    config = GatewayConfig(
+        data_dir=tmp_path,
+        code_query_allowed_import_roots=["json", "scipy", "matplotlib"],
+    )
+    server = GatewayServer(config=config, upstreams=[_upstream()])
+
+    app = server.build_fastmcp_app()
+    tools = asyncio.run(app.get_tools())
+
+    assert (
+        "Code-query packages: matplotlib,scipy."
+        in tools["artifact"].description
+    )
 
 
 def test_build_fastmcp_app_rejects_safe_name_collisions(
@@ -783,7 +812,7 @@ def test_handle_mirrored_tool_rejects_placeholder_cursor_argument(
     )
     assert response["details"]["cursor_param"] == "after"
     assert response["details"]["cursor_value"] == "last_cursor"
-    assert "pagination.next_cursor" in response["details"]["hint"]
+    assert "pagination.next.params" in response["details"]["hint"]
 
 
 def test_handle_mirrored_tool_rejects_invalid_chain_seq(tmp_path: Path) -> None:
@@ -1067,6 +1096,13 @@ def test_handle_mirrored_tool_passthroughs_small_response(
     assert "json" in part_types
     assert "text" in part_types
     assert response != upstream_payload
+    metadata = response.get("metadata")
+    assert isinstance(metadata, dict)
+    usage = metadata.get("usage")
+    assert isinstance(usage, dict)
+    assert usage.get("interface") == "mcp"
+    assert usage.get("artifact_id") == "art_new"
+    assert usage.get("packages") == "jmespath,numpy,pandas"
 
 
 def test_handle_mirrored_tool_uses_passthrough_budget_for_mode_selection(
@@ -1125,6 +1161,11 @@ def test_handle_mirrored_tool_uses_passthrough_budget_for_mode_selection(
 
     assert response["artifact_id"] == "art_new"
     assert response["response_mode"] == "schema_ref"
+    metadata = response.get("metadata")
+    assert isinstance(metadata, dict)
+    usage = metadata.get("usage")
+    assert isinstance(usage, dict)
+    assert usage.get("root_path") == "$"
 
 
 def test_handle_mirrored_tool_fails_closed_when_redaction_errors(

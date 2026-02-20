@@ -24,7 +24,7 @@ sift-gateway run -- <command>
 ```
 
 2. Keep `artifact_id` and short summary in context.
-3. If pagination exists (`pagination.has_next_page=true`), continue explicitly:
+3. If pagination exists (`pagination.next.kind=="command"`), continue explicitly:
 
 ```bash
 sift-gateway run --continue-from <artifact_id> -- <next-command-with-next_params-applied>

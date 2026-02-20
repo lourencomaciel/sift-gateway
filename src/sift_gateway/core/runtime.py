@@ -231,10 +231,6 @@ class ArtifactCodeRuntime(ArtifactGetRuntime, Protocol):
     """Runtime hooks required by artifact code execution."""
 
     @property
-    def code_query_enabled(self) -> bool:
-        """Whether code-query execution is enabled."""
-
-    @property
     def code_query_max_input_records(self) -> int:
         """Maximum number of input records permitted for code queries."""
 

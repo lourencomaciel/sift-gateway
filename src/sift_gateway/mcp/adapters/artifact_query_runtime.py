@@ -80,11 +80,6 @@ class GatewayArtifactQueryRuntime:
         return self.gateway.config.select_missing_as_null
 
     @property
-    def code_query_enabled(self) -> bool:
-        """Return whether code-query execution is enabled."""
-        return self.gateway.config.code_query_enabled
-
-    @property
     def code_query_max_input_records(self) -> int:
         """Return maximum code-query input record budget."""
         return self.gateway.config.code_query_max_input_records

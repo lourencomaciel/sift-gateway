@@ -623,7 +623,6 @@ class GatewayConfig(BaseSettings):
     )
 
     # --------------- Code query runtime ---------------
-    code_query_enabled: bool = Field(True)
     code_query_allowed_import_roots: list[str] | None = Field(
         None,
         description=(
@@ -1224,6 +1223,8 @@ def load_gateway_config(
 
     # Convert mcpServers format to legacy upstreams if needed
     merged = _resolve_mcp_servers_format(merged, env_overrides)
+    # query_kind=code is always enabled; ignore legacy persisted toggle.
+    merged.pop("code_query_enabled", None)
 
     config = GatewayConfig.model_validate(merged)
 

@@ -182,6 +182,30 @@ def test_load_gateway_config_reads_state_config(tmp_path: Path) -> None:
     assert config.max_items == 777
 
 
+def test_load_gateway_config_ignores_legacy_code_query_enabled(
+    tmp_path: Path,
+) -> None:
+    state_dir = tmp_path / "state"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    (state_dir / "config.json").write_text(
+        json.dumps({"code_query_enabled": False, "max_items": 333}),
+        encoding="utf-8",
+    )
+
+    config = load_gateway_config(data_dir_override=str(tmp_path))
+    assert config.max_items == 333
+    assert not hasattr(config, "code_query_enabled")
+
+
+def test_env_legacy_code_query_enabled_is_ignored(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setenv("SIFT_GATEWAY_CODE_QUERY_ENABLED", "false")
+
+    config = load_gateway_config(data_dir_override=str(tmp_path))
+    assert not hasattr(config, "code_query_enabled")
+
+
 def test_env_overrides_state_config(tmp_path: Path, monkeypatch) -> None:
     state_dir = tmp_path / "state"
     state_dir.mkdir(parents=True, exist_ok=True)

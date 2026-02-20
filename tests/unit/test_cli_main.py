@@ -435,7 +435,8 @@ def test_serve_run_human_output_snapshot(
         "bytes:    12\n"
         "capture:  cli_command\n"
         "exit:     0\n"
-        "hint:     use `sift-gateway code art_new '$' --expr \"len(df)\"`\n"
+        "hint:     use `sift-gateway code art_new '$' --expr \"len(df)\"`; "
+        "pkgs: jmespath,numpy,pandas\n"
     )
 
 
@@ -613,11 +614,14 @@ def test_serve_run_injects_pagination_state_into_capture_meta(
     payload = json.loads(out)
 
     assert exit_code == 0
-    assert payload["pagination"]["has_next_page"] is True
-    assert payload["pagination"]["next_action"] == {
+    assert payload["pagination"]["has_more"] is True
+    assert payload["pagination"]["next"] == {
+        "kind": "command",
+        "artifact_id": "art_page_1",
         "command": "run",
         "continue_from_artifact_id": "art_page_1",
         "command_line": "sift-gateway run --continue-from art_page_1 -- <next-command>",
+        "params": {"after": "CURSOR_2", "limit": 100},
     }
     meta = captured["meta"]
     assert meta["capture_mode"] == "command"
@@ -687,8 +691,10 @@ def test_serve_run_derives_numeric_progression_from_integer_flags(
     payload = json.loads(out)
 
     assert exit_code == 0
-    assert payload["pagination"]["has_next_page"] is True
-    assert payload["pagination"]["next_params"] == {"page": 2}
+    assert payload["pagination"]["has_more"] is True
+    next_payload = payload["pagination"]["next"]
+    assert next_payload["kind"] == "command"
+    assert next_payload["params"] == {"page": 2}
     pagination = captured["meta"]["_gateway_pagination"]
     assert pagination["next_params"] == {"page": 2}
 
@@ -956,11 +962,14 @@ def test_serve_run_continue_from_links_lineage_and_page_number(
     assert exit_code == 0
     assert payload["artifact_id"] == "art_page_2"
     assert payload["source_artifact_id"] == "art_page_1"
-    assert payload["pagination"]["has_next_page"] is True
-    assert payload["pagination"]["next_action"] == {
+    assert payload["pagination"]["has_more"] is True
+    assert payload["pagination"]["next"] == {
+        "kind": "command",
+        "artifact_id": "art_page_2",
         "command": "run",
         "continue_from_artifact_id": "art_page_2",
         "command_line": "sift-gateway run --continue-from art_page_2 -- <next-command>",
+        "params": {"after": "CUR_3", "limit": 100},
     }
     assert payload["pagination"]["page_number"] == 1
     assert captured["parent_artifact_id"] == "art_page_1"

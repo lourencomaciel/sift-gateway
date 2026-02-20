@@ -1,201 +1,235 @@
 # Sift
 
-Sift is a local, single-tenant gateway for AI agent tool work.
-It reduces context bloat by persisting tool output as artifacts and returning
-only what the agent needs inline.
-
-Use it with agents over MCP, or run it directly in CLI workflows.
+**Artifact gateway** - Structured memory for AI agents. Keeps context usable in multi-step workflows.
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![PyPI](https://img.shields.io/pypi/v/sift-gateway.svg)](https://pypi.org/project/sift-gateway/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-## One Command, Two Modes
+---
 
-Sift uses one command handle: `sift-gateway`.
+AI agents break when their tools return too much data. A single MCP call or CLI command can return 30-100 KB of JSON. That is roughly 8,000-25,000 tokens spent before the agent can do the next step. After a few calls, the model starts dropping details or making bad calls. See [Why Sift exists](docs/why.md) for research and open issues behind this pattern.
 
-| Mode | How you run it | What it does |
-|---|---|---|
-| MCP gateway mode | `sift-gateway` | Mirrors upstream MCP tools and persists outputs as artifacts |
-| CLI mode | `sift-gateway run` / `sift-gateway code` | Captures command output and runs Python over persisted artifacts |
+Sift stores tool output as artifacts, infers a schema, and returns a compact reference with field types and sample values. The agent can see the data shape without carrying full payloads in context. When it needs details, it runs focused Python queries against stored artifacts.
 
-These modes are independent. You can run only MCP mode, only CLI mode, or both.
+Sift works with MCP clients (Claude Desktop, Claude Code, Cursor, VS Code, Windsurf, Zed) and CLI agents (OpenClaw, terminal automation). Same artifact store, same query interface, two entry points.
 
-## MCP Gateway Mode
+```
+                           ┌─────────────────────┐
+  MCP tool call ──────────▶│                     │──────────▶ Upstream MCP Server
+  CLI command   ──────────▶│        Sift         │──────────▶ Shell command
+                           │                     │
+                           │   ┌─────────────┐   │
+                           │   │  Artifacts  │   │
+                           │   │  (SQLite)   │   │
+                           │   └─────────────┘   │
+                           └─────────────────────┘
+                                     │
+                                     ▼
+                           Small output? return inline
+                           Large output? return schema reference
+                           Agent queries what it needs via code
+```
 
-Use this when an agent/client talks to tools over MCP.
+## Quick start
 
-### Quick start
+### MCP agents
 
 ```bash
 pipx install sift-gateway
 sift-gateway init --from claude
-sift-gateway --check
 ```
 
-Then restart your MCP client.
+Restart your MCP client. Sift mirrors upstream tools, persists outputs as artifacts, and returns either the full payload (for small responses) or a schema reference (for large responses). The agent can query stored artifacts with `artifact(action="query", query_kind="code", ...)`.
 
-`--from` shortcuts:
-`claude`, `claude-code`, `cursor`, `vscode`, `windsurf`, `zed`, `auto`
-(or pass an explicit config path).
+`--from` shortcuts: `claude`, `claude-code`, `cursor`, `vscode`, `windsurf`, `zed`, `auto`, or an explicit path.
 
-### Common gateway commands
-
-```bash
-sift-gateway --help
-sift-gateway upstream add '<json>' --from claude
-sift-gateway install pandas
-sift-gateway uninstall pandas
-sift-gateway --transport sse --host 127.0.0.1 --port 8080
-```
-
-### Runtime behavior
-
-- Mirrors upstream MCP tools with original schemas.
-- Persists mirrored outputs as artifacts.
-- Returns either:
-  - `response_mode="full"` (inline payload), or
-  - `response_mode="schema_ref"` (`artifact_id` + compact schema).
-- For paginated upstream results, always returns `schema_ref` and
-  `pagination.next_action` with `artifact(action="next_page", ...)`.
-
-## CLI Mode
-
-Use this when you want artifact workflows directly in terminal automation.
-
-### Quick start
+### CLI agents (OpenClaw, terminal automation)
 
 ```bash
 pipx install sift-gateway
-sift-gateway run -- echo '{"items":[{"id":1,"name":"a"}]}'
+sift-gateway run -- kubectl get pods -A -o json
 ```
 
-### Capture sources
+Large output is stored and returned as an artifact ID plus compact schema. Example:
 
 ```bash
-# Capture command output
-sift-gateway run -- git status --porcelain
-
-# Capture stdin
-cat payload.json | sift-gateway run --stdin
+sift-gateway code <artifact_id> '$.items' --expr "df.groupby('status')['name'].count().to_dict()"
 ```
 
-### Continuing paginated captures
-
-If `sift-gateway run` reports `pagination.has_next_page=true`, continue with:
+Pipe mode:
 
 ```bash
-# first capture
-sift-gateway run -- gh api repos/org/repo/pulls --limit 100 --after CUR_1
-
-# follow-up capture linked to previous page
-sift-gateway run --continue-from art_123 -- gh api repos/org/repo/pulls --limit 100 --after CUR_2
+curl -s api.example.com/events | sift-gateway run --stdin
 ```
 
-In MCP mode, continuation is `artifact(action="next_page", artifact_id=...)`.
-In CLI mode, continuation is manual via `run --continue-from`.
+For OpenClaw, see the [OpenClaw Integration Pack](docs/openclaw/README.md).
 
-### Analyze artifacts with Python
+## Example workflow
 
+You ask an agent to check what is failing in prod:
+
+```
+datadog.list_monitors(tag="service:payments")
+```
+
+Without Sift, 70 KB of monitor configs and metadata can go straight into context. That is about 18,000 tokens before the next tool call.
+
+With Sift, the agent gets a schema reference:
+
+```json
+{
+  "response_mode": "schema_ref",
+  "artifact_id": "art_9b2c...",
+  "schemas_compact": [{"rp": "$.monitors", "f": [
+    {"p": "$.name", "t": ["string"]},
+    {"p": "$.status", "t": ["string"], "examples": ["Alert", "OK", "Warn"]},
+    {"p": "$.type", "t": ["string"]},
+    {"p": "$.last_triggered", "t": ["datetime"]}
+  ]}],
+  "schema_legend": {"schema": {"rp": "root_path"}, "field": {"p": "path", "t": "types"}}
+}
+```
+
+The agent can then run a focused query:
+
+```python
+artifact(
+    action="query",
+    query_kind="code",
+    artifact_id="art_9b2c...",
+    root_path="$.monitors",
+    code="def run(data, schema, params): return [m for m in data if m.get('status') == 'Alert']",
+)
+```
+
+In this example, two calls use about 400 tokens and still leave room for follow-up steps.
+
+## How it works
+
+Sift runs one processing pipeline for MCP and CLI:
+
+1. Execute the tool call or command.
+2. Parse JSON output.
+3. Detect pagination from the raw response.
+4. Redact sensitive values (enabled by default).
+5. Persist the artifact to SQLite.
+6. Map the schema (field types, sample values, cardinality).
+7. Choose response mode: `full` (inline) or `schema_ref` (compact reference).
+8. Return the artifact-centric response.
+
+### Response mode selection
+
+Sift chooses between inline and reference automatically:
+
+- If the response has upstream pagination: always `schema_ref`.
+- If the full response exceeds the configured cap (default 8 KB): `schema_ref`.
+- If the schema reference is at least 50% smaller than full: `schema_ref`.
+- Otherwise: `full` (inline payload).
+
+## Pagination
+
+When upstream tools or APIs paginate, Sift handles continuation explicitly.
+
+MCP:
+```python
+artifact(action="next_page", artifact_id="art_9b2c...")
+```
+
+CLI:
 ```bash
-# single-artifact expression
-sift-gateway code art_123 '$.items' --expr 'len(df)'
-
-# single-artifact full function
-sift-gateway code art_123 '$.items' --code 'def run(data, schema, params): return {"rows": len(data)}'
-
-# multi-artifact expression
-sift-gateway code --artifact-id art_users --artifact-id art_orders --root-path '$.items' --expr 'len(df)'
-
-# multi-artifact file mode
-sift-gateway code --artifact-id art_users --artifact-id art_orders --root-path '$.users' --root-path '$.orders' --file ./join.py
+sift-gateway run --continue-from art_9b2c... -- gh api repos/org/repo/pulls --after NEXT_CURSOR
 ```
 
-`--expr` always receives a pandas `df` DataFrame. In multi-artifact mode,
-`df` is the concatenation of requested artifact rows, and
-`artifact_frames` is available as a `{artifact_id: DataFrame}` mapping.
+Each page creates a new artifact linked to the previous one through lineage metadata. The agent can run code queries across the full chain.
 
-CLI mode uses local state in `.sift-gateway` by default.
-Use `--data-dir` to target a different instance.
+## Code queries
 
-## MCP Artifact Tool Contract
+Both MCP and CLI agents can analyze stored artifacts with Python.
 
-MCP retrieval is through the `artifact` tool:
-
-- `action="query"` with `query_kind="code"` only.
-- `action="next_page"` to fetch the next upstream page for an artifact chain.
-
-Example `query_kind="code"`:
-
+MCP:
 ```python
 artifact(
     action="query",
     query_kind="code",
     artifact_id="art_123",
     root_path="$.items",
-    code="def run(data, schema, params): return {'rows': len(data)}",
+    code="def run(data, schema, params): return {'count': len(data)}",
 )
 ```
 
-Example `next_page`:
+CLI:
+```bash
+# Expression mode (receives a pandas DataFrame as df)
+sift-gateway code art_123 '$.items' --expr "df['status'].value_counts().to_dict()"
+
+# Function mode
+sift-gateway code art_123 '$.items' --code "def run(data, schema, params): return {'count': len(data)}"
+
+# File mode
+sift-gateway code art_123 '$.items' --file ./analysis.py
+```
+
+Multi-artifact query example:
 
 ```python
 artifact(
-    action="next_page",
-    artifact_id="art_123",
+    action="query",
+    query_kind="code",
+    artifact_ids=["art_users", "art_orders"],
+    root_paths={"art_users": "$.users", "art_orders": "$.orders"},
+    code="""
+def run(artifacts, schemas, params):
+    users = {u["id"]: u["name"] for u in artifacts["art_users"]}
+    return [{"user": users.get(o["user_id"]), "amount": o["amount"]}
+            for o in artifacts["art_orders"]]
+""",
 )
 ```
 
-## Response Modes
+### Import allowlist
 
-Sift chooses between two response modes:
+Code queries run with a configurable import allowlist. Default modules include `math`, `json`, `re`, `collections`, `statistics`, `heapq`, `numpy`, `pandas`, `jmespath`, `datetime`, `itertools`, `functools`, `operator`, `decimal`, `csv`, `io`, `string`, `textwrap`, `copy`, `typing`, `dataclasses`, `enum`, `fractions`, `bisect`, `random`, `base64`, and `urllib.parse`.
 
-- `full`: inline payload
-- `schema_ref`: `artifact_id` + `schemas_compact` + `schema_legend`
+Install additional packages:
 
-Selection rules:
+```bash
+sift-gateway install scipy matplotlib
+```
 
-1. If pagination exists: always `schema_ref`.
-2. Else if full response exceeds `SIFT_GATEWAY_PASSTHROUGH_MAX_BYTES`: `schema_ref`.
-3. Else return `schema_ref` only when schema payload is at least 50% smaller.
-4. Otherwise return `full`.
+## Security
 
-## Configuration Highlights
+Code queries use AST validation, an import allowlist, timeout enforcement, and memory limits. This is not a full OS-level sandbox.
+
+Outbound secret redaction is enabled by default to reduce accidental leakage of API keys from upstream tool responses.
+
+See [SECURITY.md](SECURITY.md) for the full security policy.
+
+## Configuration
 
 | Env var | Default | Description |
 |---|---|---|
-| `SIFT_GATEWAY_DATA_DIR` | `.sift-gateway` | Instance root directory |
-| `SIFT_GATEWAY_PASSTHROUGH_MAX_BYTES` | `8192` | Inline response cap used by full/schema_ref mode selection |
-| `SIFT_GATEWAY_CODE_QUERY_ENABLED` | `true` | Enable code queries |
-| `SIFT_GATEWAY_SECRET_REDACTION_ENABLED` | `true` | Redact likely outbound secrets |
+| `SIFT_GATEWAY_DATA_DIR` | `.sift-gateway` | Root data directory |
+| `SIFT_GATEWAY_PASSTHROUGH_MAX_BYTES` | `8192` | Inline response cap |
+| `SIFT_GATEWAY_SECRET_REDACTION_ENABLED` | `true` | Redact secrets from tool output |
 | `SIFT_GATEWAY_AUTH_TOKEN` | unset | Required for non-local HTTP binds |
 
-Full reference: [`docs/config.md`](docs/config.md)
-
-## Security Notes
-
-- Code queries use AST/import/time/memory guardrails, not full OS sandboxing.
-- Outbound secret redaction is enabled by default.
-
-Disable code queries if needed:
-
-```bash
-export SIFT_GATEWAY_CODE_QUERY_ENABLED=false
-```
-
-More: [`SECURITY.md`](SECURITY.md)
+Full reference: [docs/config.md](docs/config.md)
 
 ## Documentation
 
-- [`docs/README.md`](docs/README.md) - full map
-- [`docs/quickstart.md`](docs/quickstart.md)
-- [`docs/recipes.md`](docs/recipes.md)
-- [`docs/api_contracts.md`](docs/api_contracts.md)
-- [`docs/config.md`](docs/config.md)
-- [`docs/deployment.md`](docs/deployment.md)
-- [`docs/errors.md`](docs/errors.md)
-- [`docs/observability.md`](docs/observability.md)
-- [`docs/architecture.md`](docs/architecture.md)
+| Doc | Covers |
+|---|---|
+| [Why Sift Exists](docs/why.md) | Research and ecosystem context |
+| [Quick Start](docs/quickstart.md) | Install, init, first artifact |
+| [Recipes](docs/recipes.md) | Practical usage patterns |
+| [OpenClaw Pack](docs/openclaw/README.md) | OpenClaw skill, quickstart, templates |
+| [API Contracts](docs/api_contracts.md) | MCP + CLI public contract |
+| [Configuration](docs/config.md) | All settings and env vars |
+| [Deployment](docs/deployment.md) | Transport modes, auth, ops |
+| [Errors](docs/errors.md) | Error codes and troubleshooting |
+| [Observability](docs/observability.md) | Structured logging and metrics |
+| [Architecture](docs/architecture.md) | Design and invariants |
 
 ## Development
 
@@ -204,11 +238,13 @@ git clone https://github.com/lourencomaciel/sift-gateway.git
 cd sift-gateway
 uv sync --extra dev
 
-UV_CACHE_DIR=/tmp/uv-cache uv run python -m ruff check src tests
-UV_CACHE_DIR=/tmp/uv-cache uv run python -m mypy src
-UV_CACHE_DIR=/tmp/uv-cache uv run python -m pytest tests/unit/ -q
+uv run python -m pytest tests/unit/ -q
+uv run python -m ruff check src tests
+uv run python -m mypy src
 ```
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the full development guide.
 
 ## License
 
-MIT - see [`LICENSE`](LICENSE).
+MIT - see [LICENSE](LICENSE).

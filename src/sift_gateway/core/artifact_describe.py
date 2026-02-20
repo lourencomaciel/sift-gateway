@@ -428,32 +428,22 @@ def _describe_pagination_meta(
     state = _extract_pagination_state(envelope)
     if state is None or not state.next_params:
         return None
-    has_next_page = not (
-        state.upstream_prefix == "cli" and state.tool_name == "run"
+    next_kind = (
+        "command"
+        if state.upstream_prefix == "cli" and state.tool_name == "run"
+        else "tool_call"
     )
-    meta = build_upstream_pagination_meta(
+    return build_upstream_pagination_meta(
         artifact_id=anchor_artifact_id,
         page_number=state.page_number,
         retrieval_status=RETRIEVAL_STATUS_PARTIAL,
         has_more=True,
         partial_reason=UPSTREAM_PARTIAL_REASON_MORE_PAGES_AVAILABLE,
         warning=PAGINATION_WARNING_INCOMPLETE_RESULT_SET,
-        has_next_page=has_next_page,
+        next_kind=next_kind,
         next_params=state.next_params,
         original_args=state.original_args,
     )
-    if not has_next_page:
-        # Preserve discovered continuation parameters for interface layers
-        # that support manual continuation without artifact.next_page replay.
-        meta["next_params"] = state.next_params
-        if len(state.next_params) == 1:
-            cursor_param, cursor_value = next(
-                iter(state.next_params.items())
-            )
-            if isinstance(cursor_param, str) and cursor_param:
-                meta["next_cursor_param"] = cursor_param
-                meta["next_cursor"] = cursor_value
-    return meta
 
 
 def execute_artifact_describe(

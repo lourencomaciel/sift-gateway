@@ -1,14 +1,14 @@
 """Build canonical pagination metadata for gateway responses.
 
 Defines layer-explicit pagination fields used by mirrored upstream
-responses and retrieval tool responses.  Exports helper builders
-that preserve backward-compatible pagination fields while adding
-canonical completion semantics.
+responses and retrieval tool responses.
 """
 
 from __future__ import annotations
 
 from typing import Any, Literal
+
+from sift_gateway.tools.usage_hint import with_pagination_completeness_rule
 
 NEXT_PAGE_TOOL_NAME: Literal["artifact"] = "artifact"
 
@@ -49,13 +49,12 @@ UpstreamPartialReason = Literal[
     "NEXT_TOKEN_MISSING",
 ]
 RetrievalPartialReason = Literal["CURSOR_AVAILABLE"]
+UpstreamNextKind = Literal["tool_call", "command", "params_only"]
 
 
-def _extract_cursor_info(
-    next_params: dict[str, Any] | None,
-) -> tuple[str | None, Any]:
+def _extract_cursor_info(next_params: dict[str, Any]) -> tuple[str | None, Any]:
     """Return a single cursor-like key/value from next params."""
-    if not isinstance(next_params, dict) or len(next_params) != 1:
+    if len(next_params) != 1:
         return None, None
     only_item = next(iter(next_params.items()))
     if not isinstance(only_item[0], str) or not only_item[0]:
@@ -63,15 +62,58 @@ def _extract_cursor_info(
     return only_item[0], only_item[1]
 
 
-def _build_next_action(artifact_id: str) -> dict[str, Any]:
-    """Build canonical artifact next_page tool action."""
+def _build_tool_call_next(artifact_id: str) -> dict[str, Any]:
+    """Build canonical MCP tool-call continuation payload."""
     return {
+        "kind": "tool_call",
+        "artifact_id": artifact_id,
         "tool": NEXT_PAGE_TOOL_NAME,
         "arguments": {
             "action": "next_page",
             "artifact_id": artifact_id,
         },
     }
+
+
+def _build_command_next(artifact_id: str) -> dict[str, Any]:
+    """Build canonical CLI command continuation payload."""
+    command_line = (
+        f"sift-gateway run --continue-from {artifact_id} -- <next-command>"
+    )
+    return {
+        "kind": "command",
+        "artifact_id": artifact_id,
+        "command": "run",
+        "continue_from_artifact_id": artifact_id,
+        "command_line": command_line,
+    }
+
+
+def _build_params_only_next(artifact_id: str) -> dict[str, Any]:
+    """Build canonical manual continuation payload."""
+    return {
+        "kind": "params_only",
+        "artifact_id": artifact_id,
+    }
+
+
+def _build_upstream_next(
+    *,
+    artifact_id: str,
+    next_kind: UpstreamNextKind | None,
+    next_params: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    """Build canonical upstream continuation payload."""
+    if next_kind is None:
+        return None
+    if next_kind == "tool_call":
+        next_payload = _build_tool_call_next(artifact_id)
+    elif next_kind == "command":
+        next_payload = _build_command_next(artifact_id)
+    else:
+        next_payload = _build_params_only_next(artifact_id)
+    next_payload["params"] = dict(next_params) if isinstance(next_params, dict) else {}
+    return next_payload
 
 
 def _maybe_limit_hint(original_args: dict[str, Any] | None) -> str | None:
@@ -86,42 +128,76 @@ def _maybe_limit_hint(original_args: dict[str, Any] | None) -> str | None:
     return None
 
 
-def _build_upstream_hint(
+def _next_hint_phrase(
     *,
-    artifact_id: str,
-    retrieval_status: RetrievalStatus,
-    has_next_page: bool,
+    next_payload: dict[str, Any],
     cursor_param: str | None,
     cursor_value: Any,
+) -> str:
+    """Build continuation phrase for the current next payload."""
+    kind = next_payload.get("kind")
+    if kind == "tool_call":
+        artifact_id = next_payload.get("artifact_id")
+        if isinstance(artifact_id, str) and artifact_id:
+            if cursor_param is not None:
+                return (
+                    "continue with "
+                    f'artifact(action="next_page", artifact_id="{artifact_id}") '
+                    "or re-call the mirrored tool with that cursor"
+                )
+            return (
+                "call "
+                f'artifact(action="next_page", artifact_id="{artifact_id}") '
+                "to fetch the next page"
+            )
+    if kind == "command":
+        command_line = next_payload.get("command_line")
+        if isinstance(command_line, str) and command_line:
+            if cursor_param is not None:
+                return (
+                    f'continue with "{command_line}" and use '
+                    '"pagination.next.params" as continuation values'
+                )
+            return f'continue with "{command_line}"'
+    return "use pagination.next.params as continuation values"
+
+
+def _build_upstream_hint(
+    *,
+    retrieval_status: RetrievalStatus,
+    next_payload: dict[str, Any] | None,
     original_args: dict[str, Any] | None,
 ) -> str:
     """Build a user-facing hint consistent with pagination state."""
-    if has_next_page:
+    if next_payload is not None:
+        next_params_raw = next_payload.get("params")
+        next_params = (
+            next_params_raw if isinstance(next_params_raw, dict) else {}
+        )
+        cursor_param, cursor_value = _extract_cursor_info(next_params)
         hint_parts: list[str] = ["More results are available"]
         limit_hint = _maybe_limit_hint(original_args)
         if limit_hint is not None:
             hint_parts.append(limit_hint)
         if cursor_param is not None:
             hint_parts.append(f'next cursor is {cursor_param}="{cursor_value}"')
-            hint_parts.append(
-                "continue with "
-                f'artifact(action="next_page", artifact_id="{artifact_id}") '
-                "or re-call the mirrored tool with that cursor"
+        hint_parts.append(
+            _next_hint_phrase(
+                next_payload=next_payload,
+                cursor_param=cursor_param,
+                cursor_value=cursor_value,
             )
-        else:
-            hint_parts.append(
-                "call "
-                f'artifact(action="next_page", artifact_id="{artifact_id}") '
-                "to fetch the next page"
-            )
-        return ". ".join(hint_parts) + "."
+        )
+        return with_pagination_completeness_rule(". ".join(hint_parts) + ".")
 
     if retrieval_status == RETRIEVAL_STATUS_PARTIAL:
-        return (
+        return with_pagination_completeness_rule(
             "Result set may be incomplete. More pages might exist, "
-            "but a next-page action could not be generated."
+            "but a continuation action could not be generated."
         )
-    return "No additional pages are available."
+    return with_pagination_completeness_rule(
+        "No additional pages are available."
+    )
 
 
 def _warning_items(
@@ -129,7 +205,7 @@ def _warning_items(
     warning: str | None,
     extra_warnings: list[dict[str, Any]] | None,
 ) -> list[dict[str, Any]]:
-    """Build warnings list preserving backward-compatible primary warning."""
+    """Build warnings list preserving primary warning code."""
     warning_items: list[dict[str, Any]] = []
     if isinstance(warning, str) and warning:
         warning_items.append({"code": warning})
@@ -150,43 +226,24 @@ def build_upstream_pagination_meta(
     has_more: bool,
     partial_reason: UpstreamPartialReason | None,
     warning: str | None,
-    has_next_page: bool,
+    next_kind: UpstreamNextKind | None = None,
     next_params: dict[str, Any] | None = None,
     original_args: dict[str, Any] | None = None,
     extra_warnings: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    """Build canonical upstream pagination metadata.
-
-    Args:
-        artifact_id: Artifact identifier for the current page.
-        page_number: Zero-based page number for this artifact.
-        retrieval_status: Completion status (``PARTIAL`` or
-            ``COMPLETE``).
-        has_more: Whether more upstream results are known to
-            exist from this response.
-        partial_reason: Optional reason when status is PARTIAL.
-        warning: Optional warning code for incomplete results.
-        has_next_page: Whether ``artifact.next_page`` can fetch
-            the next page from this artifact.
-        next_params: Optional next-call params extracted from
-            upstream pagination state.
-        original_args: Original mirrored-tool args used for this
-            page. Used only for hint enrichment.
-        extra_warnings: Additional structured warnings to expose
-            alongside the legacy single warning code.
-
-    Returns:
-        Pagination metadata dict with canonical and compatibility
-        fields.
-    """
-    cursor_param, cursor_value = _extract_cursor_info(next_params)
-    next_action = _build_next_action(artifact_id) if has_next_page else None
+    """Build canonical upstream pagination metadata."""
+    next_payload = (
+        _build_upstream_next(
+            artifact_id=artifact_id,
+            next_kind=next_kind,
+            next_params=next_params,
+        )
+        if has_more
+        else None
+    )
     hint = _build_upstream_hint(
-        artifact_id=artifact_id,
         retrieval_status=retrieval_status,
-        has_next_page=has_next_page,
-        cursor_param=cursor_param,
-        cursor_value=cursor_value,
+        next_payload=next_payload,
         original_args=original_args,
     )
 
@@ -196,18 +253,10 @@ def build_upstream_pagination_meta(
         "partial_reason": partial_reason,
         "has_more": has_more,
         "page_number": page_number,
-        "next_action": next_action,
+        "next": next_payload,
         "warning": warning,
-        # Backward-compatible fields.
-        "has_next_page": has_next_page,
         "hint": hint,
     }
-    if has_next_page and isinstance(next_params, dict):
-        meta["next_params"] = next_params
-        if cursor_param is not None:
-            meta["next_cursor_param"] = cursor_param
-            meta["next_cursor"] = cursor_value
-
     warnings_list = _warning_items(
         warning=warning,
         extra_warnings=extra_warnings,

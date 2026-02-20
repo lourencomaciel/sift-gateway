@@ -191,7 +191,6 @@ Shorter TTLs reduce storage overhead but may break long-running pagination workf
 Configure Python code query execution:
 
 ```bash
-export SIFT_GATEWAY_CODE_QUERY_ENABLED=true
 export SIFT_GATEWAY_CODE_QUERY_TIMEOUT_SECONDS=30
 export SIFT_GATEWAY_CODE_QUERY_MAX_INPUT_RECORDS=10000
 export SIFT_GATEWAY_CODE_QUERY_ALLOWED_IMPORT_ROOTS='["math","json","jmespath","numpy","pandas"]'

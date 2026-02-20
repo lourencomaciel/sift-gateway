@@ -41,12 +41,18 @@ from sift_gateway.mcp.adapters.artifact_query_runtime import (
     GatewayArtifactQueryRuntime,
 )
 from sift_gateway.mcp.server import GatewayServer
+from sift_gateway.pagination.contract import build_upstream_pagination_meta
 from sift_gateway.pagination.extract import (
     PaginationAssessment,
     assess_pagination,
 )
 from sift_gateway.request_identity import compute_request_identity
 from sift_gateway.schema_compact import SCHEMA_LEGEND, compact_schema_payload
+from sift_gateway.tools.usage_hint import (
+    build_code_query_usage,
+    compact_schema_primary_root_path,
+    render_code_query_usage_hint,
+)
 
 _CLI_SESSION_ID = "cli"
 _CLI_PREFIX = "cli"
@@ -458,122 +464,35 @@ def _assess_cli_pagination(
     return {"_gateway_pagination": assessment.state.to_dict()}, assessment
 
 
-def _build_cli_continue_command(artifact_id: str) -> str:
-    """Build the CLI continuation command template for one artifact."""
-    return (
-        f"sift-gateway run --continue-from {artifact_id} -- <next-command>"
-    )
-
-
-def _build_cli_next_action(artifact_id: str) -> dict[str, Any]:
-    """Build CLI-native continuation action metadata."""
-    return {
-        "command": "run",
-        "continue_from_artifact_id": artifact_id,
-        "command_line": _build_cli_continue_command(artifact_id),
-    }
-
-
-def _build_cli_continue_hint(artifact_id: str) -> str:
-    """Build a consistent continuation hint for CLI pagination."""
-    return (
-        "More results are available. Continue with "
-        f'"{_build_cli_continue_command(artifact_id)}" and use '
-        '"pagination.next_params" as continuation values.'
-    )
-
-
-def _resolve_cli_pagination_artifact_id(
-    *,
-    payload: dict[str, Any],
-    next_action: Any,
-) -> str | None:
-    """Resolve the artifact id used to build CLI continuation metadata."""
-    if isinstance(next_action, dict):
-        arguments = next_action.get("arguments")
-        if isinstance(arguments, dict):
-            candidate_id = arguments.get("artifact_id")
-            if isinstance(candidate_id, str) and candidate_id:
-                return candidate_id
-    artifact_id = payload.get("artifact_id")
-    if isinstance(artifact_id, str) and artifact_id:
-        return artifact_id
-    return None
-
-
-def _adapt_cli_pagination_meta(
-    payload: dict[str, Any],
-) -> dict[str, Any]:
-    """Rewrite generic pagination next_action to CLI-native form."""
-    pagination = payload.get("pagination")
-    if not isinstance(pagination, dict):
-        return payload
-    if pagination.get("has_next_page") is True:
-        return payload
-
-    if pagination.get("has_more") is not True:
-        return payload
-    next_params = pagination.get("next_params")
-    if not isinstance(next_params, dict) or not next_params:
-        return payload
-    artifact_id = _resolve_cli_pagination_artifact_id(
-        payload=payload,
-        next_action=pagination.get("next_action"),
-    )
-    if artifact_id is None:
-        return payload
-
-    updated_pagination = dict(pagination)
-    updated_pagination["has_next_page"] = True
-    updated_pagination["next_action"] = _build_cli_next_action(artifact_id)
-    updated_pagination["hint"] = _build_cli_continue_hint(artifact_id)
-    return {
-        **payload,
-        "pagination": updated_pagination,
-    }
-
-
 def _build_cli_pagination_output(
     *,
     assessment: PaginationAssessment,
     artifact_id: str,
 ) -> dict[str, Any]:
     """Build model-facing pagination metadata for CLI command captures."""
-    has_next_page = assessment.has_more and assessment.state is not None
-    next_action = _build_cli_next_action(artifact_id) if has_next_page else None
-    if has_next_page:
-        hint = _build_cli_continue_hint(artifact_id)
-    elif assessment.retrieval_status == "PARTIAL":
-        hint = (
-            "Result set may be incomplete. More pages might exist, "
-            "but continuation parameters were not discovered."
-        )
-    else:
-        hint = "No additional pages are available."
-
-    pagination: dict[str, Any] = {
-        "layer": "upstream",
-        "retrieval_status": assessment.retrieval_status,
-        "partial_reason": assessment.partial_reason,
-        "has_more": assessment.has_more,
-        "page_number": assessment.page_number,
-        "next_action": next_action,
-        "warning": assessment.warning,
-        "has_next_page": has_next_page,
-        "hint": hint,
-    }
-    if has_next_page and assessment.state is not None:
-        pagination["next_params"] = assessment.state.next_params
-        if len(assessment.state.next_params) == 1:
-            cursor_param, cursor_value = next(
-                iter(assessment.state.next_params.items())
-            )
-            if isinstance(cursor_param, str) and cursor_param:
-                pagination["next_cursor_param"] = cursor_param
-                pagination["next_cursor"] = cursor_value
-    if isinstance(assessment.warning, str) and assessment.warning:
-        pagination["warnings"] = [{"code": assessment.warning}]
-    return pagination
+    return build_upstream_pagination_meta(
+        artifact_id=artifact_id,
+        page_number=assessment.page_number,
+        retrieval_status=assessment.retrieval_status,
+        has_more=assessment.has_more,
+        partial_reason=assessment.partial_reason,
+        warning=assessment.warning,
+        next_kind=(
+            "command"
+            if assessment.has_more and assessment.state is not None
+            else None
+        ),
+        next_params=(
+            assessment.state.next_params
+            if assessment.state is not None
+            else None
+        ),
+        original_args=(
+            assessment.state.original_args
+            if assessment.state is not None
+            else None
+        ),
+    )
 
 
 def _estimate_records(payload: Any) -> int | None:
@@ -762,12 +681,14 @@ def _emit_human_run_continuation(
 ) -> None:
     """Emit run continuation, schema, and follow-up hint lines."""
     pagination = payload.get("pagination")
-    if (
-        isinstance(pagination, dict)
-        and pagination.get("has_next_page") is True
-        and artifact_id is not None
-    ):
-        _write_line(f"next:     {_build_cli_continue_command(artifact_id)}")
+    if isinstance(pagination, dict):
+        next_payload = pagination.get("next")
+        if isinstance(next_payload, dict) and (
+            next_payload.get("kind") == "command"
+        ):
+            command_line = next_payload.get("command_line")
+            if isinstance(command_line, str) and command_line:
+                _write_line(f"next:     {command_line}")
 
     if payload.get("response_mode") == "schema_ref":
         schemas = payload.get("schemas_compact")
@@ -775,10 +696,22 @@ def _emit_human_run_continuation(
             _write_line(f"schema_roots: {len(schemas)}")
 
     if artifact_id is not None and command_exit_code == 0:
-        _write_line(
-            "hint:     use "
-            f"`sift-gateway code {artifact_id} '$' --expr \"len(df)\"`"
-        )
+        usage_hint = ""
+        metadata = payload.get("metadata")
+        if isinstance(metadata, dict):
+            raw_usage = metadata.get("usage")
+            if isinstance(raw_usage, dict):
+                usage_hint = render_code_query_usage_hint(raw_usage)
+        if not usage_hint:
+            usage_hint = render_code_query_usage_hint(
+                build_code_query_usage(
+                    interface="cli",
+                    artifact_id=artifact_id,
+                    root_path="$",
+                    configured_roots=None,
+                )
+            )
+        _write_line(f"hint:     {usage_hint}")
 
 
 def _emit_human_run(payload: dict[str, Any]) -> None:
@@ -1237,6 +1170,15 @@ def _execute_run(
             runtime,
             artifact_id=artifact_id,
         )
+        configured_roots = getattr(
+            runtime, "code_query_allowed_import_roots", None
+        )
+        metadata["usage"] = build_code_query_usage(
+            interface="cli",
+            artifact_id=artifact_id,
+            root_path=compact_schema_primary_root_path(schemas_compact),
+            configured_roots=configured_roots,
+        )
         full_payload = gateway_tool_result(
             response_mode="full",
             artifact_id=artifact_id,
@@ -1458,7 +1400,6 @@ def _dispatch_cli_payload(
     with _runtime_context(data_dir_override=args.data_dir) as runtime:
         payload, mode = _dispatch_command(runtime, args)
         payload = _sanitize_cli_payload(runtime, payload)
-        payload = _adapt_cli_pagination_meta(payload)
     return payload, mode
 
 
