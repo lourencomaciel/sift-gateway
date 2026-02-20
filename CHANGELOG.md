@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [0.2.8] - 2026-02-20
+
+### Changed
+- Normalized compact schema payload handling for `query_kind=code` so `schemas_compact` no longer collapses into null placeholders in multi-artifact code queries
+- Aligned `sift-gateway code` CLI output normalization with the same compact schema handling used by tool responses
+
 ## [0.2.7] - 2026-02-20
 
 ### Changed
