@@ -45,10 +45,7 @@ from sift_gateway.envelope.responses import (
 )
 from sift_gateway.obs.logging import LogEvents, get_logger
 from sift_gateway.query.jsonpath import JsonPathError, evaluate_jsonpath
-from sift_gateway.schema_compact import (
-    SCHEMA_LEGEND,
-    normalize_compact_schema_payload,
-)
+from sift_gateway.schema_compact import SCHEMA_LEGEND, compact_schema_payload
 from sift_gateway.storage.payload_store import reconstruct_envelope
 from sift_gateway.tools.artifact_get import FETCH_ARTIFACT_SQL
 from sift_gateway.tools.artifact_schema import FETCH_SCHEMA_FIELDS_SQL
@@ -1327,7 +1324,7 @@ def _build_code_response(
             schemas_full = [
                 schema for schema in raw_schemas if isinstance(schema, dict)
             ]
-            schemas_compact = normalize_compact_schema_payload(schemas_full)
+            schemas_compact = compact_schema_payload(schemas_full)
         if schemas_compact:
             schema_legend = SCHEMA_LEGEND
 

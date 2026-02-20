@@ -6,7 +6,6 @@ token overhead in mirrored and describe responses.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 import re
 from typing import Any
 
@@ -159,23 +158,3 @@ def compact_schema_payload(
             continue
         compacted.append(compact_schema_entry(schema))
     return compacted
-
-
-def normalize_compact_schema_payload(
-    schemas: list[dict[str, Any]],
-) -> list[dict[str, Any]]:
-    """Return compact schemas, avoiding double-compaction.
-
-    ``artifact.describe(scope="single")`` already returns compact
-    schema entries.  Downstream callers that always compact again
-    can accidentally erase fields (yielding null-heavy placeholders).
-    """
-    normalized: list[dict[str, Any]] = []
-    for schema in schemas:
-        if not isinstance(schema, Mapping):
-            continue
-        if {"rp", "f", "cv"}.issubset(schema.keys()):
-            normalized.append(dict(schema))
-            continue
-        normalized.append(compact_schema_entry(dict(schema)))
-    return normalized
