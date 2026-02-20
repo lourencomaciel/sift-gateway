@@ -24,7 +24,7 @@ sift-gateway run -- <command>
 ```
 
 2. Keep `artifact_id` and short summary in context.
-3. If pagination exists (`pagination.has_next_page=true`), continue explicitly:
+3. If pagination exists (`pagination.next.kind=="command"`), continue explicitly:
 
 ```bash
 sift-gateway run --continue-from <artifact_id> -- <next-command-with-next_params-applied>
@@ -88,6 +88,6 @@ curl -s https://api.example.com/events | sift-gateway run --stdin --ttl 8h --tag
 ## Context budget rules
 
 - keep raw output out of context; keep `artifact_id` plus compact summary
-- for paginated APIs, keep `next_params` and issue explicit continuation
+- for paginated APIs, keep `pagination.next.params` and issue explicit continuation
 - prefer narrow code outputs (counts, projections, aggregates)
 - each run capture is fresh by design; do not assume implicit dedupe

@@ -396,10 +396,16 @@ def test_execute_artifact_describe_surfaces_upstream_pagination_meta() -> None:
     )
 
     assert result["pagination"]["layer"] == "upstream"
-    assert result["pagination"]["has_next_page"] is False
+    assert result["pagination"]["has_more"] is True
     assert result["pagination"]["retrieval_status"] == "PARTIAL"
-    assert result["pagination"]["next_action"] is None
-    assert result["pagination"]["next_params"] == {"after": "C2"}
+    assert result["pagination"]["next"] == {
+        "kind": "command",
+        "artifact_id": "art_1",
+        "command": "run",
+        "continue_from_artifact_id": "art_1",
+        "command_line": "sift-gateway run --continue-from art_1 -- <next-command>",
+        "params": {"after": "C2"},
+    }
 
 
 def test_execute_artifact_describe_surfaces_next_page_for_mirrored_state() -> None:
@@ -497,9 +503,12 @@ def test_execute_artifact_describe_surfaces_next_page_for_mirrored_state() -> No
     )
 
     assert result["pagination"]["layer"] == "upstream"
-    assert result["pagination"]["has_next_page"] is True
+    assert result["pagination"]["has_more"] is True
     assert result["pagination"]["retrieval_status"] == "PARTIAL"
-    assert result["pagination"]["next_action"] == {
+    assert result["pagination"]["next"] == {
+        "kind": "tool_call",
+        "artifact_id": "art_1",
         "tool": "artifact",
         "arguments": {"action": "next_page", "artifact_id": "art_1"},
+        "params": {"after": "C2"},
     }

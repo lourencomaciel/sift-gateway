@@ -76,7 +76,10 @@ from sift_gateway.security.redaction import (
     ResponseSecretRedactor,
     SecretRedactionError,
 )
-from sift_gateway.tools.usage_hint import PAGINATION_COMPLETENESS_RULE
+from sift_gateway.tools.usage_hint import (
+    PAGINATION_COMPLETENESS_RULE,
+    summarize_code_query_packages,
+)
 
 _GENERIC_ARGS_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -92,15 +95,6 @@ _SUPPORTED_ENVELOPE_PARTS = {
 }
 _BUILTIN_TOOL_DESCRIPTIONS: dict[str, str] = {
     "gateway.status": "Gateway health and configuration snapshot.",
-    "artifact": (
-        "Interact with stored artifacts. "
-        "Actions: query and next_page. "
-        'Use action="query" with query_kind="code" to run Python over '
-        "stored artifacts. "
-        "Use action=\"next_page\" to fetch additional upstream pages for a "
-        "paginated artifact. "
-        f"{PAGINATION_COMPLETENESS_RULE}"
-    ),
 }
 _BUILTIN_TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
     "gateway.status": {
@@ -229,6 +223,23 @@ _CURSOR_STALE_REASON_PATTERNS: tuple[tuple[str, str], ...] = (
     ("root_path mismatch", "root_path_mismatch"),
     ("scope mismatch", "scope_mismatch"),
 )
+
+
+def _artifact_tool_description(
+    *,
+    code_query_package_summary: str,
+) -> str:
+    """Build artifact-tool description with compact package summary."""
+    return (
+        "Interact with stored artifacts. "
+        "Actions: query and next_page. "
+        'Use action="query" with query_kind="code" to run Python over '
+        "stored artifacts. "
+        f"Code-query packages: {code_query_package_summary}. "
+        "Use action=\"next_page\" to fetch additional upstream pages for a "
+        "paginated artifact. "
+        f"{PAGINATION_COMPLETENESS_RULE}"
+    )
 
 
 def _not_implemented(tool_name: str) -> dict[str, Any]:
@@ -1463,12 +1474,21 @@ class GatewayServer:
                 safe_name=safe_name,
                 qualified_name=tool_name,
             )
+            description = _BUILTIN_TOOL_DESCRIPTIONS.get(
+                tool_name, "Gateway tool"
+            )
+            if tool_name == "artifact":
+                description = _artifact_tool_description(
+                    code_query_package_summary=summarize_code_query_packages(
+                        configured_roots=(
+                            self.config.code_query_allowed_import_roots
+                        ),
+                    ),
+                )
             app.add_tool(
                 RuntimeTool(
                     name=safe_name,
-                    description=_BUILTIN_TOOL_DESCRIPTIONS.get(
-                        tool_name, "Gateway tool"
-                    ),
+                    description=description,
                     parameters=dict(schema),
                     handler=handler,
                     response_sanitizer=self._sanitize_tool_result,

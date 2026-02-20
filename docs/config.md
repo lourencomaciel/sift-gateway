@@ -152,7 +152,6 @@ Lineage query rules for `artifact(action="query")`:
 
 | Key | Type | Default | Env var | Description |
 |-----|------|---------|---------|-------------|
-| `code_query_enabled` | bool | `true` | `SIFT_GATEWAY_CODE_QUERY_ENABLED` | Enable `query_kind=code` |
 | `code_query_allowed_import_roots` | list[string] \| null | `null` | `SIFT_GATEWAY_CODE_QUERY_ALLOWED_IMPORT_ROOTS` | Explicit import-root allowlist for code runtime; when `null`, built-in defaults are used |
 | `code_query_timeout_seconds` | float | `8.0` | `SIFT_GATEWAY_CODE_QUERY_TIMEOUT_SECONDS` | Subprocess wall-clock timeout |
 | `code_query_max_memory_mb` | int | `512` | `SIFT_GATEWAY_CODE_QUERY_MAX_MEMORY_MB` | Best-effort subprocess memory cap |

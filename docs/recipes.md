@@ -16,7 +16,7 @@ Use `--expr` for quick transforms and `--code` / `--file` for multi-step logic.
 
 ## Pattern 2: Upstream pagination chain (CLI)
 
-When `run` returns `pagination.has_next_page=true`:
+When `run` returns `pagination.next.kind=="command"`:
 
 ```bash
 # page 1
@@ -28,7 +28,7 @@ sift-gateway run --continue-from art_page_1 -- gh api repos/org/repo/pulls --lim
 
 Notes:
 
-- Apply `pagination.next_params` from the previous response.
+- Apply `pagination.next.params` from the previous response.
 - Each continuation creates a new artifact linked by `parent_artifact_id` and
   `chain_seq`.
 
@@ -114,6 +114,7 @@ For both mirrored-tool and code responses:
 ## Common mistakes
 
 - Trying to call `artifact(action="query")` without `query_kind="code"`.
-- Treating `run --continue-from` as optional when `has_next_page=true`.
+- Treating `run --continue-from` as optional when
+  `pagination.next.kind=="command"`.
 - Assuming completion without checking `pagination.retrieval_status`.
 - Returning huge code outputs without narrowing logic.

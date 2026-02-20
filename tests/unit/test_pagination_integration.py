@@ -338,18 +338,19 @@ def test_pagination_response_meta_shape() -> None:
     assert meta["retrieval_status"] == "PARTIAL"
     assert meta["partial_reason"] == "MORE_PAGES_AVAILABLE"
     assert meta["has_more"] is True
-    assert meta["next_action"]["tool"] == "artifact"
-    assert meta["next_action"]["arguments"] == {
-        "action": "next_page",
+    assert meta["next"] == {
+        "kind": "tool_call",
         "artifact_id": "art_123",
+        "tool": "artifact",
+        "arguments": {
+            "action": "next_page",
+            "artifact_id": "art_123",
+        },
+        "params": {"after": "ABC"},
     }
     assert meta["warning"] == "INCOMPLETE_RESULT_SET"
     assert meta["warnings"] == [{"code": "INCOMPLETE_RESULT_SET"}]
-    assert meta["has_next_page"] is True
     assert meta["page_number"] == 0
-    assert meta["next_params"] == {"after": "ABC"}
-    assert meta["next_cursor_param"] == "after"
-    assert meta["next_cursor"] == "ABC"
     assert "art_123" in meta["hint"]
     assert "limit=100" in meta["hint"]
     assert 'after="ABC"' in meta["hint"]
@@ -371,10 +372,9 @@ def test_pagination_response_meta_complete_page() -> None:
     assert meta["retrieval_status"] == "COMPLETE"
     assert meta["partial_reason"] is None
     assert meta["has_more"] is False
-    assert meta["next_action"] is None
+    assert meta["next"] is None
     assert meta["warning"] is None
     assert "warnings" not in meta
-    assert meta["has_next_page"] is False
     assert meta["page_number"] == 3
 
 
@@ -421,14 +421,16 @@ def test_gateway_tool_result_includes_pagination() -> None:
         "retrieval_status": "PARTIAL",
         "partial_reason": "MORE_PAGES_AVAILABLE",
         "has_more": True,
-        "next_action": {
-            "tool": "artifact_next_page",
-            "arguments": {"artifact_id": "art_1"},
+        "next": {
+            "kind": "tool_call",
+            "artifact_id": "art_1",
+            "tool": "artifact",
+            "arguments": {"action": "next_page", "artifact_id": "art_1"},
+            "params": {"after": "C2"},
         },
         "warning": "INCOMPLETE_RESULT_SET",
-        "has_next_page": True,
         "page_number": 0,
-        "hint": "Call artifact_next_page...",
+        "hint": "Call artifact...",
     }
     result = gateway_tool_result(
         response_mode="schema_ref",
