@@ -1,25 +1,22 @@
 # API Contracts
 
-Canonical behavior for Sift's public runtime surface.
+Canonical contract for Sift's public runtime surface.
 
-## Public Tool Surface
+## Scope
 
-### Mirrored upstream tools
+Public workflows are intentionally narrow:
 
-Every mirrored upstream call is persisted as an artifact and returns one of:
+1. Capture data:
+   - MCP: mirrored upstream tool calls
+   - CLI: `sift-gateway run -- <command>`
+2. Continue upstream pagination:
+   - MCP: `artifact(action="next_page", artifact_id=...)`
+   - CLI: `sift-gateway run --continue-from <artifact_id> -- <next-command>`
+3. Analyze artifacts:
+   - MCP: `artifact(action="query", query_kind="code", ...)`
+   - CLI: `sift-gateway code ...`
 
-- `response_mode="full"`
-- `response_mode="schema_ref"`
-
-### `artifact` tool
-
-The consolidated `artifact` tool supports only two actions:
-
-- `action="query"` with `query_kind="code"`
-- `action="next_page"`
-
-Legacy `query_kind` values (`describe`, `get`, `select`, `search`) are not part
-of this contract.
+Legacy retrieval query kinds are not part of this contract.
 
 ## Required Gateway Context
 
@@ -27,6 +24,21 @@ Mirrored tool calls and `artifact(...)` calls must include
 `_gateway_context.session_id`.
 
 If missing, the gateway returns `INVALID_ARGUMENT`.
+
+## Processing Pipeline
+
+Mirrored tool calls, pagination continuations, and code outputs follow:
+
+1. Execute tool/command/code.
+2. Parse payload.
+3. Detect pagination from raw parsed payload.
+4. Redact sensitive output values.
+5. Persist artifact.
+6. Build mapping + compact schema.
+7. Choose response mode.
+8. Return artifact-centric response.
+
+Pagination detection happens before redaction. Persisted payloads are redacted.
 
 ## `artifact(action="query", query_kind="code")`
 
@@ -36,9 +48,9 @@ If missing, the gateway returns `INVALID_ARGUMENT`.
 - `action="query"`
 - `query_kind="code"`
 - `code`
-- target selection:
-  - single target: `artifact_id` (and optional `root_path`, default `$`)
-  - multi target: `artifact_ids` (and optional `root_paths` map)
+- one target shape:
+  - single target: `artifact_id` (optional `root_path`, default `$`)
+  - multi target: `artifact_ids` (optional `root_paths` map)
 
 ### Optional arguments
 
@@ -47,19 +59,19 @@ If missing, the gateway returns `INVALID_ARGUMENT`.
 
 ### Runtime entrypoints
 
-- Single target: `run(data, schema, params)`
-- Multi target: `run(artifacts, schemas, params)`
+- single artifact: `run(data, schema, params)`
+- multi artifact: `run(artifacts, schemas, params)`
 
-### Response shape (`query_kind="code"`)
+## Response shape (`query_kind="code"`)
 
-Always returns artifact-centric payload with shared envelope keys:
+Code-query responses are artifact-centric and include:
 
 - `response_mode`
 - `artifact_id` (derived artifact)
 - `lineage`
-- `metadata` (includes `stats` and determinism metadata)
+- `metadata` (`stats` + determinism metadata)
 
-Compatibility fields may also be present:
+Compatibility fields may be present:
 
 - `items`
 - `total_matched`
@@ -70,7 +82,7 @@ Compatibility fields may also be present:
 - `warnings`
 - `sampled_only`
 
-Code queries are unpaginated by retrieval cursor (no query cursor loop).
+Code query responses do not expose a query-cursor loop.
 
 ## `artifact(action="next_page")`
 
@@ -82,14 +94,14 @@ Code queries are unpaginated by retrieval cursor (no query cursor loop).
 
 ### Behavior
 
-- Loads upstream pagination state from the referenced artifact.
-- Replays the mirrored upstream tool with stored continuation params.
-- Persists a new artifact linked by lineage (`parent_artifact_id`, `chain_seq`).
-- Returns the same mirrored-response contract (`full` or `schema_ref`).
+- loads upstream pagination state from the referenced artifact
+- replays the mirrored upstream tool with continuation params
+- persists a new artifact linked with `parent_artifact_id` and `chain_seq`
+- returns the same mirrored response contract (`full` or `schema_ref`)
 
 ## Mirrored Response Contract
 
-Mirrored upstream calls and next-page calls return a gateway payload with:
+Mirrored upstream calls and `next_page` return:
 
 - `response_mode`: `full` or `schema_ref`
 - `artifact_id`
@@ -97,11 +109,11 @@ Mirrored upstream calls and next-page calls return a gateway payload with:
 - optional `pagination`
 - optional `metadata`
 
-### `full` mode
+### `full`
 
-Includes `payload` inline.
+Includes inline `payload`.
 
-### `schema_ref` mode
+### `schema_ref`
 
 Includes:
 
@@ -109,23 +121,20 @@ Includes:
 - `schemas_compact`
 - `schema_legend`
 
-No verbose `schemas` field is part of this public contract.
+No verbose `schemas` field is part of the public contract.
 
 ## Response Mode Selection
 
-Sift evaluates mode using the same policy across mirrored calls and code output:
+Mode selection is shared across mirrored calls and code output:
 
-1. If pagination exists: return `schema_ref`.
-2. Else if serialized `full` bytes > `max_bytes`: return `schema_ref`.
-3. Else if `schema_ref_bytes * 2 <= full_bytes`: return `schema_ref`.
-4. Else return `full`.
-
-`max_bytes` is driven by configured output budget (`max_bytes_out`).
+1. If pagination exists: `schema_ref`.
+2. Else if serialized `full` bytes exceed configured cap: `schema_ref`.
+3. Else if `schema_ref` is at least 50% smaller: `schema_ref`.
+4. Else: `full`.
 
 ## Pagination Metadata
 
-When upstream pagination exists, responses include a `pagination` object with
-upstream-layer metadata, including:
+When upstream pagination exists, `pagination` includes:
 
 - `layer="upstream"`
 - `retrieval_status` (`PARTIAL` or `COMPLETE`)
@@ -134,17 +143,49 @@ upstream-layer metadata, including:
 - `has_next_page`
 - `next_action`
 - optional `next_params`
-- continuation `hint`
+- continuation hint
 
 Do not claim completion until `pagination.retrieval_status == "COMPLETE"`.
 
-## CLI Equivalence
+## CLI Output Contract
 
-CLI uses the same contract and storage model:
+`sift-gateway run` and `sift-gateway code` expose two output modes:
 
-- capture: `sift-gateway run -- <command>`
-- continuation: `sift-gateway run --continue-from <artifact_id> -- <next-command>`
-- code query: `sift-gateway code ...`
+- default human summary output (compact, only present fields)
+- `--json` machine output (single minified deterministic object)
 
-CLI additionally rewrites `pagination.next_action` to a CLI-native command
-shape for convenience.
+### `sift-gateway run` human output fields
+
+Possible lines:
+
+- `artifact`
+- `mode`
+- `records`
+- `bytes`
+- `capture`
+- `expires`
+- `tags`
+- `exit`
+- `next`
+- `schema_roots`
+- `hint`
+
+### `sift-gateway code` human output
+
+Summary header plus formatted JSON payload.
+
+### `--json` shared keys
+
+- `response_mode`
+- `artifact_id`
+- optional `lineage`
+- optional `pagination`
+- optional `metadata`
+
+For pagination, `run` may include a CLI-native continuation helper under
+`pagination.next_action.command_line`.
+
+## Compatibility Rules
+
+- additive JSON fields are allowed
+- changes to human summary layout must be reflected in CLI tests and docs

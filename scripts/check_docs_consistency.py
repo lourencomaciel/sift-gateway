@@ -30,28 +30,8 @@ ERRORS_DOC_PATH = ROOT / "docs" / "errors.md"
 OBS_DOC_PATH = ROOT / "docs" / "observability.md"
 OPENCLAW_DOC_MIRRORS: tuple[tuple[Path, Path], ...] = (
     (
-        ROOT / "docs" / "openclaw" / "README.md",
-        ROOT / "src" / "sift_gateway" / "openclaw" / "README.md",
-    ),
-    (
         ROOT / "docs" / "openclaw" / "SKILL.md",
         ROOT / "src" / "sift_gateway" / "openclaw" / "SKILL.md",
-    ),
-    (
-        ROOT / "docs" / "openclaw" / "response-templates.md",
-        ROOT
-        / "src"
-        / "sift_gateway"
-        / "openclaw"
-        / "response-templates.md",
-    ),
-    (
-        ROOT / "docs" / "openclaw" / "troubleshooting.md",
-        ROOT
-        / "src"
-        / "sift_gateway"
-        / "openclaw"
-        / "troubleshooting.md",
     ),
 )
 
@@ -260,7 +240,7 @@ def _validate_observability_doc(observability_doc: str) -> list[str]:
 
 
 def _validate_openclaw_doc_mirrors() -> list[str]:
-    """Validate openclaw docs remain mirrored across docs/src trees."""
+    """Validate packaged OpenClaw docs remain mirrored where required."""
     failures: list[str] = []
     for docs_path, src_path in OPENCLAW_DOC_MIRRORS:
         docs_text = _read_text(docs_path)

@@ -173,4 +173,4 @@ See `docs/observability.md` for event catalog.
 - code runtime is policy-constrained but not a full OS sandbox
 - non-local HTTP binds require auth token
 
-See `docs/security-hardening.md` and `SECURITY.md`.
+See `../SECURITY.md`.
