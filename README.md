@@ -187,15 +187,15 @@ More: [`SECURITY.md`](SECURITY.md)
 
 ## Documentation
 
+- [`docs/README.md`](docs/README.md) - full map
 - [`docs/quickstart.md`](docs/quickstart.md)
-- [`docs/config.md`](docs/config.md)
-- [`docs/api_contracts.md`](docs/api_contracts.md)
 - [`docs/recipes.md`](docs/recipes.md)
+- [`docs/api_contracts.md`](docs/api_contracts.md)
+- [`docs/config.md`](docs/config.md)
 - [`docs/deployment.md`](docs/deployment.md)
 - [`docs/errors.md`](docs/errors.md)
 - [`docs/observability.md`](docs/observability.md)
 - [`docs/architecture.md`](docs/architecture.md)
-- [`docs/openclaw/README.md`](docs/openclaw/README.md)
 
 ## Development
 

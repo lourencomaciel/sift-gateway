@@ -125,26 +125,41 @@ Recommended setup path (rulesets):
 UV_CACHE_DIR=/tmp/uv-cache uv run python scripts/run_rc_preflight.py
 ```
 
-2. Update `pyproject.toml` version and move release notes from
+2. Run release hardening checks:
+
+```bash
+UV_CACHE_DIR=/tmp/uv-cache uv run pytest \
+  tests/unit/test_cli_main.py \
+  tests/unit/test_core_artifact_code.py \
+  tests/unit/test_cleanup_lifecycle.py -q
+
+UV_CACHE_DIR=/tmp/uv-cache uv run python scripts/benchmark_large_payloads.py \
+  --rows 1000,5000,20000 \
+  --repeats 3 \
+  --query-limit 50 \
+  --json > docs/benchmarks/YYYY-MM-DD-local-baseline.json
+```
+
+3. Update `pyproject.toml` version and move release notes from
    `Unreleased` in `CHANGELOG.md`.
-3. Merge release changes to `main`.
-4. Create and push a tag that matches `v*` (for example `v0.1.1`):
+4. Merge release changes to `main`.
+5. Create and push a tag that matches `v*` (for example `v0.1.1`):
 
 ```bash
 git tag v0.1.1
 git push origin v0.1.1
 ```
 
-5. Push the tag and let GitHub Actions run
+6. Push the tag and let GitHub Actions run
    `.github/workflows/release.yml`:
    - `verify_build` runs lint, type checks, unit tests, build, twine check,
      and wheel smoke commands.
    - `publish_testpypi` publishes to TestPyPI (`testpypi` environment).
    - `publish_pypi` publishes to PyPI (`pypi` environment) after
      `publish_testpypi` succeeds.
-6. Validate `publish_testpypi` output before approving the `pypi`
+7. Validate `publish_testpypi` output before approving the `pypi`
    environment deployment.
-7. Confirm TestPyPI and PyPI install/upgrade paths:
+8. Confirm TestPyPI and PyPI install/upgrade paths:
    - `pipx install sift-gateway`
    - `uv tool install sift-gateway`
 
