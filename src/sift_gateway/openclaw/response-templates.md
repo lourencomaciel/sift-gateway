@@ -1,45 +1,38 @@
 # OpenClaw Response Templates
 
-Use these compact templates to keep agent replies small and actionable.
+Compact templates for low-token agent replies.
 
-## Capture Summary
+## Capture summary
 
 ```text
 Captured to <artifact_id> (<records> records, <bytes> bytes).
-Next: `sift-gateway query <artifact_id> '<root_path>' --limit <n>`.
+Next: run `sift-gateway code <artifact_id> '$' --expr "<narrow_expr>"`.
 ```
 
-## Follow-Up Capture
+## Follow-up capture
 
 ```text
-Captured a fresh artifact <artifact_id> for this run.
-Next: compare with `sift-gateway diff <previous_id> <artifact_id>` if needed.
+Captured page artifact <artifact_id> linked to <parent_artifact_id>.
+Next: continue with `sift-gateway run --continue-from <artifact_id> -- <next-command>` if more pages remain.
 ```
 
-## Narrow Query Result
+## Code result
 
 ```text
-Returned <count> rows from <artifact_id> at <root_path>.
-Fields: <field_a>, <field_b>, <field_c>.
+Computed <summary> from <artifact_id>.
+Returned <count> result rows.
 ```
 
-## Paginated Follow-Up
+## Pagination follow-up
 
 ```text
-Returned first <count> rows; more available.
-Use cursor: `<cursor>` for next page.
+Upstream pagination is PARTIAL for <artifact_id>.
+Use: `sift-gateway run --continue-from <artifact_id> -- <next-command-with-next_params-applied>`.
 ```
 
-## Diff Result
+## Failure template
 
 ```text
-Compared <left_artifact_id> vs <right_artifact_id>: equal=<true|false>.
-<if false> Included bounded unified diff (<lines> lines).
-```
-
-## Failure Template
-
-```text
-Capture/query failed: <code> - <message>.
-Action: <single next command to unblock>.
+Operation failed: <code> - <message>.
+Next action: <single command to unblock>.
 ```

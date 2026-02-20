@@ -134,6 +134,20 @@ def run(artifacts, schemas, params):
     assert result == [{"records": 3}]
 
 
+def test_execute_code_in_subprocess_multi_signature_accepts_single_input() -> None:
+    result = execute_code_in_subprocess(
+        code="""
+def run(artifacts, schemas, params):
+    return {"records": len(artifacts["__single__"])}
+""",
+        data=[{"id": 1}, {"id": 2}],
+        schema={"root_path": "$.items"},
+        params={},
+        runtime=CodeRuntimeConfig(timeout_seconds=2.0, max_memory_mb=256),
+    )
+    assert result == {"records": 2}
+
+
 def test_execute_code_in_subprocess_runtime_error_includes_traceback() -> None:
     with pytest.raises(CodeRuntimeError) as exc:
         execute_code_in_subprocess(

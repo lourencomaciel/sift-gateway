@@ -1,343 +1,176 @@
-# Sift — Design Specification v1.9
+# Sift Architecture (Contract V1)
 
-> **Status**: Locked — this document is the authoritative reference for the v1.9 implementation.
+Authoritative architecture reference for the current public surface.
 
 ## 1. Overview
 
-Sift is a local, single-tenant MCP proxy that:
+Sift is a local, single-tenant MCP proxy and artifact runtime that:
 
-1. Discovers tools exposed by upstream MCP servers (stdio or HTTP transport).
-2. Mirrors each tool as `{prefix}.{tool}` with identical schema — no injected fields.
-3. Intercepts every tool call, forwards it upstream, and wraps the result in a **durable artifact envelope** stored to SQLite and the local filesystem.
-4. Persists every mirrored tool call, then returns either raw upstream payloads (small responses) or a **handle** (larger/continuation responses) with artifact ID, inline schema-first metadata (`mapping` + `schemas`), usage hint, and optional upstream pagination metadata.
-5. Applies outbound secret redaction to tool responses before returning them to the MCP client (enabled by default; configurable).
-6. Generates a **deterministic inventory** (full or partial schema mapping) for each artifact's JSON payload.
-7. Provides a consolidated **`artifact`** retrieval tool with
-   actions (`query`, `next_page`) using cursor pagination.
-   Query behavior is explicit via `query_kind=describe|get|select|search|code`.
-   For non-search kinds, `scope` defaults to `all_related`.
+1. Mirrors upstream MCP tools.
+2. Persists all mirrored responses as artifacts.
+3. Exposes a narrow retrieval surface:
+   - `artifact(action="query", query_kind="code")`
+   - `artifact(action="next_page")`
+4. Provides equivalent CLI workflows:
+   - `sift-gateway run`
+   - `sift-gateway run --continue-from`
+   - `sift-gateway code`
 
-### Design invariants
+## 2. Design invariants
 
-- **Single workspace**: `WORKSPACE_ID = "local"` — all PKs include it.
-- **Determinism**: identical inputs produce identical mappings, traversals, and cursors.
-- **Bounded responses**: every retrieval tool enforces item, byte, compute, and wildcard caps.
-- **Crash safety**: filesystem writes are atomic (temp → fsync → rename); DB writes use transactions.
-- **Always store**: even upstream errors produce an error-envelope artifact.
-- **Outbound safety by default**: responses are redacted for likely secrets before client return unless explicitly disabled.
+- Single workspace: `WORKSPACE_ID = "local"`.
+- Deterministic mappings and traversal.
+- Always persist mirrored responses (including upstream errors).
+- Explicit pagination continuation (never implicit completeness claims).
+- Outbound redaction enabled by default.
 
-## 2. Storage model
+## 3. Processing pipeline
 
-### 2.1 Filesystem (content-addressed)
+For mirrored tool calls, CLI run captures, and code outputs:
+
+1. Execute tool/command/code.
+2. Parse JSON payload.
+3. Detect pagination from raw parsed payload.
+4. Redact sensitive output values.
+5. Persist artifact.
+6. Run mapping.
+7. Build compact schema payload (`schemas_compact` + `schema_legend`).
+8. Choose response mode (`full` or `schema_ref`).
+9. Return response with lineage and pagination metadata.
+
+## 4. Response modes
+
+Every run/code-style response is artifact-centric with:
+
+- `response_mode`
+- `artifact_id`
+- optional `lineage`
+- optional `pagination`
+- optional `metadata`
+
+### `full`
+
+Returns inline `payload`.
+
+### `schema_ref`
+
+Returns compact schema reference:
+
+- `artifact_id`
+- `schemas_compact`
+- `schema_legend`
+
+### Mode selection
+
+1. If pagination exists: `schema_ref`.
+2. Else if full bytes > configured cap: `schema_ref`.
+3. Else if `schema_ref` is at least 50% smaller: `schema_ref`.
+4. Else: `full`.
+
+## 5. Pagination model
+
+Sift uses explicit upstream pagination metadata (`pagination.layer="upstream"`).
+
+Key fields:
+
+- `retrieval_status` (`PARTIAL` | `COMPLETE`)
+- `partial_reason`
+- `has_more`
+- `has_next_page`
+- `next_action`
+- optional `next_params`
+
+Continuation APIs:
+
+- MCP: `artifact(action="next_page", artifact_id=...)`
+- CLI: `sift-gateway run --continue-from <artifact_id> -- <next-command>`
+
+Each continued page is linked through lineage metadata:
+
+- `parent_artifact_id`
+- `chain_seq`
+
+## 6. Storage model
+
+### Filesystem
 
 ```
 DATA_DIR/
-  blobs/bin/<ab>/<cd>/<sha256_hex>   # binary blobs (images, oversized JSON, etc.)
-  resources/                          # internal resource copies
-  state/config.json                   # persisted config
-  tmp/                                # atomic write staging
-  logs/                               # structured JSON logs
+  blobs/bin/<ab>/<cd>/<sha256_hex>
+  resources/
+  state/config.json
+  state/gateway.db
+  tmp/
+  logs/
 ```
 
-Binary blobs are content-addressed by `sha256(raw_bytes)`. Writes are atomic: write to `tmp/`, fsync, rename into final path.
+### SQLite core tables
 
-### 2.2 SQLite schema
+- `sessions`
+- `binary_blobs`
+- `payload_blobs`
+- `payload_binary_refs`
+- `artifacts`
+- `artifact_roots`
 
-Core tables (all PKs include `workspace_id`):
+## 7. Mapping model
 
-| Table | Purpose |
-|-------|---------|
-| `sessions` | Client session tracking with `last_seen_at` |
-| `binary_blobs` | Registry of content-addressed binary files |
-| `payload_blobs` | Compressed canonical envelope bytes + JSONB projection |
-| `payload_binary_refs` | Links payloads to their binary blob dependencies |
-| `artifacts` | Artifact metadata: request identity, mapping state, lifecycle |
-| `artifact_roots` | Mapping roots discovered by full/partial mapping |
+Sift builds deterministic mapping metadata for persisted payloads:
 
-Ordering is always by `created_seq DESC` (identity column).
+- full mapping for smaller payloads
+- partial mapping with bounded sampling for larger payloads
 
-## 3. Envelope normalization
+Determinism linkage includes traversal/mapping versions and budget fingerprints.
 
-Upstream MCP responses are normalized into a canonical envelope shape:
+## 8. Code runtime model
 
-- **Content parts**: `json`, `text`, `resource_ref`, `binary_ref`
-- **Error block**: present iff `ok = false`
-- **Oversized JSON rule**: if a JSON part exceeds `max_json_part_parse_bytes`, it is stored as a `binary_ref` with `mime = application/json` and a warning is recorded in `meta.warnings`
-- Raw binary bytes are never stored in the envelope — always as `binary_ref`
+`query_kind="code"` executes sandboxed Python with bounded resources.
 
-## 4. Canonical JSON and hashing
+Supported entrypoints:
 
-- **Canonicalization**: RFC 8785 (JCS) — deterministic key ordering, UTF-8, number formatting
-- **Decimal-safe parsing**: JSON floats parsed as `Decimal`, NaN/Infinity rejected
-- **Payload hash**: `payload_hash_full = sha256(uncompressed_canonical_bytes)`
-- **Compression**: canonical bytes stored with `gzip` (default) or `none`
+- single artifact: `run(data, schema, params)`
+- multi artifact: `run(artifacts, schemas, params)`
 
-## 5. Request identity
+Highlights:
 
-- `upstream_instance_id`: semantic identity of the upstream (excludes secrets)
-- `canonical_args_bytes`: RFC 8785 canonical JSON of stripped/validated args
-- `request_key = sha256(upstream_instance_id | prefix | tool | canonical_args_bytes)`
-- **Reserved arg stripping**: keys matching `_gateway_*` are removed before hashing/forwarding
+- inputs are loaded from persisted, redacted artifacts
+- outputs must be JSON-serializable
+- output size bounded by `max_bytes_out`
+- runtime enforces AST/import/time/memory guardrails
 
-## 6. Mapping system
+## 9. Request identity and lineage
 
-### 6.1 Full mapping
+- mirrored requests use deterministic identity hashing (`request_key`)
+- each persisted artifact stores provenance (`capture_kind`, `capture_origin`)
+- lineage links allow chain-aware continuation and scope-aware code execution
 
-For payloads ≤ `max_full_map_bytes`: parse fully, discover up to K roots (K=3), build deterministic inventory, write `artifact_roots`.
+## 10. Error model
 
-### 6.2 Partial mapping (streaming, deterministic)
-
-For large or byte-backed payloads:
-
-- Streaming via ijson — budgets enforced (bytes, compute steps, depth, records, record size, leaf paths)
-- **Deterministic reservoir sampling**: seed = `sha256(payload_hash_full | root_path | map_budget_fingerprint)`
-- Oversize sampled elements skipped and counted (bias invariant)
-- `sample_indices` stored sorted ascending, only materialized indices included
-- `count_estimate` only when `stop_reason = none` and closing array observed
-- If `stop_reason != none`: prefix coverage = true, count_estimate = null
-- **Fingerprint**: `map_budget_fingerprint = sha256(budgets + versions)` — changes invalidate cursors
-
-### 6.3 Worker safety
-
-Conditional update: `deleted_at IS NULL AND map_status IN (pending, stale) AND generation = snapshot_generation`. Otherwise discard.
-
-## 7. Retrieval and traversal contract
-
-- **Version**: `traversal_v1`
-- **Arrays**: ascending index order
-- **Objects**: lexicographic key order
-- **Wildcards**: follow container type rules
-- **Partial mode**: sampled indices enumerated ascending
-- **JSONPath subset**: `$`, `.name`, `['..']`, `[n]`, `[*]` — caps on length, segments, wildcard expansion
-- **select_paths**: normalized, deduplicated, sorted lexicographically; `select_paths_hash = sha256(canonical_bytes(sorted_paths))`
-
-## 8. Cursor contract
-
-- **Format**: `cur1.<payload_b64u>` (unsigned base64url-encoded RFC 8785 canonical JSON)
-- **Payload fields**: artifact_id, tool, position_state, issued_at, expires_at; retrieval bindings (for example target/jsonpath/select hashes); optional sample_set_hash; and for lineage-scoped queries `scope`, `anchor_artifact_id`, `related_set_hash`
-- **Binding checks on resume**: tool, artifact_id
-- **Staleness triggers**: query-parameter binding mismatch, sample_set_hash mismatch, `related_set_hash` mismatch
-- **TTL**: configurable `cursor_ttl_minutes` (default 60); expired cursors raise `CursorExpiredError`
-
-## 9. Tool surface
-
-### Gateway tools
-
-| Tool | Purpose |
-|------|---------|
-| `gateway_status` | Health, versions, budgets, connectivity |
-| `artifact` | Consolidated retrieval tool with `action` parameter |
-
-#### `artifact` actions
-
-| Action | Purpose |
-|--------|---------|
-| `query` | Retrieval/search entrypoint; requires explicit `query_kind` |
-| `next_page` | Fetch next upstream page using stored pagination state |
-
-#### `query_kind` (required when `action="query"`)
-
-| `query_kind` | Purpose |
-|--------------|---------|
-| `describe` | Lineage-aware root catalog and compatibility summary |
-| `get` | Retrieve envelope/jsonpath values or mapped root catalog |
-| `select` | Project/filter records from mapped roots |
-| `search` | Workspace artifact listing |
-| `code` | Execute generated Python over lineage-merged root records |
-
-#### Scope model
-
-- `scope` applies to `query_kind=describe|get|select|code` and defaults to `all_related`.
-- `all_related` resolves the full visible lineage component (anchor + ancestors + descendants).
-- `single` restricts execution to the anchor artifact only.
-- `query_kind=search` does not accept `artifact_id` or `scope`.
-- For `query_kind=code`, `scope=single` restricts each requested anchor to
-  itself; `scope=all_related` expands each anchor through lineage.
-
-#### `query_kind=code` execution contract
-
-- Required args: `root_path`, `code`, and either `artifact_id` (single artifact) or `artifact_ids` (multi-artifact).
-- Optional args: `params` (object).
-- Disallowed args: `target`, `jsonpath`, `select_paths`, `where`, `order_by`, `distinct`, `count_only`, `filters`.
-- Runtime entrypoint supports:
-  - `run(data, schema, params)` for single-artifact queries.
-  - `run(artifacts, schemas, params)` for multi-artifact queries.
-- Input records are root-scoped and lineage-merged. Dict records include injected `_locator`; scalar/list records are wrapped as `{\"_locator\": ..., \"value\": ...}`.
-- For multi-artifact queries, `artifacts` and `schemas` are dictionaries keyed by requested artifact id.
-- Return contract: any JSON-serializable value; non-list values are normalized to a single-item list.
-- Runtime uses subprocess isolation with deterministic env (`PYTHONHASHSEED=0`, `TZ=UTC`), timeout, memory cap, and input-size guards.
-- Default import roots include stdlib helpers (`math`, `statistics`, `decimal`, `datetime`, `re`, `itertools`, `collections`, `functools`, `operator`, `heapq`, `json`, `csv`, `io`, `string`, `textwrap`, `copy`, `typing`, `dataclasses`, `enum`, `fractions`, `bisect`, `pprint`, `uuid`, `base64`, `struct`, `array`, `numbers`, `cmath`, `random`, `secrets`, `fnmatch`, `difflib`, `html`, `urllib`) plus `jmespath`, `pandas`, and `numpy`. The `io` module restricts file-backed classes; only `StringIO` and `BytesIO` are usable. The `urllib` module is restricted to `urllib.parse` only; `urllib.request` and other submodules are blocked.
-- Import roots can be explicitly configured via `code_query_allowed_import_roots`.
-- Code query responses are unpaginated: all rows are returned in one response.
-- Output is bounded only by `max_bytes_out`; oversize responses fail with `RESPONSE_TOO_LARGE`.
-- Runtime failures may include `details.traceback` (truncated to 2000 chars) with line numbers.
-- When sampled mapping data is included, responses set `sampled_only=true` and include explicit warnings.
-
-#### Strict merge contract (why queries do not silently break)
-
-- `select` computes a root signature per included artifact from: `root_path`, `root_shape`, canonicalized `fields_top` (keys/types), and `map_kind`.
-- If multiple distinct signatures are present for the requested `root_path`, query fails fast with `INVALID_ARGUMENT` and details code `INCOMPATIBLE_LINEAGE_SCHEMA`.
-- Artifacts missing the requested `root_path` are skipped (with warnings/counts), not treated as incompatible.
-- Merged rows include provenance via `_locator.artifact_id`.
-
-### Response shape
-
-Retrieval tools return compatibility fields:
-`{items, truncated, cursor, omitted, stats}` plus:
+Stable top-level gateway error envelope:
 
 ```json
 {
-  "pagination": {
-    "layer": "artifact_retrieval",
-    "retrieval_status": "PARTIAL|COMPLETE",
-    "partial_reason": "CURSOR_AVAILABLE|null",
-    "has_more": true,
-    "next_cursor": "cur_..."
-  }
+  "type": "gateway_error",
+  "code": "INVALID_ARGUMENT",
+  "message": "...",
+  "details": {}
 }
 ```
 
-Mirrored upstream tool responses include:
+See `docs/errors.md` for full taxonomy.
 
-```json
-{
-  "pagination": {
-    "layer": "upstream",
-    "retrieval_status": "PARTIAL|COMPLETE",
-    "partial_reason": "MORE_PAGES_AVAILABLE|SIGNAL_INCONCLUSIVE|CONFIG_MISSING|NEXT_TOKEN_MISSING|null",
-    "has_more": true,
-    "page_number": 0,
-    "next_action": {
-      "tool": "artifact",
-      "arguments": {"action": "next_page", "artifact_id": "art_..."}
-    },
-    "warning": "INCOMPLETE_RESULT_SET|null",
-    "has_next_page": true,
-    "hint": "..."
-  }
-}
-```
+## 11. Observability
 
-Completion semantics are fail-closed: do not claim full completeness
-until `pagination.retrieval_status == "COMPLETE"`.
+- structured JSON logs (opt-in with `--logs`)
+- metrics for capture, pagination, mapping, code runtime, and redaction events
+- deterministic debug fields for lineage/mapping diagnostics
 
-For `query_kind=code`, pagination fields are omitted (`truncated=false`, no cursor) because results are returned in a single response.
+See `docs/observability.md` for event catalog.
 
-## 10. Reference timestamps
+## 12. Security posture
 
-- **Creation**: sets `artifacts.last_referenced_at`.
-- **Retrieval/search/describe**: read-only for artifact metadata; no
-  session-specific attachment table is used.
+- outbound secret redaction on tool responses by default
+- code runtime is policy-constrained but not a full OS sandbox
+- non-local HTTP binds require auth token
 
-## 11. Pruning
-
-- **Soft delete**: rechecks predicates, sets `deleted_at`, increments generation
-- **Hard delete**: cascades through artifact_roots → unreferenced payload_blobs → unreferenced binary_blobs → filesystem cleanup
-- **Reconciler**: finds orphan filesystem blobs not referenced in DB
-
-## 12. Observability
-
-- **Logging**: structlog JSON with correlation fields (session_id, artifact_id, request_key, payload_hash_full)
-- **Metrics**: alias hits, upstream calls, oversize JSON count, partial map stop_reason distribution, cursor stale reasons, secret redaction matches/failures
-- **Determinism debug**: map_budget_fingerprint, map_backend_id, prng_version, sample_set_hash logged on cursor issue/verify
-
-## 13. Version constants
-
-| Constant | Value |
-|----------|-------|
-| `WORKSPACE_ID` | `local` |
-| `CANONICALIZER_VERSION` | `jcs_rfc8785_v1` |
-| `MAPPER_VERSION` | `mapper_v1` |
-| `TRAVERSAL_CONTRACT_VERSION` | `traversal_v1` |
-| `CURSOR_VERSION` | `cursor_v1` |
-| `PRNG_VERSION` | `prng_xoshiro256ss_v1` |
-
-## 14. Response model
-
-Mirrored tool calls persist synchronously.
-
-Return shape:
-
-- small responses may return raw upstream payloads directly
-- larger responses and continuation-required responses return handle payloads
-- raw passthrough responses omit gateway handle metadata (`artifact_id`,
-  `mapping`, `schemas`, `pagination`) even though artifacts are still persisted
-- all responses pass through outbound secret redaction before return; `cursor`,
-  `next_cursor`, and `pagination` control fields are preserved from the
-  original result to keep continuation stable
-
-When a handle is returned, the caller receives:
-
-- **`artifact_id`** and **request/cache metadata** (`request_key`, `reason`, `artifact_id_origin`).
-- **`mapping`**: inline mapping metadata (`map_kind`, `map_status`, mapper/traversal versions, and determinism linkage).
-- **`schemas`**: inline compact schema list (legend-driven key aliases) with per-field type/required/nullable counts, observed-count defaults, compact example values, sampled `distinct_values` (max 10), sampled `cardinality`, and determinism hashes.
-  - Compaction rule: if exactly one schema root has the highest `coverage.observed_records`, only that primary schema is returned.
-  - If highest coverage ties, all tied schemas are returned.
-- **`schema_legend`**: one-time key map describing compact aliases used in `schemas`.
-  - Key examples: `rp`=`root_path`, `f`=`fields`, `oc`=`observed_count`, `e`=`example_value`, `tr`=`example_truncated_chars`.
-  - `field.oc` is omitted when equal to `schema.fd.oc` (field default).
-  - Truncated examples use `e` + numeric `tr` instead of repeated prose (no repeated `"N more chars truncated"` strings).
-- **`usage_hint`**: a heuristic natural language hint (no LLM) describing what the artifact contains, which fields are available, and which retrieval action to call next (`query_kind="select"` / `query_kind="code"` for arrays, `query_kind="get"` for dicts). For code queries, hints include dynamically detected third-party package availability for the current runtime policy/environment.
-
-This eliminates the need for a separate describe call — the LLM can go directly from the tool response to `artifact(action="query", query_kind="select")`. `query_kind="describe"` remains available for explicit post-hoc lineage/compatibility inspection.
-
-## 15. Artifact query references
-
-Top-level string arguments in mirrored tool calls are inspected for
-artifact references. Matched references are resolved server-side
-before the arguments are forwarded to the upstream tool.
-
-### 15.1 Syntax
-
-| Pattern | Resolves to |
-|---------|-------------|
-| `art_<32hex>` | Full JSON/text payload |
-| `art_<32hex>:$.path` | JSONPath query result |
-
-Detection rules:
-
-1. Match `^art_[0-9a-f]{32}` prefix.
-2. If that is the full string: bare ref (resolve full payload).
-3. If followed by `:$`: split on first `:`, parse remainder as JSONPath.
-4. Anything else: not a reference, pass through unchanged.
-
-Nested values (inside dicts or lists) are never inspected.
-
-### 15.2 Resolution
-
-For each detected reference:
-
-1. Fetch the artifact envelope (uses `FETCH_ARTIFACT_SQL`).
-2. Validate: not deleted, not binary-only.
-3. Extract JSON target via `extract_json_target`.
-4. If JSONPath query present: evaluate via `evaluate_jsonpath`.
-   - Empty match list → `ResolveError(NOT_FOUND)`.
-   - Single match → return the scalar (unwrapped).
-   - Multiple matches → return the list.
-5. Substitute the resolved value into the argument dict.
-
-### 15.3 Request identity invariant
-
-Request identity hashes use the pre-resolution arguments (pointer
-strings). Same reference string = same request key, regardless of
-the artifact's current content.
-
-### 15.4 DB-less mode
-
-Resolution is skipped entirely when no database is configured
-(no artifacts to resolve).
-
-## 16. Workflow recipes
-
-### 16.1 Large mirrored result retrieval
-
-1. Call mirrored tool and receive `artifact_id`.
-2. Use inline `schemas` to pick `root_path` (typically the single returned schema, or the highest-coverage schema in ties).
-3. Call `artifact(action="query", query_kind="select")` with cursor paging.
-4. Continue until `pagination.retrieval_status == "COMPLETE"`.
-
-### 16.2 Upstream page chaining
-
-1. Inspect mirrored response `pagination.layer = "upstream"`.
-2. If `has_next_page`, call `artifact(action="next_page")` with current `artifact_id`.
-3. Repeat until `pagination.retrieval_status == "COMPLETE"`.
+See `docs/security-hardening.md` and `SECURITY.md`.

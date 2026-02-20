@@ -7,6 +7,10 @@ from typing import Any
 
 from sift_gateway.constants import WORKSPACE_ID
 from sift_gateway.core.query_scope import resolve_cursor_offset, resolve_scope
+from sift_gateway.core.retrieval_helpers import (
+    extract_json_target,
+    touch_retrieval_artifacts,
+)
 from sift_gateway.core.rows import row_to_dict, rows_to_dicts
 from sift_gateway.core.runtime import ArtifactGetRuntime
 from sift_gateway.envelope.responses import gateway_error
@@ -51,27 +55,6 @@ ROOT_COLUMNS = [
     "fields_top",
     "sample_indices",
 ]
-
-
-def extract_json_target(
-    envelope: dict[str, Any], mapped_part_index: int | None
-) -> Any:
-    """Extract JSON content target that mapping root_paths are relative to."""
-    from sift_gateway.mapping.json_strings import resolve_json_strings
-
-    if not isinstance(mapped_part_index, int):
-        return envelope
-    content = envelope.get("content", [])
-    if 0 <= mapped_part_index < len(content):
-        part = content[mapped_part_index]
-        if (
-            isinstance(part, dict)
-            and part.get("type") == "json"
-            and "value" in part
-        ):
-            return resolve_json_strings(part["value"])
-    return envelope
-
 
 @dataclass(frozen=True)
 class _GetQueryState:
@@ -651,30 +634,6 @@ def _build_get_envelope_response(
     return response
 
 
-def _touch_retrieval_artifacts(
-    runtime: ArtifactGetRuntime,
-    connection: Any,
-    *,
-    session_id: str,
-    artifact_ids: list[str],
-) -> None:
-    """Touch retrieval timestamp for artifact ids and commit when needed."""
-    touched = False
-    for artifact_id in artifact_ids:
-        touched = (
-            runtime.safe_touch_for_retrieval(
-                connection,
-                session_id=session_id,
-                artifact_id=artifact_id,
-            )
-            or touched
-        )
-    if touched:
-        commit = getattr(connection, "commit", None)
-        if callable(commit):
-            commit()
-
-
 def execute_artifact_get(
     runtime: ArtifactGetRuntime,
     *,
@@ -744,7 +703,7 @@ def execute_artifact_get(
         if cursor_err is not None:
             return cursor_err
 
-        _touch_retrieval_artifacts(
+        touch_retrieval_artifacts(
             runtime,
             connection,
             session_id=query_state.session_id,

@@ -682,7 +682,7 @@ async def connect_upstreams(
     """
     upstreams: list[UpstreamInstance] = []
     for config in configs:
-        upstreams.append(await connect_upstream(config, data_dir))  # noqa: PERF401
+        upstreams.append(await connect_upstream(config, data_dir))
     return upstreams
 
 

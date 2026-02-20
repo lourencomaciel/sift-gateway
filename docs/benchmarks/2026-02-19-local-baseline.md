@@ -26,7 +26,7 @@ Results:
 
 Notes:
 
-1. Capture and select latency scale predictably with payload size.
+1. Capture and retrieval-kernel latency scale predictably with payload size.
 2. The 1,000-row `get` p95 outlier reflects a warm-up/variance spike in this local run.
-3. Use this baseline as a trend reference, not a strict pass/fail gate.
-
+3. `select`/`get` here are legacy internal kernel probes, not public contract-v1 APIs.
+4. Use this baseline as a trend reference, not a strict pass/fail gate.

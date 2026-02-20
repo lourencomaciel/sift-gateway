@@ -95,22 +95,10 @@ _BUILTIN_TOOL_DESCRIPTIONS: dict[str, str] = {
     "artifact": (
         "Interact with stored artifacts. "
         "Actions: query and next_page. "
-        "For query, pass query_kind: describe|get|select|search|code. "
-        "For describe/get/select, pass artifact_id. "
-        "For code, pass artifact_id (single artifact) or artifact_ids "
-        "(multi-artifact). "
-        "Use query_kind=select with root_path/select_paths and where. "
-        "Use query_kind=code with root_path/code and optional params. "
-        "Schema is returned inline in query_kind=describe and in mirrored tool responses. "
-        "Use count_only=true for counts, distinct=true for unique values. "
-        "Continue partial results with "
-        "query + cursor (not next_page). "
-        "next_page is only for fetching additional "
-        "upstream pages. "
-        "Filtering (where) and multi-field projection "
-        "(select_paths) are query_kind=select only. "
-        "Code queries return all results (no pagination), limited by "
-        "max_bytes_out. "
+        'Use action="query" with query_kind="code" to run Python over '
+        "stored artifacts. "
+        "Use action=\"next_page\" to fetch additional upstream pages for a "
+        "paginated artifact. "
         f"{PAGINATION_COMPLETENESS_RULE}"
     ),
 }
@@ -139,42 +127,32 @@ _BUILTIN_TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
                     "next_page",
                 ],
                 "description": (
-                    "query: explicit retrieval/search "
-                    "(use query_kind to choose behavior). "
+                    'query: execute code query (query_kind="code"). '
                     "next_page: fetch next upstream page."
                 ),
             },
             "query_kind": {
                 "type": "string",
-                "enum": ["describe", "get", "select", "search", "code"],
+                "enum": ["code"],
                 "description": (
-                    "Required for action=query. "
-                    "describe: mapping roots summary; "
-                    "get: retrieve envelope/mapped values; "
-                    "select: projection/filter over records; "
-                    "search: workspace artifact listing; "
-                    "code: execute generated Python against a mapped root."
+                    'Required for action=query and must be "code".'
                 ),
             },
             "scope": {
                 "type": "string",
                 "enum": ["all_related", "single"],
                 "description": (
-                    "For query_kind describe/get/select/code: "
-                    "all_related (default) queries the full lineage "
-                    "component of artifact_id; single queries only "
-                    "artifact_id (or only each requested id for "
-                    "query_kind=code with artifact_ids). "
-                    "Not valid for query_kind=search."
+                    "[query_kind=code] all_related (default) executes across "
+                    "the lineage set of each anchor artifact; single executes "
+                    "against only the requested artifact(s)."
                 ),
             },
             "artifact_id": {
                 "type": "string",
                 "description": (
-                    "Anchor artifact. Required for query_kind "
-                    "describe|get|select and next_page. "
-                    "For query_kind=code, use artifact_id (single) "
-                    "or artifact_ids (multi). Omit for query_kind=search."
+                    "Anchor artifact. Required for action=next_page. "
+                    "For query_kind=code, use artifact_id (single) or "
+                    "artifact_ids (multi)."
                 ),
             },
             "artifact_ids": {
@@ -186,24 +164,10 @@ _BUILTIN_TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
                     "artifact_id."
                 ),
             },
-            "target": {
-                "type": "string",
-                "enum": ["envelope", "mapped"],
-                "description": (
-                    "[query_kind=get] Retrieval target (default: envelope)."
-                ),
-            },
-            "jsonpath": {
-                "type": "string",
-                "description": (
-                    "[query_kind=get] JSONPath filter on envelope."
-                ),
-            },
             "root_path": {
                 "type": "string",
                 "description": (
-                    "[query_kind=select|code] JSONPath to root records, "
-                    "from query_kind=describe output."
+                    "[query_kind=code] JSONPath to root records."
                 ),
             },
             "root_paths": {
@@ -213,29 +177,6 @@ _BUILTIN_TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
                     "[query_kind=code] Optional per-artifact root paths for "
                     "multi-artifact queries. Keys are artifact IDs, values are "
                     "JSONPath strings. Mutually exclusive with root_path."
-                ),
-            },
-            "select_paths": {
-                "type": "array",
-                "items": {"type": "string"},
-                "description": (
-                    "[query_kind=select] Field names to project, "
-                    "e.g. ['name', 'spend']. No $ prefix."
-                ),
-            },
-            "where": {
-                "type": "object",
-                "description": (
-                    "[query_kind=select] Structured filter object. "
-                    'Leaf: {"path": "$.field", "op": "<op>", "value": <v>}. '
-                    "Ops: eq, ne, gt, gte, lt, lte, in, contains, "
-                    "array_contains, exists, not_exists. "
-                    'Group: {"logic": "and"|"or", "filters": [...]}. '
-                    'Negate: {"not": {<filter>}}. '
-                    "Paths use JSONPath ($.prefix). "
-                    'Examples: {"path":"$.status","op":"eq","value":"active"}, '
-                    '{"path":"$.spend","op":"gt","value":0}, '
-                    '{"not":{"path":"$.name","op":"in","value":["x","y"]}}.'
                 ),
             },
             "code": {
@@ -259,60 +200,10 @@ _BUILTIN_TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
             "params": {
                 "type": "object",
                 "description": (
-                    "[query_kind=code] JSON object passed as the third argument "
-                    "to run(..., ..., params)."
+                    "[query_kind=code] JSON object passed as the third "
+                    "argument to run(..., ..., params)."
                 ),
                 "additionalProperties": True,
-            },
-            "filters": {
-                "type": "object",
-                "description": (
-                    "[query_kind=search] source_tool, kind, status, "
-                    "parent_artifact_id, etc."
-                ),
-                "additionalProperties": True,
-            },
-            "query": {
-                "type": "string",
-                "description": (
-                    "[query_kind=search] Optional full-text search query "
-                    "against source_tool, kind, field names, and sample "
-                    "values."
-                ),
-            },
-            "order_by": {
-                "type": "string",
-                "description": (
-                    "Sort order. "
-                    "query_kind=search: created_seq_desc (default), "
-                    "last_seen_desc, chain_seq_asc. "
-                    "query_kind=select: 'field [ASC|DESC]', e.g. "
-                    "'spend DESC', 'to_number(spend) DESC', "
-                    "'name ASC'."
-                ),
-            },
-            "count_only": {
-                "type": "boolean",
-                "description": (
-                    "[query_kind=select] Return only the count of matching "
-                    "records, no items. Skips projection and "
-                    "pagination."
-                ),
-            },
-            "distinct": {
-                "type": "boolean",
-                "description": (
-                    "[query_kind=select] Deduplicate projected records. "
-                    "Returns only unique projections."
-                ),
-            },
-            "cursor": {
-                "type": "string",
-                "description": "[query_kind=select] Opaque pagination cursor.",
-            },
-            "limit": {
-                "type": "integer",
-                "description": "[query_kind=select|search] Max items per page.",
             },
         },
         "required": ["action"],
@@ -669,7 +560,7 @@ class GatewayServer:
     mirrored_tools: dict[str, MirroredTool] = field(default_factory=dict)
     response_redactor: ResponseSecretRedactor | None = None
 
-    def __post_init__(self) -> None:  # noqa: D105
+    def __post_init__(self) -> None:
         if not self.mirrored_tools and self.upstreams:
             self.mirrored_tools = build_mirrored_tools(self.upstreams)
         if self.response_redactor is None:
@@ -1364,19 +1255,6 @@ class GatewayServer:
             ),
             metrics=self.metrics,
         )
-
-    async def drain_mapping_tasks(self, *, timeout: float = 30.0) -> int:
-        """No-op retained for shutdown compatibility.
-
-        Args:
-            timeout: Maximum seconds to wait for tasks to
-                complete. Defaults to 30.
-
-        Returns:
-            Always ``0``.
-        """
-        _ = timeout
-        return 0
 
     # -- Envelope transformation --
 

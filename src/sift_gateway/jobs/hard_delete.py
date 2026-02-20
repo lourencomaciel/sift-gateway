@@ -115,18 +115,6 @@ def hard_delete_candidates_params(
     return (WORKSPACE_ID, grace_period_timestamp, batch_size)
 
 
-def _remove_blob_file(fs_path: str) -> bool:
-    """Attempt to unlink a blob file from the filesystem.
-
-    Args:
-        fs_path: Absolute path to the blob file.
-
-    Returns:
-        True if the file was removed, False on any error.
-    """
-    return _remove_blob_file_with_root(fs_path, blobs_root=None)
-
-
 def _remove_blob_file_with_root(
     fs_path: str, *, blobs_root: Path | None
 ) -> bool:

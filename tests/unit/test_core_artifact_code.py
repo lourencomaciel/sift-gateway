@@ -342,9 +342,90 @@ def test_execute_artifact_code_returns_items_and_persists_derived(
 
     assert result["total_matched"] == 1
     assert result["items"][0]["id"] == 1
-    assert result["derived_artifact_id"] == "art_derived"
+    assert result["artifact_id"] == "art_derived"
     assert runtime.persisted_calls
     assert conn.committed is True
+
+
+def test_execute_artifact_code_continues_when_describe_lookup_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    conn = _SeqConnection(
+        [
+            _FakeCursor(one=_meta_row()),
+            _FakeCursor(one=_root_row()),
+            _FakeCursor(one=_schema_root_row()),
+            _FakeCursor(all_rows=[_schema_field_row()]),
+            _FakeCursor(one=_artifact_row([{"id": 1}])),
+        ]
+    )
+    runtime = _Runtime(db_pool=_SeqPool(conn))
+
+    monkeypatch.setattr(
+        "sift_gateway.core.artifact_code.execute_code_in_subprocess",
+        lambda **kwargs: kwargs["data"],
+    )
+    monkeypatch.setattr(
+        "sift_gateway.core.artifact_code.execute_artifact_describe",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            RuntimeError("describe lookup failed")
+        ),
+    )
+
+    result = execute_artifact_code(
+        runtime,
+        arguments={
+            "_gateway_context": {"session_id": "sess_1"},
+            "artifact_id": "art_1",
+            "root_path": "$.items",
+            "code": "def run(data, schema, params): return data",
+        },
+    )
+
+    assert result["artifact_id"] == "art_derived"
+    assert result["total_matched"] == 1
+    assert result["response_mode"] == "full"
+    assert runtime.persisted_calls
+
+
+def test_execute_artifact_code_returns_error_on_missing_derived_artifact_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    conn = _SeqConnection(
+        [
+            _FakeCursor(one=_meta_row()),
+            _FakeCursor(one=_root_row()),
+            _FakeCursor(one=_schema_root_row()),
+            _FakeCursor(all_rows=[_schema_field_row()]),
+            _FakeCursor(one=_artifact_row([{"id": 1}])),
+        ]
+    )
+    runtime = _Runtime(db_pool=_SeqPool(conn))
+
+    monkeypatch.setattr(
+        "sift_gateway.core.artifact_code.execute_code_in_subprocess",
+        lambda **kwargs: kwargs["data"],
+    )
+    monkeypatch.setattr(
+        runtime,
+        "persist_code_derived",
+        lambda **_kwargs: (None, None),
+    )
+
+    result = execute_artifact_code(
+        runtime,
+        arguments={
+            "_gateway_context": {"session_id": "sess_1"},
+            "artifact_id": "art_1",
+            "root_path": "$.items",
+            "code": "def run(data, schema, params): return data",
+        },
+    )
+
+    assert result["code"] == "DERIVED_PERSISTENCE_FAILED"
+    assert "invalid artifact_id" in result["message"]
+    assert result["details"]["stage"] == "persist_code_derived"
+    assert result["details"]["artifact_id"] is None
 
 
 def test_execute_artifact_code_rejects_input_records_exceeded(
