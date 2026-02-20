@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.2.6] - 2026-02-20
+
 ### Added
 - MIT LICENSE file
 - CONTRIBUTING.md and CHANGELOG.md
