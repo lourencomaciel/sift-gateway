@@ -350,7 +350,7 @@ class TestCheckConstraints:
             assert f"'{val}'" in self.sql
 
     def test_envelope_encoding_check(self) -> None:
-        for val in ("zstd", "gzip", "none"):
+        for val in ("gzip", "none"):
             assert f"'{val}'" in self.sql
 
     def test_byte_count_non_negative(self) -> None:

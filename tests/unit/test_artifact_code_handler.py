@@ -14,6 +14,7 @@ from sift_gateway.codegen.runtime import (
 )
 from sift_gateway.config.settings import GatewayConfig
 from sift_gateway.core.artifact_code import (
+    _enrich_entrypoint_hint,
     _enrich_install_hint,
     _module_to_dist,
 )
@@ -273,6 +274,74 @@ def test_code_query_all_related_merges_records(
         "art_1",
         "art_2",
     }
+
+
+def test_code_query_all_related_rejects_incompatible_schema_signatures(
+    tmp_path: Path, monkeypatch
+) -> None:
+    conn = _SeqConnection(
+        [
+            _SeqCursor(one=_meta_row("art_1")),
+            _SeqCursor(one=_root_row("rk_1")),
+            _SeqCursor(
+                one=_schema_root_row(
+                    "rk_1", schema_hash="sha256:schema_items_a"
+                )
+            ),
+            _SeqCursor(one=_meta_row("art_2")),
+            _SeqCursor(one=_root_row("rk_2")),
+            _SeqCursor(
+                one=_schema_root_row(
+                    "rk_2", schema_hash="sha256:schema_items_b"
+                )
+            ),
+        ]
+    )
+    server = _server(tmp_path, conn)
+
+    monkeypatch.setattr(
+        "sift_gateway.mcp.adapters.artifact_query_runtime.GatewayArtifactQueryRuntime.resolve_related_artifacts",
+        lambda *_args, **_kwargs: [
+            {"artifact_id": "art_1", "generation": 1},
+            {"artifact_id": "art_2", "generation": 1},
+        ],
+    )
+    monkeypatch.setattr(
+        server,
+        "_safe_touch_for_retrieval_many",
+        lambda *args, **kwargs: None,
+    )
+    runtime_called = False
+
+    def _fake_exec(**_kwargs: Any) -> list[dict[str, Any]]:
+        nonlocal runtime_called
+        runtime_called = True
+        return []
+
+    monkeypatch.setattr(
+        "sift_gateway.core.artifact_code.execute_code_in_subprocess",
+        _fake_exec,
+    )
+
+    response = asyncio.run(
+        server.handle_artifact(
+            {
+                "action": "query",
+                "query_kind": "code",
+                "_gateway_context": {"session_id": "sess_1"},
+                "artifact_id": "art_1",
+                "root_path": "$.items",
+                "code": "def run(data, schema, params): return data",
+            }
+        )
+    )
+
+    assert response["code"] == "INVALID_ARGUMENT"
+    assert response["message"] == "incompatible lineage schema for root_path"
+    assert response["details"]["code"] == "INCOMPATIBLE_LINEAGE_SCHEMA"
+    assert response["details"]["root_path"] == "$.items"
+    assert len(response["details"]["signature_groups"]) == 2
+    assert runtime_called is False
 
 
 def test_code_query_normalizes_scalar_return_to_list(
@@ -1052,6 +1121,68 @@ def test_code_query_runtime_error_includes_traceback_details(
     assert "traceback" in response["details"]
 
 
+def test_code_query_entrypoint_missing_adds_single_entrypoint_hint(
+    tmp_path: Path, monkeypatch
+) -> None:
+    conn = _SeqConnection(
+        [
+            _SeqCursor(one=_meta_row("art_1")),
+            _SeqCursor(one=_root_row("rk_1")),
+            _SeqCursor(one=_schema_root_row("rk_1")),
+            _SeqCursor(all_rows=[_schema_field_row()]),
+            _SeqCursor(
+                one=_artifact_row(
+                    "art_1",
+                    {
+                        "content": [
+                            {
+                                "type": "json",
+                                "value": {"items": [{"id": 1}]},
+                            }
+                        ]
+                    },
+                )
+            ),
+        ]
+    )
+    server = _server(tmp_path, conn)
+
+    monkeypatch.setattr(
+        "sift_gateway.mcp.adapters.artifact_query_runtime.GatewayArtifactQueryRuntime.resolve_related_artifacts",
+        lambda *_args, **_kwargs: [{"artifact_id": "art_1", "generation": 1}],
+    )
+    monkeypatch.setattr(
+        server,
+        "_safe_touch_for_retrieval_many",
+        lambda *args, **kwargs: None,
+    )
+    monkeypatch.setattr(
+        "sift_gateway.core.artifact_code.execute_code_in_subprocess",
+        lambda **_kwargs: (_ for _ in ()).throw(
+            CodeRuntimeError(
+                code="CODE_ENTRYPOINT_MISSING",
+                message="run(...) entrypoint not found",
+            )
+        ),
+    )
+
+    response = asyncio.run(
+        server.handle_artifact(
+            {
+                "action": "query",
+                "query_kind": "code",
+                "_gateway_context": {"session_id": "sess_1"},
+                "artifact_id": "art_1",
+                "root_path": "$.items",
+                "code": "def not_run(data, schema, params): return data",
+            }
+        )
+    )
+    assert response["code"] == "INVALID_ARGUMENT"
+    assert response["details"]["code"] == "CODE_ENTRYPOINT_MISSING"
+    assert "def run(data, schema, params):" in response["message"]
+
+
 def test_code_query_multi_artifact_passes_artifacts_payload(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -1261,6 +1392,63 @@ def test_code_query_multi_artifact_requires_root_path_or_root_paths(
     )
     assert response["code"] == "INVALID_ARGUMENT"
     assert "missing root_path or root_paths" in response["message"]
+    assert response["details"]["code"] == "ROOT_PATH_REQUIRED"
+    assert "hint" in response["details"]
+
+
+def test_code_query_multi_artifact_root_paths_requires_object_shape(
+    tmp_path: Path,
+) -> None:
+    server = GatewayServer(config=GatewayConfig(data_dir=tmp_path))
+    response = asyncio.run(
+        server.handle_artifact(
+            {
+                "action": "query",
+                "query_kind": "code",
+                "_gateway_context": {"session_id": "sess_1"},
+                "artifact_ids": ["art_1", "art_2"],
+                "root_paths": ["$.items_a", "$.items_b"],
+                "code": "def run(artifacts, schemas, params): return []",
+            }
+        )
+    )
+    assert response["code"] == "INVALID_ARGUMENT"
+    assert (
+        response["message"]
+        == "root_paths must be an object keyed by artifact id"
+    )
+    assert response["details"]["code"] == "ROOT_PATHS_SHAPE_INVALID"
+    assert "hint" in response["details"]
+
+
+def test_code_query_multi_artifact_root_paths_keys_must_match_artifact_ids(
+    tmp_path: Path,
+) -> None:
+    server = GatewayServer(config=GatewayConfig(data_dir=tmp_path))
+    response = asyncio.run(
+        server.handle_artifact(
+            {
+                "action": "query",
+                "query_kind": "code",
+                "_gateway_context": {"session_id": "sess_1"},
+                "artifact_ids": ["art_1", "art_2"],
+                "root_paths": {
+                    "art_1": "$.items_a",
+                    "art_3": "$.items_c",
+                },
+                "code": "def run(artifacts, schemas, params): return []",
+            }
+        )
+    )
+    assert response["code"] == "INVALID_ARGUMENT"
+    assert response["message"] == "root_paths keys do not match artifact_ids"
+    details = response["details"]
+    assert details["code"] == "ROOT_PATH_KEYS_MISMATCH"
+    assert details["expected_artifact_ids"] == ["art_1", "art_2"]
+    assert details["provided_root_paths_keys"] == ["art_1", "art_3"]
+    assert details["missing_keys"] == ["art_2"]
+    assert details["extra_keys"] == ["art_3"]
+    assert "hint" in details
 
 
 # ------------------------------------------------------------------
@@ -1272,6 +1460,28 @@ def test_enrich_install_hint_no_module() -> None:
     msg = "No module named 'pandas'"
     result = _enrich_install_hint(msg)
     assert result.endswith("sift-gateway install pandas")
+
+
+def test_enrich_entrypoint_hint_single_shape() -> None:
+    msg = "run(...) entrypoint not found"
+    result = _enrich_entrypoint_hint(
+        msg,
+        details_code="CODE_ENTRYPOINT_MISSING",
+        multi_artifact=False,
+    )
+    assert "def run(data, schema, params):" in result
+    assert "data is list[dict]" in result
+
+
+def test_enrich_entrypoint_hint_multi_shape() -> None:
+    msg = "run(...) entrypoint not found"
+    result = _enrich_entrypoint_hint(
+        msg,
+        details_code="CODE_ENTRYPOINT_MISSING",
+        multi_artifact=True,
+    )
+    assert "def run(artifacts, schemas, params):" in result
+    assert "dict[artifact_id -> list[dict]]" in result
 
 
 def test_enrich_install_hint_no_module_uses_static_map() -> None:

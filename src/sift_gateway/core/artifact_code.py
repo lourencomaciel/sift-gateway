@@ -142,6 +142,31 @@ def _enrich_install_hint(msg: str) -> str:
     return msg
 
 
+def _enrich_entrypoint_hint(
+    msg: str,
+    *,
+    details_code: str | None,
+    multi_artifact: bool,
+) -> str:
+    """Append an entrypoint-shape hint for missing run(...) errors."""
+    if details_code != "CODE_ENTRYPOINT_MISSING":
+        return msg
+    if multi_artifact:
+        hint = (
+            "Hint: For multi-artifact queries define "
+            "def run(artifacts, schemas, params): ... where artifacts is "
+            "dict[artifact_id -> list[dict]]."
+        )
+    else:
+        hint = (
+            "Hint: For single-artifact queries define "
+            "def run(data, schema, params): ... where data is list[dict]."
+        )
+    if hint in msg:
+        return msg
+    return f"{msg}\n{hint}"
+
+
 def _code_error(
     message: str,
     *,
@@ -215,24 +240,61 @@ def _normalize_code_root_paths(
             return {}, gateway_error(
                 "INVALID_ARGUMENT",
                 "root_paths must be an object keyed by artifact id",
+                details={
+                    "code": "ROOT_PATHS_SHAPE_INVALID",
+                    "hint": (
+                        "Provide root_paths as an object: "
+                        "{artifact_id: jsonpath}."
+                    ),
+                },
             )
         normalized: dict[str, str] = {}
+        missing_keys: list[str] = []
+        extra_keys: list[str] = []
+        expected_keys = sorted(dict.fromkeys(artifact_ids))
+        provided_keys = sorted(str(key) for key in raw_root_paths.keys())
         for artifact_id in artifact_ids:
             value = raw_root_paths.get(artifact_id)
             if not isinstance(value, str) or not value.strip():
-                return {}, gateway_error(
-                    "INVALID_ARGUMENT",
-                    f"missing root_paths.{artifact_id}",
-                )
-            normalized[artifact_id] = value
+                missing_keys.append(artifact_id)
+                continue
+            normalized[artifact_id] = value.strip()
+        expected_key_set = set(artifact_ids)
+        for key in raw_root_paths.keys():
+            if not isinstance(key, str) or key not in expected_key_set:
+                extra_keys.append(str(key))
+        if missing_keys or extra_keys:
+            return {}, gateway_error(
+                "INVALID_ARGUMENT",
+                "root_paths keys do not match artifact_ids",
+                details={
+                    "code": "ROOT_PATH_KEYS_MISMATCH",
+                    "expected_artifact_ids": expected_keys,
+                    "provided_root_paths_keys": provided_keys,
+                    "missing_keys": sorted(missing_keys),
+                    "extra_keys": sorted(extra_keys),
+                    "hint": (
+                        "Provide one non-empty root path for each artifact_id, "
+                        "or use shared root_path."
+                    ),
+                },
+            )
         return normalized, None
 
     if not isinstance(raw_root_path, str) or not raw_root_path.strip():
         return {}, gateway_error(
             "INVALID_ARGUMENT",
             "missing root_path or root_paths",
+            details={
+                "code": "ROOT_PATH_REQUIRED",
+                "hint": (
+                    "Provide root_path for single/shared queries, or root_paths "
+                    "keyed by artifact_id for multi-artifact queries."
+                ),
+            },
         )
-    return dict.fromkeys(artifact_ids, raw_root_path), None
+    root_path = raw_root_path.strip()
+    return dict.fromkeys(artifact_ids, root_path), None
 
 
 @dataclass(frozen=True)
@@ -1124,8 +1186,13 @@ def _execute_code_runtime(
             code=exc.code,
             message=str(exc),
         )
+        runtime_error_message = _enrich_entrypoint_hint(
+            str(exc),
+            details_code=exc.code,
+            multi_artifact=len(request.requested_artifact_ids) > 1,
+        )
         return None, _code_error(
-            _enrich_install_hint(str(exc)),
+            _enrich_install_hint(runtime_error_message),
             details_code=exc.code,
             details={"traceback": exc.traceback} if exc.traceback else None,
         )
@@ -1519,6 +1586,7 @@ def execute_artifact_code(
 
 
 __all__ = [
+    "_enrich_entrypoint_hint",
     "_enrich_install_hint",
     "_module_to_dist",
     "execute_artifact_code",

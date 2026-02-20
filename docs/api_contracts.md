@@ -49,18 +49,25 @@ Pagination detection happens before redaction. Persisted payloads are redacted.
 - `query_kind="code"`
 - `code`
 - one target shape:
-  - single target: `artifact_id` (optional `root_path`, default `$`)
-  - multi target: `artifact_ids` (optional `root_paths` map)
+  - single target: `artifact_id` + `root_path`
+  - multi target: `artifact_ids` + (`root_path` shared or `root_paths` exact map)
 
 ### Optional arguments
 
-- `scope`: `all_related` (default) or `single`
+- `scope`: `all_related` (default, pagination-chain related artifacts) or `single`
 - `params`: JSON object passed to `run(..., ..., params)`
 
 ### Runtime entrypoints
 
 - single artifact: `run(data, schema, params)`
 - multi artifact: `run(artifacts, schemas, params)`
+
+Runtime shape notes:
+
+- single: `data` is `list[dict]`
+- multi: `artifacts` is `dict[artifact_id -> list[dict]]`
+- prefer `scope=single` unless cross-artifact logic is required
+- prefer compact outputs (aggregates or top-N) to reduce `schema_ref` responses
 
 ## Response shape (`query_kind="code"`)
 

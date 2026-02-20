@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+### Changed
+- **Breaking:** removed `sift-gateway code --expr`; CLI code queries now require `--code` or `--file`
+- **Breaking:** removed `sift-gateway run --stdin`; CLI captures are command-backed via `run -- <command>`
+- **Breaking:** removed legacy `zstd` envelope canonical encoding support (only `gzip` and `none` are accepted)
+- `scope=all_related` lineage traversal now follows pagination chains only (excludes non-pagination lineage edges)
+
 ## [0.2.6] - 2026-02-20
 
 ### Added

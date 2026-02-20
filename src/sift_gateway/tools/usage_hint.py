@@ -133,13 +133,20 @@ def build_code_query_usage(
         root_path_token = shlex.quote(root_path)
         example = (
             f'sift-gateway code {artifact_id_token} '
-            f'{root_path_token} --expr "len(df)"'
+            f'{root_path_token} --code "def run(data, schema, params): return len(data)"'
         )
     return {
         "interface": interface,
         "query_kind": "code",
         "artifact_id": artifact_id,
         "root_path": root_path,
+        "entrypoint_single": "run(data, schema, params)",
+        "entrypoint_multi": "run(artifacts, schemas, params)",
+        "multi_input_shape": "dict[artifact_id -> list[dict]]",
+        "strategy": (
+            "Prefer scope=single first. Keep outputs compact "
+            "(aggregates or top <= 20 rows)."
+        ),
         "packages": package_summary,
         "example": example,
     }

@@ -23,6 +23,7 @@ from typing import Any
 from sift_gateway import __version__
 from sift_gateway.config import load_gateway_config
 from sift_gateway.config.shared import is_sift_command
+from sift_gateway.constants import DEFAULT_GATEWAY_NAME
 from sift_gateway.lifecycle import run_startup_check
 
 _ARTIFACT_COMMANDS = {
@@ -79,7 +80,7 @@ def _add_init_mode_group(
     )
     init_parser.add_argument(
         "--gateway-name",
-        default="artifact-gateway",
+        default=DEFAULT_GATEWAY_NAME,
         help="Name for the gateway entry in the rewritten source file",
     )
     init_parser.add_argument(

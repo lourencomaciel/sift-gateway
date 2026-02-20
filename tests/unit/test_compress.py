@@ -20,30 +20,11 @@ def test_none_roundtrip() -> None:
     assert decompress_bytes(compressed.data, compressed.encoding) == data
 
 
-def test_zstd_compress_raises() -> None:
+def test_unsupported_compress_encoding_raises() -> None:
     with pytest.raises(ValueError, match="unsupported"):
-        compress_bytes(b"data", "zstd")
+        compress_bytes(b"data", "brotli")
 
 
-def test_zstd_decompress_legacy_payload() -> None:
-    zstandard = pytest.importorskip("zstandard")
-    raw = b"hello" * 100
-    compressed = zstandard.ZstdCompressor().compress(raw)
-    assert decompress_bytes(compressed, "zstd") == raw
-
-
-def test_zstd_decompress_missing_package(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    import builtins
-
-    real_import = builtins.__import__
-
-    def _block_zstandard(name: str, *args: object, **kwargs: object) -> object:
-        if name == "zstandard":
-            raise ModuleNotFoundError(name)
-        return real_import(name, *args, **kwargs)
-
-    monkeypatch.setattr(builtins, "__import__", _block_zstandard)
-    with pytest.raises(ValueError, match="zstandard"):
+def test_unsupported_decompress_encoding_raises() -> None:
+    with pytest.raises(ValueError, match="unsupported"):
         decompress_bytes(b"data", "zstd")
