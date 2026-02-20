@@ -1,122 +1,68 @@
 # Recipes & Examples
 
-Practical patterns for retrieving and reusing Sift artifacts.
+Practical patterns for capturing, paginating, and analyzing artifacts.
 
-## Pattern 1: Handle Response -> Deterministic Retrieval
+## Pattern 1: Run -> Code (CLI)
 
-When a mirrored upstream call returns a handle (typically larger payloads or
-continuation-required responses), use `select` to page through the data.
+```bash
+# capture
+sift-gateway run -- curl -s 'https://jsonplaceholder.typicode.com/comments?_page=1&_limit=200'
 
-```python
-# 1) Mirrored upstream call
-result = github.search_repositories(query="mcp", limit=100)
-artifact_id = result["artifact_id"]
+# analyze
+sift-gateway code <artifact_id> '$' --expr "df['email'].str.contains('joana', case=False, na=False).sum()"
+```
 
-# 2) First retrieval page
-page = artifact(
-    action="query",
-    query_kind="select",
-    artifact_id=artifact_id,
-    root_path="$.items",
-    select_paths=["name", "stargazers_count"],
-    limit=50,
-)
+Use `--expr` for quick transforms and `--code` / `--file` for multi-step logic.
 
-# 3) Continue while retrieval is partial
-while page["pagination"]["retrieval_status"] == "PARTIAL":
-    page = artifact(
-        action="query",
-        query_kind="select",
-        artifact_id=artifact_id,
-        cursor=page["cursor"],
-        limit=50,
-    )
+## Pattern 2: Upstream pagination chain (CLI)
+
+When `run` returns `pagination.has_next_page=true`:
+
+```bash
+# page 1
+sift-gateway run -- gh api repos/org/repo/pulls --limit 100 --after CUR_1
+
+# page 2 (linked lineage)
+sift-gateway run --continue-from art_page_1 -- gh api repos/org/repo/pulls --limit 100 --after CUR_2
 ```
 
 Notes:
 
-- `cursor` is passed back as a top-level field.
-- `pagination.next_cursor` contains the same continuation token.
-- Completeness is based on `pagination.retrieval_status == "COMPLETE"`.
-- If the mirrored call returned raw payload, the response will not include
-  `artifact_id`. Use `query_kind="search"` to locate the persisted artifact for
-  the session, or set `passthrough_max_bytes=0` for deterministic handle
-  returns.
+- Apply `pagination.next_params` from the previous response.
+- Each continuation creates a new artifact linked by `parent_artifact_id` and
+  `chain_seq`.
 
-## Pattern 1b: Filtered Retrieval
-
-Use `where` with structured filter objects to push predicates down to SQL.
-
-```python
-page = artifact(
-    action="query",
-    query_kind="select",
-    artifact_id=artifact_id,
-    root_path="$.items",
-    select_paths=["name", "stargazers_count"],
-    where={
-        "logic": "and",
-        "filters": [
-            {"path": "$.stargazers_count", "op": "gte", "value": 100},
-            {"path": "$.language", "op": "in", "value": ["Python", "TypeScript"]},
-        ],
-    },
-    limit=50,
-)
-```
-
-Supported operators: `eq`, `ne`, `gt`, `gte`, `lt`, `lte`, `in`, `contains`,
-`array_contains`, `exists`, `not_exists`. See `api_contracts.md` for full
-syntax.
-
-## Pattern 2: Upstream Pagination Chain
-
-Use `next_page` only for upstream-layer pagination captured from mirrored tools.
+## Pattern 3: Upstream pagination chain (MCP)
 
 ```python
 page = github.list_issues(repo="owner/repo", per_page=100)
 
-while page.get("pagination", {}).get("has_next_page"):
+while page.get("pagination", {}).get("retrieval_status") == "PARTIAL":
     page = artifact(
         action="next_page",
         artifact_id=page["artifact_id"],
     )
 ```
 
-## Pattern 3: Tool Chaining with Artifact References
+Do not claim completeness until
+`pagination.retrieval_status == "COMPLETE"`.
 
-Pass artifact references directly to other mirrored tools.
-
-```python
-# Full payload
-tool_b(input="art_7f3a...")
-
-# Specific field
-tool_b(input="art_7f3a...:$.items[0].name")
-
-# Wildcard expansion
-tool_b(emails="art_7f3a...:$.users[*].email")
-```
-
-Constraint:
-
-- Only top-level string arguments are resolved. Nested dict/list values are not.
-
-## Pattern 4: Code Query (Single Artifact)
-
-Code queries are root-scoped and unpaginated.
+## Pattern 4: Code query (MCP, single artifact)
 
 ```python
 summary = artifact(
     action="query",
     query_kind="code",
-    artifact_id="art_123...",
+    artifact_id="art_123",
     root_path="$.result.rows",
     code="""
 def run(data, schema, params):
     floor = float(params.get('min_spend', 0))
     return [
-        {"campaign_id": row.get("campaign_id"), "spend": float(row.get("spend", 0) or 0)}
+        {
+            "campaign_id": row.get("campaign_id"),
+            "spend": float(row.get("spend", 0) or 0),
+        }
         for row in data
         if float(row.get("spend", 0) or 0) >= floor
     ]
@@ -125,31 +71,22 @@ def run(data, schema, params):
 )
 ```
 
-Contract highlights:
-
-- Required: `artifact_id`, `root_path`, `code`
-- Optional: `params`
-- Response has no `cursor`; code query is one-shot
-- Output must fit `max_bytes_out`
-
-## Pattern 5: Code Query (Multi-Artifact)
-
-Use `artifact_ids` and a multi-artifact runtime entrypoint.
+## Pattern 5: Code query (MCP, multi artifact)
 
 ```python
 joined = artifact(
     action="query",
     query_kind="code",
-    artifact_ids=["art_users...", "art_orders..."],
+    artifact_ids=["art_users", "art_orders"],
     root_paths={
-        "art_users...": "$.users",
-        "art_orders...": "$.orders",
+        "art_users": "$.users",
+        "art_orders": "$.orders",
     },
     code="""
 def run(artifacts, schemas, params):
-    users = artifacts["art_users..."]
-    orders = artifacts["art_orders..."]
-    user_names = {u["id"]: u.get("name") for u in users}
+    users = artifacts["art_users"]
+    orders = artifacts["art_orders"]
+    names = {u["id"]: u.get("name") for u in users}
 
     totals = {}
     for order in orders:
@@ -157,40 +94,26 @@ def run(artifacts, schemas, params):
         totals[uid] = totals.get(uid, 0) + float(order.get("amount", 0) or 0)
 
     return [
-        {"user_id": uid, "name": user_names.get(uid), "total": total}
+        {"user_id": uid, "name": names.get(uid), "total": total}
         for uid, total in totals.items()
     ]
 """,
 )
 ```
 
-## Pattern 6: Session Artifact Search
+## Pattern 6: Schema-first response handling
 
-List artifacts already visible to the current session.
+For both mirrored-tool and code responses:
 
-```python
-search_page = artifact(
-    action="query",
-    query_kind="search",
-    filters={"status": "ok", "source_tool_prefix": "github"},
-    order_by="created_seq_desc",
-    limit=50,
-)
+1. Check `response_mode`.
+2. If `full`, consume `payload` directly.
+3. If `schema_ref`, inspect `schemas_compact` and run focused code queries.
+4. If pagination is present and partial, continue with `next_page` (MCP) or
+   `run --continue-from` (CLI).
 
-if search_page["truncated"]:
-    search_page_2 = artifact(
-        action="query",
-        query_kind="search",
-        cursor=search_page["cursor"],
-        limit=50,
-    )
-```
+## Common mistakes
 
-## Common Mistakes
-
-- Using `action="next_page"` for retrieval cursors.
-  Use `artifact(action="query", ..., cursor=...)` instead.
-- Calling `select` without `select_paths` on a fresh query.
-- Treating code queries as paginated (`limit`/`cursor` are not retrieval paging controls).
-- Assuming `has_more=false` means complete without checking
-  `pagination.retrieval_status`.
+- Trying to call `artifact(action="query")` without `query_kind="code"`.
+- Treating `run --continue-from` as optional when `has_next_page=true`.
+- Assuming completion without checking `pagination.retrieval_status`.
+- Returning huge code outputs without narrowing logic.

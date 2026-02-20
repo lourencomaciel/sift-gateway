@@ -262,6 +262,11 @@ def resolve_all_related_root_candidates(
             details={
                 "code": "INCOMPATIBLE_LINEAGE_SCHEMA",
                 "root_path": root_path,
+                "hint": (
+                    "Use scope=single to query only anchor artifacts, "
+                    "or choose root_path/root_paths that resolve to one "
+                    "compatible schema signature."
+                ),
                 "signature_groups": [
                     {
                         "signature": signature,

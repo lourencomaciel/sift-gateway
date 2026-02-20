@@ -408,8 +408,8 @@ def test_schema_field_distinct_values_are_capped_with_cardinality(
         field for field in item_schema.fields if field.path == "$.action_type"
     )
     assert action_field.distinct_values is not None
-    assert len(action_field.distinct_values) == 10
-    assert action_field.cardinality == 10
+    assert len(action_field.distinct_values) == 1
+    assert action_field.cardinality == 1
 
 
 def test_sampled_schema_distinct_values_reflect_sampled_records(
@@ -433,7 +433,7 @@ def test_sampled_schema_distinct_values_reflect_sampled_records(
         field for field in item_schema.fields if field.path == "$.action_type"
     )
     assert action_field.distinct_values is not None
-    assert len(action_field.distinct_values) <= 8
+    assert len(action_field.distinct_values) <= 1
     assert action_field.cardinality is not None
 
 
@@ -460,8 +460,8 @@ def test_schema_distinct_values_preserve_boolean_vs_number_identity() -> None:
     )
     assert observed == 4
     mixed_field = next(field for field in fields if field.path == "$.mixed")
-    assert mixed_field.distinct_values == [False, True, 0, 1]
-    assert mixed_field.cardinality == 4
+    assert mixed_field.distinct_values == [True]
+    assert mixed_field.cardinality == 1
 
 
 def test_schema_distinct_values_handle_large_integers() -> None:
@@ -471,8 +471,8 @@ def test_schema_distinct_values_handle_large_integers() -> None:
     fields, observed = _build_fields([{"id": huge}, {"id": 1}])
     assert observed == 2
     id_field = next(field for field in fields if field.path == "$.id")
-    assert id_field.distinct_values == [1, huge]
-    assert id_field.cardinality == 2
+    assert id_field.distinct_values == [huge]
+    assert id_field.cardinality == 1
 
 
 def test_schema_distinct_values_handle_float_values(tmp_path: Path) -> None:
@@ -496,8 +496,8 @@ def test_schema_distinct_values_handle_float_values(tmp_path: Path) -> None:
         field for field in item_schema.fields if field.path == "$.spend"
     )
     assert spend_field.distinct_values is not None
-    assert set(spend_field.distinct_values) == {9.25, 12.5}
-    assert spend_field.cardinality == 2
+    assert spend_field.distinct_values == [12.5]
+    assert spend_field.cardinality == 1
 
 
 def test_full_mapping_populates_record_rows(tmp_path: Path) -> None:

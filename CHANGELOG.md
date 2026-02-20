@@ -23,10 +23,12 @@
 - Rebranded from "MCP Artifact Gateway" to "Sift"
 - Replaced silent `except Exception: pass` blocks with warning logs
 - Structured logs are now opt-in via top-level `--logs`; default CLI output suppresses structured stderr logs
+- **Breaking:** public artifact contract is now `query_kind=code` + `action=next_page`; legacy `describe|get|select|search` are removed from primary docs/workflows
+- **Breaking:** artifact CLI contract is now `run`/`run --continue-from`/`code`; legacy `list|schema|get|query|diff` are no longer documented public workflow
 - **Breaking:** `query_kind=code` now returns all results without pagination/cursor
 - `query_kind=code` supports `scope` (`all_related` default, `single` anchor-only)
 - Documented return normalization for code queries (non-list values auto-wrap to one-item lists)
-- Mirrored tool responses are always persisted; passthrough now controls only whether callers receive raw payloads or gateway handles
+- Mirrored/tool and CLI responses now use unified `full` vs `schema_ref` selection policy
 - `docs/cli-agnostic-roadmap.md` now marks Phase 8 complete and tracks RC cut as next action
 
 ## [0.1.0] - 2025

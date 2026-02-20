@@ -28,12 +28,9 @@ from sift_gateway.config.mcp_servers import (
     extract_mcp_servers,
     read_config_file,
 )
+from sift_gateway.config.shared import ensure_gateway_config_path
 from sift_gateway.config.upstream_secrets import write_secret
-from sift_gateway.constants import (
-    CONFIG_FILENAME,
-    DEFAULT_DATA_DIR,
-    STATE_SUBDIR,
-)
+from sift_gateway.constants import DEFAULT_DATA_DIR
 
 
 @contextlib.contextmanager
@@ -64,13 +61,6 @@ def _gateway_server_entry(
     if data_dir is not None:
         entry["args"] = ["--data-dir", str(data_dir.expanduser().resolve())]
     return entry
-
-
-def _ensure_gateway_config_dir(data_dir: Path) -> Path:
-    """Ensure the gateway state directory exists, return config.json path."""
-    state_dir = data_dir / STATE_SUBDIR
-    state_dir.mkdir(parents=True, exist_ok=True)
-    return state_dir / CONFIG_FILENAME
 
 
 def _load_gateway_config(config_path: Path) -> dict[str, Any]:
@@ -205,7 +195,7 @@ def run_init(
     server_names = sorted(servers.keys())
 
     # 2. Prepare gateway config
-    gateway_config_path = _ensure_gateway_config_dir(data_dir)
+    gateway_config_path = ensure_gateway_config_path(data_dir)
     existing_gateway_config = _load_gateway_config(gateway_config_path)
 
     # Merge: existing gateway mcpServers + newly imported servers

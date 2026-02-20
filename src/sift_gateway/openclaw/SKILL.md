@@ -1,21 +1,21 @@
 ---
 name: sift-gateway
-description: Store and query large command outputs without context bloat
+description: Store and analyze large command outputs without context bloat
 requirements:
   - sift-gateway
 ---
 
 # Sift - Large Output Handler
 
-Use Sift when output might exceed about 4KB, or when the same data will be referenced more than once.
+Use Sift when output may exceed ~4KB or when data will be reused.
 
-## When to Use Sift
+## When to use Sift
 
 - API list calls: `gh api`, `curl`, `kubectl ... -o json`
-- Large query results or long logs
-- Multi-step workflows that reuse the same dataset
+- large logs or long tabular output
+- multi-step tasks where the same dataset is reused
 
-## Core Workflow
+## Core workflow
 
 1. Capture output:
 
@@ -23,63 +23,56 @@ Use Sift when output might exceed about 4KB, or when the same data will be refer
 sift-gateway run -- <command>
 ```
 
-2. Read summary and keep only the artifact id in context.
-3. Query only needed slices:
+2. Keep `artifact_id` and short summary in context.
+3. If pagination exists (`pagination.has_next_page=true`), continue explicitly:
 
 ```bash
-sift-gateway query <artifact_id> '$' --limit 20
+sift-gateway run --continue-from <artifact_id> -- <next-command-with-next_params-applied>
 ```
 
-4. Narrow fields/rows:
+4. Run focused analysis with code:
 
 ```bash
-sift-gateway query <artifact_id> '$.items' --where '{"path":"$.state","op":"eq","value":"open"}' --select "id,title"
+sift-gateway code <artifact_id> '$' --expr "df.head(5).to_dict('records')"
 ```
 
-5. Run Python analysis when selection logic is not enough:
+## Code methods
+
+`sift-gateway code` accepts:
+
+- `--expr "<python_expr>"` for quick DataFrame expressions.
+- `--code "<python_source>"` for inline `run(data, schema, params)`.
+- `--file <path.py>` for file-based `run(...)`.
+- `--params '<json_object>'` to pass runtime parameters.
+- `--scope single` to disable lineage expansion.
+- multi-artifact mode with repeated `--artifact-id` and optional `--root-path` mapping.
 
 ```bash
-sift-gateway code <artifact_id> '$.items' --expr "df.groupby('owner').size().to_dict()"
-```
-
-### Code Methods (`sift-gateway code`)
-
-`sift-gateway code` accepts three code input modes:
-
-- `--expr "<python_expr>"` for quick DataFrame expressions (`df` is preloaded).
-- `--code "<python_source>"` for inline source defining `run(data, schema, params)`.
-- `--file <path.py>` to load source from a file defining `run(data, schema, params)`.
-
-Pass runtime parameters with `--params '<json_object>'`; the object is available as
-`params` inside `run`.
-
-```bash
-# Quick expression mode
+# quick expression
 sift-gateway code <artifact_id> '$.items' --expr "df['status'].value_counts().to_dict()"
 
-# Inline function mode
+# inline function mode
 sift-gateway code <artifact_id> '$.items' \
   --code "def run(data, schema, params): return {'rows': len(data), 'tag': params.get('tag')}" \
   --params '{"tag":"daily"}'
 
-# File mode
+# file mode
 sift-gateway code <artifact_id> '$.items' --file ./analysis.py --params '{"owner":"alice"}'
+
+# multi-artifact mode
+sift-gateway code --artifact-id art_users --artifact-id art_orders --root-path '$.items' --expr "len(df)"
 ```
 
 ## Commands
 
 | Command | Purpose |
 | --- | --- |
-| `sift-gateway run -- <cmd>` | Capture command output as an artifact |
+| `sift-gateway run -- <cmd>` | Capture command output as artifact |
+| `sift-gateway run --continue-from <id> -- <cmd>` | Capture next upstream page and link lineage |
 | `sift-gateway run --stdin` | Capture piped stdin |
-| `sift-gateway query <id> <root_path>` | Filter/project rows from mapped roots |
-| `sift-gateway code <id> <root_path>` | Run sandboxed Python over root data |
-| `sift-gateway schema <id>` | Inspect structure before querying |
-| `sift-gateway list` | List recent artifacts |
-| `sift-gateway get <id>` | Retrieve envelope or mapped payload |
-| `sift-gateway diff <id1> <id2>` | Compare artifacts |
+| `sift-gateway code ...` | Run sandboxed Python over one or multiple artifact roots |
 
-## High-Signal Patterns
+## High-signal patterns
 
 ```bash
 # GitHub PRs
@@ -90,14 +83,11 @@ kubectl get pods -A -o json | sift-gateway run --stdin --tag k8s
 
 # API dump with retention control
 curl -s https://api.example.com/events | sift-gateway run --stdin --ttl 8h --tag events
-
-# Python aggregation with DataFrame convenience
-sift-gateway code art_abc123 '$.items' --expr "df['status'].value_counts().to_dict()"
 ```
 
-## Context Budget Rules
+## Context budget rules
 
-- Keep raw output out of context; keep artifact IDs and small summaries.
-- Query in pages (`--limit`) and only required fields (`--select`).
-- Use `sift-gateway code` for complex aggregation/join logic.
-- Repeated commands always produce fresh captures; compare runs with `sift-gateway diff`.
+- keep raw output out of context; keep `artifact_id` plus compact summary
+- for paginated APIs, keep `next_params` and issue explicit continuation
+- prefer narrow code outputs (counts, projections, aggregates)
+- each run capture is fresh by design; do not assume implicit dedupe

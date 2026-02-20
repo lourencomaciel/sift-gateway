@@ -1,10 +1,10 @@
 # Sift
 
 Sift is a local, single-tenant gateway for AI agent tool work.
-It fixes context bloat by storing large tool outputs as artifacts and returning
-only the slices an agent needs.
+It reduces context bloat by persisting tool output as artifacts and returning
+only what the agent needs inline.
 
-Use it with agents that talk through MCP, or run it directly in CLI workflows.
+Use it with agents over MCP, or run it directly in CLI workflows.
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![PyPI](https://img.shields.io/pypi/v/sift-gateway.svg)](https://pypi.org/project/sift-gateway/)
@@ -16,8 +16,8 @@ Sift uses one command handle: `sift-gateway`.
 
 | Mode | How you run it | What it does |
 |---|---|---|
-| MCP gateway mode | `sift-gateway` (default server behavior) | Proxies MCP traffic and persists tool outputs as artifacts |
-| CLI mode | `sift-gateway <artifact-command>` | Captures, queries, and computes over artifacts directly |
+| MCP gateway mode | `sift-gateway` | Mirrors upstream MCP tools and persists outputs as artifacts |
+| CLI mode | `sift-gateway run` / `sift-gateway code` | Captures command output and runs Python over persisted artifacts |
 
 These modes are independent. You can run only MCP mode, only CLI mode, or both.
 
@@ -53,7 +53,11 @@ sift-gateway --transport sse --host 127.0.0.1 --port 8080
 
 - Mirrors upstream MCP tools with original schemas.
 - Persists mirrored outputs as artifacts.
-- Returns small responses inline and larger responses as handles.
+- Returns either:
+  - `response_mode="full"` (inline payload), or
+  - `response_mode="schema_ref"` (`artifact_id` + compact schema).
+- For paginated upstream results, always returns `schema_ref` and
+  `pagination.next_action` with `artifact(action="next_page", ...)`.
 
 ## CLI Mode
 
@@ -64,7 +68,6 @@ Use this when you want artifact workflows directly in terminal automation.
 ```bash
 pipx install sift-gateway
 sift-gateway run -- echo '{"items":[{"id":1,"name":"a"}]}'
-sift-gateway list --limit 10
 ```
 
 ### Capture sources
@@ -77,95 +80,92 @@ sift-gateway run -- git status --porcelain
 cat payload.json | sift-gateway run --stdin
 ```
 
-### Continuing paginated CLI captures
+### Continuing paginated captures
 
-If `sift-gateway run` detects upstream pagination, it returns:
-
-- `pagination.has_next_page`
-- `pagination.next_params`
-- `pagination.next_action.command_line`
-
-Follow up by running the next command explicitly and linking lineage:
+If `sift-gateway run` reports `pagination.has_next_page=true`, continue with:
 
 ```bash
 # first capture
 sift-gateway run -- gh api repos/org/repo/pulls --limit 100 --after CUR_1
 
-# follow-up capture (example: apply next_params from prior response)
+# follow-up capture linked to previous page
 sift-gateway run --continue-from art_123 -- gh api repos/org/repo/pulls --limit 100 --after CUR_2
 ```
 
 In MCP mode, continuation is `artifact(action="next_page", artifact_id=...)`.
 In CLI mode, continuation is manual via `run --continue-from`.
 
-### Query and inspect artifacts
+### Analyze artifacts with Python
 
 ```bash
-sift-gateway schema art_123
-sift-gateway get art_123
-sift-gateway query art_123 '$.items' --select id,name --limit 50
+# single-artifact expression
 sift-gateway code art_123 '$.items' --expr 'len(df)'
-sift-gateway query art_123 '$.items' --scope single --select id,name
-sift-gateway code art_123 '$.items' --scope single --expr 'len(df)'
+
+# single-artifact full function
+sift-gateway code art_123 '$.items' --code 'def run(data, schema, params): return {"rows": len(data)}'
+
+# multi-artifact expression
 sift-gateway code --artifact-id art_users --artifact-id art_orders --root-path '$.items' --expr 'len(df)'
+
+# multi-artifact file mode
 sift-gateway code --artifact-id art_users --artifact-id art_orders --root-path '$.users' --root-path '$.orders' --file ./join.py
-sift-gateway diff art_left art_right
 ```
+
+`--expr` always receives a pandas `df` DataFrame. In multi-artifact mode,
+`df` is the concatenation of requested artifact rows, and
+`artifact_frames` is available as a `{artifact_id: DataFrame}` mapping.
 
 CLI mode uses local state in `.sift-gateway` by default.
 Use `--data-dir` to target a different instance.
 
-## MCP Artifact Query Model
+## MCP Artifact Tool Contract
 
-In MCP workflows, retrieval happens through the `artifact` tool with
-`action="query"`.
+MCP retrieval is through the `artifact` tool:
 
-Supported `query_kind` values:
+- `action="query"` with `query_kind="code"` only.
+- `action="next_page"` to fetch the next upstream page for an artifact chain.
 
-| query_kind | Purpose |
-|---|---|
-| `describe` | Schema and metadata |
-| `get` | Full payload retrieval |
-| `select` | Projection/filtering from a root path |
-| `search` | Search and list session artifacts in the current workspace |
-| `code` | Execute constrained Python over artifact data |
-
-Example `query_kind="search"`:
+Example `query_kind="code"`:
 
 ```python
 artifact(
     action="query",
-    query_kind="search",
-    query="github issues",
-    limit=25,
-)
-```
-
-Example `query_kind="select"`:
-
-```python
-artifact(
-    action="query",
-    query_kind="select",
+    query_kind="code",
     artifact_id="art_123",
     root_path="$.items",
-    select_paths=["id", "name", "status"],
-    limit=50,
+    code="def run(data, schema, params): return {'rows': len(data)}",
 )
 ```
 
-## Context-Bloat Controls
+Example `next_page`:
 
-- `SIFT_GATEWAY_PASSTHROUGH_MAX_BYTES` controls inline-vs-handle threshold.
-- Default: `8192` bytes.
-- Set to `0` to force handle-first behavior.
+```python
+artifact(
+    action="next_page",
+    artifact_id="art_123",
+)
+```
+
+## Response Modes
+
+Sift chooses between two response modes:
+
+- `full`: inline payload
+- `schema_ref`: `artifact_id` + `schemas_compact` + `schema_legend`
+
+Selection rules:
+
+1. If pagination exists: always `schema_ref`.
+2. Else if full response exceeds `SIFT_GATEWAY_PASSTHROUGH_MAX_BYTES`: `schema_ref`.
+3. Else return `schema_ref` only when schema payload is at least 50% smaller.
+4. Otherwise return `full`.
 
 ## Configuration Highlights
 
 | Env var | Default | Description |
 |---|---|---|
 | `SIFT_GATEWAY_DATA_DIR` | `.sift-gateway` | Instance root directory |
-| `SIFT_GATEWAY_PASSTHROUGH_MAX_BYTES` | `8192` | Inline response threshold |
+| `SIFT_GATEWAY_PASSTHROUGH_MAX_BYTES` | `8192` | Inline response cap used by full/schema_ref mode selection |
 | `SIFT_GATEWAY_CODE_QUERY_ENABLED` | `true` | Enable code queries |
 | `SIFT_GATEWAY_SECRET_REDACTION_ENABLED` | `true` | Redact likely outbound secrets |
 | `SIFT_GATEWAY_AUTH_TOKEN` | unset | Required for non-local HTTP binds |

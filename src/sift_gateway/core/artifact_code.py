@@ -27,24 +27,30 @@ from sift_gateway.constants import (
     TRAVERSAL_CONTRACT_VERSION,
     WORKSPACE_ID,
 )
-from sift_gateway.core.artifact_get import ENVELOPE_COLUMNS, extract_json_target
+from sift_gateway.core.artifact_describe import execute_artifact_describe
+from sift_gateway.core.artifact_get import ENVELOPE_COLUMNS
 from sift_gateway.core.lineage_roots import (
     resolve_all_related_root_candidates,
     resolve_single_root_candidate,
 )
 from sift_gateway.core.query_scope import resolve_scope
+from sift_gateway.core.retrieval_helpers import extract_json_target
 from sift_gateway.core.rows import row_to_dict, rows_to_dicts
 from sift_gateway.core.runtime import ArtifactCodeRuntime
 from sift_gateway.core.schema_payload import build_schema_payload
-from sift_gateway.envelope.responses import gateway_error
+from sift_gateway.envelope.responses import (
+    gateway_error,
+    gateway_tool_result,
+    select_response_mode,
+)
 from sift_gateway.obs.logging import LogEvents, get_logger
 from sift_gateway.query.jsonpath import JsonPathError, evaluate_jsonpath
+from sift_gateway.schema_compact import SCHEMA_LEGEND, compact_schema_payload
 from sift_gateway.storage.payload_store import reconstruct_envelope
 from sift_gateway.tools.artifact_get import FETCH_ARTIFACT_SQL
 from sift_gateway.tools.artifact_schema import FETCH_SCHEMA_FIELDS_SQL
 from sift_gateway.tools.artifact_select import (
     FETCH_SAMPLES_SQL,
-    build_select_result,
 )
 
 _SCHEMA_FIELD_COLUMNS = [
@@ -1133,7 +1139,7 @@ def _validate_code_output_size(
     runtime: ArtifactCodeRuntime,
     normalized_items: list[Any],
 ) -> tuple[int | None, dict[str, Any] | None]:
-    """Validate runtime output serialization size against max_bytes_out."""
+    """Validate output serialization and return serialized byte count."""
     try:
         used_bytes = len(encode_json_bytes(normalized_items))
     except Exception as exc:
@@ -1141,17 +1147,6 @@ def _validate_code_output_size(
         return None, _code_error(
             f"output serialization failed: {exc}",
             details_code="CODE_RUNTIME_EXCEPTION",
-        )
-    if used_bytes > runtime.max_bytes_out:
-        runtime.increment_metric("codegen_failure")
-        return None, gateway_error(
-            "RESPONSE_TOO_LARGE",
-            (
-                "Code query results "
-                f"({used_bytes} bytes) exceed max_bytes_out "
-                f"({runtime.max_bytes_out} bytes). "
-                "Aggregate data in your run() function to reduce output size."
-            ),
         )
     return used_bytes, None
 
@@ -1208,36 +1203,111 @@ def _build_code_lineage(
 
 
 def _build_code_response(
+    runtime: ArtifactCodeRuntime,
     *,
-    build_select_result: Any,
-    normalized_items: list[Any],
-    total_matched: int,
-    used_bytes: int,
     request: _CodeRequest,
     state: _CodeCollectionState,
-    determinism: dict[str, Any],
+    runtime_result: Any,
+    normalized_items: list[Any],
+    derived_artifact_id: str,
+    used_bytes: int,
 ) -> dict[str, Any]:
-    """Build final code-query tool response payload."""
-    response = build_select_result(
-        items=normalized_items,
-        truncated=False,
-        cursor=None,
-        total_matched=total_matched,
-        sampled_only=bool(state.sampled_artifacts),
-        omitted=None,
-        stats={
+    """Build contract-v1 code response with full/schema_ref mode policy."""
+    lineage = _build_code_lineage(request=request, state=state)
+    metadata: dict[str, Any] = {
+        "stats": {
             "bytes_out": used_bytes,
             "input_records": state.input_count,
             "input_bytes": state.input_bytes,
-            "output_records": total_matched,
+            "output_records": len(normalized_items),
         },
-        determinism=determinism,
-    )
-    response["scope"] = request.scope
-    response["lineage"] = _build_code_lineage(request=request, state=state)
+        "determinism": _build_code_determinism(request=request, state=state),
+        "scope": request.scope,
+    }
     if state.warnings:
-        response["warnings"] = state.warnings
-    return cast(dict[str, Any], response)
+        metadata["warnings"] = state.warnings
+
+    describe: dict[str, Any] | None = None
+    try:
+        describe_result = execute_artifact_describe(
+            runtime,
+            arguments={
+                "_gateway_context": {"session_id": request.session_id},
+                "artifact_id": derived_artifact_id,
+                "scope": "single",
+            },
+        )
+    except Exception as exc:
+        _logger.warning(
+            "code response describe failed; continuing without schema metadata",
+            artifact_id=derived_artifact_id,
+            error_type=type(exc).__name__,
+            exc_info=True,
+        )
+    else:
+        if isinstance(describe_result, dict):
+            describe = describe_result
+    schemas_compact: list[dict[str, Any]] = []
+    schema_legend: dict[str, Any] | None = None
+    if describe is not None:
+        raw_schemas = describe.get("schemas")
+        if isinstance(raw_schemas, list):
+            schemas_full = [
+                schema for schema in raw_schemas if isinstance(schema, dict)
+            ]
+            schemas_compact = compact_schema_payload(schemas_full)
+        if schemas_compact:
+            schema_legend = SCHEMA_LEGEND
+
+    full_payload = gateway_tool_result(
+        response_mode="full",
+        artifact_id=derived_artifact_id,
+        payload=runtime_result,
+        lineage=lineage,
+        metadata=metadata,
+    )
+    full_payload["items"] = normalized_items
+    full_payload["total_matched"] = len(normalized_items)
+    full_payload["truncated"] = False
+    full_payload["stats"] = metadata["stats"]
+    full_payload["determinism"] = metadata["determinism"]
+    full_payload["scope"] = request.scope
+    if state.sampled_artifacts:
+        full_payload["sampled_only"] = True
+    if state.warnings:
+        full_payload["warnings"] = state.warnings
+
+    schema_ref_payload = gateway_tool_result(
+        response_mode="schema_ref",
+        artifact_id=derived_artifact_id,
+        schemas_compact=schemas_compact,
+        schema_legend=schema_legend or SCHEMA_LEGEND,
+        lineage=lineage,
+        metadata=metadata,
+    )
+    schema_ref_payload["total_matched"] = len(normalized_items)
+    schema_ref_payload["truncated"] = False
+    schema_ref_payload["stats"] = metadata["stats"]
+    schema_ref_payload["determinism"] = metadata["determinism"]
+    schema_ref_payload["scope"] = request.scope
+    if state.sampled_artifacts:
+        schema_ref_payload["sampled_only"] = True
+    if state.warnings:
+        schema_ref_payload["warnings"] = state.warnings
+    response_mode = select_response_mode(
+        has_pagination=False,
+        full_payload=full_payload,
+        schema_ref_payload=schema_ref_payload,
+        max_bytes=(
+            runtime.max_bytes_out
+            if isinstance(runtime.max_bytes_out, int)
+            and runtime.max_bytes_out > 0
+            else 5_000_000
+        ),
+    )
+    if response_mode == "schema_ref":
+        return schema_ref_payload
+    return full_payload
 
 
 def _parse_code_args(
@@ -1410,15 +1480,6 @@ def execute_artifact_code(
         return output_err
     runtime.increment_metric("codegen_success")
 
-    response = _build_code_response(
-        build_select_result=build_select_result,
-        normalized_items=normalized_items,
-        total_matched=total_matched,
-        used_bytes=cast(int, used_bytes),
-        request=request,
-        state=state,
-        determinism=_build_code_determinism(request=request, state=state),
-    )
     derived_artifact_id, persist_err = runtime.persist_code_derived(
         parent_artifact_ids=request.requested_artifact_ids,
         requested_root_paths=request.requested_root_paths,
@@ -1429,7 +1490,25 @@ def execute_artifact_code(
     )
     if persist_err is not None:
         return persist_err
-    response["derived_artifact_id"] = derived_artifact_id
+    if not isinstance(derived_artifact_id, str) or not derived_artifact_id:
+        return gateway_error(
+            "DERIVED_PERSISTENCE_FAILED",
+            "derived artifact persistence returned invalid artifact_id",
+            details={
+                "stage": "persist_code_derived",
+                "artifact_id": derived_artifact_id,
+            },
+        )
+
+    response = _build_code_response(
+        runtime,
+        request=request,
+        state=state,
+        runtime_result=runtime_result,
+        normalized_items=normalized_items,
+        derived_artifact_id=derived_artifact_id,
+        used_bytes=cast(int, used_bytes),
+    )
 
     _logger.info(
         LogEvents.CODEGEN_COMPLETED,

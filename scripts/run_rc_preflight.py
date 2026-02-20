@@ -105,24 +105,14 @@ def _build_steps(args: argparse.Namespace) -> list[Step]:
         steps.extend(
             [
                 Step(
-                    name="smoke_cli_version",
-                    command=["uv", "run", "sift-gateway", "--version"],
-                ),
-                Step(
-                    name="smoke_cli_list",
+                    name="smoke_cli_behavior",
                     command=[
                         "uv",
                         "run",
-                        "sift-gateway",
-                        "list",
-                        "--limit",
-                        "1",
-                        "--json",
+                        "python",
+                        "scripts/smoke_cli_behavior.py",
+                        "--fail-fast",
                     ],
-                ),
-                Step(
-                    name="smoke_mcp_check",
-                    command=["uv", "run", "sift-gateway", "--check"],
                 ),
             ]
         )

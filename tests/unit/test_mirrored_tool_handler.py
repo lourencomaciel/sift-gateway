@@ -3,10 +3,12 @@ from __future__ import annotations
 from unittest.mock import MagicMock
 
 from sift_gateway.config.settings import PaginationConfig
+from sift_gateway.envelope.normalize import normalize_envelope
 from sift_gateway.mcp.handlers.mirrored_tool import (
     _detect_duplicate_page_warning,
     _fetch_inline_describe,
     _minimal_describe,
+    _sanitize_envelope_payload,
 )
 
 # ---------------------------------------------------------------------------
@@ -14,36 +16,25 @@ from sift_gateway.mcp.handlers.mirrored_tool import (
 # ---------------------------------------------------------------------------
 
 
-def test_minimal_describe_returns_tuple() -> None:
-    desc, hint = _minimal_describe("art_test")
+def test_minimal_describe_returns_dict() -> None:
+    desc = _minimal_describe("art_test")
     assert isinstance(desc, dict)
-    assert isinstance(hint, str)
 
 
 def test_minimal_describe_has_artifact_id() -> None:
-    desc, _ = _minimal_describe("art_abc")
+    desc = _minimal_describe("art_abc")
     assert desc["artifact_id"] == "art_abc"
 
 
 def test_minimal_describe_has_pending_status() -> None:
-    desc, _ = _minimal_describe("art_xyz")
+    desc = _minimal_describe("art_xyz")
     assert desc["mapping"]["map_status"] == "pending"
     assert desc["mapping"]["map_kind"] == "none"
 
 
 def test_minimal_describe_has_empty_roots() -> None:
-    desc, _ = _minimal_describe("art_xyz")
+    desc = _minimal_describe("art_xyz")
     assert desc["roots"] == []
-
-
-def test_minimal_describe_hint_mentions_mapping() -> None:
-    _, hint = _minimal_describe("art_1")
-    assert "Mapping in progress" in hint
-
-
-def test_minimal_describe_hint_mentions_artifact_id() -> None:
-    _, hint = _minimal_describe("art_custom_id")
-    assert "art_custom_id" in hint
 
 
 # ---------------------------------------------------------------------------
@@ -115,20 +106,18 @@ def test_fetch_inline_describe_happy_path() -> None:
         schema_root_rows=schema_root_rows,
         schema_field_rows_by_root_key=schema_fields,
     )
-    desc, hint = _fetch_inline_describe(conn, "art_1")
+    desc = _fetch_inline_describe(conn, "art_1")
     assert desc["artifact_id"] == "art_1"
     assert desc["mapping"]["map_kind"] == "full"
     assert desc["mapping"]["map_status"] == "complete"
     assert desc["roots"] == []
     assert len(desc["schemas"]) == 1
     assert desc["schemas"][0]["root_path"] == "$.data"
-    assert "10 records" in hint
-    assert 'artifact(action="query"' in hint
 
 
 def test_fetch_inline_describe_no_artifact_row() -> None:
     conn = _mock_connection(artifact_row=None)
-    desc, _hint = _fetch_inline_describe(conn, "art_missing")
+    desc = _fetch_inline_describe(conn, "art_missing")
     assert desc["artifact_id"] == "art_missing"
     assert desc["mapping"]["map_kind"] == "none"
     assert desc["roots"] == []
@@ -137,11 +126,10 @@ def test_fetch_inline_describe_no_artifact_row() -> None:
 def test_fetch_inline_describe_db_error_falls_back() -> None:
     conn = MagicMock()
     conn.execute.side_effect = RuntimeError("DB gone")
-    desc, hint = _fetch_inline_describe(conn, "art_err")
+    desc = _fetch_inline_describe(conn, "art_err")
     assert desc["artifact_id"] == "art_err"
     assert desc["mapping"]["map_status"] == "pending"
     assert desc["roots"] == []
-    assert "Mapping in progress" in hint
 
 
 def test_fetch_inline_describe_cache_hit_with_schema_paths() -> None:
@@ -192,13 +180,11 @@ def test_fetch_inline_describe_cache_hit_with_schema_paths() -> None:
         schema_root_rows=schema_root_rows,
         schema_field_rows_by_root_key=schema_fields,
     )
-    desc, hint = _fetch_inline_describe(conn, "art_cached")
+    desc = _fetch_inline_describe(conn, "art_cached")
     assert desc["roots"] == []
     assert len(desc["schemas"]) == 2
     assert desc["schemas"][0]["root_path"] == "$.result.data"
     assert desc["schemas"][1]["root_path"] == "$.result.paging"
-    assert "100 records" in hint
-    assert "Also available" in hint
 
 
 def test_fetch_inline_describe_keeps_all_schemas_when_primary_not_unique() -> (
@@ -251,11 +237,10 @@ def test_fetch_inline_describe_keeps_all_schemas_when_primary_not_unique() -> (
         schema_root_rows=schema_root_rows,
         schema_field_rows_by_root_key=schema_fields,
     )
-    desc, hint = _fetch_inline_describe(conn, "art_tie")
+    desc = _fetch_inline_describe(conn, "art_tie")
     assert len(desc["schemas"]) == 2
     root_paths = {schema["root_path"] for schema in desc["schemas"]}
     assert root_paths == {"$.result.a", "$.result.b"}
-    assert "Also available" in hint
 
 
 def test_fetch_inline_describe_includes_schemas() -> None:
@@ -295,7 +280,7 @@ def test_fetch_inline_describe_includes_schemas() -> None:
         schema_root_rows=schema_root_rows,
         schema_field_rows_by_root_key=schema_fields,
     )
-    desc, _ = _fetch_inline_describe(conn, "art_schema")
+    desc = _fetch_inline_describe(conn, "art_schema")
     assert len(desc["schemas"]) == 1
     assert desc["schemas"][0]["root_path"] == "$.result.data"
     assert desc["roots"] == []
@@ -399,7 +384,7 @@ def test_fetch_inline_describe_dedupes_exact_duplicate_schema_roots() -> None:
         schema_root_rows=schema_root_rows,
         schema_field_rows_by_root_key=schema_fields,
     )
-    desc, _ = _fetch_inline_describe(conn, "art_dup")
+    desc = _fetch_inline_describe(conn, "art_dup")
     assert len(desc["schemas"]) == 1
     assert desc["schemas"][0]["root_path"] == "$.result.data"
 
@@ -465,7 +450,58 @@ def test_fetch_inline_describe_drops_parent_root_when_children_exist() -> None:
         schema_root_rows=schema_root_rows,
         schema_field_rows_by_root_key=schema_fields,
     )
-    desc, _ = _fetch_inline_describe(conn, "art_parent")
+    desc = _fetch_inline_describe(conn, "art_parent")
     root_paths = [schema["root_path"] for schema in desc["schemas"]]
     assert "$.result" not in root_paths
     assert set(root_paths) == {"$.result.data", "$.result.paging"}
+
+
+def test_sanitize_envelope_payload_preserves_gateway_pagination_state() -> None:
+    pagination_state = {
+        "upstream_prefix": "demo",
+        "tool_name": "echo",
+        "original_args": {"message": "hello"},
+        "next_params": {"after": "CURSOR_2"},
+        "page_number": 1,
+    }
+    envelope = normalize_envelope(
+        upstream_instance_id="inst_demo",
+        upstream_prefix="demo",
+        tool="echo",
+        status="ok",
+        content=[{"type": "json", "value": {"ok": True}}],
+        meta={
+            "trace_token": "ghp_1234567890abcdef",
+            "_gateway_pagination": pagination_state,
+        },
+    )
+
+    def _fake_sanitize(result: dict[str, object]) -> dict[str, object]:
+        payload = result["payload"]
+        assert isinstance(payload, dict)
+        meta = payload.get("meta")
+        assert isinstance(meta, dict)
+        redacted_payload = dict(payload)
+        redacted_payload["meta"] = {
+            **meta,
+            "trace_token": "[REDACTED_SECRET]",
+            "_gateway_pagination": {
+                **pagination_state,
+                "next_params": {"after": "[REDACTED_SECRET]"},
+            },
+        }
+        return {"payload": redacted_payload}
+
+    ctx = MagicMock()
+    ctx._sanitize_tool_result.side_effect = _fake_sanitize
+
+    sanitized = _sanitize_envelope_payload(
+        ctx=ctx,
+        envelope=envelope,
+    )
+    assert sanitized.meta["trace_token"] == "[REDACTED_SECRET]"
+    gateway_pagination = sanitized.meta.get("_gateway_pagination")
+    assert isinstance(gateway_pagination, dict)
+    next_params = gateway_pagination.get("next_params")
+    assert isinstance(next_params, dict)
+    assert next_params.get("after") == "CURSOR_2"
