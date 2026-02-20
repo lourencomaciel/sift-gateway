@@ -431,12 +431,18 @@ def test_gateway_tool_result_includes_pagination() -> None:
         "hint": "Call artifact_next_page...",
     }
     result = gateway_tool_result(
+        response_mode="schema_ref",
         artifact_id="art_1",
+        schemas_compact=[],
         pagination=pagination,
     )
     assert result["pagination"] == pagination
 
 
 def test_gateway_tool_result_no_pagination_key_when_none() -> None:
-    result = gateway_tool_result(artifact_id="art_1")
+    result = gateway_tool_result(
+        response_mode="full",
+        artifact_id="art_1",
+        payload={"ok": True},
+    )
     assert "pagination" not in result

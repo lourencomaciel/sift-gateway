@@ -13,6 +13,7 @@ from sift_gateway.core.lineage_roots import (
     resolve_single_root_candidate,
 )
 from sift_gateway.core.query_scope import resolve_cursor_offset, resolve_scope
+from sift_gateway.core.retrieval_helpers import touch_retrieval_artifacts
 from sift_gateway.core.runtime import ArtifactSelectRuntime
 from sift_gateway.cursor.payload import CursorStaleError
 from sift_gateway.cursor.sample_set_hash import (
@@ -803,30 +804,6 @@ def _count_select_total(
     )
 
 
-def _touch_retrieval_artifacts(
-    runtime: ArtifactSelectRuntime,
-    connection: Any,
-    *,
-    session_id: str,
-    artifact_ids: list[str],
-) -> None:
-    """Touch retrieval timestamp for artifact ids and commit when needed."""
-    touched = False
-    for artifact_id in artifact_ids:
-        touched = (
-            runtime.safe_touch_for_retrieval(
-                connection,
-                session_id=session_id,
-                artifact_id=artifact_id,
-            )
-            or touched
-        )
-    if touched:
-        commit = getattr(connection, "commit", None)
-        if callable(commit):
-            commit()
-
-
 def _run_select_query_phase(
     *,
     runtime: ArtifactSelectRuntime,
@@ -878,7 +855,7 @@ def _run_select_query_phase(
                 candidates=candidates,
                 bindings=bindings,
             )
-            _touch_retrieval_artifacts(
+            touch_retrieval_artifacts(
                 runtime,
                 connection,
                 session_id=query_state.session_id,
@@ -897,7 +874,7 @@ def _run_select_query_phase(
         )
         if collect_err is not None:
             return None, collect_err
-        _touch_retrieval_artifacts(
+        touch_retrieval_artifacts(
             runtime,
             connection,
             session_id=query_state.session_id,

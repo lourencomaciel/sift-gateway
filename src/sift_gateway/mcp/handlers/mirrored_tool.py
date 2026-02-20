@@ -7,30 +7,25 @@ and trigger mapping.  Exports ``handle_mirrored_tool``.
 
 from __future__ import annotations
 
-import asyncio
 import dataclasses
-import importlib.util
 import json
 import sqlite3
-import time
 from typing import TYPE_CHECKING, Any
 
 from sift_gateway.artifacts.create import (
     CreateArtifactInput,
     persist_artifact,
 )
-from sift_gateway.codegen.ast_guard import (
-    ALLOWED_STDLIB_IMPORTS,
-    allowed_import_roots,
-)
 from sift_gateway.constants import WORKSPACE_ID
 from sift_gateway.envelope.model import (
     Envelope,
     JsonContentPart,
 )
+from sift_gateway.envelope.normalize import normalize_envelope
 from sift_gateway.envelope.responses import (
     gateway_error,
     gateway_tool_result,
+    select_response_mode,
 )
 from sift_gateway.mcp.handlers.common import (
     row_to_dict,
@@ -46,18 +41,9 @@ from sift_gateway.mcp.mirror import (
 from sift_gateway.mcp.upstream_errors import (
     classify_upstream_exception,
 )
-from sift_gateway.obs.logging import LogEvents, get_logger
-from sift_gateway.pagination.auto import (
-    AutoPaginationResult,
-    _count_json_records,
-    _count_json_value_records,
-    _extract_json_content,
-    merge_envelopes,
-    resolve_auto_paginate_limits,
-)
+from sift_gateway.obs.logging import get_logger
 from sift_gateway.pagination.contract import (
     PAGINATION_WARNING_INCOMPLETE_RESULT_SET,
-    RETRIEVAL_STATUS_COMPLETE,
     RETRIEVAL_STATUS_PARTIAL,
     UPSTREAM_PARTIAL_REASON_SIGNAL_INCONCLUSIVE,
     build_upstream_pagination_meta,
@@ -77,10 +63,7 @@ from sift_gateway.tools.artifact_describe import (
     build_describe_response,
 )
 from sift_gateway.tools.artifact_schema import FETCH_SCHEMA_FIELDS_SQL
-from sift_gateway.tools.usage_hint import (
-    build_usage_hint,
-    with_pagination_completeness_rule,
-)
+from sift_gateway.tools.usage_hint import with_pagination_completeness_rule
 
 if TYPE_CHECKING:
     from sift_gateway.mcp.server import GatewayServer
@@ -108,7 +91,6 @@ class _PersistDescribeResult:
 
     handle: Any
     describe: dict[str, Any]
-    usage_hint: str
     pagination_warnings: list[dict[str, Any]]
 
 
@@ -146,56 +128,6 @@ def _json_size_bytes(payload: Any) -> int:
         msg = "arguments must be valid UTF-8 JSON"
         raise ValueError(msg) from exc
     return len(encoded)
-
-
-def _serialized_response_size_bytes(
-    payload: dict[str, Any],
-) -> int | None:
-    """Return serialized size for passthrough decisions."""
-    try:
-        return _json_size_bytes(payload)
-    except ValueError:
-        return None
-
-
-def _should_passthrough_response(
-    *,
-    ctx: GatewayServer,
-    mirrored: MirroredTool,
-    upstream_result: dict[str, Any],
-    pagination_assessment: PaginationAssessment | None,
-    auto_paginated: bool,
-    pagination_warnings: list[dict[str, Any]] | None,
-) -> bool:
-    """Decide whether to return raw upstream response directly."""
-    if not mirrored.upstream.config.passthrough_allowed:
-        return False
-
-    if ctx.config.passthrough_max_bytes <= 0:
-        return False
-
-    if auto_paginated:
-        # Persist merged artifact, but keep handle response when
-        # additional pages were merged by the gateway.
-        return False
-
-    if pagination_warnings:
-        # Keep handle response when pagination diagnostics were generated
-        # so warnings remain visible to callers.
-        return False
-
-    if (
-        pagination_assessment is not None
-        and pagination_assessment.retrieval_status != RETRIEVAL_STATUS_COMPLETE
-    ):
-        # Keep handle contract for any non-complete pagination state
-        # so partial/warning metadata is preserved.
-        return False
-
-    response_size = _serialized_response_size_bytes(upstream_result)
-    if response_size is None:
-        return False
-    return response_size <= ctx.config.passthrough_max_bytes
 
 
 def _truncate_error_text(text: str, max_bytes: int) -> str:
@@ -464,53 +396,22 @@ def _select_leaf_schema_roots(
     return leaves
 
 
-def _available_code_query_packages(
-    ctx: GatewayServer,
-) -> list[str] | None:
-    """Return available third-party package roots for code-query hints."""
-    if not ctx.config.code_query_enabled:
-        return None
-
-    allowed_roots = sorted(
-        allowed_import_roots(
-            configured_roots=ctx.config.code_query_allowed_import_roots,
-        )
-    )
-    package_roots = [
-        root for root in allowed_roots if root not in ALLOWED_STDLIB_IMPORTS
-    ]
-    available_packages: list[str] = []
-    for package_root in package_roots:
-        try:
-            spec = importlib.util.find_spec(package_root)
-        except (ModuleNotFoundError, ImportError, ValueError):
-            spec = None
-        if spec is not None:
-            available_packages.append(package_root)
-    return available_packages
-
-
 def _fetch_inline_describe(
     connection: Any,
     artifact_id: str,
-    *,
-    code_query_packages: list[str] | None = None,
-) -> tuple[dict[str, Any], str]:
-    """Fetch schema-first describe data and build a usage hint.
+) -> dict[str, Any]:
+    """Fetch schema-first describe data.
 
     Queries artifact and schema tables on the already-open
-    *connection* and returns the full describe dict plus a
-    heuristic usage hint string.  Falls back to a minimal
-    describe on any error so callers always get a result.
+    *connection* and returns the full describe dict. Falls back
+    to a minimal describe on any error so callers always get a result.
 
     Args:
         connection: Active database connection.
         artifact_id: The artifact to describe.
-        code_query_packages: Available third-party code-query
-            packages to advertise in usage hints.
 
     Returns:
-        A ``(describe_dict, usage_hint)`` tuple.
+        Describe payload dict.
     """
     try:
         artifact_row = row_to_dict(
@@ -570,42 +471,27 @@ def _fetch_inline_describe(
             },
             [],
         )
-    return describe, build_usage_hint(
-        artifact_id,
-        describe,
-        code_query_enabled=code_query_packages is not None,
-        code_query_packages=code_query_packages,
-    )
+    return describe
 
 
 def _minimal_describe(
     artifact_id: str,
-    *,
-    code_query_packages: list[str] | None = None,
-) -> tuple[dict[str, Any], str]:
+) -> dict[str, Any]:
     """Build a minimal describe for DB-less or error paths.
 
     Args:
         artifact_id: The artifact identifier.
-        code_query_packages: Available third-party code-query
-            packages to advertise in usage hints.
 
     Returns:
-        A ``(describe_dict, usage_hint)`` tuple with empty roots.
+        Describe payload dict with empty roots.
     """
-    describe = build_describe_response(
+    return build_describe_response(
         {
             "artifact_id": artifact_id,
             "map_kind": "none",
             "map_status": "pending",
         },
         [],
-    )
-    return describe, build_usage_hint(
-        artifact_id,
-        describe,
-        code_query_enabled=code_query_packages is not None,
-        code_query_packages=code_query_packages,
     )
 
 
@@ -622,21 +508,31 @@ def _describe_has_ready_schema(describe: dict[str, Any]) -> bool:
 
 def _schema_payload_from_describe(
     describe: dict[str, Any],
-) -> tuple[dict[str, Any], list[dict[str, Any]], dict[str, Any] | None]:
+) -> tuple[
+    dict[str, Any],
+    list[dict[str, Any]],
+    list[dict[str, Any]],
+    dict[str, Any] | None,
+]:
     """Extract canonical schema-first payload fields from describe data."""
     mapping = describe.get("mapping")
     schemas = describe.get("schemas")
     mapping_payload: dict[str, Any] = (
         dict(mapping) if isinstance(mapping, dict) else {}
     )
-    schema_payload_raw: list[dict[str, Any]] = (
+    schema_payload_full: list[dict[str, Any]] = (
         [item for item in schemas if isinstance(item, dict)]
         if isinstance(schemas, list)
         else []
     )
-    schema_payload = compact_schema_payload(schema_payload_raw)
-    schema_legend = SCHEMA_LEGEND if schema_payload else None
-    return mapping_payload, schema_payload, schema_legend
+    schema_payload_compact = compact_schema_payload(schema_payload_full)
+    schema_legend = SCHEMA_LEGEND if schema_payload_compact else None
+    return (
+        mapping_payload,
+        schema_payload_full,
+        schema_payload_compact,
+        schema_legend,
+    )
 
 
 def _inject_pagination_state(
@@ -769,353 +665,6 @@ def _pagination_response_meta(
     if isinstance(hint, str):
         base["hint"] = with_pagination_completeness_rule(hint)
     return base
-
-
-def _auto_paginate_result(
-    *,
-    first_envelope: Envelope,
-    additional_json_values: list[Any],
-    assessment: PaginationAssessment,
-    pages_fetched: int,
-    total_records: int,
-    stopped_reason: str,
-    binary_refs: list[Any],
-) -> AutoPaginationResult:
-    """Build a stable auto-pagination result payload."""
-    return AutoPaginationResult(
-        envelope=merge_envelopes(
-            first_envelope,
-            additional_json_values,
-            assessment,
-        ),
-        assessment=assessment,
-        pages_fetched=pages_fetched,
-        total_records=total_records,
-        stopped_reason=stopped_reason,
-        binary_refs=binary_refs,
-    )
-
-
-def _resolve_auto_paginate_args(
-    *,
-    ctx: GatewayServer,
-    next_args: dict[str, Any],
-    log: Any,
-) -> tuple[dict[str, Any] | None, str | None]:
-    """Resolve artifact refs for follow-up page requests."""
-    if ctx.db_pool is None:
-        return next_args, None
-
-    from sift_gateway.mcp.resolve_refs import (
-        ResolveError,
-        resolve_artifact_refs,
-    )
-
-    try:
-        with ctx.db_pool.connection() as resolve_conn:
-            resolved = resolve_artifact_refs(
-                resolve_conn,
-                next_args,
-                blobs_payload_dir=ctx.config.blobs_payload_dir,
-            )
-            if isinstance(resolved, ResolveError):
-                log.warning(
-                    LogEvents.AUTO_PAGINATION_REF_RESOLUTION_ERROR,
-                    error=resolved.message,
-                )
-                return None, "error"
-            return resolved, None
-    except Exception:
-        log.warning(
-            LogEvents.AUTO_PAGINATION_REF_RESOLUTION_ERROR,
-            exc_info=True,
-        )
-        return None, "error"
-
-
-def _remaining_auto_paginate_timeout(
-    *,
-    started: float,
-    timeout: float,
-) -> float:
-    """Return a non-negative timeout budget for the next upstream call."""
-    remaining = timeout - (time.monotonic() - started)
-    if remaining <= 0:
-        return 0.1
-    return remaining
-
-
-async def _fetch_auto_paginate_upstream_result(
-    *,
-    ctx: GatewayServer,
-    mirrored: MirroredTool,
-    forwarded_args: dict[str, Any],
-    remaining_timeout: float,
-    pages_fetched: int,
-    log: Any,
-) -> tuple[dict[str, Any] | None, str | None]:
-    """Fetch one upstream page with timeout/error normalization."""
-    try:
-        upstream_result = await asyncio.wait_for(
-            ctx._call_upstream_with_metrics(
-                mirrored=mirrored,
-                forwarded_args=forwarded_args,
-            ),
-            timeout=remaining_timeout,
-        )
-    except TimeoutError:
-        log.info(
-            LogEvents.AUTO_PAGINATION_UPSTREAM_TIMEOUT,
-            pages_fetched=pages_fetched,
-            remaining=remaining_timeout,
-        )
-        return None, "timeout"
-    except Exception:
-        log.warning(
-            LogEvents.AUTO_PAGINATION_UPSTREAM_FAILURE,
-            exc_info=True,
-        )
-        return None, "error"
-
-    if bool(upstream_result.get("isError", False)):
-        log.info(
-            LogEvents.AUTO_PAGINATION_UPSTREAM_ERROR_RESULT,
-            pages_fetched=pages_fetched,
-        )
-        return None, "error"
-    return upstream_result, None
-
-
-def _normalize_auto_paginate_page(
-    *,
-    ctx: GatewayServer,
-    mirrored: MirroredTool,
-    upstream_result: dict[str, Any],
-    log: Any,
-) -> tuple[tuple[Envelope, list[Any]] | None, str | None]:
-    """Convert upstream result to envelope/page binary refs."""
-    try:
-        page_envelope, page_binary_refs = ctx._envelope_from_upstream_result(
-            mirrored=mirrored,
-            upstream_result=upstream_result,
-        )
-    except ValueError:
-        log.warning(
-            LogEvents.AUTO_PAGINATION_ENVELOPE_NORMALIZATION_FAILED,
-            exc_info=True,
-        )
-        return None, "error"
-    return (page_envelope, page_binary_refs), None
-
-
-def _auto_paginate_stop_reason(
-    *,
-    assessment: PaginationAssessment,
-    pages_fetched: int,
-    max_pages: int,
-    total_records: int,
-    max_records: int,
-) -> str:
-    """Determine the loop stop reason for a successful pass."""
-    if assessment.has_more and assessment.state is not None:
-        if pages_fetched >= max_pages:
-            return "max_pages"
-        if total_records >= max_records:
-            return "max_records"
-    return "complete"
-
-
-async def _auto_paginate_loop(
-    ctx: GatewayServer,
-    mirrored: MirroredTool,
-    *,
-    first_envelope: Envelope,
-    first_assessment: PaginationAssessment,
-    forwarded_args: dict[str, Any],
-    max_pages: int,
-    max_records: int,
-    timeout: float,
-) -> AutoPaginationResult:
-    """Fetch additional upstream pages and merge into one envelope.
-
-    Loops while pagination indicates more pages, respecting
-    configured limits for page count, record count, and timeout.
-    On upstream error or timeout, returns what was successfully
-    fetched so far.
-
-    Args:
-        ctx: Gateway server instance.
-        mirrored: Mirrored tool descriptor.
-        first_envelope: Envelope from the initial upstream call.
-        first_assessment: Pagination assessment for the first page.
-        forwarded_args: Original forwarded arguments.
-        max_pages: Maximum total pages to fetch.
-        max_records: Maximum total records across all pages.
-        timeout: Timeout in seconds for the entire loop.
-
-    Returns:
-        ``AutoPaginationResult`` with merged data.
-    """
-    log = get_logger(component="mcp.handlers.auto_paginate")
-    started = time.monotonic()
-    pages_fetched = 1
-    total_records = _count_json_records(first_envelope)
-    additional_json_values: list[Any] = []
-    accumulated_binary_refs: list[Any] = []
-    current_assessment = first_assessment
-
-    while (
-        pages_fetched < max_pages
-        and total_records < max_records
-        and current_assessment.has_more
-        and current_assessment.state is not None
-    ):
-        elapsed = time.monotonic() - started
-        if elapsed >= timeout:
-            log.info(
-                LogEvents.AUTO_PAGINATION_TIMEOUT,
-                pages_fetched=pages_fetched,
-                total_records=total_records,
-                elapsed=elapsed,
-            )
-            return _auto_paginate_result(
-                first_envelope=first_envelope,
-                additional_json_values=additional_json_values,
-                assessment=current_assessment,
-                pages_fetched=pages_fetched,
-                total_records=total_records,
-                stopped_reason="timeout",
-                binary_refs=accumulated_binary_refs,
-            )
-
-        state = current_assessment.state
-        next_args = {
-            **state.original_args,
-            **state.next_params,
-        }
-
-        # Resolve artifact refs before sending upstream, matching
-        # the main handler path (Phase 1.75).
-        upstream_next_args, resolution_error = _resolve_auto_paginate_args(
-            ctx=ctx,
-            next_args=next_args,
-            log=log,
-        )
-        if resolution_error is not None:
-            return _auto_paginate_result(
-                first_envelope=first_envelope,
-                additional_json_values=additional_json_values,
-                assessment=current_assessment,
-                pages_fetched=pages_fetched,
-                total_records=total_records,
-                stopped_reason=resolution_error,
-                binary_refs=accumulated_binary_refs,
-            )
-        assert upstream_next_args is not None
-
-        remaining = _remaining_auto_paginate_timeout(
-            started=started,
-            timeout=timeout,
-        )
-        (
-            upstream_result,
-            fetch_error,
-        ) = await _fetch_auto_paginate_upstream_result(
-            ctx=ctx,
-            mirrored=mirrored,
-            forwarded_args=upstream_next_args,
-            remaining_timeout=remaining,
-            pages_fetched=pages_fetched,
-            log=log,
-        )
-        if fetch_error is not None:
-            return _auto_paginate_result(
-                first_envelope=first_envelope,
-                additional_json_values=additional_json_values,
-                assessment=current_assessment,
-                pages_fetched=pages_fetched,
-                total_records=total_records,
-                stopped_reason=fetch_error,
-                binary_refs=accumulated_binary_refs,
-            )
-        assert upstream_result is not None
-
-        page_result, normalize_error = _normalize_auto_paginate_page(
-            ctx=ctx,
-            mirrored=mirrored,
-            upstream_result=upstream_result,
-            log=log,
-        )
-        if normalize_error is not None:
-            return _auto_paginate_result(
-                first_envelope=first_envelope,
-                additional_json_values=additional_json_values,
-                assessment=current_assessment,
-                pages_fetched=pages_fetched,
-                total_records=total_records,
-                stopped_reason=normalize_error,
-                binary_refs=accumulated_binary_refs,
-            )
-        assert page_result is not None
-        page_envelope, page_binary_refs = page_result
-        accumulated_binary_refs.extend(page_binary_refs)
-
-        page_number = state.page_number + 1
-        page_envelope, page_assessment = _inject_pagination_state(
-            page_envelope,
-            mirrored.upstream.config,
-            next_args,
-            mirrored.prefix,
-            page_number=page_number,
-        )
-        if page_assessment is not None:
-            current_assessment = page_assessment
-
-        page_json = _extract_json_content(page_envelope)
-        if page_json is None:
-            log.info(
-                LogEvents.AUTO_PAGINATION_BINARY_CONTENT_STOP,
-                pages_fetched=pages_fetched,
-            )
-            return _auto_paginate_result(
-                first_envelope=first_envelope,
-                additional_json_values=additional_json_values,
-                assessment=current_assessment,
-                pages_fetched=pages_fetched,
-                total_records=total_records,
-                stopped_reason="binary_content",
-                binary_refs=accumulated_binary_refs,
-            )
-
-        # Count full page records; max_records is a stop condition
-        # for additional fetches, not a per-page trim budget.
-        page_records = _count_json_value_records(page_json)
-
-        additional_json_values.append(page_json)
-        pages_fetched += 1
-        total_records += page_records
-
-        if total_records >= max_records:
-            break
-
-        if page_assessment is None:
-            break
-
-    return _auto_paginate_result(
-        first_envelope=first_envelope,
-        additional_json_values=additional_json_values,
-        assessment=current_assessment,
-        pages_fetched=pages_fetched,
-        total_records=total_records,
-        stopped_reason=_auto_paginate_stop_reason(
-            assessment=current_assessment,
-            pages_fetched=pages_fetched,
-            max_pages=max_pages,
-            total_records=total_records,
-            max_records=max_records,
-        ),
-        binary_refs=accumulated_binary_refs,
-    )
 
 
 def _preflight_mirrored_gateway(ctx: GatewayServer) -> dict[str, Any] | None:
@@ -1363,91 +912,71 @@ def _envelope_from_upstream_result(
     return (envelope, binary_refs), None
 
 
-def _apply_oversize_guard_after_auto_pagination(
+def _sanitize_envelope_payload(
     *,
     ctx: GatewayServer,
     envelope: Envelope,
-    binary_refs: list[Any],
-) -> tuple[Envelope, list[Any]]:
-    """Reapply oversized JSON replacement after merged page accumulation."""
-    if ctx.blob_store is None:
-        return envelope, binary_refs
+) -> Envelope:
+    """Redact envelope payload values while preserving envelope shape.
 
-    from sift_gateway.envelope.oversize import replace_oversized_json_parts
+    Raises:
+        ValueError: If redaction fails or produces an invalid payload shape.
+    """
+    raw_payload = envelope.to_dict()
+    preserved_pagination_state: dict[str, Any] | None = None
+    raw_meta = raw_payload.get("meta")
+    if isinstance(raw_meta, dict):
+        raw_pagination_state = raw_meta.get("_gateway_pagination")
+        if isinstance(raw_pagination_state, dict):
+            preserved_pagination_state = dict(raw_pagination_state)
 
-    merged_refs: list[Any] = []
-    envelope = replace_oversized_json_parts(
-        envelope,
-        max_json_part_parse_bytes=ctx.config.max_json_part_parse_bytes,
-        blob_store=ctx.blob_store,
-        binary_refs_out=merged_refs,
-    )
-    return envelope, [*binary_refs, *merged_refs]
-
-
-async def _maybe_auto_paginate(
-    *,
-    ctx: GatewayServer,
-    mirrored: MirroredTool,
-    envelope: Envelope,
-    pagination_assessment: PaginationAssessment | None,
-    forwarded_args: dict[str, Any],
-    binary_refs: list[Any],
-) -> tuple[Envelope, PaginationAssessment | None, list[Any], bool]:
-    """Run auto-pagination when enabled and applicable."""
+    sanitized_wrapper = ctx._sanitize_tool_result({"payload": raw_payload})
     if (
-        pagination_assessment is None
-        or not pagination_assessment.has_more
-        or pagination_assessment.state is None
+        not isinstance(sanitized_wrapper, dict)
+        or sanitized_wrapper.get("type") == "gateway_error"
     ):
-        return envelope, pagination_assessment, binary_refs, False
+        raise ValueError("response redaction failed")
+    payload = sanitized_wrapper.get("payload")
+    if not isinstance(payload, dict):
+        raise ValueError("response redaction failed")
+    raw_content = payload.get("content")
+    if not isinstance(raw_content, list):
+        raise ValueError("response redaction failed")
 
-    ap_limits = resolve_auto_paginate_limits(
-        ctx.config,
-        mirrored.upstream.config,
-    )
-    if ap_limits.max_pages <= 1:
-        return envelope, pagination_assessment, binary_refs, False
-
-    ap_result = await _auto_paginate_loop(
-        ctx,
-        mirrored,
-        first_envelope=envelope,
-        first_assessment=pagination_assessment,
-        forwarded_args=forwarded_args,
-        max_pages=ap_limits.max_pages,
-        max_records=ap_limits.max_records,
-        timeout=ap_limits.timeout,
-    )
-    merged_binary_refs = [*binary_refs, *ap_result.binary_refs]
-    merged_envelope, merged_binary_refs = (
-        _apply_oversize_guard_after_auto_pagination(
-            ctx=ctx,
-            envelope=ap_result.envelope,
-            binary_refs=merged_binary_refs,
+    raw_error = payload.get("error")
+    error = raw_error if isinstance(raw_error, dict) else None
+    raw_meta = payload.get("meta")
+    meta = raw_meta if isinstance(raw_meta, dict) else envelope.meta
+    if preserved_pagination_state is not None:
+        meta = dict(envelope.meta) if not isinstance(meta, dict) else dict(meta)
+        # Keep continuation state exact for artifact(action="next_page").
+        meta["_gateway_pagination"] = preserved_pagination_state
+    try:
+        return normalize_envelope(
+            upstream_instance_id=str(
+                payload.get("upstream_instance_id", envelope.upstream_instance_id)
+            ),
+            upstream_prefix=str(
+                payload.get("upstream_prefix", envelope.upstream_prefix)
+            ),
+            tool=str(payload.get("tool", envelope.tool)),
+            status=str(payload.get("status", envelope.status)),
+            content=[part for part in raw_content if isinstance(part, dict)],
+            error=error,
+            meta=meta,
         )
-    )
-    return (
-        merged_envelope,
-        ap_result.assessment,
-        merged_binary_refs,
-        ap_result.pages_fetched > 1,
-    )
+    except Exception as exc:
+        raise ValueError("response redaction failed") from exc
 
 
 def _run_inline_describe_with_fallback(
     *,
     connection: Any,
     artifact_id: str,
-    code_query_packages: list[str] | None,
-) -> tuple[dict[str, Any], str]:
+) -> dict[str, Any]:
     """Run inline describe; degrade to minimal describe on error."""
     try:
-        return _fetch_inline_describe(
-            connection,
-            artifact_id,
-            code_query_packages=code_query_packages,
-        )
+        return _fetch_inline_describe(connection, artifact_id)
     except Exception as exc:
         _logger.warning(
             "inline describe failed; returning minimal describe",
@@ -1457,7 +986,6 @@ def _run_inline_describe_with_fallback(
         )
         return _minimal_describe(
             artifact_id,
-            code_query_packages=code_query_packages,
         )
 
 
@@ -1465,20 +993,17 @@ def _normalize_describe_payload(
     *,
     artifact_id: str,
     describe: dict[str, Any],
-    usage_hint: str,
-    code_query_packages: list[str] | None,
-) -> tuple[dict[str, Any], str]:
+) -> dict[str, Any]:
     """Normalize non-ready describe payloads to best-effort output."""
     if _describe_has_ready_schema(describe):
-        return describe, usage_hint
+        return describe
 
     map_status = describe.get("mapping", {}).get("map_status")
     schemas = describe.get("schemas")
     has_schemas = isinstance(schemas, list) and bool(schemas)
     if map_status == "ready" and not has_schemas:
-        describe, usage_hint = _minimal_describe(
+        describe = _minimal_describe(
             artifact_id,
-            code_query_packages=code_query_packages,
         )
         map_status = describe.get("mapping", {}).get("map_status")
         has_schemas = False
@@ -1489,7 +1014,7 @@ def _normalize_describe_payload(
         map_status=map_status,
         has_schemas=has_schemas,
     )
-    return describe, usage_hint
+    return describe
 
 
 def _safe_duplicate_page_warning(
@@ -1532,7 +1057,6 @@ def _persist_and_describe(
     identity: Any,
     envelope: Envelope,
     binary_refs: list[Any],
-    code_query_packages: list[str] | None,
     pagination_assessment: PaginationAssessment | None,
     forwarded_args: dict[str, Any],
 ) -> tuple[_PersistDescribeResult | None, dict[str, Any] | None]:
@@ -1567,16 +1091,13 @@ def _persist_and_describe(
                 )
 
             stage = "fetch_inline_describe"
-            describe, usage_hint = _run_inline_describe_with_fallback(
+            describe = _run_inline_describe_with_fallback(
                 connection=connection,
                 artifact_id=handle.artifact_id,
-                code_query_packages=code_query_packages,
             )
-            describe, usage_hint = _normalize_describe_payload(
+            describe = _normalize_describe_payload(
                 artifact_id=handle.artifact_id,
                 describe=describe,
-                usage_hint=usage_hint,
-                code_query_packages=code_query_packages,
             )
 
             pagination_warnings: list[dict[str, Any]] = []
@@ -1595,7 +1116,6 @@ def _persist_and_describe(
                 _PersistDescribeResult(
                     handle=handle,
                     describe=describe,
-                    usage_hint=usage_hint,
                     pagination_warnings=pagination_warnings,
                 ),
                 None,
@@ -1672,7 +1192,6 @@ async def handle_mirrored_tool(
         tool_name=mirrored.original_name,
         forwarded_args=forwarded_args,
     )
-    code_query_packages = _available_code_query_packages(ctx)
 
     upstream_args, upstream_args_error = _resolve_upstream_args(
         ctx=ctx,
@@ -1705,20 +1224,13 @@ async def handle_mirrored_tool(
         mirrored.prefix,
         page_number=page_number,
     )
-    (
-        envelope,
-        pagination_assessment,
-        binary_refs,
-        auto_paginated,
-    ) = await _maybe_auto_paginate(
-        ctx=ctx,
-        mirrored=mirrored,
-        envelope=envelope,
-        pagination_assessment=pagination_assessment,
-        forwarded_args=forwarded_args,
-        binary_refs=binary_refs,
-    )
-
+    try:
+        envelope = _sanitize_envelope_payload(
+            ctx=ctx,
+            envelope=envelope,
+        )
+    except ValueError:
+        return gateway_error("INTERNAL", "response redaction failed")
     persist_result, persist_error = _persist_and_describe(
         ctx=ctx,
         invocation=invocation,
@@ -1726,23 +1238,12 @@ async def handle_mirrored_tool(
         identity=identity,
         envelope=envelope,
         binary_refs=binary_refs,
-        code_query_packages=code_query_packages,
         pagination_assessment=pagination_assessment,
         forwarded_args=forwarded_args,
     )
     if persist_error is not None:
         return persist_error
     assert persist_result is not None
-
-    if _should_passthrough_response(
-        ctx=ctx,
-        mirrored=mirrored,
-        upstream_result=upstream_result,
-        pagination_assessment=pagination_assessment,
-        auto_paginated=auto_paginated,
-        pagination_warnings=persist_result.pagination_warnings,
-    ):
-        return upstream_result
 
     pagination_meta = None
     if pagination_assessment is not None:
@@ -1751,20 +1252,61 @@ async def handle_mirrored_tool(
             persist_result.handle.artifact_id,
             extra_warnings=persist_result.pagination_warnings,
         )
-    mapping_payload, schema_payload, schema_legend = (
+    (
+        mapping_payload,
+        _schema_payload,
+        schema_payload_compact,
+        schema_legend,
+    ) = (
         _schema_payload_from_describe(persist_result.describe)
     )
+    artifact_id = persist_result.handle.artifact_id
+    lineage: dict[str, Any] = {
+        "scope": "single",
+        "artifact_ids": [artifact_id],
+    }
+    if invocation.parent_artifact_id is not None:
+        lineage["parent_artifact_id"] = invocation.parent_artifact_id
+    if invocation.chain_seq is not None:
+        lineage["chain_seq"] = invocation.chain_seq
 
-    return gateway_tool_result(
-        artifact_id=persist_result.handle.artifact_id,
-        cache_meta={
-            "reason": "fresh",
-            "request_key": identity.request_key,
-            "artifact_id_origin": "fresh",
-        },
-        mapping=mapping_payload,
-        schemas=schema_payload,
-        schema_legend=schema_legend,
-        usage_hint=persist_result.usage_hint,
+    payload_for_full = envelope.to_dict()
+
+    metadata: dict[str, Any] = {}
+    if isinstance(mapping_payload, dict) and mapping_payload:
+        metadata["mapping"] = mapping_payload
+    metadata["cache"] = {
+        "reason": "fresh",
+        "request_key": identity.request_key,
+        "artifact_id_origin": "fresh",
+    }
+
+    full_payload = gateway_tool_result(
+        response_mode="full",
+        artifact_id=artifact_id,
+        payload=payload_for_full,
+        lineage=lineage,
         pagination=pagination_meta,
+        metadata=metadata,
     )
+    schema_ref_payload = gateway_tool_result(
+        response_mode="schema_ref",
+        artifact_id=artifact_id,
+        schemas_compact=schema_payload_compact,
+        schema_legend=schema_legend or SCHEMA_LEGEND,
+        lineage=lineage,
+        pagination=pagination_meta,
+        metadata=metadata,
+    )
+    has_pagination = (
+        pagination_meta is not None or invocation.parent_artifact_id is not None
+    )
+    response_mode = select_response_mode(
+        has_pagination=has_pagination,
+        full_payload=full_payload,
+        schema_ref_payload=schema_ref_payload,
+        max_bytes=ctx.config.passthrough_max_bytes,
+    )
+    if response_mode == "schema_ref":
+        return schema_ref_payload
+    return full_payload

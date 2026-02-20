@@ -146,19 +146,19 @@ Sift records Prometheus-style counters and histograms internally for gateway ope
 
 ## Performance Tuning
 
-### Mirrored Response Handling
+### Response Mode Handling
 
 Mirrored upstream responses are always persisted as artifacts. Return shape is
-controlled by passthrough size settings.
+controlled by full-vs-schema mode selection.
 
 ```bash
-export SIFT_GATEWAY_PASSTHROUGH_MAX_BYTES=8192  # Default: 8 KB
+export SIFT_GATEWAY_PASSTHROUGH_MAX_BYTES=8192  # Legacy name; inline-mode cap
 ```
 
-- Small responses at or under this threshold may return raw upstream payloads.
-- Larger responses return artifact handles.
-- Responses requiring explicit continuation (`pagination.has_more=true`) return
-  handles regardless of size.
+- If upstream pagination is present, Sift returns `response_mode="schema_ref"`.
+- If non-paginated full payload exceeds the cap, Sift returns `schema_ref`.
+- Under the cap, Sift returns `schema_ref` only when compact schema is at
+  least 50% smaller than full payload; otherwise it returns `full`.
 
 To limit disk growth, tune storage quota settings instead:
 

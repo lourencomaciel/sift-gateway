@@ -106,7 +106,7 @@ Runtime behavior:
 | `max_bytes_out` | int | `5000000` | `SIFT_GATEWAY_MAX_BYTES_OUT` | Max response bytes |
 | `max_wildcards` | int | `10000` | `SIFT_GATEWAY_MAX_WILDCARDS` | Max wildcard expansions |
 | `max_compute_steps` | int | `1000000` | `SIFT_GATEWAY_MAX_COMPUTE_STEPS` | Max retrieval compute steps |
-| `passthrough_max_bytes` | int | `8192` | `SIFT_GATEWAY_PASSTHROUGH_MAX_BYTES` | Max serialized mirrored-response size to return raw (`0` disables) |
+| `passthrough_max_bytes` | int | `8192` | `SIFT_GATEWAY_PASSTHROUGH_MAX_BYTES` | Legacy-named inline response cap used for `full` vs `schema_ref` mode selection |
 
 ## Outbound secret redaction
 
@@ -131,29 +131,22 @@ export SIFT_GATEWAY_SECRET_REDACTION_ENABLED=false
 | `max_path_segments` | int | `64` | `SIFT_GATEWAY_MAX_PATH_SEGMENTS` | Max JSONPath segments |
 | `max_wildcard_expansion_total` | int | `10000` | `SIFT_GATEWAY_MAX_WILDCARD_EXPANSION_TOTAL` | Max wildcard expansion results |
 
-## Search and lineage-query limits
+## Lineage and compatibility limits
 
 | Key | Type | Default | Env var | Description |
 |-----|------|---------|---------|-------------|
-| `artifact_search_max_limit` | int | `200` | `SIFT_GATEWAY_ARTIFACT_SEARCH_MAX_LIMIT` | Max search `limit` |
+| `artifact_search_max_limit` | int | `200` | `SIFT_GATEWAY_ARTIFACT_SEARCH_MAX_LIMIT` | Legacy compatibility limit retained for internal/runtime status fields |
 | `related_query_max_artifacts` | int | `256` | `SIFT_GATEWAY_RELATED_QUERY_MAX_ARTIFACTS` | Max artifacts in `scope=all_related` query |
 
 Lineage query rules for `artifact(action="query")`:
 
-- `query_kind` is required and must be one of `describe|get|select|search|code`.
-- `query_kind=describe|get|select` requires `artifact_id`.
+- `query_kind` is required and must be `code`.
 - `query_kind=code` requires `artifact_id` (single) or `artifact_ids` (multi).
-- `scope` applies to `describe|get|select|code` and defaults to `all_related`.
-- `scope=single` restricts execution to the anchor artifact.
-- `query_kind=search` rejects `artifact_id` and `scope`.
-- For `query_kind=code`, `scope=single` restricts inputs to the requested
-  anchor(s) without lineage expansion.
-- `query_kind=code` returns all results in a single response (no pagination); output is bounded by `max_bytes_out`.
-- `query_kind=code` runtime failures can include `details.traceback` (up to 2000 chars).
-
-For `query_kind=select`, lineage merge is strict by root signature. If related
-artifacts expose incompatible schemas at the requested `root_path`, query fails
-with `INVALID_ARGUMENT` (`details.code = INCOMPATIBLE_LINEAGE_SCHEMA`).
+- `scope` applies to `query_kind=code` and defaults to `all_related`.
+- `scope=single` restricts inputs to the requested anchor artifact(s) only.
+- `query_kind=code` returns one response bounded by `max_bytes_out`.
+- `query_kind=code` runtime failures can include `details.traceback`
+  (up to 2000 chars).
 
 ## Code query runtime
 
@@ -208,24 +201,25 @@ reduce risk but do not provide full OS-level sandboxing.
 |-----|------|---------|---------|-------------|
 | `cursor_ttl_minutes` | int | `60` | `SIFT_GATEWAY_CURSOR_TTL_MINUTES` | Cursor TTL |
 
-## Auto-pagination
+## Auto-pagination (legacy compatibility)
 
 | Key | Type | Default | Env var | Description |
 |-----|------|---------|---------|-------------|
-| `auto_paginate_max_pages` | int | `10` | `SIFT_GATEWAY_AUTO_PAGINATE_MAX_PAGES` | Max pages to merge (`0` disables) |
-| `auto_paginate_max_records` | int | `1000` | `SIFT_GATEWAY_AUTO_PAGINATE_MAX_RECORDS` | Approximate record budget before stopping |
-| `auto_paginate_timeout_seconds` | float | `30.0` | `SIFT_GATEWAY_AUTO_PAGINATE_TIMEOUT_SECONDS` | Loop timeout |
+| `auto_paginate_max_pages` | int | `10` | `SIFT_GATEWAY_AUTO_PAGINATE_MAX_PAGES` | Legacy compatibility setting (explicit page continuation is preferred) |
+| `auto_paginate_max_records` | int | `1000` | `SIFT_GATEWAY_AUTO_PAGINATE_MAX_RECORDS` | Legacy compatibility setting |
+| `auto_paginate_timeout_seconds` | float | `30.0` | `SIFT_GATEWAY_AUTO_PAGINATE_TIMEOUT_SECONDS` | Legacy compatibility setting |
 
-Auto-pagination applies to mirrored tool calls with upstream pagination state.
-When enabled, Sift fetches additional upstream pages and merges them into one
-artifact before returning.
+Contract-v1 clients should paginate explicitly via:
+
+- MCP: `artifact(action="next_page", artifact_id=...)`
+- CLI: `sift-gateway run --continue-from <artifact_id> -- <next-command>`
 
 ## Miscellaneous
 
 | Key | Type | Default | Env var | Description |
 |-----|------|---------|---------|-------------|
 | `binary_probe_bytes` | int | `65536` | `SIFT_GATEWAY_BINARY_PROBE_BYTES` | Bytes used for binary detection |
-| `select_missing_as_null` | bool | `false` | `SIFT_GATEWAY_SELECT_MISSING_AS_NULL` | Missing select fields become `null` |
+| `select_missing_as_null` | bool | `false` | `SIFT_GATEWAY_SELECT_MISSING_AS_NULL` | Legacy compatibility toggle for retired select-query internals |
 
 ## Upstream configuration
 
@@ -259,7 +253,7 @@ Upstream fields:
 | `auto_paginate_max_pages` | int | null | Per-upstream override for gateway auto-pagination page cap |
 | `auto_paginate_max_records` | int | null | Per-upstream override for gateway auto-pagination record cap |
 | `auto_paginate_timeout_seconds` | float | null | Per-upstream override for gateway auto-pagination timeout |
-| `passthrough_allowed` | bool | `true` | Allow small mirrored responses to return raw for this upstream |
+| `passthrough_allowed` | bool | `true` | Legacy compatibility flag (retained in config schema; not part of v1 public contract) |
 | `secret_ref` | str | null | Reference to upstream secret file |
 | `inherit_parent_env` | bool | `false` | Inherit full parent env for stdio |
 | `external_user_id` | str | null | Stable user identity for upstream auth persistence (`auto` generates UUID) |
@@ -324,23 +318,23 @@ Validation behavior:
 - `page_number` requires `page_param_name` and `has_more_response_path`.
 - `param_map` requires non-empty `next_params_response_paths`.
 
-Pagination layers are explicit:
+Pagination continuation is explicit:
 
-- Retrieval-layer continuation: `artifact(action="query", query_kind=..., cursor=...)`
-- Upstream-page continuation: `artifact(action="next_page", artifact_id=...)`
+- MCP: `artifact(action="next_page", artifact_id=...)`
+- CLI: `sift-gateway run --continue-from <artifact_id> -- <next-command>`
+## Mirrored response modes
 
-## Mirrored response passthrough
+For mirrored tool calls, Sift always persists/map-indexes responses and then
+chooses one response mode:
 
-For mirrored tool calls, Sift always persists/map-indexes responses. Return
-shape is controlled by passthrough settings:
+- `full` (inline payload)
+- `schema_ref` (`artifact_id` + compact schema)
 
-- if serialized response size <= `passthrough_max_bytes` and
-  `upstream.passthrough_allowed=true`, Sift returns the raw upstream result.
-- otherwise Sift returns the gateway artifact handle payload.
+Mode policy:
 
-Passthrough is automatically disabled when a mirrored call still has upstream
-pages remaining (`pagination.has_more=true`) or when gateway auto-pagination
-merged additional pages.
+- pagination present -> `schema_ref`
+- otherwise if full bytes exceed `passthrough_max_bytes` -> `schema_ref`
+- otherwise return `schema_ref` only when it is at least 50% smaller
 
 ### `_gateway.secret_ref`
 

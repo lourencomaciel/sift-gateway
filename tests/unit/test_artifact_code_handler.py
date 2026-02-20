@@ -984,8 +984,9 @@ def test_code_query_rejects_output_above_transport_budget(
             }
         )
     )
-    assert response["code"] == "RESPONSE_TOO_LARGE"
-    assert "max_bytes_out" in response["message"]
+    assert response["response_mode"] == "schema_ref"
+    assert response["artifact_id"].startswith("art_")
+    assert "schemas_compact" in response
 
 
 def test_code_query_runtime_error_includes_traceback_details(

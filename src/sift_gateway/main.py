@@ -22,16 +22,12 @@ from typing import Any
 
 from sift_gateway import __version__
 from sift_gateway.config import load_gateway_config
+from sift_gateway.config.shared import is_sift_command
 from sift_gateway.lifecycle import run_startup_check
 
 _ARTIFACT_COMMANDS = {
-    "list",
-    "schema",
-    "get",
-    "query",
     "code",
     "run",
-    "diff",
 }
 _SHARED_FLAGS_WITH_VALUE = {
     "--data-dir",
@@ -468,12 +464,6 @@ def _run_install(args: argparse.Namespace) -> int:
     return install_packages(args.packages, data_dir=data_dir)
 
 
-def _is_sift_command(command: str) -> bool:
-    """Return whether a command string invokes ``sift-gateway``."""
-    command_name = Path(command).name.lower()
-    return command_name in {"sift-gateway", "sift-gateway.exe"}
-
-
 def _resolve_data_dir_from_source_config(source_path: Path) -> Path | None:
     """Extract gateway ``--data-dir`` from a migrated source config."""
     from sift_gateway.config.mcp_servers import (
@@ -491,7 +481,7 @@ def _resolve_data_dir_from_source_config(source_path: Path) -> Path | None:
         if not isinstance(entry, dict):
             continue
         command = entry.get("command")
-        if not isinstance(command, str) or not _is_sift_command(command):
+        if not isinstance(command, str) or not is_sift_command(command):
             continue
         raw_args = entry.get("args")
         if not isinstance(raw_args, list):
@@ -639,7 +629,7 @@ def _run_server(
             "  sift-gateway init --from claude  "
             "Import MCP config\n"
             "  sift-gateway run -- <command>  "
-            "Capture and query CLI artifacts",
+            "Capture CLI artifacts (then use code or continue-from)",
             file=sys.stderr,
         )
         return 1

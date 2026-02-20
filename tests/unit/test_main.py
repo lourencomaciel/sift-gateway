@@ -422,7 +422,15 @@ def test_serve_dispatches_artifact_cli_mode(monkeypatch) -> None:
     )
     monkeypatch.setattr(
         "sys.argv",
-        ["sift-gateway", "--data-dir", "/tmp/demo", "list", "--limit", "1"],
+        [
+            "sift-gateway",
+            "--data-dir",
+            "/tmp/demo",
+            "run",
+            "--",
+            "echo",
+            "ok",
+        ],
     )
 
     exit_code = serve()
@@ -431,9 +439,10 @@ def test_serve_dispatches_artifact_cli_mode(monkeypatch) -> None:
     assert seen["argv"] == [
         "--data-dir",
         "/tmp/demo",
-        "list",
-        "--limit",
-        "1",
+        "run",
+        "--",
+        "echo",
+        "ok",
     ]
 
 
@@ -457,9 +466,10 @@ def test_serve_dispatches_artifact_cli_mode_with_logs_flag(
             "--logs",
             "--data-dir",
             "/tmp/demo",
-            "list",
-            "--limit",
-            "1",
+            "run",
+            "--",
+            "echo",
+            "ok",
         ],
     )
 
@@ -469,9 +479,10 @@ def test_serve_dispatches_artifact_cli_mode_with_logs_flag(
     assert seen["argv"] == [
         "--data-dir",
         "/tmp/demo",
-        "list",
-        "--limit",
-        "1",
+        "run",
+        "--",
+        "echo",
+        "ok",
     ]
 
 

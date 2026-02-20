@@ -19,6 +19,7 @@ from typing import Any
 from sift_gateway.config.mcp_servers import (
     extract_mcp_servers,
 )
+from sift_gateway.config.shared import is_sift_command
 from sift_gateway.config.upstream_secrets import write_secret
 from sift_gateway.constants import (
     CONFIG_FILENAME,
@@ -34,12 +35,6 @@ def _suppress_os_error() -> Iterator[None]:
 
 
 logger = logging.getLogger(__name__)
-
-
-def _is_sift_command(command: str) -> bool:
-    """Return whether a command string invokes ``sift-gateway``."""
-    command_name = Path(command).name.lower()
-    return command_name in {"sift-gateway", "sift-gateway.exe"}
 
 
 def _is_gateway_entry(
@@ -65,7 +60,7 @@ def _is_gateway_entry(
         return False
 
     cmd = server_config.get("command")
-    return isinstance(cmd, str) and _is_sift_command(cmd)
+    return isinstance(cmd, str) and is_sift_command(cmd)
 
 
 def _ensure_gateway_data_dir_arg(
@@ -77,7 +72,7 @@ def _ensure_gateway_data_dir_arg(
         return dict(entry)
 
     command = entry.get("command")
-    if not isinstance(command, str) or not _is_sift_command(command):
+    if not isinstance(command, str) or not is_sift_command(command):
         return dict(entry)
 
     updated = dict(entry)

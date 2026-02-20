@@ -146,10 +146,7 @@ async def execute_artifact_next_page(
         return gateway_error(
             "INVALID_ARGUMENT",
             "artifact has no upstream pagination state. "
-            "next_page fetches additional upstream pages. "
-            "To continue an artifact query, use "
-            'artifact(action="query", query_kind=..., artifact_id=..., '
-            "cursor=...) instead.",
+            "next_page only fetches additional upstream pages.",
         )
 
     qualified_name = f"{state.upstream_prefix}.{state.tool_name}"

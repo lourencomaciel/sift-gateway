@@ -7,6 +7,7 @@ from typing import Any
 
 from sift_gateway.constants import WORKSPACE_ID
 from sift_gateway.core.artifact_next_page import _extract_pagination_state
+from sift_gateway.core.retrieval_helpers import touch_retrieval_artifacts
 from sift_gateway.core.rows import row_to_dict, rows_to_dicts
 from sift_gateway.core.runtime import ArtifactGetRuntime
 from sift_gateway.core.schema_payload import build_schema_payload
@@ -455,30 +456,6 @@ def _describe_pagination_meta(
     return meta
 
 
-def _touch_retrieval_artifacts(
-    runtime: ArtifactGetRuntime,
-    connection: Any,
-    *,
-    session_id: str,
-    artifact_ids: list[str],
-) -> None:
-    """Touch retrieval timestamp for artifact ids and commit when needed."""
-    touched = False
-    for artifact_id in artifact_ids:
-        touched = (
-            runtime.safe_touch_for_retrieval(
-                connection,
-                session_id=session_id,
-                artifact_id=artifact_id,
-            )
-            or touched
-        )
-    if touched:
-        commit = getattr(connection, "commit", None)
-        if callable(commit):
-            commit()
-
-
 def execute_artifact_describe(
     runtime: ArtifactGetRuntime,
     *,
@@ -535,7 +512,7 @@ def execute_artifact_describe(
             artifact_rows=artifact_rows,
         )
 
-        _touch_retrieval_artifacts(
+        touch_retrieval_artifacts(
             runtime,
             connection,
             session_id=session_id,

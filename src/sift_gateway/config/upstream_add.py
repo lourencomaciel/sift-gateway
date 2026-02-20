@@ -23,15 +23,15 @@ from sift_gateway.config.mcp_servers import (
     _infer_transport,
     extract_mcp_servers,
 )
+from sift_gateway.config.shared import (
+    ensure_gateway_config_path,
+    gateway_config_path,
+)
 from sift_gateway.config.upstream_secrets import (
     _validate_prefix,
     write_secret,
 )
-from sift_gateway.constants import (
-    CONFIG_FILENAME,
-    DEFAULT_DATA_DIR,
-    STATE_SUBDIR,
-)
+from sift_gateway.constants import DEFAULT_DATA_DIR
 
 
 @contextlib.contextmanager
@@ -39,20 +39,6 @@ def _suppress_os_error() -> Iterator[None]:
     """Suppress OSError during cleanup."""
     with contextlib.suppress(OSError):
         yield
-
-
-def _ensure_gateway_config_dir(data_dir: Path) -> Path:
-    """Ensure the gateway state directory exists.
-
-    Args:
-        data_dir: Root data directory for Sift state.
-
-    Returns:
-        Path to ``config.json`` inside the state directory.
-    """
-    state_dir = data_dir / STATE_SUBDIR
-    state_dir.mkdir(parents=True, exist_ok=True)
-    return state_dir / CONFIG_FILENAME
 
 
 def _load_gateway_config(config_path: Path) -> dict[str, Any]:
@@ -302,7 +288,7 @@ def run_upstream_add(
     _validate_servers_for_add(servers)
 
     # Compute config path; only create dirs when writing
-    config_path = data_dir / STATE_SUBDIR / CONFIG_FILENAME
+    config_path = gateway_config_path(data_dir)
     gw_config = _load_gateway_config(config_path)
 
     existing_servers = gw_config.get("mcpServers", {})
@@ -315,7 +301,7 @@ def run_upstream_add(
     )
 
     if not dry_run:
-        _ensure_gateway_config_dir(data_dir)
+        ensure_gateway_config_path(data_dir)
         for name in added:
             entry = dict(servers[name])  # shallow copy
             entry = _externalize_secrets_for_server(data_dir, name, entry)

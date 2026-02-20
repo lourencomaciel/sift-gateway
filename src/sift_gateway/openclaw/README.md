@@ -1,73 +1,62 @@
 # OpenClaw Integration Pack
 
-This pack makes Sift the default "large output handler" for OpenClaw agents.
+This pack makes Sift the default large-output path for OpenClaw agents.
 
-## What You Get
+## What you get
 
-- A ready-to-install skill file: `docs/openclaw/SKILL.md`
-- OpenClaw-first quickstart and workflow guidance
-- Troubleshooting for context overflow patterns
-- Copy-paste response templates that stay within tight context budgets
+- installable skill file: `docs/openclaw/SKILL.md`
+- OpenClaw-first quickstart
+- troubleshooting guidance for context overflow
+- compact response templates
 
-## OpenClaw-First Quickstart
+## OpenClaw-first quickstart
 
-1. Install Sift CLI:
+1. Install Sift:
 
 ```bash
 pipx install sift-gateway
 ```
 
-2. Install the packaged skill in your OpenClaw skills directory:
+2. Install the packaged skill:
 
 ```bash
 mkdir -p ~/.openclaw/skills/sift-gateway
 sift-gateway-openclaw-skill --output ~/.openclaw/skills/sift-gateway/SKILL.md
 ```
 
-3. Restart OpenClaw (or reload skills) and run a capture flow:
+3. Restart OpenClaw (or reload skills), then run:
 
 ```bash
 sift-gateway run -- echo '[{"id":1,"state":"open"},{"id":2,"state":"closed"}]'
-sift-gateway query <artifact_id> '$' --limit 1
 sift-gateway code <artifact_id> '$' --expr "df.shape[0]"
+```
+
+If `pagination.has_next_page=true`, continue with:
+
+```bash
+sift-gateway run --continue-from <artifact_id> -- <next-command-with-next_params-applied>
 ```
 
 4. Add one short system instruction in your OpenClaw profile:
 
 ```text
-When command output may exceed ~4KB, capture with `sift-gateway run` and query incrementally.
+When command output may exceed ~4KB, capture with `sift-gateway run` and analyze with `sift-gateway code`.
 ```
 
-## `sift-gateway code` Methods
-
-Use one of these modes depending on complexity:
-
-- `--expr "<python_expr>"` for fast DataFrame expressions.
-- `--code "<python_source>"` for inline `run(data, schema, params)`.
-- `--file <path.py>` for file-based `run(data, schema, params)`.
-- `--params '<json_object>'` to pass runtime parameters into `params`.
-
-```bash
-sift-gateway code <artifact_id> '$.items' --expr "df.shape[0]"
-sift-gateway code <artifact_id> '$.items' --code "def run(data, schema, params): return {'rows': len(data)}"
-sift-gateway code <artifact_id> '$.items' --file ./analysis.py --params '{"window":"7d"}'
-```
-
-## Capture vs Inline Decision Rule
+## Capture vs inline decision rule
 
 - Inline: expected output < 4KB and used once.
-- Capture: lists, logs, paginated APIs, JSON blobs, tabular data, or anything reused.
+- Capture: lists, logs, paginated APIs, JSON blobs, tabular data, or reused data.
 - Always capture: `gh api`, `kubectl ... -o json`, `curl` returning arrays/objects.
 
-## Manual Validation Checklist
+## Manual validation checklist
 
-- `sift-gateway run -- <cmd>` returns an artifact summary.
-- `sift-gateway query <id> '$' --limit 5` returns bounded data.
-- `sift-gateway run` always captures a fresh run result.
+- `sift-gateway run -- <cmd>` returns artifact summary.
+- paginated captures continue via `run --continue-from`.
 - `sift-gateway run --stdin` works from a pipe.
-- `sift-gateway diff <id1> <id2>` reports equality or bounded diff lines.
+- `sift-gateway code` returns focused outputs in both `--expr` and `--file` modes.
 
-## Related Docs
+## Related docs
 
 - `docs/openclaw/SKILL.md`
 - `docs/openclaw/troubleshooting.md`
