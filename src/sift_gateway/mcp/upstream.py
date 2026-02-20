@@ -680,10 +680,7 @@ async def connect_upstreams(
         List of connected ``UpstreamInstance`` descriptors in
         the same order as *configs*.
     """
-    upstreams: list[UpstreamInstance] = []
-    for config in configs:
-        upstreams.append(await connect_upstream(config, data_dir))
-    return upstreams
+    return [await connect_upstream(config, data_dir) for config in configs]
 
 
 async def call_upstream_tool(

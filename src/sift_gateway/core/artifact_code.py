@@ -33,8 +33,8 @@ from sift_gateway.core.lineage_roots import (
     resolve_all_related_root_candidates,
     resolve_single_root_candidate,
 )
-from sift_gateway.core.retrieval_helpers import extract_json_target
 from sift_gateway.core.query_scope import resolve_scope
+from sift_gateway.core.retrieval_helpers import extract_json_target
 from sift_gateway.core.rows import row_to_dict, rows_to_dicts
 from sift_gateway.core.runtime import ArtifactCodeRuntime
 from sift_gateway.core.schema_payload import build_schema_payload

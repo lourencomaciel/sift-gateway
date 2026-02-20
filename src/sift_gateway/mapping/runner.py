@@ -626,7 +626,7 @@ def _open_partial_stream(
             ),
         )
     normalized_value = resolve_json_strings(value)
-    spool = tempfile.SpooledTemporaryFile(
+    spool = tempfile.SpooledTemporaryFile(  # noqa: SIM115
         mode="w+b",
         max_size=_PARTIAL_MAP_SPOOL_MAX_MEMORY_BYTES,
     )

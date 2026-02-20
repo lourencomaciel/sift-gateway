@@ -15,7 +15,8 @@ class RetrievalTouchRuntime(Protocol):
         *,
         session_id: str,
         artifact_id: str,
-    ) -> bool: ...
+    ) -> bool:
+        """Touch retrieval metadata for one artifact id."""
 
 
 def extract_json_target(
