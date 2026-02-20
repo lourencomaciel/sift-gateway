@@ -561,6 +561,7 @@ class GatewayServer:
     response_redactor: ResponseSecretRedactor | None = None
 
     def __post_init__(self) -> None:
+        """Initialize mirrored-tool cache and response redactor defaults."""
         if not self.mirrored_tools and self.upstreams:
             self.mirrored_tools = build_mirrored_tools(self.upstreams)
         if self.response_redactor is None:
