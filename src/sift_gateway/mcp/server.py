@@ -137,8 +137,9 @@ _BUILTIN_TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
                 "enum": ["all_related", "single"],
                 "description": (
                     "[query_kind=code] all_related (default) executes across "
-                    "the lineage set of each anchor artifact; single executes "
-                    "against only the requested artifact(s)."
+                    "pagination-chain related artifacts for each anchor; "
+                    "single executes against only the requested artifact(s). "
+                    "Prefer single unless cross-artifact logic is required."
                 ),
             },
             "artifact_id": {
@@ -154,14 +155,15 @@ _BUILTIN_TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
                 "items": {"type": "string"},
                 "description": (
                     "[query_kind=code] Optional list of anchor artifacts for "
-                    "multi-artifact code queries. Mutually exclusive with "
-                    "artifact_id."
+                    "multi-artifact queries (run(artifacts, schemas, params)). "
+                    "Mutually exclusive with artifact_id."
                 ),
             },
             "root_path": {
                 "type": "string",
                 "description": (
-                    "[query_kind=code] JSONPath to root records."
+                    "[query_kind=code] JSONPath to root records for single "
+                    "queries, or one shared path across artifact_ids."
                 ),
             },
             "root_paths": {
@@ -169,17 +171,20 @@ _BUILTIN_TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
                 "additionalProperties": {"type": "string"},
                 "description": (
                     "[query_kind=code] Optional per-artifact root paths for "
-                    "multi-artifact queries. Keys are artifact IDs, values are "
-                    "JSONPath strings. Mutually exclusive with root_path."
+                    "multi-artifact queries. Keys must match artifact_ids "
+                    "exactly; values are JSONPath strings. Mutually exclusive "
+                    "with root_path."
                 ),
             },
             "code": {
                 "type": "string",
                 "description": (
-                    "[query_kind=code] Python source defining "
-                    "run(artifacts, schemas, params) for multi-artifact "
-                    "queries, or run(data, schema, params) for single-artifact "
-                    "queries. "
+                    "[query_kind=code] Python source defining one of: "
+                    "run(data, schema, params) for single-artifact queries "
+                    "(data is list[dict]) or run(artifacts, schemas, params) "
+                    "for multi-artifact queries (artifacts is "
+                    "dict[artifact_id -> list[dict]]). Return compact output "
+                    "(aggregates or top-N rows) to reduce schema_ref responses. "
                     "Allowed imports: math, statistics, decimal, "
                     "datetime, re, itertools, collections, functools, "
                     "operator, heapq, json, csv, io "
@@ -187,8 +192,10 @@ _BUILTIN_TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
                     "typing, dataclasses, enum, fractions, bisect, "
                     "pprint, uuid, base64, struct, array, numbers, "
                     "cmath, random, secrets, fnmatch, difflib, html, "
-                    "urllib.parse, jmespath, pandas, numpy by default; "
-                    "allowlist can be overridden by config."
+                    "urllib.parse. Third-party imports depend on installed "
+                    "packages and configured allowlist (see Code-query "
+                    "packages in tool description); allowlist can be "
+                    "overridden by config."
                 ),
             },
             "params": {

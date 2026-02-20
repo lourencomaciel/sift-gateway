@@ -57,29 +57,20 @@ visible AS (
     WHERE a.workspace_id = %s
       AND a.deleted_at IS NULL
 ),
-lineage_edges AS (
-    SELECT le.child_artifact_id, le.parent_artifact_id
-    FROM artifact_lineage_edges le
-    WHERE le.workspace_id = %s
-),
 edges AS (
-    SELECT v.artifact_id AS src, v.parent_artifact_id AS dst
-    FROM visible v
-    WHERE v.parent_artifact_id IS NOT NULL
+    SELECT child.artifact_id AS src, child.parent_artifact_id AS dst
+    FROM visible child
+    JOIN visible parent
+      ON parent.artifact_id = child.parent_artifact_id
+    WHERE child.parent_artifact_id IS NOT NULL
+      AND child.chain_seq IS NOT NULL
     UNION
-    SELECT v.parent_artifact_id AS src, v.artifact_id AS dst
-    FROM visible v
-    WHERE v.parent_artifact_id IS NOT NULL
-    UNION
-    SELECT le.child_artifact_id AS src, le.parent_artifact_id AS dst
-    FROM lineage_edges le
-    JOIN visible vc ON vc.artifact_id = le.child_artifact_id
-    JOIN visible vp ON vp.artifact_id = le.parent_artifact_id
-    UNION
-    SELECT le.parent_artifact_id AS src, le.child_artifact_id AS dst
-    FROM lineage_edges le
-    JOIN visible vc ON vc.artifact_id = le.child_artifact_id
-    JOIN visible vp ON vp.artifact_id = le.parent_artifact_id
+    SELECT child.parent_artifact_id AS src, child.artifact_id AS dst
+    FROM visible child
+    JOIN visible parent
+      ON parent.artifact_id = child.parent_artifact_id
+    WHERE child.parent_artifact_id IS NOT NULL
+      AND child.chain_seq IS NOT NULL
 ),
 related(artifact_id) AS (
     SELECT v.artifact_id
@@ -106,7 +97,7 @@ def resolve_related_artifacts(
     session_id: str,
     anchor_artifact_id: str,
 ) -> list[dict[str, Any]]:
-    """Resolve the full connected lineage component for an anchor.
+    """Resolve the connected pagination-chain component for an anchor.
 
     Args:
         connection: Active database connection.
@@ -120,7 +111,6 @@ def resolve_related_artifacts(
     rows = connection.execute(
         RESOLVE_RELATED_ARTIFACTS_SQL,
         (
-            WORKSPACE_ID,
             WORKSPACE_ID,
             anchor_artifact_id,
         ),

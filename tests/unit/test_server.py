@@ -671,12 +671,15 @@ def test_build_fastmcp_app_includes_mirrored_tools(tmp_path: Path) -> None:
         in tools["artifact"].description
     )
     artifact_schema = tools["artifact"].parameters
+    code_description = artifact_schema["properties"]["code"]["description"]
     assert "scope" in artifact_schema["properties"]
     assert artifact_schema["properties"]["scope"]["enum"] == [
         "all_related",
         "single",
     ]
     assert artifact_schema["properties"]["query_kind"]["enum"] == ["code"]
+    assert "Third-party imports depend on installed packages" in code_description
+    assert "pandas, numpy by default" not in code_description
 
 
 def test_build_fastmcp_app_artifact_description_uses_configured_packages(

@@ -133,6 +133,10 @@ def test_build_code_query_usage_mcp_mentions_packages(monkeypatch) -> None:
     assert usage["packages"] == "jmespath,numpy"
     assert 'artifact_id="art_1"' in usage["example"]
     assert 'root_path="$.items"' in usage["example"]
+    assert usage["entrypoint_single"] == "run(data, schema, params)"
+    assert usage["entrypoint_multi"] == "run(artifacts, schemas, params)"
+    assert usage["multi_input_shape"] == "dict[artifact_id -> list[dict]]"
+    assert "scope=single" in usage["strategy"]
 
 
 def test_build_code_query_usage_mcp_escapes_root_path_quotes(
@@ -168,7 +172,13 @@ def test_build_code_query_usage_cli_mentions_packages(monkeypatch) -> None:
     )
     assert usage["interface"] == "cli"
     assert usage["packages"] == "pandas"
-    assert usage["example"] == 'sift-gateway code art_1 \'$.items\' --expr "len(df)"'
+    assert usage["entrypoint_single"] == "run(data, schema, params)"
+    assert usage["entrypoint_multi"] == "run(artifacts, schemas, params)"
+    assert usage["multi_input_shape"] == "dict[artifact_id -> list[dict]]"
+    assert (
+        usage["example"]
+        == 'sift-gateway code art_1 \'$.items\' --code "def run(data, schema, params): return len(data)"'
+    )
 
 
 def test_build_code_query_usage_cli_shell_quotes_root_path(
@@ -192,13 +202,13 @@ def test_render_code_query_usage_hint_cli() -> None:
     hint = render_code_query_usage_hint(
         {
             "interface": "cli",
-            "example": 'sift-gateway code art_1 \'$.items\' --expr "len(df)"',
+            "example": 'sift-gateway code art_1 \'$.items\' --code "def run(data, schema, params): return len(data)"',
             "packages": "pandas",
         }
     )
     assert (
         hint
-        == "use `sift-gateway code art_1 '$.items' --expr \"len(df)\"`; pkgs: pandas"
+        == "use `sift-gateway code art_1 '$.items' --code \"def run(data, schema, params): return len(data)\"`; pkgs: pandas"
     )
 
 

@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
-import io
 import json
 from pathlib import Path
+import re
 import subprocess
 from typing import Any
 
@@ -14,6 +14,47 @@ from sift_gateway import cli_main
 
 class _FakeRuntime:
     pass
+
+
+class _SingleRowCursor:
+    def __init__(self, row: tuple[Any, ...] | None) -> None:
+        self._row = row
+
+    def fetchone(self) -> tuple[Any, ...] | None:
+        return self._row
+
+
+class _ContinueConnection:
+    def __init__(self, row: tuple[Any, ...] | None) -> None:
+        self._row = row
+        self.query: str | None = None
+        self.params: tuple[Any, ...] | None = None
+
+    def execute(
+        self, query: str, params: tuple[Any, ...]
+    ) -> _SingleRowCursor:
+        self.query = query
+        self.params = params
+        return _SingleRowCursor(self._row)
+
+
+class _ContinueConnectionContext:
+    def __init__(self, connection: _ContinueConnection) -> None:
+        self._connection = connection
+
+    def __enter__(self) -> _ContinueConnection:
+        return self._connection
+
+    def __exit__(self, *_args: object) -> bool:
+        return False
+
+
+class _ContinuePool:
+    def __init__(self, connection: _ContinueConnection) -> None:
+        self._connection = connection
+
+    def connection(self) -> _ContinueConnectionContext:
+        return _ContinueConnectionContext(self._connection)
 
 
 @contextmanager
@@ -151,8 +192,8 @@ def test_serve_code_supports_multi_artifact_shared_root_path(
             "art_orders",
             "--root-path",
             "$.items",
-            "--expr",
-            "len(df)",
+            "--code",
+            "def run(artifacts, schemas, params):\n    return []",
             "--json",
         ]
     )
@@ -196,8 +237,8 @@ def test_serve_code_supports_multi_artifact_per_artifact_root_paths(
             "$.users",
             "--root-path",
             "$.orders",
-            "--expr",
-            "len(df)",
+            "--code",
+            "def run(artifacts, schemas, params):\n    return []",
             "--json",
         ]
     )
@@ -208,42 +249,6 @@ def test_serve_code_supports_multi_artifact_per_artifact_root_paths(
         "art_users": "$.users",
         "art_orders": "$.orders",
     }
-
-
-def test_serve_code_expr_builds_dataframe_wrapper(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(
-        "sift_gateway.cli_main._runtime_context",
-        _fake_runtime_context,
-    )
-    captured_args: dict[str, Any] = {}
-
-    def _fake_code(runtime: Any, arguments: dict[str, Any]) -> dict[str, Any]:
-        del runtime
-        captured_args.update(arguments)
-        return {"items": [1], "truncated": False}
-
-    monkeypatch.setattr(
-        "sift_gateway.cli_main.execute_artifact_code", _fake_code
-    )
-
-    exit_code = cli_main.serve(
-        [
-            "code",
-            "art_1",
-            "$.items",
-            "--expr",
-            "df['value'].sum()",
-            "--json",
-        ]
-    )
-
-    assert exit_code == 0
-    assert "import pandas as pd" in captured_args["code"]
-    assert "def run(artifacts, schemas, params):" in captured_args["code"]
-    assert "artifact_frames" in captured_args["code"]
-    assert "return df['value'].sum()" in captured_args["code"]
 
 
 def test_serve_code_rejects_invalid_params_json(
@@ -272,6 +277,38 @@ def test_serve_code_rejects_invalid_params_json(
     assert "invalid --params JSON" in err
 
 
+def test_serve_code_rejects_removed_expr_flag(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with pytest.raises(SystemExit) as exc_info:
+        cli_main.serve(
+            [
+                "code",
+                "art_1",
+                "$.items",
+                "--code",
+                "def run(data, schema, params): return []",
+                "--expr",
+                "len(df)",
+            ]
+        )
+    err = capsys.readouterr().err
+
+    assert exc_info.value.code == 2
+    assert "unrecognized arguments: --expr len(df)" in err
+
+
+def test_serve_run_rejects_removed_stdin_flag(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with pytest.raises(SystemExit) as exc_info:
+        cli_main.serve(["run", "--stdin"])
+    err = capsys.readouterr().err
+
+    assert exc_info.value.code == 2
+    assert "unrecognized arguments: --stdin" in err
+
+
 def test_serve_code_scope_single_sets_scope_single(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -297,14 +334,80 @@ def test_serve_code_scope_single_sets_scope_single(
             "$.items",
             "--scope",
             "single",
-            "--expr",
-            "len(df)",
+            "--code",
+            "def run(data, schema, params):\n    return []",
             "--json",
         ]
     )
 
     assert exit_code == 0
     assert captured_args["scope"] == "single"
+
+
+def test_load_cli_continue_chain_seq_requires_database_backend() -> None:
+    runtime = type("_Runtime", (), {"db_pool": None})()
+
+    with pytest.raises(
+        ValueError,
+        match="run --continue-from requires database backend",
+    ):
+        cli_main._load_cli_continue_chain_seq(
+            runtime,
+            artifact_id="art_parent",
+        )
+
+
+@pytest.mark.parametrize(
+    ("row", "expected"),
+    [
+        (None, "artifact not found: art_parent"),
+        (
+            ("art_parent", "2026-02-20T00:00:00Z", "cli_command", 0),
+            "artifact has been deleted: art_parent",
+        ),
+        (
+            ("art_parent", None, "derived", 0),
+            "run --continue-from requires a cli command parent artifact: art_parent",
+        ),
+    ],
+)
+def test_load_cli_continue_chain_seq_rejects_invalid_parent(
+    row: tuple[Any, ...] | None,
+    expected: str,
+) -> None:
+    connection = _ContinueConnection(row)
+    runtime = type(
+        "_Runtime",
+        (),
+        {"db_pool": _ContinuePool(connection)},
+    )()
+
+    with pytest.raises(ValueError, match=re.escape(expected)):
+        cli_main._load_cli_continue_chain_seq(
+            runtime,
+            artifact_id="art_parent",
+        )
+
+
+def test_load_cli_continue_chain_seq_returns_next_page_index() -> None:
+    connection = _ContinueConnection(("art_parent", None, "cli_command", 2))
+    runtime = type(
+        "_Runtime",
+        (),
+        {"db_pool": _ContinuePool(connection)},
+    )()
+
+    chain_seq = cli_main._load_cli_continue_chain_seq(
+        runtime,
+        artifact_id="art_parent",
+    )
+
+    assert chain_seq == 3
+    assert connection.query is not None
+    assert "SELECT artifact_id, deleted_at, capture_kind, chain_seq" in (
+        connection.query
+    )
+    assert connection.params == ("local", "art_parent")
 
 
 def test_serve_code_rejects_mixed_positional_and_multi_flags(
@@ -325,8 +428,8 @@ def test_serve_code_rejects_mixed_positional_and_multi_flags(
             "art_2",
             "--root-path",
             "$.items",
-            "--expr",
-            "len(df)",
+            "--code",
+            "def run(data, schema, params):\n    return []",
         ]
     )
     err = capsys.readouterr().err
@@ -357,8 +460,8 @@ def test_serve_code_rejects_mismatched_multi_root_path_count(
             "$.two",
             "--root-path",
             "$.three",
-            "--expr",
-            "len(df)",
+            "--code",
+            "def run(data, schema, params):\n    return []",
         ]
     )
     err = capsys.readouterr().err
@@ -380,8 +483,8 @@ def test_serve_code_rejects_partial_positional_mode(
         [
             "code",
             "art_1",
-            "--expr",
-            "len(df)",
+            "--code",
+            "def run(data, schema, params):\n    return []",
         ]
     )
     err = capsys.readouterr().err
@@ -435,7 +538,7 @@ def test_serve_run_human_output_snapshot(
         "bytes:    12\n"
         "capture:  cli_command\n"
         "exit:     0\n"
-        "hint:     use `sift-gateway code art_new '$' --expr \"len(df)\"`; "
+        "hint:     use `sift-gateway code art_new '$' --code \"def run(data, schema, params): return len(data)\"`; "
         "pkgs: jmespath,numpy,pandas\n"
     )
 
@@ -825,69 +928,6 @@ def test_serve_run_fails_closed_on_redaction_error_before_capture(
     assert payload["code"] == "INTERNAL"
     assert payload["message"] == "response redaction failed"
     assert capture_called["value"] is False
-
-
-def test_serve_run_stdin_uses_stdin_capture_kind(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(
-        "sift_gateway.cli_main._runtime_context",
-        _fake_runtime_context,
-    )
-    captured: dict[str, Any] = {}
-
-    def _fake_capture(
-        runtime: Any, *, arguments: dict[str, Any]
-    ) -> dict[str, Any]:
-        del runtime
-        captured.update(arguments)
-        return {
-            "artifact_id": "art_stdin",
-            "created_seq": 2,
-            "status": "ok",
-            "kind": "data",
-            "capture_kind": "stdin_pipe",
-            "capture_key": "rk_2",
-            "payload_json_bytes": 10,
-            "payload_binary_bytes_total": 0,
-            "payload_total_bytes": 10,
-            "expires_at": None,
-            "reused": False,
-        }
-
-    class _FakeStdin:
-        def __init__(self, raw: bytes) -> None:
-            self.buffer = io.BytesIO(raw)
-
-    monkeypatch.setattr(
-        "sift_gateway.cli_main.execute_artifact_capture", _fake_capture
-    )
-    monkeypatch.setattr("sys.stdin", _FakeStdin(b'{"k": "v"}'))
-
-    exit_code = cli_main.serve(["run", "--stdin", "--json"])
-
-    assert exit_code == 0
-    assert captured["capture_kind"] == "stdin_pipe"
-    assert captured["tool_name"] == "stdin"
-    assert captured["payload"] == {"k": "v"}
-
-
-def test_serve_run_rejects_stdin_with_continue_from(
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    monkeypatch.setattr(
-        "sift_gateway.cli_main._runtime_context",
-        _fake_runtime_context,
-    )
-
-    exit_code = cli_main.serve(
-        ["run", "--stdin", "--continue-from", "art_1", "--json"]
-    )
-    err = capsys.readouterr().err
-
-    assert exit_code == 1
-    assert "--stdin cannot be combined with --continue-from" in err
 
 
 def test_serve_run_continue_from_links_lineage_and_page_number(

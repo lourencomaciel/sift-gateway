@@ -305,17 +305,6 @@ def _trial_run_json_basic(ctx: SmokeContext) -> dict[str, Any]:
     }
 
 
-def _trial_run_json_stdin(ctx: SmokeContext) -> dict[str, Any]:
-    result, payload = ctx.cli_json(
-        ["run", "--stdin", "--json"],
-        input_text='{"items":[{"id":20},{"id":21},{"id":22}]}',
-    )
-    _assert(result.returncode == 0, "stdin run should exit 0")
-    _assert(payload.get("records") == 3, "expected stdin records=3")
-    _assert(payload.get("command_exit_code") == 0, "expected stdin exit=0")
-    return {"artifact_id": payload.get("artifact_id")}
-
-
 def _trial_run_tags_ttl(ctx: SmokeContext) -> dict[str, Any]:
     result, payload = ctx.cli_json(
         [
@@ -360,36 +349,11 @@ def _trial_run_nonzero_exit(ctx: SmokeContext) -> dict[str, Any]:
     return {"artifact_id": payload.get("artifact_id")}
 
 
-def _trial_run_invalid_stdin_with_command(ctx: SmokeContext) -> dict[str, Any]:
-    _expect_cli_error(
-        ctx,
-        args=["run", "--stdin", "--json", "--", "echo", "hello"],
-        expected_message="--stdin cannot be combined with a command",
-    )
-    return {}
-
-
-def _trial_run_invalid_stdin_with_continue(ctx: SmokeContext) -> dict[str, Any]:
-    artifact_id = _require_str(ctx.state.get("art_basic"), label="art_basic")
-    _expect_cli_error(
-        ctx,
-        args=[
-            "run",
-            "--stdin",
-            "--continue-from",
-            artifact_id,
-            "--json",
-        ],
-        expected_message="--stdin cannot be combined with --continue-from",
-    )
-    return {}
-
-
 def _trial_run_invalid_missing_command(ctx: SmokeContext) -> dict[str, Any]:
     _expect_cli_error(
         ctx,
         args=["run"],
-        expected_message="run requires a command or --stdin",
+        expected_message="run requires a command",
     )
     return {}
 
@@ -483,8 +447,8 @@ def _trial_code_single_expr(ctx: SmokeContext) -> dict[str, Any]:
             "code",
             artifact_id,
             "$.items",
-            "--expr",
-            "len(df)",
+            "--code",
+            "def run(data, schema, params): return len(data)",
             "--json",
         ]
     )
@@ -561,8 +525,11 @@ def _trial_code_multi_expr_shared_root(ctx: SmokeContext) -> dict[str, Any]:
             art_right,
             "--root-path",
             "$.items",
-            "--expr",
-            "len(df)",
+            "--code",
+            (
+                "def run(artifacts, schemas, params): "
+                "return sum(len(rows) for rows in artifacts.values())"
+            ),
             "--json",
         ]
     )
@@ -595,8 +562,11 @@ def _trial_code_multi_expr_per_artifact_roots(ctx: SmokeContext) -> dict[str, An
             "$.users",
             "--root-path",
             "$.orders",
-            "--expr",
-            "sum(frame.shape[0] for frame in artifact_frames.values())",
+            "--code",
+            (
+                "def run(artifacts, schemas, params): "
+                "return sum(len(rows) for rows in artifacts.values())"
+            ),
             "--json",
         ]
     )
@@ -696,8 +666,11 @@ def _trial_code_multi_incompatible_lineage_hint(
             page2_artifact,
             "--root-path",
             "$.items",
-            "--expr",
-            "len(df)",
+            "--code",
+            (
+                "def run(artifacts, schemas, params): "
+                "return sum(len(rows) for rows in artifacts.values())"
+            ),
             "--json",
         ]
     )
@@ -747,8 +720,8 @@ def _trial_code_invalid_mixed_positional_and_flags(
             "art_2",
             "--root-path",
             "$.items",
-            "--expr",
-            "len(df)",
+            "--code",
+            "def run(data, schema, params): return len(data)",
         ],
         expected_message="cannot mix positional artifact_id/root_path",
     )
@@ -770,8 +743,8 @@ def _trial_code_invalid_mismatched_root_paths(ctx: SmokeContext) -> dict[str, An
             "$.two",
             "--root-path",
             "$.three",
-            "--expr",
-            "len(df)",
+            "--code",
+            "def run(data, schema, params): return len(data)",
         ],
         expected_message="provide one --root-path or repeat --root-path",
     )
@@ -784,8 +757,8 @@ def _trial_code_invalid_partial_positional(ctx: SmokeContext) -> dict[str, Any]:
         args=[
             "code",
             "art_1",
-            "--expr",
-            "len(df)",
+            "--code",
+            "def run(data, schema, params): return len(data)",
         ],
         expected_message="requires both artifact_id and root_path",
     )
@@ -803,8 +776,8 @@ def _trial_code_invalid_duplicate_artifact_ids(ctx: SmokeContext) -> dict[str, A
             "art_dup",
             "--root-path",
             "$.items",
-            "--expr",
-            "len(df)",
+            "--code",
+            "def run(data, schema, params): return len(data)",
         ],
         expected_message="duplicate --artifact-id values are not supported",
     )
@@ -836,11 +809,8 @@ TRIALS: list[tuple[str, Callable[[SmokeContext], dict[str, Any]]]] = [
     ("help", _trial_help),
     ("check", _trial_check),
     ("run_json_basic", _trial_run_json_basic),
-    ("run_json_stdin", _trial_run_json_stdin),
     ("run_tags_ttl", _trial_run_tags_ttl),
     ("run_nonzero_exit", _trial_run_nonzero_exit),
-    ("run_invalid_stdin_with_command", _trial_run_invalid_stdin_with_command),
-    ("run_invalid_stdin_with_continue", _trial_run_invalid_stdin_with_continue),
     ("run_invalid_missing_command", _trial_run_invalid_missing_command),
     ("run_pagination", _trial_run_pagination),
     ("run_continue_from", _trial_run_continue_from),

@@ -54,13 +54,13 @@ sift-gateway run -- kubectl get pods -A -o json
 Large output is stored and returned as an artifact ID plus compact schema. Example:
 
 ```bash
-sift-gateway code <artifact_id> '$.items' --expr "df.groupby('status')['name'].count().to_dict()"
+sift-gateway code <artifact_id> '$.items' --code "def run(data, schema, params): return {'rows': len(data)}"
 ```
 
-Pipe mode:
+Another capture example:
 
 ```bash
-curl -s api.example.com/events | sift-gateway run --stdin
+sift-gateway run -- curl -s api.example.com/events
 ```
 
 For OpenClaw, see the [OpenClaw Integration Pack](docs/openclaw/README.md).
@@ -160,9 +160,6 @@ artifact(
 
 CLI:
 ```bash
-# Expression mode (receives a pandas DataFrame as df)
-sift-gateway code art_123 '$.items' --expr "df['status'].value_counts().to_dict()"
-
 # Function mode
 sift-gateway code art_123 '$.items' --code "def run(data, schema, params): return {'count': len(data)}"
 
@@ -189,7 +186,7 @@ def run(artifacts, schemas, params):
 
 ### Import allowlist
 
-Code queries run with a configurable import allowlist. Default modules include `math`, `json`, `re`, `collections`, `statistics`, `heapq`, `numpy`, `pandas`, `jmespath`, `datetime`, `itertools`, `functools`, `operator`, `decimal`, `csv`, `io`, `string`, `textwrap`, `copy`, `typing`, `dataclasses`, `enum`, `fractions`, `bisect`, `random`, `base64`, and `urllib.parse`.
+Code queries run with a configurable import allowlist. Default allowed import roots include `math`, `json`, `re`, `collections`, `statistics`, `heapq`, `numpy`, `pandas`, `jmespath`, `datetime`, `itertools`, `functools`, `operator`, `decimal`, `csv`, `io`, `string`, `textwrap`, `copy`, `typing`, `dataclasses`, `enum`, `fractions`, `bisect`, `random`, `base64`, and `urllib.parse`. Third-party modules are usable only when installed in Sift's runtime environment.
 
 Install additional packages:
 

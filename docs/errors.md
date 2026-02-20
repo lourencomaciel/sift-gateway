@@ -86,6 +86,9 @@ Some handlers include a secondary machine code in `details.code`.
 | `INCOMPATIBLE_LINEAGE_SCHEMA` | Related artifacts have incompatible schemas for requested root path |
 | `MISSING_ROOT_PATH` | Related artifact does not contain requested root path |
 | `SKIPPED_ARTIFACT` | Artifact was skipped while processing lineage query (for example missing/deleted/non-queryable) |
+| `ROOT_PATH_REQUIRED` | Code query omitted both `root_path` and `root_paths` |
+| `ROOT_PATHS_SHAPE_INVALID` | `root_paths` argument was not an object keyed by artifact id |
+| `ROOT_PATH_KEYS_MISMATCH` | `root_paths` keys did not match `artifact_ids` (missing/extra keys) |
 | `CODE_SCOPE_UNSUPPORTED` | `query_kind=code` received unsupported `scope` value |
 | `CODE_ENTRYPOINT_MISSING` | Generated code did not define valid `run(data, schema, params)` or `run(artifacts, schemas, params)` |
 | `CODE_IMPORT_NOT_ALLOWED` | Generated code imported a module outside the allowlist |

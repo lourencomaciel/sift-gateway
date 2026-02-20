@@ -42,8 +42,7 @@ def decompress_bytes(
 
     Args:
         data: Compressed byte payload.
-        encoding: Compression encoding (``"none"``, ``"gzip"``, or
-            ``"zstd"`` for legacy payloads).
+        encoding: Compression encoding (``"none"`` or ``"gzip"``).
         max_output_size: Upper bound on decompressed output in
             bytes.  ``0`` means unlimited (default for backward
             compatibility).
@@ -59,17 +58,6 @@ def decompress_bytes(
         return data
     if encoding == "gzip":
         out = gzip.decompress(data)
-    elif encoding == "zstd":
-        try:
-            import zstandard  # type: ignore[import-not-found]
-        except ModuleNotFoundError:
-            msg = (
-                "zstd-compressed payload found but the"
-                " 'zstandard' package is not installed;"
-                " run: pip install zstandard"
-            )
-            raise ValueError(msg) from None
-        out = zstandard.ZstdDecompressor().decompress(data)
     else:
         msg = f"unsupported encoding: {encoding}"
         raise ValueError(msg)
