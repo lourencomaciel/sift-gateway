@@ -46,6 +46,7 @@ from sift_gateway.pagination.contract import (
     PAGINATION_WARNING_INCOMPLETE_RESULT_SET,
     RETRIEVAL_STATUS_PARTIAL,
     UPSTREAM_PARTIAL_REASON_SIGNAL_INCONCLUSIVE,
+    UpstreamNextKind,
     build_upstream_pagination_meta,
 )
 from sift_gateway.pagination.extract import (
@@ -63,7 +64,10 @@ from sift_gateway.tools.artifact_describe import (
     build_describe_response,
 )
 from sift_gateway.tools.artifact_schema import FETCH_SCHEMA_FIELDS_SQL
-from sift_gateway.tools.usage_hint import with_pagination_completeness_rule
+from sift_gateway.tools.usage_hint import (
+    build_code_query_usage,
+    compact_schema_primary_root_path,
+)
 
 if TYPE_CHECKING:
     from sift_gateway.mcp.server import GatewayServer
@@ -257,7 +261,7 @@ def _validate_cursor_argument(
                     "cursor_value": cursor_value,
                     "hint": (
                         "Extract the real cursor from the previous response "
-                        "pagination.next_cursor (or pagination.next_params) "
+                        "pagination.next.params "
                         "before retrying."
                     ),
                 },
@@ -639,16 +643,20 @@ def _pagination_response_meta(
     Returns:
         Dict with pagination info for the LLM.
     """
-    has_next_page = assessment.has_more and assessment.state is not None
+    next_kind: UpstreamNextKind | None = (
+        "tool_call"
+        if assessment.has_more and assessment.state is not None
+        else None
+    )
     page_number = assessment.page_number
-    base = build_upstream_pagination_meta(
+    return build_upstream_pagination_meta(
         artifact_id=artifact_id,
         page_number=page_number,
         retrieval_status=assessment.retrieval_status,
         has_more=assessment.has_more,
         partial_reason=assessment.partial_reason,
         warning=assessment.warning,
-        has_next_page=has_next_page,
+        next_kind=next_kind,
         next_params=(
             assessment.state.next_params
             if assessment.state is not None
@@ -661,10 +669,6 @@ def _pagination_response_meta(
         ),
         extra_warnings=extra_warnings,
     )
-    hint = base.get("hint")
-    if isinstance(hint, str):
-        base["hint"] = with_pagination_completeness_rule(hint)
-    return base
 
 
 def _preflight_mirrored_gateway(ctx: GatewayServer) -> dict[str, Any] | None:
@@ -1275,6 +1279,12 @@ async def handle_mirrored_tool(
     metadata: dict[str, Any] = {}
     if isinstance(mapping_payload, dict) and mapping_payload:
         metadata["mapping"] = mapping_payload
+    metadata["usage"] = build_code_query_usage(
+        interface="mcp",
+        artifact_id=artifact_id,
+        root_path=compact_schema_primary_root_path(schema_payload_compact),
+        configured_roots=ctx.config.code_query_allowed_import_roots,
+    )
     metadata["cache"] = {
         "reason": "fresh",
         "request_key": identity.request_key,

@@ -76,9 +76,9 @@ Key fields:
 - `retrieval_status` (`PARTIAL` | `COMPLETE`)
 - `partial_reason`
 - `has_more`
-- `has_next_page`
-- `next_action`
-- optional `next_params`
+- `next` (object or `null`)
+- `next.kind` (`tool_call` | `command` | `params_only`)
+- optional `next.params`
 
 Continuation APIs:
 

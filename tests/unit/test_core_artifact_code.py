@@ -69,10 +69,6 @@ class _Runtime:
     persisted_calls: list[dict[str, Any]] = field(default_factory=list)
 
     @property
-    def code_query_enabled(self) -> bool:
-        return True
-
-    @property
     def code_query_timeout_seconds(self) -> float:
         return 10.0
 

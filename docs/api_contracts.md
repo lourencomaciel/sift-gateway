@@ -140,9 +140,9 @@ When upstream pagination exists, `pagination` includes:
 - `retrieval_status` (`PARTIAL` or `COMPLETE`)
 - `partial_reason`
 - `has_more`
-- `has_next_page`
-- `next_action`
-- optional `next_params`
+- `next` (object or `null`)
+- `next.kind` (`tool_call` | `command` | `params_only`)
+- optional `next.params`
 - continuation hint
 
 Do not claim completion until `pagination.retrieval_status == "COMPLETE"`.
@@ -182,8 +182,8 @@ Summary header plus formatted JSON payload.
 - optional `pagination`
 - optional `metadata`
 
-For pagination, `run` may include a CLI-native continuation helper under
-`pagination.next_action.command_line`.
+For pagination, `run` includes a CLI-native continuation helper under
+`pagination.next.command_line` when `pagination.next.kind == "command"`.
 
 ## Compatibility Rules
 

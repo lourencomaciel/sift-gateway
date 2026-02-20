@@ -1414,9 +1414,6 @@ def execute_artifact_code(
     arguments: dict[str, Any],
 ) -> dict[str, Any]:
     """Execute deterministic generated Python over mapped root datasets."""
-    if not runtime.code_query_enabled:
-        return gateway_error("NOT_IMPLEMENTED", "query_kind=code is disabled")
-
     request, state, prepare_err = _prepare_code_request_state(
         runtime=runtime,
         arguments=arguments,

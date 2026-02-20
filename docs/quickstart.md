@@ -140,7 +140,7 @@ sift-gateway code <artifact_id> '$' --expr 'len(df)'
 `df` is combined across requested artifacts and `artifact_frames` maps
 `artifact_id` to each per-artifact DataFrame.
 
-If pagination is present (`pagination.has_next_page=true`), continue with:
+If pagination is present (`pagination.next.kind=="command"`), continue with:
 
 ```bash
 sift-gateway run --continue-from <artifact_id> -- <next-command-with-next-params-applied>

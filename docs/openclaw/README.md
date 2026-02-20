@@ -31,7 +31,7 @@ sift-gateway run -- echo '[{"id":1,"state":"open"},{"id":2,"state":"closed"}]'
 sift-gateway code <artifact_id> '$' --expr "df.shape[0]"
 ```
 
-If `pagination.has_next_page=true`, continue with:
+If `pagination.next.kind=="command"`, continue with:
 
 ```bash
 sift-gateway run --continue-from <artifact_id> -- <next-command-with-next_params-applied>
@@ -95,7 +95,7 @@ Fix:
 sift-gateway run --continue-from <artifact_id> -- <next-command-with-next_params-applied>
 ```
 
-Use `pagination.next_params` from the prior result.
+Use `pagination.next.params` from the prior result.
 
 ### Symptom: `sift-gateway code` fails immediately
 
