@@ -46,6 +46,7 @@ from sift_gateway.pagination.contract import (
     PAGINATION_WARNING_INCOMPLETE_RESULT_SET,
     RETRIEVAL_STATUS_PARTIAL,
     UPSTREAM_PARTIAL_REASON_SIGNAL_INCONCLUSIVE,
+    UpstreamNextKind,
     build_upstream_pagination_meta,
 )
 from sift_gateway.pagination.extract import (
@@ -642,7 +643,7 @@ def _pagination_response_meta(
     Returns:
         Dict with pagination info for the LLM.
     """
-    next_kind = (
+    next_kind: UpstreamNextKind | None = (
         "tool_call"
         if assessment.has_more and assessment.state is not None
         else None

@@ -88,6 +88,6 @@ curl -s https://api.example.com/events | sift-gateway run --stdin --ttl 8h --tag
 ## Context budget rules
 
 - keep raw output out of context; keep `artifact_id` plus compact summary
-- for paginated APIs, keep `next_params` and issue explicit continuation
+- for paginated APIs, keep `pagination.next.params` and issue explicit continuation
 - prefer narrow code outputs (counts, projections, aggregates)
 - each run capture is fresh by design; do not assume implicit dedupe

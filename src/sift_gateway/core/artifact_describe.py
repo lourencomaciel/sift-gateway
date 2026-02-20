@@ -16,6 +16,7 @@ from sift_gateway.pagination.contract import (
     PAGINATION_WARNING_INCOMPLETE_RESULT_SET,
     RETRIEVAL_STATUS_PARTIAL,
     UPSTREAM_PARTIAL_REASON_MORE_PAGES_AVAILABLE,
+    UpstreamNextKind,
     build_upstream_pagination_meta,
 )
 from sift_gateway.schema_compact import SCHEMA_LEGEND, compact_schema_payload
@@ -428,7 +429,7 @@ def _describe_pagination_meta(
     state = _extract_pagination_state(envelope)
     if state is None or not state.next_params:
         return None
-    next_kind = (
+    next_kind: UpstreamNextKind = (
         "command"
         if state.upstream_prefix == "cli" and state.tool_name == "run"
         else "tool_call"
