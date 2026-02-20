@@ -7,11 +7,11 @@ This guide defines the Phase 8 benchmark path for CLI-agnostic Sift.
 Measure core operations on large synthetic payloads:
 
 1. Capture (`execute_artifact_capture`)
-2. Select query (`execute_artifact_select`)
-3. Get query (`execute_artifact_get`)
+2. Retrieval kernel (`execute_artifact_select`) for projection/filter stress
+3. Retrieval kernel (`execute_artifact_get`) for envelope retrieval stress
 
-Both MCP and CLI surfaces call these same core services, so this benchmark is
-a shared performance signal.
+Items 2 and 3 are legacy internal kernels retained as performance probes even
+though contract-v1 public workflows are `run`/`next_page`/`code`.
 
 ## Runner
 
@@ -52,14 +52,14 @@ For each row-count case, track:
 
 1. `payload_total_bytes_p50`
 2. `capture.p50_ms` and `capture.p95_ms`
-3. `select.p50_ms` and `select.p95_ms`
-4. `get.p50_ms` and `get.p95_ms`
+3. `select.p50_ms` and `select.p95_ms` (kernel proxy)
+4. `get.p50_ms` and `get.p95_ms` (kernel proxy)
 
 Flag for investigation when:
 
 1. `p95` regresses by >20% against prior baseline at similar payload size.
 2. Capture latency scales super-linearly between adjacent row tiers.
-3. Select/get p95 grows disproportionately vs payload byte growth.
+3. Retrieval-kernel p95 grows disproportionately vs payload byte growth.
 
 ## CI vs Local
 

@@ -5,7 +5,7 @@ maintainer-only guide.
 
 ## Start Here
 
-- `quickstart.md` — install, init, and first artifact query
+- `quickstart.md` — install, init, and first run/code artifact flow
 - `openclaw/README.md` — OpenClaw-first quickstart and skill pack
 - `cli-output-format.md` — stable human and JSON output contract for `sift-gateway`
 - `config.md` — all config keys, env vars, defaults, and runtime flags

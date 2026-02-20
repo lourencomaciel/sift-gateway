@@ -1,8 +1,8 @@
 # Release Checklist
 
-Use this checklist for the CLI-agnostic release candidate.
+Use this checklist for contract-v1 releases.
 
-## Quality Gates
+## Quality gates
 
 1. One-command preflight (recommended):
    - `UV_CACHE_DIR=/tmp/uv-cache uv run python scripts/run_rc_preflight.py`
@@ -12,7 +12,7 @@ Use this checklist for the CLI-agnostic release candidate.
    - `UV_CACHE_DIR=/tmp/uv-cache uv run mypy src`
    - `UV_CACHE_DIR=/tmp/uv-cache uv run python scripts/check_docs_consistency.py`
 
-## Hardening Gates
+## Hardening gates
 
 1. Cleanup lifecycle coverage present:
    - `tests/unit/test_cleanup_lifecycle.py`
@@ -23,19 +23,21 @@ Use this checklist for the CLI-agnostic release candidate.
    - `docs/benchmarks/2026-02-19-local-baseline.json`
    - `docs/benchmarks/2026-02-19-local-baseline.md`
 
-## Release Notes and Migration
+## Release notes and migration
 
 1. `CHANGELOG.md` updated under `Unreleased`.
 2. `docs/migration-guide.md` current and linked from README/docs index.
-3. Packaging transition notes stay aligned with:
+3. Packaging transition notes aligned with:
    - `docs/packaging-transition.md`
 
-## Final Verify
+## Final verify
 
 1. Build artifacts:
    - `UV_CACHE_DIR=/tmp/uv-cache uv build`
 2. Smoke CLI:
+   - `UV_CACHE_DIR=/tmp/uv-cache uv run python scripts/smoke_cli_behavior.py --fail-fast`
    - `sift-gateway --version`
-   - `sift-gateway list`
+   - `sift-gateway run --json -- echo '{"ok":true}'`
+   - `sift-gateway code <artifact_id-from-previous-step> '$' --expr 'len(df)' --json`
 3. Smoke MCP status path:
    - `sift-gateway --check`

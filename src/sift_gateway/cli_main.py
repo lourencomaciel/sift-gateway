@@ -6,7 +6,6 @@ import argparse
 from collections.abc import Generator
 from contextlib import contextmanager
 from dataclasses import dataclass
-import difflib
 import hashlib
 import json
 import os
@@ -22,6 +21,7 @@ from sift_gateway.config import load_gateway_config
 from sift_gateway.constants import (
     CAPTURE_KIND_CLI_COMMAND,
     CAPTURE_KIND_STDIN_PIPE,
+    RESPONSE_TYPE_ERROR,
     WORKSPACE_ID,
 )
 from sift_gateway.core.artifact_capture import (
@@ -29,11 +29,13 @@ from sift_gateway.core.artifact_capture import (
 )
 from sift_gateway.core.artifact_code import execute_artifact_code
 from sift_gateway.core.artifact_describe import execute_artifact_describe
-from sift_gateway.core.artifact_get import execute_artifact_get
-from sift_gateway.core.artifact_search import execute_artifact_search
-from sift_gateway.core.artifact_select import execute_artifact_select
 from sift_gateway.db.backend import SqliteBackend
 from sift_gateway.db.migrate import apply_migrations
+from sift_gateway.envelope.responses import (
+    gateway_error,
+    gateway_tool_result,
+    select_response_mode,
+)
 from sift_gateway.lifecycle import ensure_data_dirs
 from sift_gateway.mcp.adapters.artifact_query_runtime import (
     GatewayArtifactQueryRuntime,
@@ -44,7 +46,7 @@ from sift_gateway.pagination.extract import (
     assess_pagination,
 )
 from sift_gateway.request_identity import compute_request_identity
-from sift_gateway.storage.payload_store import reconstruct_envelope
+from sift_gateway.schema_compact import SCHEMA_LEGEND, compact_schema_payload
 
 _CLI_SESSION_ID = "cli"
 _CLI_PREFIX = "cli"
@@ -52,13 +54,22 @@ _CLI_UPSTREAM_INSTANCE_ID = "cli_local"
 _DEFAULT_TTL_RAW = "24h"
 _TTL_PATTERN = re.compile(r"^([1-9][0-9]*)([smhd]?)$")
 _INT_PATTERN = re.compile(r"^[+-]?[0-9]+$")
-_DIFF_DEFAULT_MAX_LINES = 200
 _CODE_EXPR_TEMPLATE = textwrap.dedent(
     """
-    def run(data, schema, params):
+    def run(artifacts, schemas, params):
         import pandas as pd
-        rows = data if isinstance(data, list) else [data]
-        df = pd.DataFrame(rows)
+        artifact_frames = {{}}
+        for artifact_id, artifact_rows in artifacts.items():
+            rows = (
+                artifact_rows
+                if isinstance(artifact_rows, list)
+                else [artifact_rows]
+            )
+            artifact_frames[artifact_id] = pd.DataFrame(rows)
+        if artifact_frames:
+            df = pd.concat(artifact_frames.values(), ignore_index=True)
+        else:
+            df = pd.DataFrame()
         return {expr}
     """
 ).strip()
@@ -76,18 +87,6 @@ _CLI_CONTINUE_PARENT_COLUMNS = [
     "capture_kind",
     "chain_seq",
 ]
-
-_LIST_FILTER_ATTRS: tuple[tuple[str, str], ...] = (
-    ("status", "status"),
-    ("kind", "kind"),
-    ("source_tool", "source_tool"),
-    ("source_tool_prefix", "source_tool_prefix"),
-    ("upstream_instance_id", "upstream_instance_id"),
-    ("request_key", "request_key"),
-    ("capture_kind", "capture_kind"),
-    ("capture_key", "capture_key"),
-    ("parent_artifact_id", "parent_artifact_id"),
-)
 
 
 @dataclass
@@ -108,25 +107,6 @@ class _RunCaptureExecution:
 def _migrations_dir() -> Path:
     """Return the SQLite migrations directory path."""
     return Path(__file__).resolve().parent / "db" / "migrations_sqlite"
-
-
-def _split_select_paths(raw_values: list[str] | None) -> list[str]:
-    """Split ``--select`` values supporting repeated and comma-separated flags."""
-    values = raw_values or []
-    out: list[str] = []
-    for value in values:
-        for segment in value.split(","):
-            stripped = segment.strip()
-            if stripped:
-                out.append(stripped)
-    return out
-
-
-def _parse_where_json(raw_where: str | None) -> dict[str, Any] | None:
-    """Parse ``--where`` JSON into a filter object."""
-    if raw_where is None:
-        return None
-    return _parse_json_object(raw_where, flag="--where")
 
 
 def _parse_json_object(raw_value: str, *, flag: str) -> dict[str, Any]:
@@ -494,21 +474,6 @@ def _build_cli_next_action(artifact_id: str) -> dict[str, Any]:
     }
 
 
-def _is_artifact_next_page_action(next_action: Any) -> bool:
-    """Return whether next_action is canonical artifact(action=next_page)."""
-    if not isinstance(next_action, dict):
-        return False
-    if next_action.get("tool") != "artifact":
-        return False
-    arguments = next_action.get("arguments")
-    if not isinstance(arguments, dict):
-        return False
-    if arguments.get("action") != "next_page":
-        return False
-    artifact_id = arguments.get("artifact_id")
-    return isinstance(artifact_id, str) and bool(artifact_id)
-
-
 def _build_cli_continue_hint(artifact_id: str) -> str:
     """Build a consistent continuation hint for CLI pagination."""
     return (
@@ -518,49 +483,21 @@ def _build_cli_continue_hint(artifact_id: str) -> str:
     )
 
 
-def _pagination_has_known_next_action(
+def _resolve_cli_pagination_artifact_id(
     *,
-    pagination: dict[str, Any],
+    payload: dict[str, Any],
     next_action: Any,
-) -> bool:
-    """Return whether pagination already has a supported next_action."""
-    if pagination.get("has_next_page") is not True:
-        return False
-    if isinstance(next_action, dict) and next_action.get("command") == "run":
-        return True
-    return _is_artifact_next_page_action(next_action)
-
-
-def _pagination_requires_manual_cli_continuation(
-    pagination: dict[str, Any],
-) -> bool:
-    """Return whether pagination indicates manual CLI continuation."""
-    next_params = pagination.get("next_params")
-    return (
-        pagination.get("has_next_page") is not True
-        and pagination.get("has_more") is True
-        and isinstance(next_params, dict)
-        and bool(next_params)
-    )
-
-
-def _artifact_id_from_pagination_next_action(next_action: Any) -> str | None:
-    """Extract artifact_id from canonical artifact-next-page action."""
-    if not isinstance(next_action, dict):
-        return None
-    arguments = next_action.get("arguments")
-    if not isinstance(arguments, dict):
-        return None
-    candidate_id = arguments.get("artifact_id")
-    if isinstance(candidate_id, str) and candidate_id:
-        return candidate_id
-    return None
-
-
-def _non_empty_string(value: Any) -> str | None:
-    """Normalize optional non-empty string."""
-    if isinstance(value, str) and value:
-        return value
+) -> str | None:
+    """Resolve the artifact id used to build CLI continuation metadata."""
+    if isinstance(next_action, dict):
+        arguments = next_action.get("arguments")
+        if isinstance(arguments, dict):
+            candidate_id = arguments.get("artifact_id")
+            if isinstance(candidate_id, str) and candidate_id:
+                return candidate_id
+    artifact_id = payload.get("artifact_id")
+    if isinstance(artifact_id, str) and artifact_id:
+        return artifact_id
     return None
 
 
@@ -571,19 +508,18 @@ def _adapt_cli_pagination_meta(
     pagination = payload.get("pagination")
     if not isinstance(pagination, dict):
         return payload
-    next_action = pagination.get("next_action")
-    if _pagination_has_known_next_action(
-        pagination=pagination,
-        next_action=next_action,
-    ):
+    if pagination.get("has_next_page") is True:
         return payload
 
-    if not _pagination_requires_manual_cli_continuation(pagination):
+    if pagination.get("has_more") is not True:
         return payload
-
-    artifact_id = _artifact_id_from_pagination_next_action(next_action)
-    if artifact_id is None:
-        artifact_id = _non_empty_string(payload.get("artifact_id"))
+    next_params = pagination.get("next_params")
+    if not isinstance(next_params, dict) or not next_params:
+        return payload
+    artifact_id = _resolve_cli_pagination_artifact_id(
+        payload=payload,
+        next_action=pagination.get("next_action"),
+    )
     if artifact_id is None:
         return payload
 
@@ -653,101 +589,6 @@ def _estimate_records(payload: Any) -> int | None:
             return len(stdout)
         return 1
     return None
-
-
-def _build_diff_lines(
-    *,
-    left_payload: dict[str, Any],
-    right_payload: dict[str, Any],
-    left_label: str,
-    right_label: str,
-    max_lines: int,
-) -> tuple[list[str], bool]:
-    """Build bounded unified diff lines for two payload objects."""
-    left_lines = json.dumps(
-        left_payload,
-        ensure_ascii=False,
-        indent=2,
-        sort_keys=True,
-        default=str,
-    ).splitlines()
-    right_lines = json.dumps(
-        right_payload,
-        ensure_ascii=False,
-        indent=2,
-        sort_keys=True,
-        default=str,
-    ).splitlines()
-    all_lines = list(
-        difflib.unified_diff(
-            left_lines,
-            right_lines,
-            fromfile=left_label,
-            tofile=right_label,
-            lineterm="",
-        )
-    )
-    if len(all_lines) <= max_lines:
-        return all_lines, False
-    return all_lines[:max_lines], True
-
-
-def _fetch_artifact_for_diff(
-    runtime: GatewayArtifactQueryRuntime,
-    *,
-    artifact_id: str,
-) -> dict[str, Any]:
-    """Load one artifact envelope payload for diffing."""
-    if runtime.db_pool is None:
-        msg = "artifact diff requires database backend"
-        raise ValueError(msg)
-    with runtime.db_pool.connection() as connection:
-        row = connection.execute(
-            """
-            SELECT a.artifact_id, a.payload_hash_full, a.payload_total_bytes,
-                   pb.envelope, pb.envelope_canonical_encoding,
-                   pb.payload_fs_path
-            FROM artifacts a
-            JOIN payload_blobs pb
-              ON pb.workspace_id = a.workspace_id
-             AND pb.payload_hash_full = a.payload_hash_full
-            WHERE a.workspace_id = %s
-              AND a.artifact_id = %s
-              AND a.deleted_at IS NULL
-            """,
-            (WORKSPACE_ID, artifact_id),
-        ).fetchone()
-        if row is None:
-            msg = f"artifact not found: {artifact_id}"
-            raise ValueError(msg)
-        loaded = {
-            "artifact_id": row[0],
-            "payload_hash_full": row[1],
-            "payload_total_bytes": row[2],
-            "envelope": row[3],
-            "envelope_canonical_encoding": row[4],
-            "payload_fs_path": row[5],
-        }
-        raw_envelope = loaded["envelope"]
-        if isinstance(raw_envelope, dict):
-            envelope = raw_envelope
-        else:
-            payload_fs_path = loaded["payload_fs_path"]
-            if not isinstance(payload_fs_path, str) or not payload_fs_path:
-                msg = f"payload path unavailable for artifact: {artifact_id}"
-                raise ValueError(msg)
-            envelope = reconstruct_envelope(
-                payload_fs_path=payload_fs_path,
-                blobs_payload_dir=runtime.config.blobs_payload_dir,
-                encoding=str(loaded.get("envelope_canonical_encoding", "none")),
-                expected_hash=str(loaded["payload_hash_full"]),
-            )
-        return {
-            "artifact_id": str(loaded["artifact_id"]),
-            "payload_hash_full": str(loaded["payload_hash_full"]),
-            "payload_total_bytes": int(loaded["payload_total_bytes"]),
-            "envelope": envelope,
-        }
 
 
 def _load_cli_continue_chain_seq(
@@ -822,27 +663,18 @@ def _build_gateway_context() -> dict[str, Any]:
     return {"session_id": _CLI_SESSION_ID}
 
 
-def _collect_list_filters(args: argparse.Namespace) -> dict[str, Any]:
-    """Build search filters from parsed list-command arguments."""
-    filters: dict[str, Any] = {}
-    if args.include_deleted:
-        filters["include_deleted"] = True
-    for attr_name, filter_key in _LIST_FILTER_ATTRS:
-        value = getattr(args, attr_name, None)
-        if value is not None:
-            filters[filter_key] = value
-    return filters
-
-
 def _is_error_response(payload: dict[str, Any]) -> bool:
     """Return whether a payload appears to be a gateway error response."""
-    return (
-        isinstance(payload.get("code"), str)
-        and isinstance(payload.get("message"), str)
-        and "items" not in payload
-        and "count" not in payload
-        and "artifact_id" not in payload
-    )
+    code = payload.get("code")
+    message = payload.get("message")
+    if not isinstance(code, str) or not isinstance(message, str):
+        return False
+    payload_type = payload.get("type")
+    if payload_type == RESPONSE_TYPE_ERROR:
+        return True
+    # Legacy CLI/core errors still return {"code","message"} without
+    # the typed gateway_error envelope.
+    return payload_type is None and "response_mode" not in payload
 
 
 def _write_line(text: str, *, stream: Any | None = None) -> None:
@@ -854,264 +686,114 @@ def _write_line(text: str, *, stream: Any | None = None) -> None:
 
 def _emit_json(payload: dict[str, Any]) -> None:
     """Emit payload as machine-readable JSON."""
-    _write_line(json.dumps(payload, ensure_ascii=False, sort_keys=True))
-
-
-def _emit_human_list(payload: dict[str, Any]) -> None:
-    """Emit compact human-readable output for ``sift-gateway list``."""
-    items = payload.get("items")
-    if not isinstance(items, list) or not items:
-        _write_line("no artifacts")
-    else:
-        for item in items:
-            if not isinstance(item, dict):
-                continue
-            _write_line(
-                " ".join(
-                    [
-                        str(item.get("artifact_id", "")),
-                        f"seq={item.get('created_seq')}",
-                        f"kind={item.get('kind')}",
-                        f"status={item.get('status')}",
-                        f"source={item.get('source_tool')}",
-                        f"capture={item.get('capture_kind')}",
-                        f"bytes={item.get('payload_total_bytes')}",
-                    ]
-                )
-            )
-    cursor = payload.get("cursor")
-    if isinstance(cursor, str) and cursor:
-        _write_line(f"next_cursor: {cursor}")
-
-
-def _emit_human_schema_roots(roots: Any) -> None:
-    """Emit compact root summary lines for schema output."""
-    if not isinstance(roots, list):
-        return
-    _write_line(f"roots: {len(roots)}")
-    for root in roots:
-        if not isinstance(root, dict):
-            continue
-        root_path = root.get("root_path")
-        count = root.get("count_estimate")
-        _write_line(f"- {root_path} count={count}")
-
-
-def _schema_next_line_and_artifact(
-    next_action: Any,
-) -> tuple[str | None, str | None]:
-    """Resolve emitted next-line text and CLI artifact override."""
-    if not isinstance(next_action, dict):
-        return None, None
-
-    artifact_id = _non_empty_string(
-        next_action.get("continue_from_artifact_id")
+    _write_line(
+        json.dumps(
+            payload,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
     )
-    command_line = _non_empty_string(next_action.get("command_line"))
-    if command_line is not None:
-        return f"next: {command_line}", artifact_id
-
-    if _is_artifact_next_page_action(next_action):
-        arguments = next_action.get("arguments")
-        if isinstance(arguments, dict):
-            next_artifact_id = _non_empty_string(arguments.get("artifact_id"))
-            if next_artifact_id is not None:
-                return (
-                    "next: "
-                    f'artifact(action="next_page", artifact_id="{next_artifact_id}")',
-                    artifact_id,
-                )
-    return None, artifact_id
 
 
-def _emit_human_schema_pagination(
-    payload: dict[str, Any],
-    pagination: dict[str, Any],
-) -> None:
-    """Emit continuation lines for schema output when pagination exists."""
-    if pagination.get("has_next_page") is not True:
-        return
-
-    artifact_id = _non_empty_string(payload.get("artifact_id"))
-    next_line, candidate_artifact_id = _schema_next_line_and_artifact(
-        pagination.get("next_action")
-    )
-    if candidate_artifact_id is not None:
-        artifact_id = candidate_artifact_id
-
-    if next_line is not None:
-        _write_line(next_line)
-    elif artifact_id is not None:
-        _write_line(f"next: {_build_cli_continue_command(artifact_id)}")
-
-    hint = _non_empty_string(pagination.get("hint"))
-    if hint is not None:
-        _write_line(f"hint: {hint}")
-
-
-def _emit_human_schema(payload: dict[str, Any]) -> None:
-    """Emit compact human-readable output for ``sift-gateway schema``."""
-    _write_line(f"artifact: {payload.get('artifact_id')}")
-    _write_line(f"scope: {payload.get('scope')}")
-    artifacts = payload.get("artifacts")
-    if isinstance(artifacts, list):
-        _write_line(f"artifacts: {len(artifacts)}")
-
-    _emit_human_schema_roots(payload.get("roots"))
-
-    pagination = payload.get("pagination")
-    if isinstance(pagination, dict):
-        _emit_human_schema_pagination(payload, pagination)
-
-
-def _emit_human_generic(payload: dict[str, Any]) -> None:
-    """Emit default human-readable output for ``get`` and ``query``."""
-    items = payload.get("items")
-    if isinstance(items, list):
-        _write_line(f"items: {len(items)}")
-    if "count" in payload:
-        _write_line(f"count: {payload.get('count')}")
-    if payload.get("truncated") is True and isinstance(
-        payload.get("cursor"), str
-    ):
-        _write_line(f"next_cursor: {payload['cursor']}")
+def _emit_human_code(payload: dict[str, Any]) -> None:
+    """Emit compact code-query summary."""
+    artifact_id = payload.get("artifact_id")
+    if isinstance(artifact_id, str):
+        _write_line(f"artifact: {artifact_id}")
+    _write_line(f"mode:     {payload.get('response_mode')}")
+    if payload.get("response_mode") == "schema_ref":
+        schemas = payload.get("schemas_compact")
+        if isinstance(schemas, list):
+            _write_line(f"schema_roots: {len(schemas)}")
+    metadata = payload.get("metadata")
+    if isinstance(metadata, dict):
+        stats = metadata.get("stats")
+        if isinstance(stats, dict):
+            output_records = stats.get("output_records")
+            if isinstance(output_records, int):
+                _write_line(f"records:  {output_records}")
+            bytes_out = stats.get("bytes_out")
+            if isinstance(bytes_out, int):
+                _write_line(f"bytes:    {bytes_out}")
     _write_line(
         json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True)
     )
 
 
-def _emit_human_run(payload: dict[str, Any]) -> None:
-    """Emit compact run-capture summary."""
-    artifact_id = payload.get("artifact_id")
-    if isinstance(artifact_id, str):
-        _write_line(f"artifact: {artifact_id}")
-    records = payload.get("records")
+def _run_payload_metadata(payload: dict[str, Any]) -> dict[str, Any]:
+    """Return run payload metadata object or an empty dict."""
+    metadata = payload.get("metadata")
+    if isinstance(metadata, dict):
+        return metadata
+    return {}
+
+
+def _emit_human_run_metadata(meta: dict[str, Any]) -> int | None:
+    """Emit run metadata lines and return command exit code when available."""
+    records = meta.get("records")
     if isinstance(records, int):
         _write_line(f"records:  {records}")
     else:
         _write_line("records:  unknown")
-    _write_line(f"bytes:    {payload.get('payload_total_bytes')}")
-    capture_kind = payload.get("capture_kind")
+
+    _write_line(f"bytes:    {meta.get('payload_total_bytes')}")
+    capture_kind = meta.get("capture_kind")
     if isinstance(capture_kind, str):
         _write_line(f"capture:  {capture_kind}")
-    expires_at = payload.get("expires_at")
+    expires_at = meta.get("expires_at")
     if isinstance(expires_at, str) and expires_at:
         _write_line(f"expires:  {expires_at}")
-    tags = payload.get("tags")
+    tags = meta.get("tags")
     if isinstance(tags, list) and tags:
         _write_line(f"tags:     {', '.join(str(tag) for tag in tags)}")
-    command_exit_code = payload.get("command_exit_code")
+    command_exit_code = meta.get("command_exit_code")
     if isinstance(command_exit_code, int):
         _write_line(f"exit:     {command_exit_code}")
+        return command_exit_code
+    return None
+
+
+def _emit_human_run_continuation(
+    payload: dict[str, Any],
+    *,
+    artifact_id: str | None,
+    command_exit_code: int | None,
+) -> None:
+    """Emit run continuation, schema, and follow-up hint lines."""
     pagination = payload.get("pagination")
     if (
         isinstance(pagination, dict)
         and pagination.get("has_next_page") is True
-        and isinstance(artifact_id, str)
+        and artifact_id is not None
     ):
         _write_line(f"next:     {_build_cli_continue_command(artifact_id)}")
-    if isinstance(artifact_id, str):
+
+    if payload.get("response_mode") == "schema_ref":
+        schemas = payload.get("schemas_compact")
+        if isinstance(schemas, list):
+            _write_line(f"schema_roots: {len(schemas)}")
+
+    if artifact_id is not None and command_exit_code == 0:
         _write_line(
-            f"hint:     use `sift-gateway query {artifact_id} '$'` to explore"
+            "hint:     use "
+            f"`sift-gateway code {artifact_id} '$' --expr \"len(df)\"`"
         )
 
 
-def _emit_human_diff(payload: dict[str, Any]) -> None:
-    """Emit concise artifact comparison output."""
-    _write_line(f"left:    {payload.get('left_artifact_id')}")
-    _write_line(f"right:   {payload.get('right_artifact_id')}")
-    _write_line(f"equal:   {payload.get('equal')}")
-    _write_line(
-        f"hashes:  {payload.get('left_payload_hash')} / "
-        f"{payload.get('right_payload_hash')}"
+def _emit_human_run(payload: dict[str, Any]) -> None:
+    """Emit compact run-capture summary."""
+    raw_artifact_id = payload.get("artifact_id")
+    artifact_id = raw_artifact_id if isinstance(raw_artifact_id, str) else None
+    if artifact_id is not None:
+        _write_line(f"artifact: {artifact_id}")
+    _write_line(f"mode:     {payload.get('response_mode')}")
+    command_exit_code = _emit_human_run_metadata(_run_payload_metadata(payload))
+    _emit_human_run_continuation(
+        payload,
+        artifact_id=artifact_id,
+        command_exit_code=command_exit_code,
     )
-    _write_line(
-        f"bytes:   {payload.get('left_payload_bytes')} / "
-        f"{payload.get('right_payload_bytes')}"
-    )
-    if payload.get("equal") is True:
-        return
-    diff_lines = payload.get("diff_lines")
-    if isinstance(diff_lines, list):
-        for line in diff_lines:
-            _write_line(str(line))
-    if payload.get("diff_truncated") is True:
-        _write_line("diff truncated; use --max-lines to increase output")
-
-
-def _execute_list(
-    runtime: GatewayArtifactQueryRuntime,
-    args: argparse.Namespace,
-) -> dict[str, Any]:
-    """Execute ``sift-gateway list`` against core search service."""
-    return execute_artifact_search(
-        runtime,
-        arguments={
-            "_gateway_context": _build_gateway_context(),
-            "filters": _collect_list_filters(args),
-            "order_by": args.order_by,
-            "limit": args.limit,
-            "cursor": args.cursor,
-            "query": args.query,
-        },
-    )
-
-
-def _execute_schema(
-    runtime: GatewayArtifactQueryRuntime,
-    args: argparse.Namespace,
-) -> dict[str, Any]:
-    """Execute ``sift-gateway schema`` against core describe service."""
-    return execute_artifact_describe(
-        runtime,
-        arguments={
-            "_gateway_context": _build_gateway_context(),
-            "artifact_id": args.artifact_id,
-            "scope": args.scope,
-        },
-    )
-
-
-def _execute_get(
-    runtime: GatewayArtifactQueryRuntime,
-    args: argparse.Namespace,
-) -> dict[str, Any]:
-    """Execute ``sift-gateway get`` against core get service."""
-    return execute_artifact_get(
-        runtime,
-        arguments={
-            "_gateway_context": _build_gateway_context(),
-            "artifact_id": args.artifact_id,
-            "scope": args.scope,
-            "target": args.target,
-            "jsonpath": args.jsonpath,
-            "limit": args.limit,
-            "cursor": args.cursor,
-        },
-    )
-
-
-def _execute_query(
-    runtime: GatewayArtifactQueryRuntime,
-    args: argparse.Namespace,
-) -> dict[str, Any]:
-    """Execute ``sift-gateway query`` against core select service."""
-    where_expr = _parse_where_json(args.where)
-    payload: dict[str, Any] = {
-        "_gateway_context": _build_gateway_context(),
-        "artifact_id": args.artifact_id,
-        "scope": args.scope,
-        "root_path": args.root_path,
-        "select_paths": _split_select_paths(args.select),
-        "limit": args.limit,
-        "cursor": args.cursor,
-        "order_by": args.order_by,
-        "distinct": args.distinct,
-        "count_only": args.count_only,
-    }
-    if where_expr is not None:
-        payload["where"] = where_expr
-    return execute_artifact_select(runtime, arguments=payload)
 
 
 def _execute_code(
@@ -1392,6 +1074,74 @@ def _decorate_run_capture_payload(
         )
 
 
+def _sanitize_run_payload_for_storage(
+    runtime: GatewayArtifactQueryRuntime,
+    payload: Any,
+) -> Any:
+    """Apply gateway redaction to persisted run payloads when available."""
+    gateway = getattr(runtime, "gateway", None)
+    sanitize = getattr(gateway, "_sanitize_tool_result", None)
+    if not callable(sanitize):
+        return payload
+    sanitized = sanitize({"payload": payload})
+    if (
+        not isinstance(sanitized, dict)
+        or sanitized.get("type") == RESPONSE_TYPE_ERROR
+    ):
+        raise ValueError("response redaction failed")
+    if "payload" in sanitized:
+        return sanitized["payload"]
+    raise ValueError("response redaction failed")
+
+
+def _resolve_run_schema_ref(
+    runtime: GatewayArtifactQueryRuntime,
+    *,
+    artifact_id: str,
+) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
+    """Load compact schema payload for one run artifact."""
+    try:
+        describe = execute_artifact_describe(
+            runtime,
+            arguments={
+                "_gateway_context": _build_gateway_context(),
+                "artifact_id": artifact_id,
+                "scope": "single",
+            },
+        )
+    except Exception:
+        return [], None
+    if not isinstance(describe, dict):
+        return [], None
+
+    raw_schemas = describe.get("schemas")
+    if not isinstance(raw_schemas, list):
+        return [], None
+    schemas_full = [schema for schema in raw_schemas if isinstance(schema, dict)]
+    schemas_compact = compact_schema_payload(schemas_full)
+    if not schemas_compact:
+        return [], None
+    return schemas_compact, SCHEMA_LEGEND
+
+
+def _build_run_lineage(
+    *,
+    artifact_id: str,
+    parent_artifact_id: str | None,
+    chain_seq: int | None,
+) -> dict[str, Any]:
+    """Build lineage metadata for CLI run responses."""
+    lineage: dict[str, Any] = {
+        "scope": "single",
+        "artifact_ids": [artifact_id],
+    }
+    if parent_artifact_id is not None:
+        lineage["parent_artifact_id"] = parent_artifact_id
+    if chain_seq is not None:
+        lineage["chain_seq"] = chain_seq
+    return lineage
+
+
 def _execute_run(
     runtime: GatewayArtifactQueryRuntime,
     args: argparse.Namespace,
@@ -1432,6 +1182,13 @@ def _execute_run(
     )
     if tags:
         execution.capture_origin["tags"] = tags
+    try:
+        execution.payload = _sanitize_run_payload_for_storage(
+            runtime,
+            execution.payload,
+        )
+    except ValueError:
+        return gateway_error("INTERNAL", "response redaction failed")
 
     capture_arguments = _build_run_capture_arguments(
         execution=execution,
@@ -1453,51 +1210,83 @@ def _execute_run(
             tags=tags,
             parent_artifact_id=parent_artifact_id,
         )
-    return capture_payload
+        artifact_id = capture_payload.get("artifact_id")
+        if not isinstance(artifact_id, str) or not artifact_id:
+            return capture_payload
 
-
-def _execute_diff(
-    runtime: GatewayArtifactQueryRuntime,
-    args: argparse.Namespace,
-) -> dict[str, Any]:
-    """Execute ``sift-gateway diff`` by comparing envelopes."""
-    max_lines = args.max_lines
-    if max_lines <= 0:
-        msg = "--max-lines must be > 0"
-        raise ValueError(msg)
-
-    left = _fetch_artifact_for_diff(
-        runtime,
-        artifact_id=args.left_artifact_id,
-    )
-    right = _fetch_artifact_for_diff(
-        runtime,
-        artifact_id=args.right_artifact_id,
-    )
-    left_hash = left["payload_hash_full"]
-    right_hash = right["payload_hash_full"]
-    equal = left_hash == right_hash
-    diff_lines: list[str] = []
-    diff_truncated = False
-    if not equal:
-        diff_lines, diff_truncated = _build_diff_lines(
-            left_payload=left["envelope"],
-            right_payload=right["envelope"],
-            left_label=str(left["artifact_id"]),
-            right_label=str(right["artifact_id"]),
-            max_lines=max_lines,
+        pagination_payload = capture_payload.get("pagination")
+        pagination = (
+            pagination_payload if isinstance(pagination_payload, dict) else None
         )
-    return {
-        "left_artifact_id": left["artifact_id"],
-        "right_artifact_id": right["artifact_id"],
-        "left_payload_hash": left_hash,
-        "right_payload_hash": right_hash,
-        "left_payload_bytes": left["payload_total_bytes"],
-        "right_payload_bytes": right["payload_total_bytes"],
-        "equal": equal,
-        "diff_lines": diff_lines,
-        "diff_truncated": diff_truncated,
-    }
+        lineage = _build_run_lineage(
+            artifact_id=artifact_id,
+            parent_artifact_id=parent_artifact_id,
+            chain_seq=chain_seq,
+        )
+        metadata: dict[str, Any] = {
+            "records": capture_payload.get("records"),
+            "command_exit_code": execution.command_exit_code,
+            "payload_total_bytes": capture_payload.get("payload_total_bytes"),
+            "capture_kind": capture_payload.get("capture_kind"),
+            "expires_at": capture_payload.get("expires_at"),
+            "status": capture_payload.get("status"),
+            "tags": tags,
+        }
+
+        schemas_compact, schema_legend = _resolve_run_schema_ref(
+            runtime,
+            artifact_id=artifact_id,
+        )
+        full_payload = gateway_tool_result(
+            response_mode="full",
+            artifact_id=artifact_id,
+            payload=execution.payload,
+            lineage=lineage,
+            pagination=pagination,
+            metadata=metadata,
+        )
+        schema_ref_payload = gateway_tool_result(
+            response_mode="schema_ref",
+            artifact_id=artifact_id,
+            schemas_compact=schemas_compact,
+            schema_legend=schema_legend or SCHEMA_LEGEND,
+            lineage=lineage,
+            pagination=pagination,
+            metadata=metadata,
+        )
+        for response_payload in (full_payload, schema_ref_payload):
+            response_payload["records"] = metadata.get("records")
+            response_payload["command_exit_code"] = metadata.get(
+                "command_exit_code"
+            )
+            response_payload["payload_total_bytes"] = metadata.get(
+                "payload_total_bytes"
+            )
+            response_payload["capture_kind"] = metadata.get("capture_kind")
+            response_payload["expires_at"] = metadata.get("expires_at")
+            response_payload["status"] = metadata.get("status")
+            response_payload["tags"] = metadata.get("tags")
+            if parent_artifact_id is not None:
+                response_payload["source_artifact_id"] = parent_artifact_id
+        has_pagination = (
+            pagination is not None or parent_artifact_id is not None
+        )
+        raw_max_bytes = getattr(runtime, "max_bytes_out", 5_000_000)
+        max_bytes = (
+            raw_max_bytes
+            if isinstance(raw_max_bytes, int) and raw_max_bytes > 0
+            else 5_000_000
+        )
+        response_mode = select_response_mode(
+            has_pagination=has_pagination,
+            full_payload=full_payload,
+            schema_ref_payload=schema_ref_payload,
+            max_bytes=max_bytes,
+        )
+        if response_mode == "schema_ref":
+            return schema_ref_payload
+        return full_payload
+    return capture_payload
 
 
 def _dispatch_command(
@@ -1505,20 +1294,10 @@ def _dispatch_command(
     args: argparse.Namespace,
 ) -> tuple[dict[str, Any], str]:
     """Run the selected command and return payload plus formatter kind."""
-    if args.command == "list":
-        return _execute_list(runtime, args), "list"
-    if args.command == "schema":
-        return _execute_schema(runtime, args), "schema"
-    if args.command == "get":
-        return _execute_get(runtime, args), "generic"
-    if args.command == "query":
-        return _execute_query(runtime, args), "generic"
     if args.command == "code":
-        return _execute_code(runtime, args), "generic"
+        return _execute_code(runtime, args), "code"
     if args.command == "run":
         return _execute_run(runtime, args), "run"
-    if args.command == "diff":
-        return _execute_diff(runtime, args), "diff"
     msg = f"unsupported command: {args.command}"
     raise ValueError(msg)
 
@@ -1560,94 +1339,6 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Override DATA_DIR (default: .sift-gateway/)",
     )
     sub = parser.add_subparsers(dest="command", required=True)
-
-    list_parser = sub.add_parser("list", help="List recent artifacts")
-    list_parser.add_argument("--limit", type=int, default=25)
-    list_parser.add_argument("--cursor", default=None)
-    list_parser.add_argument(
-        "--order-by",
-        choices=["created_seq_desc", "last_seen_desc", "chain_seq_asc"],
-        default="created_seq_desc",
-    )
-    list_parser.add_argument("--query", default=None)
-    list_parser.add_argument("--status", choices=["ok", "error"], default=None)
-    list_parser.add_argument(
-        "--kind",
-        choices=["data", "derived_query", "derived_codegen"],
-        default=None,
-    )
-    list_parser.add_argument("--source-tool", default=None)
-    list_parser.add_argument("--source-tool-prefix", default=None)
-    list_parser.add_argument("--upstream-instance-id", default=None)
-    list_parser.add_argument("--request-key", default=None)
-    list_parser.add_argument(
-        "--capture-kind",
-        choices=[
-            "mcp_tool",
-            "cli_command",
-            "stdin_pipe",
-            "file_ingest",
-            "derived_query",
-            "derived_codegen",
-        ],
-        default=None,
-    )
-    list_parser.add_argument("--capture-key", default=None)
-    list_parser.add_argument("--parent-artifact-id", default=None)
-    list_parser.add_argument("--include-deleted", action="store_true")
-    _add_common_json_flag(list_parser)
-
-    schema_parser = sub.add_parser("schema", help="Describe artifact schema")
-    schema_parser.add_argument("artifact_id")
-    schema_parser.add_argument(
-        "--scope",
-        choices=["all_related", "single"],
-        default="all_related",
-    )
-    _add_common_json_flag(schema_parser)
-
-    get_parser = sub.add_parser("get", help="Retrieve stored artifact payload")
-    get_parser.add_argument("artifact_id")
-    get_parser.add_argument(
-        "--scope",
-        choices=["all_related", "single"],
-        default="all_related",
-    )
-    get_parser.add_argument(
-        "--target",
-        choices=["envelope", "mapped"],
-        default="envelope",
-    )
-    get_parser.add_argument("--jsonpath", default=None)
-    get_parser.add_argument("--limit", type=int, default=50)
-    get_parser.add_argument("--cursor", default=None)
-    _add_common_json_flag(get_parser)
-
-    query_parser = sub.add_parser("query", help="Select/query artifact rows")
-    query_parser.add_argument("artifact_id")
-    query_parser.add_argument("root_path")
-    query_parser.add_argument(
-        "--scope",
-        choices=["all_related", "single"],
-        default="all_related",
-    )
-    query_parser.add_argument(
-        "--select",
-        action="append",
-        default=[],
-        help="Projection path(s); repeat or comma-separate",
-    )
-    query_parser.add_argument(
-        "--where",
-        default=None,
-        help="Structured filter JSON object",
-    )
-    query_parser.add_argument("--limit", type=int, default=50)
-    query_parser.add_argument("--cursor", default=None)
-    query_parser.add_argument("--order-by", default=None)
-    query_parser.add_argument("--distinct", action="store_true")
-    query_parser.add_argument("--count-only", action="store_true")
-    _add_common_json_flag(query_parser)
 
     code_parser = sub.add_parser(
         "code",
@@ -1713,7 +1404,10 @@ def _build_parser() -> argparse.ArgumentParser:
         "--expr",
         dest="code_expr",
         default=None,
-        help="Python expression evaluated with pandas DataFrame `df`",
+        help=(
+            "Python expression evaluated with pandas DataFrame `df`; "
+            "also exposes `artifact_frames` keyed by artifact id"
+        ),
     )
     code_parser.add_argument(
         "--params",
@@ -1754,20 +1448,6 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     _add_common_json_flag(run_parser)
 
-    diff_parser = sub.add_parser(
-        "diff",
-        help="Compare two stored artifact payloads",
-    )
-    diff_parser.add_argument("left_artifact_id")
-    diff_parser.add_argument("right_artifact_id")
-    diff_parser.add_argument(
-        "--max-lines",
-        type=int,
-        default=_DIFF_DEFAULT_MAX_LINES,
-        help="Maximum unified diff lines to print when payloads differ",
-    )
-    _add_common_json_flag(diff_parser)
-
     return parser
 
 
@@ -1796,12 +1476,10 @@ def _emit_error_response(payload: dict[str, Any], *, json_mode: bool) -> None:
 def _emit_human_mode_payload(mode: str, payload: dict[str, Any]) -> None:
     """Emit successful payload in human mode by dispatch mode."""
     emitters: dict[str, Any] = {
-        "list": _emit_human_list,
-        "schema": _emit_human_schema,
+        "code": _emit_human_code,
         "run": _emit_human_run,
-        "diff": _emit_human_diff,
     }
-    emitter = emitters.get(mode, _emit_human_generic)
+    emitter = emitters.get(mode, _emit_human_code)
     emitter(payload)
 
 
@@ -1810,6 +1488,10 @@ def _command_exit_code(mode: str, payload: dict[str, Any]) -> int | None:
     if mode != "run":
         return None
     command_exit_code = payload.get("command_exit_code")
+    if not isinstance(command_exit_code, int):
+        metadata = payload.get("metadata")
+        if isinstance(metadata, dict):
+            command_exit_code = metadata.get("command_exit_code")
     if isinstance(command_exit_code, int):
         return command_exit_code
     return None

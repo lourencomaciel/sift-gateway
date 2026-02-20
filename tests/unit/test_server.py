@@ -14,7 +14,6 @@ from sift_gateway.config.settings import (
 )
 from sift_gateway.constants import BLOBS_PAYLOAD_SUBDIR
 from sift_gateway.cursor.payload import CursorStaleError
-from sift_gateway.cursor.sample_set_hash import compute_sample_set_hash
 from sift_gateway.cursor.token import CursorExpiredError
 from sift_gateway.mcp.handlers.common import VISIBLE_ARTIFACT_SQL
 from sift_gateway.mcp.server import (
@@ -28,8 +27,6 @@ from sift_gateway.mcp.upstream import (
 )
 from sift_gateway.obs.metrics import GatewayMetrics, counter_value
 from sift_gateway.pagination.extract import PaginationState
-from sift_gateway.query.filters import filter_hash, parse_filter_dict
-from sift_gateway.query.select_paths import select_paths_hash
 from sift_gateway.security.redaction import (
     RedactionResult,
     SecretRedactionError,
@@ -128,44 +125,38 @@ def _persisted_handle() -> ArtifactHandle:
 def _schema_ready_inline_describe(
     _connection: object,
     artifact_id: str,
-    *,
-    code_query_packages: list[str] | None = None,
-) -> tuple[dict[str, object], str]:
-    del code_query_packages
-    return (
-        {
-            "artifact_id": artifact_id,
-            "mapping": {
-                "map_kind": "full",
-                "map_status": "ready",
-                "mapper_version": "mapper_v1",
-                "map_budget_fingerprint": None,
-                "map_backend_id": None,
-                "prng_version": None,
-                "traversal_contract_version": "traversal_v1",
-            },
-            "roots": [],
-            "schemas": [
-                {
-                    "version": "schema_v1",
-                    "schema_hash": "sha256:test_schema",
-                    "root_path": "$",
-                    "mode": "sampled",
-                    "coverage": {
-                        "completeness": "partial",
-                        "observed_records": 1,
-                    },
-                    "fields": [],
-                    "determinism": {
-                        "dataset_hash": "sha256:test_dataset",
-                        "traversal_contract_version": "traversal_v1",
-                        "map_budget_fingerprint": None,
-                    },
-                }
-            ],
+) -> dict[str, object]:
+    return {
+        "artifact_id": artifact_id,
+        "mapping": {
+            "map_kind": "full",
+            "map_status": "ready",
+            "mapper_version": "mapper_v1",
+            "map_budget_fingerprint": None,
+            "map_backend_id": None,
+            "prng_version": None,
+            "traversal_contract_version": "traversal_v1",
         },
-        "hint",
-    )
+        "roots": [],
+        "schemas": [
+            {
+                "version": "schema_v1",
+                "schema_hash": "sha256:test_schema",
+                "root_path": "$",
+                "mode": "sampled",
+                "coverage": {
+                    "completeness": "partial",
+                    "observed_records": 1,
+                },
+                "fields": [],
+                "determinism": {
+                    "dataset_hash": "sha256:test_dataset",
+                    "traversal_contract_version": "traversal_v1",
+                    "map_budget_fingerprint": None,
+                },
+            }
+        ],
+    }
 
 
 def _patch_schema_ready_describe(monkeypatch) -> None:
@@ -612,7 +603,7 @@ def test_artifact_handlers_return_validation_or_not_implemented(
     invalid_query = asyncio.run(server.handle_artifact({"action": "query"}))
     assert invalid_query["code"] == "INVALID_ARGUMENT"
 
-    valid_get = asyncio.run(
+    invalid_get = asyncio.run(
         server.handle_artifact(
             {
                 "action": "query",
@@ -623,9 +614,9 @@ def test_artifact_handlers_return_validation_or_not_implemented(
             }
         )
     )
-    assert valid_get["code"] == "NOT_IMPLEMENTED"
+    assert invalid_get["code"] == "INVALID_ARGUMENT"
 
-    valid_search = asyncio.run(
+    invalid_search = asyncio.run(
         server.handle_artifact(
             {
                 "action": "query",
@@ -635,7 +626,21 @@ def test_artifact_handlers_return_validation_or_not_implemented(
             }
         )
     )
-    assert valid_search["code"] == "NOT_IMPLEMENTED"
+    assert invalid_search["code"] == "INVALID_ARGUMENT"
+
+    valid_code = asyncio.run(
+        server.handle_artifact(
+            {
+                "action": "query",
+                "query_kind": "code",
+                "_gateway_context": {"session_id": "sess_1"},
+                "artifact_id": "art_1",
+                "root_path": "$",
+                "code": "def run(data, schema, params):\n    return data",
+            }
+        )
+    )
+    assert valid_code["code"] == "NOT_IMPLEMENTED"
 
     invalid_schema = asyncio.run(
         server.handle_artifact(
@@ -665,6 +670,7 @@ def test_build_fastmcp_app_includes_mirrored_tools(tmp_path: Path) -> None:
         "all_related",
         "single",
     ]
+    assert artifact_schema["properties"]["query_kind"]["enum"] == ["code"]
 
 
 def test_build_fastmcp_app_rejects_safe_name_collisions(
@@ -993,8 +999,8 @@ def test_handle_mirrored_tool_sets_stable_upstream_error_code(
             },
         )
     )
-    assert response["type"] == "gateway_tool_result"
     assert response["artifact_id"] == "art_new"
+    assert response["response_mode"] in {"full", "schema_ref"}
     assert (
         server.upstream_runtime["demo"]["last_error_code"]
         == "UPSTREAM_DNS_FAILURE"
@@ -1050,7 +1056,140 @@ def test_handle_mirrored_tool_passthroughs_small_response(
         )
     )
 
-    assert response == upstream_payload
+    assert response["artifact_id"] == "art_new"
+    assert response["response_mode"] == "full"
+    payload = response["payload"]
+    assert isinstance(payload, dict)
+    assert payload["status"] == "ok"
+    content = payload["content"]
+    assert isinstance(content, list)
+    part_types = [part.get("type") for part in content if isinstance(part, dict)]
+    assert "json" in part_types
+    assert "text" in part_types
+    assert response != upstream_payload
+
+
+def test_handle_mirrored_tool_uses_passthrough_budget_for_mode_selection(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    server = GatewayServer(
+        config=GatewayConfig(
+            data_dir=tmp_path,
+            passthrough_max_bytes=128,
+            quota_enforcement_enabled=False,
+        ),
+        upstreams=[_upstream()],
+        db_pool=_FakePool(None),  # type: ignore[arg-type]
+        metrics=GatewayMetrics(),
+    )
+    mirrored = server.mirrored_tools["demo.echo"]
+    upstream_payload = {
+        "content": [
+            {
+                "type": "text",
+                "text": "x" * 320,
+            }
+        ],
+        "structuredContent": {"ok": True},
+        "isError": False,
+        "meta": {"trace_id": "abc"},
+    }
+
+    async def _large_response(*_args, **_kwargs):
+        return upstream_payload
+
+    monkeypatch.setattr(
+        "sift_gateway.mcp.server.call_upstream_tool", _large_response
+    )
+    monkeypatch.setattr(
+        "sift_gateway.mcp.handlers.mirrored_tool.persist_artifact",
+        lambda **_kwargs: _persisted_handle(),
+    )
+    monkeypatch.setattr(
+        server,
+        "_run_mapping_inline",
+        lambda *_args, **_kwargs: True,
+    )
+    _patch_schema_ready_describe(monkeypatch)
+
+    response = asyncio.run(
+        server.handle_mirrored_tool(
+            mirrored,
+            {
+                "_gateway_context": {"session_id": "sess_1"},
+                "message": "hello",
+            },
+        )
+    )
+
+    assert response["artifact_id"] == "art_new"
+    assert response["response_mode"] == "schema_ref"
+
+
+def test_handle_mirrored_tool_fails_closed_when_redaction_errors(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    server = GatewayServer(
+        config=GatewayConfig(
+            data_dir=tmp_path,
+            passthrough_max_bytes=8_192,
+            quota_enforcement_enabled=False,
+        ),
+        upstreams=[_upstream()],
+        db_pool=_FakePool(None),  # type: ignore[arg-type]
+        metrics=GatewayMetrics(),
+    )
+    mirrored = server.mirrored_tools["demo.echo"]
+    upstream_payload = {
+        "content": [{"type": "text", "text": "small response"}],
+        "structuredContent": {"ok": True},
+        "isError": False,
+        "meta": {"trace_id": "abc"},
+    }
+
+    async def _small_response(*_args, **_kwargs):
+        return upstream_payload
+
+    persisted = {"called": False}
+
+    def _persist_marker(**_kwargs):
+        persisted["called"] = True
+        return _persisted_handle()
+
+    monkeypatch.setattr(
+        "sift_gateway.mcp.server.call_upstream_tool", _small_response
+    )
+    monkeypatch.setattr(
+        "sift_gateway.mcp.handlers.mirrored_tool.persist_artifact",
+        _persist_marker,
+    )
+    monkeypatch.setattr(
+        server,
+        "_sanitize_tool_result",
+        lambda _payload: {
+            "type": "gateway_error",
+            "code": "INTERNAL",
+            "message": "response redaction failed",
+            "details": {},
+        },
+    )
+
+    response = asyncio.run(
+        server.handle_mirrored_tool(
+            mirrored,
+            {
+                "_gateway_context": {"session_id": "sess_1"},
+                "message": "hello",
+            },
+        )
+    )
+
+    assert response["type"] == "gateway_error"
+    assert response["code"] == "INTERNAL"
+    assert response["message"] == "response redaction failed"
+    assert persisted["called"] is False
 
 
 def test_handle_mirrored_tool_does_not_passthrough_with_pagination_warnings(
@@ -1113,8 +1252,8 @@ def test_handle_mirrored_tool_does_not_passthrough_with_pagination_warnings(
         )
     )
 
-    assert response["type"] == "gateway_tool_result"
     assert response["artifact_id"] == "art_new"
+    assert response["response_mode"] == "schema_ref"
     assert response["pagination"]["retrieval_status"] == "COMPLETE"
     assert response["pagination"]["warnings"] == [
         {
@@ -1178,8 +1317,8 @@ def test_handle_mirrored_tool_does_not_passthrough_partial_pagination(
         )
     )
 
-    assert response["type"] == "gateway_tool_result"
     assert response["artifact_id"] == "art_new"
+    assert response["response_mode"] == "schema_ref"
     assert response["pagination"]["retrieval_status"] == "PARTIAL"
 
 
@@ -1238,226 +1377,11 @@ def test_handle_mirrored_tool_does_not_passthrough_missing_next_token(
         )
     )
 
-    assert response["type"] == "gateway_tool_result"
     assert response["artifact_id"] == "art_new"
+    assert response["response_mode"] == "schema_ref"
     assert response["pagination"]["retrieval_status"] == "PARTIAL"
     assert response["pagination"]["partial_reason"] == "NEXT_TOKEN_MISSING"
     assert response["pagination"]["has_more"] is False
-
-
-def test_artifact_search_db_runtime_returns_items(
-    tmp_path: Path, monkeypatch
-) -> None:
-    conn = _SeqConnection(
-        [
-            _SeqCursor(
-                all_rows=[
-                    (
-                        "art_1",
-                        1,
-                        "2026-01-01T00:00:00Z",
-                        "2026-01-01T00:00:00Z",
-                        "demo.echo",
-                        "inst_demo",
-                        "mcp_tool",
-                        "rk_demo",
-                        "ok",
-                        123,
-                        None,
-                        "none",
-                        "pending",
-                    )
-                ]
-            )
-        ]
-    )
-    server = GatewayServer(
-        config=GatewayConfig(data_dir=tmp_path, passthrough_max_bytes=0),
-        db_pool=_SeqPool(conn),  # type: ignore[arg-type]
-    )
-    monkeypatch.setattr(
-        server, "_safe_touch_for_search", lambda *args, **kwargs: None
-    )
-
-    response = asyncio.run(
-        server.handle_artifact(
-            {
-                "action": "query",
-                "query_kind": "search",
-                "_gateway_context": {"session_id": "sess_1"},
-                "filters": {},
-            }
-        )
-    )
-    assert response["truncated"] is False
-    assert response["pagination"]["layer"] == "artifact_retrieval"
-    assert response["pagination"]["retrieval_status"] == "COMPLETE"
-    assert response["items"][0]["artifact_id"] == "art_1"
-    assert conn.committed is False
-
-
-def test_artifact_search_touches_session_when_not_mocked(
-    tmp_path: Path,
-) -> None:
-    conn = _SeqConnection(
-        [
-            _SeqCursor(
-                all_rows=[
-                    (
-                        "art_1",
-                        1,
-                        "2026-01-01T00:00:00Z",
-                        "2026-01-01T00:00:00Z",
-                        "demo.echo",
-                        "inst_demo",
-                        "mcp_tool",
-                        "rk_demo",
-                        "ok",
-                        123,
-                        None,
-                        "none",
-                        "pending",
-                    )
-                ]
-            )
-        ]
-    )
-    server = GatewayServer(
-        config=GatewayConfig(data_dir=tmp_path, passthrough_max_bytes=0),
-        db_pool=_SeqPool(conn),  # type: ignore[arg-type]
-    )
-
-    response = asyncio.run(
-        server.handle_artifact(
-            {
-                "action": "query",
-                "query_kind": "search",
-                "_gateway_context": {"session_id": "sess_1"},
-                "filters": {},
-            }
-        )
-    )
-    assert response["truncated"] is False
-    assert conn.committed is True
-
-
-def test_artifact_get_db_runtime_returns_envelope_items(
-    tmp_path: Path, monkeypatch
-) -> None:
-    envelope = {
-        "type": "mcp_envelope",
-        "upstream_instance_id": "inst_demo",
-        "upstream_prefix": "demo",
-        "tool": "echo",
-        "status": "ok",
-        "content": [{"type": "json", "value": {"id": 1}}],
-        "error": None,
-        "meta": {"warnings": []},
-    }
-    conn = _SeqConnection(
-        [
-            _SeqCursor(one=(1,)),
-            _SeqCursor(
-                one=(
-                    "art_1",
-                    "payload_hash",
-                    None,
-                    "full",
-                    "ready",
-                    1,
-                    0,
-                    "mbf",
-                    envelope,
-                    "gzip",
-                    b"",
-                    0,
-                    False,
-                )
-            ),
-        ]
-    )
-    server = GatewayServer(
-        config=GatewayConfig(data_dir=tmp_path, passthrough_max_bytes=0),
-        db_pool=_SeqPool(conn),  # type: ignore[arg-type]
-    )
-    monkeypatch.setattr(
-        server, "_safe_touch_for_retrieval", lambda *args, **kwargs: None
-    )
-
-    response = asyncio.run(
-        server.handle_artifact(
-            {
-                "action": "query",
-                "query_kind": "get",
-                "scope": "single",
-                "_gateway_context": {"session_id": "sess_1"},
-                "artifact_id": "art_1",
-                "target": "envelope",
-            }
-        )
-    )
-    assert response["target"] == "envelope"
-    assert response["pagination"]["layer"] == "artifact_retrieval"
-    assert response["pagination"]["retrieval_status"] == "COMPLETE"
-    assert response["items"][0]["_locator"]["artifact_id"] == "art_1"
-    assert response["items"][0]["value"]["type"] == "mcp_envelope"
-    assert conn.committed is False
-
-
-def test_artifact_get_touches_recency_when_not_mocked(
-    tmp_path: Path,
-) -> None:
-    envelope = {
-        "type": "mcp_envelope",
-        "upstream_instance_id": "inst_demo",
-        "upstream_prefix": "demo",
-        "tool": "echo",
-        "status": "ok",
-        "content": [{"type": "json", "value": {"id": 1}}],
-        "error": None,
-        "meta": {"warnings": []},
-    }
-    conn = _SeqConnection(
-        [
-            _SeqCursor(one=(1,)),
-            _SeqCursor(
-                one=(
-                    "art_1",
-                    "payload_hash",
-                    None,
-                    "full",
-                    "ready",
-                    1,
-                    0,
-                    "mbf",
-                    envelope,
-                    "gzip",
-                    b"",
-                    0,
-                    False,
-                )
-            ),
-        ]
-    )
-    server = GatewayServer(
-        config=GatewayConfig(data_dir=tmp_path, passthrough_max_bytes=0),
-        db_pool=_SeqPool(conn),  # type: ignore[arg-type]
-    )
-
-    response = asyncio.run(
-        server.handle_artifact(
-            {
-                "action": "query",
-                "query_kind": "get",
-                "scope": "single",
-                "_gateway_context": {"session_id": "sess_1"},
-                "artifact_id": "art_1",
-                "target": "envelope",
-            }
-        )
-    )
-    assert response["target"] == "envelope"
-    assert conn.committed is True
 
 
 def test_visible_artifact_sql_does_not_hide_deleted_rows() -> None:
@@ -1521,737 +1445,6 @@ def test_safe_touch_for_search_updates_session_only(
     assert len(conn.calls) == 1
     assert "INSERT INTO sessions" in conn.calls[0][0]
     assert conn.calls[0][1] == ("local", "sess_1")
-
-
-def test_artifact_get_cursor_includes_target_and_jsonpath_binding(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
-    conn = _SeqConnection(
-        [
-            _SeqCursor(one=(1,)),
-            _SeqCursor(
-                one=(
-                    "art_1",
-                    "payload_hash",
-                    None,
-                    "full",
-                    "ready",
-                    1,
-                    0,
-                    "mbf",
-                    {"content": [], "items": [{"id": 1}, {"id": 2}]},
-                    "gzip",
-                    b"",
-                    0,
-                    False,
-                )
-            ),
-        ]
-    )
-    server = GatewayServer(
-        config=GatewayConfig(data_dir=tmp_path, passthrough_max_bytes=0),
-        db_pool=_SeqPool(conn),  # type: ignore[arg-type]
-    )
-    monkeypatch.setattr(
-        server, "_safe_touch_for_retrieval", lambda *args, **kwargs: None
-    )
-    issued: dict[str, object] = {}
-
-    def _issue_cursor(**kwargs):
-        issued.update(kwargs)
-        return "cur_next"
-
-    monkeypatch.setattr(server, "_issue_cursor", _issue_cursor)
-
-    response = asyncio.run(
-        server.handle_artifact(
-            {
-                "action": "query",
-                "query_kind": "get",
-                "scope": "single",
-                "_gateway_context": {"session_id": "sess_1"},
-                "artifact_id": "art_1",
-                "target": "envelope",
-                "jsonpath": "$['items'][*]",
-                "limit": 1,
-            }
-        )
-    )
-    assert response["truncated"] is True
-    assert response["cursor"] == "cur_next"
-    assert response["pagination"]["retrieval_status"] == "PARTIAL"
-    assert response["pagination"]["partial_reason"] == "CURSOR_AVAILABLE"
-    assert response["pagination"]["next_cursor"] == "cur_next"
-    extra = issued["extra"]
-    assert isinstance(extra, dict)
-    assert extra["target"] == "envelope"
-    assert extra["normalized_jsonpath"] == "$.items[*]"
-    assert extra["artifact_generation"] == 1
-
-
-def test_artifact_get_jsonpath_evaluates_against_json_target(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
-    """Jsonpath evaluates against the mapped JSON part, not the envelope."""
-    envelope = {
-        "type": "mcp_envelope",
-        "content": [
-            {
-                "type": "json",
-                "value": {"users": [{"id": 1}, {"id": 2}]},
-            }
-        ],
-    }
-    conn = _SeqConnection(
-        [
-            _SeqCursor(one=(1,)),
-            _SeqCursor(
-                one=(
-                    "art_1",
-                    "payload_hash",
-                    None,
-                    "full",
-                    "ready",
-                    1,
-                    0,  # mapped_part_index
-                    "",
-                    envelope,
-                    "none",
-                    b"",
-                    0,
-                    False,
-                )
-            ),
-        ]
-    )
-    server = GatewayServer(
-        config=GatewayConfig(data_dir=tmp_path, passthrough_max_bytes=0),
-        db_pool=_SeqPool(conn),  # type: ignore[arg-type]
-    )
-    monkeypatch.setattr(
-        server, "_safe_touch_for_retrieval", lambda *args, **kwargs: None
-    )
-    response = asyncio.run(
-        server.handle_artifact(
-            {
-                "action": "query",
-                "query_kind": "get",
-                "scope": "single",
-                "_gateway_context": {"session_id": "sess_1"},
-                "artifact_id": "art_1",
-                "target": "envelope",
-                "jsonpath": "$.users[*]",
-            }
-        )
-    )
-    # $.users[*] resolves through the JSON content part, not the envelope.
-    assert len(response["items"]) == 2
-    assert response["items"][0]["value"] == {"id": 1}
-    assert response["items"][1]["value"] == {"id": 2}
-    assert response["pagination"]["retrieval_status"] == "COMPLETE"
-
-
-def test_artifact_get_cursor_target_mismatch_returns_stale(
-    tmp_path: Path, monkeypatch
-) -> None:
-    conn = _SeqConnection(
-        [
-            _SeqCursor(one=(1,)),
-            _SeqCursor(
-                one=(
-                    "art_1",
-                    "payload_hash",
-                    None,
-                    "full",
-                    "ready",
-                    1,
-                    0,
-                    "mbf",
-                    {"content": [], "items": [{"id": 1}]},
-                    "gzip",
-                    b"",
-                    0,
-                    False,
-                )
-            ),
-        ]
-    )
-    server = GatewayServer(
-        config=GatewayConfig(data_dir=tmp_path, passthrough_max_bytes=0),
-        db_pool=_SeqPool(conn),  # type: ignore[arg-type]
-        metrics=GatewayMetrics(),
-    )
-    monkeypatch.setattr(
-        server, "_safe_touch_for_retrieval", lambda *args, **kwargs: None
-    )
-    monkeypatch.setattr(
-        server,
-        "_verify_cursor_payload",
-        lambda **_kwargs: {
-            "position_state": {"offset": 0},
-            "target": "mapped",
-            "normalized_jsonpath": "$.items[*]",
-            "artifact_generation": 1,
-        },
-    )
-
-    response = asyncio.run(
-        server.handle_artifact(
-            {
-                "action": "query",
-                "query_kind": "get",
-                "scope": "single",
-                "_gateway_context": {"session_id": "sess_1"},
-                "artifact_id": "art_1",
-                "target": "envelope",
-                "jsonpath": "$.items[*]",
-                "cursor": "cursor_1",
-            }
-        )
-    )
-    assert response["code"] == "CURSOR_STALE"
-    assert "target mismatch" in response["message"]
-
-
-def test_artifact_get_cursor_restores_scope_when_omitted(
-    tmp_path: Path, monkeypatch
-) -> None:
-    conn = _SeqConnection(
-        [
-            _SeqCursor(one=(1,)),
-            _SeqCursor(
-                one=(
-                    "art_1",
-                    "payload_hash",
-                    None,
-                    "full",
-                    "ready",
-                    1,
-                    0,
-                    "mbf",
-                    {"content": [], "items": [{"id": 1}]},
-                    "gzip",
-                    b"",
-                    0,
-                    False,
-                )
-            ),
-        ]
-    )
-    server = GatewayServer(
-        config=GatewayConfig(data_dir=tmp_path, passthrough_max_bytes=0),
-        db_pool=_SeqPool(conn),  # type: ignore[arg-type]
-    )
-    monkeypatch.setattr(
-        server,
-        "_verify_cursor_payload",
-        lambda **_kwargs: {
-            "position_state": {"offset": 0},
-            "target": "envelope",
-            "normalized_jsonpath": "$",
-            "scope": "single",
-            "artifact_generation": 1,
-        },
-    )
-
-    response = asyncio.run(
-        server.handle_artifact(
-            {
-                "action": "query",
-                "query_kind": "get",
-                "_gateway_context": {"session_id": "sess_1"},
-                "artifact_id": "art_1",
-                "target": "envelope",
-                "cursor": "cursor_1",
-            }
-        )
-    )
-    assert response["scope"] == "single"
-    assert response["items"][0]["_locator"]["artifact_id"] == "art_1"
-
-
-def test_artifact_describe_db_runtime_returns_roots(
-    tmp_path: Path, monkeypatch
-) -> None:
-    conn = _SeqConnection(
-        [
-            _SeqCursor(one=(1,)),
-            _SeqCursor(
-                one=(
-                    "art_1",
-                    "partial",
-                    "ready",
-                    "mapper_v1",
-                    "mbf",
-                    "backend",
-                    "prng_xoshiro256ss_v1",
-                    0,
-                    None,
-                    1,
-                )
-            ),
-            _SeqCursor(
-                all_rows=[
-                    (
-                        "rk_1",
-                        "$.items",
-                        100,
-                        1.0,
-                        {
-                            "sampled_record_count": 2,
-                            "sampled_prefix_len": 7,
-                            "prefix_coverage": True,
-                            "stop_reason": "max_compute",
-                            "skipped_oversize_records": 1,
-                        },
-                        10.0,
-                        "array",
-                        {"id": {"number": 10}},
-                        [0, 1],
-                    )
-                ]
-            ),
-            _SeqCursor(
-                all_rows=[
-                    (
-                        "rk_1",
-                        "$.items",
-                        "schema_v1",
-                        "sha256:schema_items",
-                        "sampled",
-                        "partial",
-                        2,
-                        "sha256:dataset_items",
-                        "traversal_v1",
-                        "mbf",
-                    )
-                ]
-            ),
-            _SeqCursor(all_rows=[("$.id", ["number"], False, True, 2)]),
-        ]
-    )
-    server = GatewayServer(
-        config=GatewayConfig(data_dir=tmp_path, passthrough_max_bytes=0),
-        db_pool=_SeqPool(conn),  # type: ignore[arg-type]
-    )
-    monkeypatch.setattr(
-        server, "_safe_touch_for_retrieval", lambda *args, **kwargs: None
-    )
-
-    response = asyncio.run(
-        server.handle_artifact(
-            {
-                "action": "query",
-                "query_kind": "describe",
-                "scope": "single",
-                "_gateway_context": {"session_id": "sess_1"},
-                "artifact_id": "art_1",
-            }
-        )
-    )
-    assert response["artifact_id"] == "art_1"
-    assert response["roots"][0]["root_path"] == "$.items"
-    assert response["roots"][0]["compatible_for_select"] is True
-    assert (
-        response["roots"][0]["signature_groups"][0]["schema_mode"] == "sampled"
-    )
-
-
-def test_artifact_select_db_runtime_partial_projects_records(
-    tmp_path: Path, monkeypatch
-) -> None:
-    conn = _SeqConnection(
-        [
-            _SeqCursor(one=(1,)),
-            _SeqCursor(
-                one=("art_1", "partial", "ready", "off", None, 1, "mbf")
-            ),
-            _SeqCursor(
-                one=(
-                    "rk_1",
-                    "$.items",
-                    100,
-                    "array",
-                    {"id": {"number": 1}},
-                    [0],
-                    {"sampled_prefix_len": 9},
-                )
-            ),
-            _SeqCursor(
-                one=(
-                    "rk_1",
-                    "$.items",
-                    "schema_v1",
-                    "sha256:schema_items",
-                    "sampled",
-                    "partial",
-                    1,
-                    "sha256:dataset_items",
-                    "traversal_v1",
-                    "mbf",
-                )
-            ),
-            _SeqCursor(all_rows=[(0,)]),
-            _SeqCursor(all_rows=[(0, {"$.id": 1})]),
-        ]
-    )
-    server = GatewayServer(
-        config=GatewayConfig(data_dir=tmp_path, passthrough_max_bytes=0),
-        db_pool=_SeqPool(conn),  # type: ignore[arg-type]
-    )
-    monkeypatch.setattr(
-        server, "_safe_touch_for_retrieval", lambda *args, **kwargs: None
-    )
-
-    response = asyncio.run(
-        server.handle_artifact(
-            {
-                "action": "query",
-                "query_kind": "select",
-                "scope": "single",
-                "_gateway_context": {"session_id": "sess_1"},
-                "artifact_id": "art_1",
-                "root_path": "$.items",
-                "select_paths": ["id"],
-                "where": {"path": "$.id", "op": "eq", "value": 1},
-            }
-        )
-    )
-    assert response["sampled_only"] is True
-    assert response["sampled_prefix_len"] == 9
-    assert response["items"][0]["projection"]["$.id"] == 1
-    assert response["pagination"]["retrieval_status"] == "COMPLETE"
-
-
-def test_artifact_select_cursor_sample_set_mismatch_returns_stale(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
-    conn = _SeqConnection(
-        [
-            _SeqCursor(one=(1,)),
-            _SeqCursor(
-                one=("art_1", "partial", "ready", "off", None, 1, "mbf")
-            ),
-            _SeqCursor(
-                one=(
-                    "rk_1",
-                    "$.items",
-                    100,
-                    "array",
-                    {"id": {"number": 1}},
-                    [0, 1],
-                    {"sampled_prefix_len": 9},
-                )
-            ),
-            _SeqCursor(
-                one=(
-                    "rk_1",
-                    "$.items",
-                    "schema_v1",
-                    "sha256:schema_items",
-                    "sampled",
-                    "partial",
-                    2,
-                    "sha256:dataset_items",
-                    "traversal_v1",
-                    "mbf",
-                )
-            ),
-            _SeqCursor(all_rows=[(0,), (1,)]),
-        ]
-    )
-    server = GatewayServer(
-        config=GatewayConfig(data_dir=tmp_path, passthrough_max_bytes=0),
-        db_pool=_SeqPool(conn),  # type: ignore[arg-type]
-        metrics=GatewayMetrics(),
-    )
-    monkeypatch.setattr(
-        server, "_safe_touch_for_retrieval", lambda *args, **kwargs: None
-    )
-
-    where_expr = {"path": "$.id", "op": "eq", "value": 1}
-    monkeypatch.setattr(
-        server,
-        "_verify_cursor_payload",
-        lambda **_kwargs: {
-            "position_state": {"offset": 0},
-            "scope": "single",
-            "root_path": "$.items",
-            "select_paths_hash": select_paths_hash(["$.id"]),
-            "where_hash": filter_hash(
-                parse_filter_dict(where_expr),
-            ),
-            "artifact_generation": 1,
-            "map_budget_fingerprint": "mbf",
-            "sample_set_hash": "bad_hash",
-        },
-    )
-
-    response = asyncio.run(
-        server.handle_artifact(
-            {
-                "action": "query",
-                "query_kind": "select",
-                "scope": "single",
-                "_gateway_context": {"session_id": "sess_1"},
-                "artifact_id": "art_1",
-                "root_path": "$.items",
-                "select_paths": ["id"],
-                "where": where_expr,
-                "cursor": "cursor_1",
-            }
-        )
-    )
-    assert response["code"] == "CURSOR_STALE"
-    assert "sample_set_hash mismatch" in response["message"]
-    assert counter_value(server.metrics.cursor_stale_sample_set) == 1
-
-
-def test_artifact_select_cursor_includes_partial_binding_fields(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
-    conn = _SeqConnection(
-        [
-            _SeqCursor(one=(1,)),
-            _SeqCursor(
-                one=("art_1", "partial", "ready", "off", None, 1, "mbf")
-            ),
-            _SeqCursor(
-                one=(
-                    "rk_1",
-                    "$.items",
-                    100,
-                    "array",
-                    {"id": {"number": 1}},
-                    [0, 1],
-                    {"sampled_prefix_len": 9},
-                )
-            ),
-            _SeqCursor(
-                one=(
-                    "rk_1",
-                    "$.items",
-                    "schema_v1",
-                    "sha256:schema_items",
-                    "sampled",
-                    "partial",
-                    2,
-                    "sha256:dataset_items",
-                    "traversal_v1",
-                    "mbf",
-                )
-            ),
-            _SeqCursor(all_rows=[(0,), (1,)]),
-            _SeqCursor(
-                all_rows=[
-                    (0, {"$.id": 1}),
-                    (1, {"$.id": 2}),
-                ]
-            ),
-        ]
-    )
-    server = GatewayServer(
-        config=GatewayConfig(data_dir=tmp_path, passthrough_max_bytes=0),
-        db_pool=_SeqPool(conn),  # type: ignore[arg-type]
-    )
-    monkeypatch.setattr(
-        server, "_safe_touch_for_retrieval", lambda *args, **kwargs: None
-    )
-    issued: dict[str, object] = {}
-
-    def _issue_cursor(**kwargs):
-        issued.update(kwargs)
-        return "cur_next"
-
-    monkeypatch.setattr(server, "_issue_cursor", _issue_cursor)
-
-    response = asyncio.run(
-        server.handle_artifact(
-            {
-                "action": "query",
-                "query_kind": "select",
-                "scope": "single",
-                "_gateway_context": {"session_id": "sess_1"},
-                "artifact_id": "art_1",
-                "root_path": "$.items",
-                "select_paths": ["id"],
-                "limit": 1,
-            }
-        )
-    )
-    assert response["truncated"] is True
-    assert response["cursor"] == "cur_next"
-    assert response["pagination"]["retrieval_status"] == "PARTIAL"
-    assert response["pagination"]["next_cursor"] == "cur_next"
-
-    extra = issued["extra"]
-    assert isinstance(extra, dict)
-    assert extra["root_path"] == "$.items"
-    assert extra["select_paths"] == ["$.id"]
-    assert extra["where_serialized"] is None
-    assert extra["select_paths_hash"] == select_paths_hash(["$.id"])
-    assert extra["where_hash"] == "__none__"
-    assert extra["artifact_generation"] == 1
-    assert extra["map_budget_fingerprint"] == "mbf"
-    assert extra["sample_set_hash"] == compute_sample_set_hash(
-        root_path="$.items",
-        sample_indices=[0, 1],
-        map_budget_fingerprint="mbf",
-    )
-
-
-def test_artifact_select_cursor_restores_scope_when_omitted(
-    tmp_path: Path, monkeypatch
-) -> None:
-    conn = _SeqConnection(
-        [
-            _SeqCursor(one=(1,)),
-            _SeqCursor(one=("art_1", "full", "ready", "off", None, 1, "mbf")),
-            _SeqCursor(
-                one=(
-                    "rk_1",
-                    "$.items",
-                    2,
-                    "array",
-                    {"id": {"number": 2}},
-                    None,
-                    {},
-                )
-            ),
-            _SeqCursor(
-                one=(
-                    "rk_1",
-                    "$.items",
-                    "schema_v1",
-                    "sha256:schema_items_full",
-                    "exact",
-                    "complete",
-                    2,
-                    "sha256:dataset_items_full",
-                    "traversal_v1",
-                    None,
-                )
-            ),
-            _SeqCursor(
-                all_rows=[
-                    (0, {"$.id": 1}),
-                    (1, {"$.id": 2}),
-                ]
-            ),
-        ]
-    )
-    server = GatewayServer(
-        config=GatewayConfig(data_dir=tmp_path, passthrough_max_bytes=0),
-        db_pool=_SeqPool(conn),  # type: ignore[arg-type]
-    )
-    monkeypatch.setattr(
-        server,
-        "_verify_cursor_payload",
-        lambda **_kwargs: {
-            "position_state": {"offset": 0},
-            "scope": "single",
-            "root_path": "$.items",
-            "select_paths_hash": select_paths_hash(["$.id"]),
-            "where_hash": "__none__",
-            "artifact_generation": 1,
-        },
-    )
-
-    response = asyncio.run(
-        server.handle_artifact(
-            {
-                "action": "query",
-                "query_kind": "select",
-                "_gateway_context": {"session_id": "sess_1"},
-                "artifact_id": "art_1",
-                "root_path": "$.items",
-                "select_paths": ["id"],
-                "cursor": "cursor_1",
-            }
-        )
-    )
-    assert response["scope"] == "single"
-    assert response["total_matched"] == 2
-
-
-def test_artifact_select_cursor_always_binds_order_by(
-    tmp_path: Path, monkeypatch
-) -> None:
-    conn = _SeqConnection(
-        [
-            _SeqCursor(one=(1,)),
-            _SeqCursor(
-                one=("art_1", "partial", "ready", "off", None, 1, "mbf")
-            ),
-            _SeqCursor(
-                one=(
-                    "rk_1",
-                    "$.items",
-                    100,
-                    "array",
-                    {"id": {"number": 1}},
-                    [0, 1],
-                    {"sampled_prefix_len": 9},
-                )
-            ),
-            _SeqCursor(
-                one=(
-                    "rk_1",
-                    "$.items",
-                    "schema_v1",
-                    "sha256:schema_items",
-                    "sampled",
-                    "partial",
-                    2,
-                    "sha256:dataset_items",
-                    "traversal_v1",
-                    "mbf",
-                )
-            ),
-            _SeqCursor(all_rows=[(0,), (1,)]),
-            _SeqCursor(
-                all_rows=[
-                    (0, {"$.id": 1}),
-                    (1, {"$.id": 2}),
-                ]
-            ),
-        ]
-    )
-    server = GatewayServer(
-        config=GatewayConfig(data_dir=tmp_path, passthrough_max_bytes=0),
-        db_pool=_SeqPool(conn),  # type: ignore[arg-type]
-    )
-    issued: dict[str, object] = {}
-
-    def _issue_cursor(**kwargs):
-        issued.update(kwargs)
-        return "cur_next"
-
-    monkeypatch.setattr(server, "_issue_cursor", _issue_cursor)
-
-    response = asyncio.run(
-        server.handle_artifact(
-            {
-                "action": "query",
-                "query_kind": "select",
-                "scope": "single",
-                "_gateway_context": {"session_id": "sess_1"},
-                "artifact_id": "art_1",
-                "root_path": "$.items",
-                "select_paths": ["id"],
-                "order_by": "created_seq_desc",
-                "limit": 1,
-            }
-        )
-    )
-    assert response["truncated"] is True
-    extra = issued["extra"]
-    assert isinstance(extra, dict)
-    assert extra["order_by"] == "created_seq_desc"
 
 
 def test_artifact_next_page_returns_gone_for_deleted_artifact(
@@ -2514,8 +1707,8 @@ def test_handle_mirrored_tool_recovers_db_ok_on_successful_probe(
             },
         )
     )
-    assert response["type"] == "gateway_tool_result"
     assert response["artifact_id"] == "art_recovered"
+    assert response["response_mode"] in {"full", "schema_ref"}
     assert server.db_ok is True  # recovered from transient failure
 
 
@@ -2794,10 +1987,8 @@ def test_handle_mirrored_tool_falls_back_when_inline_describe_errors(
         )
     )
 
-    assert response["type"] == "gateway_tool_result"
     assert response["artifact_id"] == "art_new"
-    assert response["mapping"]["map_status"] == "pending"
-    assert "Mapping in progress" in response["usage_hint"]
+    assert response["response_mode"] in {"full", "schema_ref"}
 
 
 def test_handle_mirrored_tool_returns_internal_when_mapping_fails(
@@ -2963,8 +2154,8 @@ def test_handle_mirrored_tool_triggers_mapping_on_single_connection(
             },
         )
     )
-    assert response["type"] == "gateway_tool_result"
     assert response["artifact_id"] == "art_single_conn"
+    assert response["response_mode"] in {"full", "schema_ref"}
     assert checkout_count == 2  # resolve + persist/mapping
     assert mapping_called is True  # mapping still ran
 
@@ -3052,398 +2243,9 @@ def test_handle_mirrored_tool_does_not_run_quota_preflight(
             },
         )
     )
-    assert response["type"] == "gateway_tool_result"
     assert response["artifact_id"] == "art_no_quota_preflight"
+    assert response["response_mode"] in {"full", "schema_ref"}
     assert quota_called is False
-
-
-def test_artifact_select_includes_total_matched(
-    tmp_path: Path, monkeypatch
-) -> None:
-    conn = _SeqConnection(
-        [
-            _SeqCursor(one=(1,)),
-            _SeqCursor(
-                one=("art_1", "partial", "ready", "off", None, 1, "mbf")
-            ),
-            _SeqCursor(
-                one=(
-                    "rk_1",
-                    "$.items",
-                    100,
-                    "array",
-                    {"id": {"number": 1}},
-                    [0, 1],
-                    {"sampled_prefix_len": 9},
-                )
-            ),
-            _SeqCursor(
-                one=(
-                    "rk_1",
-                    "$.items",
-                    "schema_v1",
-                    "sha256:schema_items",
-                    "sampled",
-                    "partial",
-                    2,
-                    "sha256:dataset_items",
-                    "traversal_v1",
-                    "mbf",
-                )
-            ),
-            _SeqCursor(all_rows=[(0,), (1,)]),
-            _SeqCursor(
-                all_rows=[
-                    (0, {"$.id": 1}),
-                    (1, {"$.id": 2}),
-                ]
-            ),
-        ]
-    )
-    server = GatewayServer(
-        config=GatewayConfig(data_dir=tmp_path, passthrough_max_bytes=0),
-        db_pool=_SeqPool(conn),  # type: ignore[arg-type]
-    )
-    monkeypatch.setattr(
-        server, "_safe_touch_for_retrieval", lambda *args, **kwargs: None
-    )
-
-    response = asyncio.run(
-        server.handle_artifact(
-            {
-                "action": "query",
-                "query_kind": "select",
-                "scope": "single",
-                "_gateway_context": {"session_id": "sess_1"},
-                "artifact_id": "art_1",
-                "root_path": "$.items",
-                "select_paths": ["id"],
-            }
-        )
-    )
-    assert response["total_matched"] == 2
-    assert len(response["items"]) == 2
-
-
-def test_artifact_select_count_only(tmp_path: Path, monkeypatch) -> None:
-    conn = _SeqConnection(
-        [
-            _SeqCursor(one=(1,)),
-            _SeqCursor(
-                one=("art_1", "partial", "ready", "off", None, 1, "mbf")
-            ),
-            _SeqCursor(
-                one=(
-                    "rk_1",
-                    "$.items",
-                    100,
-                    "array",
-                    {"id": {"number": 1}},
-                    [0, 1],
-                    {"sampled_prefix_len": 9},
-                )
-            ),
-            _SeqCursor(
-                one=(
-                    "rk_1",
-                    "$.items",
-                    "schema_v1",
-                    "sha256:schema_items",
-                    "sampled",
-                    "partial",
-                    2,
-                    "sha256:dataset_items",
-                    "traversal_v1",
-                    "mbf",
-                )
-            ),
-            _SeqCursor(one=(2,)),
-        ]
-    )
-    server = GatewayServer(
-        config=GatewayConfig(data_dir=tmp_path, passthrough_max_bytes=0),
-        db_pool=_SeqPool(conn),  # type: ignore[arg-type]
-    )
-    monkeypatch.setattr(
-        server, "_safe_touch_for_retrieval", lambda *args, **kwargs: None
-    )
-
-    response = asyncio.run(
-        server.handle_artifact(
-            {
-                "action": "query",
-                "query_kind": "select",
-                "scope": "single",
-                "_gateway_context": {"session_id": "sess_1"},
-                "artifact_id": "art_1",
-                "root_path": "$.items",
-                "select_paths": ["id"],
-                "count_only": True,
-            }
-        )
-    )
-    assert response["count"] == 2
-    assert "items" not in response
-    assert response["truncated"] is False
-
-
-def test_artifact_select_count_only_with_where_filter(
-    tmp_path: Path, monkeypatch
-) -> None:
-    conn = _SeqConnection(
-        [
-            _SeqCursor(one=(1,)),
-            _SeqCursor(
-                one=("art_1", "partial", "ready", "off", None, 1, "mbf")
-            ),
-            _SeqCursor(
-                one=(
-                    "rk_1",
-                    "$.items",
-                    100,
-                    "array",
-                    {"id": {"number": 1}},
-                    [0, 1],
-                    {"sampled_prefix_len": 9},
-                )
-            ),
-            _SeqCursor(
-                one=(
-                    "rk_1",
-                    "$.items",
-                    "schema_v1",
-                    "sha256:schema_items",
-                    "sampled",
-                    "partial",
-                    2,
-                    "sha256:dataset_items",
-                    "traversal_v1",
-                    "mbf",
-                )
-            ),
-            _SeqCursor(one=(1,)),
-        ]
-    )
-    server = GatewayServer(
-        config=GatewayConfig(data_dir=tmp_path, passthrough_max_bytes=0),
-        db_pool=_SeqPool(conn),  # type: ignore[arg-type]
-    )
-    monkeypatch.setattr(
-        server, "_safe_touch_for_retrieval", lambda *args, **kwargs: None
-    )
-
-    response = asyncio.run(
-        server.handle_artifact(
-            {
-                "action": "query",
-                "query_kind": "select",
-                "scope": "single",
-                "_gateway_context": {"session_id": "sess_1"},
-                "artifact_id": "art_1",
-                "root_path": "$.items",
-                "select_paths": ["id"],
-                "where": {"path": "$.id", "op": "eq", "value": 1},
-                "count_only": True,
-            }
-        )
-    )
-    assert response["count"] == 1
-
-
-def test_artifact_select_distinct_deduplicates(
-    tmp_path: Path, monkeypatch
-) -> None:
-    conn = _SeqConnection(
-        [
-            _SeqCursor(one=(1,)),
-            _SeqCursor(
-                one=("art_1", "partial", "ready", "off", None, 1, "mbf")
-            ),
-            _SeqCursor(
-                one=(
-                    "rk_1",
-                    "$.items",
-                    100,
-                    "array",
-                    {"name": {"string": 1}},
-                    [0, 1, 2],
-                    {"sampled_prefix_len": 9},
-                )
-            ),
-            _SeqCursor(
-                one=(
-                    "rk_1",
-                    "$.items",
-                    "schema_v1",
-                    "sha256:schema_items",
-                    "sampled",
-                    "partial",
-                    3,
-                    "sha256:dataset_items",
-                    "traversal_v1",
-                    "mbf",
-                )
-            ),
-            _SeqCursor(all_rows=[(0,), (1,), (2,)]),
-            _SeqCursor(
-                all_rows=[
-                    (0, {"$.name": "A"}),
-                    (1, {"$.name": "A"}),
-                    (2, {"$.name": "B"}),
-                ]
-            ),
-        ]
-    )
-    server = GatewayServer(
-        config=GatewayConfig(data_dir=tmp_path, passthrough_max_bytes=0),
-        db_pool=_SeqPool(conn),  # type: ignore[arg-type]
-    )
-    monkeypatch.setattr(
-        server, "_safe_touch_for_retrieval", lambda *args, **kwargs: None
-    )
-
-    response = asyncio.run(
-        server.handle_artifact(
-            {
-                "action": "query",
-                "query_kind": "select",
-                "scope": "single",
-                "_gateway_context": {"session_id": "sess_1"},
-                "artifact_id": "art_1",
-                "root_path": "$.items",
-                "select_paths": ["name"],
-                "distinct": True,
-            }
-        )
-    )
-    assert response["total_matched"] == 2
-    projections = [item["projection"] for item in response["items"]]
-    assert {"$.name": "A"} in projections
-    assert {"$.name": "B"} in projections
-    assert len(projections) == 2
-
-
-def test_artifact_select_distinct_embeds_in_cursor(
-    tmp_path: Path, monkeypatch
-) -> None:
-    conn = _SeqConnection(
-        [
-            _SeqCursor(one=(1,)),
-            _SeqCursor(
-                one=("art_1", "partial", "ready", "off", None, 1, "mbf")
-            ),
-            _SeqCursor(
-                one=(
-                    "rk_1",
-                    "$.items",
-                    100,
-                    "array",
-                    {"name": {"string": 1}},
-                    [0, 1],
-                    {"sampled_prefix_len": 9},
-                )
-            ),
-            _SeqCursor(
-                one=(
-                    "rk_1",
-                    "$.items",
-                    "schema_v1",
-                    "sha256:schema_items",
-                    "sampled",
-                    "partial",
-                    2,
-                    "sha256:dataset_items",
-                    "traversal_v1",
-                    "mbf",
-                )
-            ),
-            _SeqCursor(all_rows=[(0,), (1,)]),
-            _SeqCursor(
-                all_rows=[
-                    (0, {"$.name": "A"}),
-                    (1, {"$.name": "B"}),
-                ]
-            ),
-        ]
-    )
-    server = GatewayServer(
-        config=GatewayConfig(data_dir=tmp_path, passthrough_max_bytes=0),
-        db_pool=_SeqPool(conn),  # type: ignore[arg-type]
-    )
-    monkeypatch.setattr(
-        server, "_safe_touch_for_retrieval", lambda *args, **kwargs: None
-    )
-    issued: dict[str, object] = {}
-
-    def _issue_cursor(**kwargs):
-        issued.update(kwargs)
-        return "cur_next"
-
-    monkeypatch.setattr(server, "_issue_cursor", _issue_cursor)
-
-    response = asyncio.run(
-        server.handle_artifact(
-            {
-                "action": "query",
-                "query_kind": "select",
-                "scope": "single",
-                "_gateway_context": {"session_id": "sess_1"},
-                "artifact_id": "art_1",
-                "root_path": "$.items",
-                "select_paths": ["name"],
-                "distinct": True,
-                "limit": 1,
-            }
-        )
-    )
-    assert response["truncated"] is True
-    extra = issued["extra"]
-    assert extra["distinct"] is True
-
-
-def test_artifact_select_rejects_wildcard_star() -> None:
-    from sift_gateway.tools.artifact_select import (
-        validate_select_args,
-    )
-
-    err = validate_select_args(
-        {
-            "_gateway_context": {"session_id": "s"},
-            "artifact_id": "art_1",
-            "root_path": "$.items",
-            "select_paths": ["*"],
-        }
-    )
-    assert err is not None
-    assert err["code"] == "INVALID_ARGUMENT"
-    assert "Wildcard" in err["message"]
-    assert "action='query'" in err["message"]
-
-
-def test_artifact_get_rejects_where_param(
-    tmp_path: Path,
-) -> None:
-    server = GatewayServer(
-        config=GatewayConfig(data_dir=tmp_path, passthrough_max_bytes=0),
-        db_pool=_SeqPool(  # type: ignore[arg-type]
-            _SeqConnection([])
-        ),
-    )
-    response = asyncio.run(
-        server.handle_artifact(
-            {
-                "action": "query",
-                "query_kind": "get",
-                "scope": "single",
-                "_gateway_context": {"session_id": "s"},
-                "artifact_id": "art_1",
-                "target": "envelope",
-                "where": 'spend != "0"',
-            }
-        )
-    )
-    assert response.get("code") == "INVALID_ARGUMENT"
-    assert "only supported with query_kind=select" in response["message"]
 
 
 def test_jsonpath_rejects_union_syntax() -> None:

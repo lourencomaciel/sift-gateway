@@ -25,7 +25,7 @@ from sift_gateway.pagination.contract import (
     UpstreamPartialReason,
 )
 from sift_gateway.pagination.discovery import discover_pagination
-from sift_gateway.query.jsonpath import JsonPathError, evaluate_jsonpath
+from sift_gateway.pagination.path_eval import evaluate_path as _evaluate_path
 
 
 @dataclass(frozen=True)
@@ -105,36 +105,6 @@ class PaginationAssessment:
     partial_reason: UpstreamPartialReason | None
     warning: str | None
     page_number: int
-
-
-def _evaluate_path(
-    data: Any,
-    path: str,
-) -> Any | None:
-    """Evaluate a JSONPath and return the first match.
-
-    Delegates to the project's ``evaluate_jsonpath`` which
-    supports dotted fields, bracket-quoted fields, integer
-    array indices, and the ``[*]`` wildcard.  Returns the
-    first matched value, or ``None`` when the path yields
-    no results or is syntactically invalid.
-
-    Args:
-        data: JSON-compatible value to traverse.
-        path: JSONPath expression starting with ``$``.
-
-    Returns:
-        The first matched value, or ``None`` if not found.
-    """
-    if not path:
-        return None
-    try:
-        matches = evaluate_jsonpath(data, path)
-    except JsonPathError:
-        return None
-    if not matches:
-        return None
-    return matches[0]
 
 
 def _has_more(

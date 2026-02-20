@@ -27,7 +27,7 @@
 - `config/` — Pydantic settings (`GatewayConfig`, `UpstreamConfig`), init/sync/secrets
 - `db/` — SQLite backend, repos, migrations
 - `mcp/` — `GatewayServer`, upstream connections, tool mirroring, handlers
-- `mcp/handlers/` — one handler per tool (artifact_get, artifact_select, artifact_code, etc.)
+- `mcp/handlers/` — consolidated artifact routing (`query_kind=code`, `next_page`) plus mirrored tool handling
 - `envelope/` — `Envelope` frozen dataclass, `ContentPart` union, `ErrorBlock`, normalize/serialize
 - `artifacts/` — artifact creation pipeline (`persist_artifact`)
 - `mapping/` — full (in-memory) + partial (streaming) schema discovery
@@ -67,8 +67,8 @@
 - Env vars starting with `[` or `{` auto-parse as JSON for list/dict fields
 - Tests monkeypatch module-level imports; when moving code between modules, update test patches too
 - No shared pytest fixtures in root conftest — helpers are module-local
-- Mirrored tool calls always persist artifacts; small responses may return raw upstream payloads while larger/continuation responses return handle payloads
-- Raw passthrough responses do not include `artifact_id`; set `passthrough_max_bytes=0` for deterministic handle responses
+- Mirrored tool calls always persist artifacts and return `response_mode=full|schema_ref`
+- Responses use `response_mode=full|schema_ref`; pagination always forces `schema_ref`
 - Upstream pagination state on handle responses is surfaced in `pagination` metadata and continued via `artifact(action="next_page", artifact_id=...)`
 
 ## Architecture

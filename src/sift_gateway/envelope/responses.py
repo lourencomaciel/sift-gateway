@@ -1,59 +1,98 @@
-"""Gateway response contracts for mirrored tool calls."""
+"""Gateway response contracts for run/code-style tool calls."""
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
-from sift_gateway.constants import RESPONSE_TYPE_ERROR, RESPONSE_TYPE_RESULT
+from sift_gateway.constants import RESPONSE_TYPE_ERROR
+
+
+def _json_size_bytes(payload: Any) -> int:
+    """Return UTF-8 byte size for one JSON-serializable payload."""
+    return len(
+        json.dumps(
+            payload,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            default=str,
+        ).encode("utf-8")
+    )
+
+
+def select_response_mode(
+    *,
+    has_pagination: bool,
+    full_payload: dict[str, Any],
+    schema_ref_payload: dict[str, Any],
+    max_bytes: int,
+) -> str:
+    """Choose response mode according to contract-v1 rules."""
+    if has_pagination:
+        return "schema_ref"
+    try:
+        full_bytes = _json_size_bytes(full_payload)
+    except Exception:
+        return "schema_ref"
+    if full_bytes > max_bytes:
+        return "schema_ref"
+    try:
+        schema_ref_bytes = _json_size_bytes(schema_ref_payload)
+    except Exception:
+        return "full"
+    if schema_ref_bytes * 2 <= full_bytes:
+        return "schema_ref"
+    return "full"
 
 
 def gateway_tool_result(
     *,
+    response_mode: str,
     artifact_id: str,
-    cache_meta: dict[str, Any] | None = None,
-    mapping: dict[str, Any] | None = None,
-    schemas: list[dict[str, Any]] | None = None,
+    payload: Any | None = None,
+    schemas_compact: list[dict[str, Any]] | None = None,
     schema_legend: dict[str, Any] | None = None,
-    usage_hint: str | None = None,
+    lineage: dict[str, Any] | None = None,
     pagination: dict[str, Any] | None = None,
+    metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Create a gateway tool response with inline schema-first data.
+    """Create a run/code result payload in contract-v1 shape.
 
     Args:
+        response_mode: ``"full"`` or ``"schema_ref"``.
         artifact_id: Unique artifact identifier.
-        cache_meta: Cache/request metadata dict.
-        mapping: Mapping metadata for this artifact.
-        schemas: Canonical schema list (one entry per root path).
-        schema_legend: Optional compact-schema legend describing
-            abbreviated schema keys.
-        usage_hint: Natural language hint for the calling model
-            describing what the artifact contains and which
-            tools to call next.
-        pagination: Pagination metadata when more pages are
-            available or pagination is configured upstream.
-            Includes canonical fields (layer, retrieval_status,
-            partial_reason, has_more, next_action) plus legacy
-            compatibility fields (``has_next_page`` and ``hint``).
+        payload: Inline payload when ``response_mode == "full"``.
+        schemas_compact: Compact schema list for ``schema_ref`` mode.
+        schema_legend: Compact-schema legend for ``schema_ref`` mode.
+        lineage: Lineage/chain metadata.
+        pagination: Pagination metadata when present.
+        metadata: Optional additional metadata.
 
     Returns:
-        Structured result dict with artifact handle, cache info,
-        schema-first mapping data, and usage hint.
+        Structured response payload.
     """
+    if response_mode not in {"full", "schema_ref"}:
+        msg = f"invalid response_mode: {response_mode}"
+        raise ValueError(msg)
+
     result: dict[str, Any] = {
-        "type": RESPONSE_TYPE_RESULT,
+        "response_mode": response_mode,
         "artifact_id": artifact_id,
-        "meta": {"cache": cache_meta or {}},
     }
-    if mapping is not None:
-        result["mapping"] = mapping
-    if schema_legend is not None:
-        result["schema_legend"] = schema_legend
-    if schemas is not None:
-        result["schemas"] = schemas
-    if usage_hint is not None:
-        result["usage_hint"] = usage_hint
+    if response_mode == "full":
+        result["payload"] = payload
+    else:
+        result["schemas_compact"] = (
+            list(schemas_compact) if isinstance(schemas_compact, list) else []
+        )
+        if schema_legend is not None:
+            result["schema_legend"] = schema_legend
+    if lineage is not None:
+        result["lineage"] = lineage
     if pagination is not None:
         result["pagination"] = pagination
+    if metadata is not None:
+        result["metadata"] = metadata
     return result
 
 

@@ -23,7 +23,7 @@ import re
 from typing import Any
 from urllib.parse import parse_qsl, urlparse
 
-from sift_gateway.query.jsonpath import JsonPathError, evaluate_jsonpath
+from sift_gateway.pagination.path_eval import evaluate_path as _evaluate_path
 
 
 @dataclass(frozen=True)
@@ -331,19 +331,6 @@ _CURSOR_PATH_SPECS: tuple[tuple[str, tuple[str, ...], float], ...] = (
         0.88,
     ),
 )
-
-
-def _evaluate_path(data: Any, path: str) -> Any | None:
-    """Evaluate JSONPath and return the first match."""
-    if not path:
-        return None
-    try:
-        matches = evaluate_jsonpath(data, path)
-    except JsonPathError:
-        return None
-    if not matches:
-        return None
-    return matches[0]
 
 
 def _normalize_name(name: str) -> str:
@@ -676,16 +663,6 @@ def _discover_has_more_from_headers(
     ):
         return True
     return None
-
-
-def _has_non_empty_header_value(
-    headers: dict[str, str],
-    key: str,
-) -> bool:
-    """Return True when a header key has a non-empty string value."""
-    raw_value = headers.get(key)
-    return isinstance(raw_value, str) and bool(raw_value.strip())
-
 
 def _cursor_header_candidates(header_key: str) -> tuple[str, ...]:
     """Return candidate request args for a cursor-related header key."""

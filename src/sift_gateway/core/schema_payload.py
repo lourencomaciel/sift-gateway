@@ -5,6 +5,8 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+_MAX_DISTINCT_VALUES = 1
+
 
 def _coerce_observed_count(raw_value: Any) -> int:
     """Normalize observed-count fields to non-negative integers."""
@@ -37,7 +39,7 @@ def _build_field_entry(
         entry["example_value"] = None
     distinct_values = field.get("distinct_values")
     if isinstance(distinct_values, list):
-        entry["distinct_values"] = list(distinct_values)
+        entry["distinct_values"] = list(distinct_values[:_MAX_DISTINCT_VALUES])
     cardinality = field.get("cardinality")
     if isinstance(cardinality, int):
         entry["cardinality"] = cardinality

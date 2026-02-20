@@ -150,28 +150,6 @@ def _count_json_records(envelope: Envelope) -> int:
     return 0
 
 
-def _count_json_value_records(value: Any) -> int:
-    """Count records in a raw JSON value.
-
-    Mirrors ``_count_json_records`` but operates on an already-
-    extracted JSON value rather than an ``Envelope``.
-
-    Args:
-        value: A JSON-compatible Python value.
-
-    Returns:
-        Number of records found, or 0 if not countable.
-    """
-    if isinstance(value, list):
-        return len(value)
-    if isinstance(value, dict):
-        for key in _COMMON_WRAPPER_KEYS:
-            child = value.get(key)
-            if isinstance(child, list):
-                return len(child)
-    return 0
-
-
 def _merge_json_values(base: Any, additional: Any) -> Any:
     """Merge two JSON values by concatenating their record arrays.
 

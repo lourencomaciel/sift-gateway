@@ -29,6 +29,7 @@ from sift_gateway.query.jsonpath import JsonPathError, evaluate_jsonpath
 from sift_gateway.util.hashing import sha256_hex
 
 SCHEMA_VERSION = "schema_v1"
+_MAX_DISTINCT_VALUES = 1
 
 
 @dataclass(frozen=True)
@@ -178,7 +179,7 @@ def _walk_value(
 
     if (
         not isinstance(value, (dict, list))
-        and len(existing.distinct_values) < 10
+        and len(existing.distinct_values) < _MAX_DISTINCT_VALUES
     ):
         distinct_key = _distinct_identity_key(value)
         if distinct_key is not None:
@@ -238,7 +239,7 @@ def _build_fields(
                     sorted(
                         path_stats.distinct_values.values(),
                         key=_distinct_sort_key,
-                    )[:10]
+                    )[:_MAX_DISTINCT_VALUES]
                     if path_stats.distinct_values
                     else None
                 ),
@@ -397,7 +398,7 @@ def build_sampled_schema(
                 distinct_values = sorted(
                     raw_distinct_values,
                     key=_distinct_sort_key,
-                )[:10]
+                )[:_MAX_DISTINCT_VALUES]
             cardinality_raw = raw.get("cardinality")
             cardinality = (
                 int(cardinality_raw)

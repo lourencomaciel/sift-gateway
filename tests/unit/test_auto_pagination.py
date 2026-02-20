@@ -10,7 +10,6 @@ from sift_gateway.envelope.model import (
 )
 from sift_gateway.pagination.auto import (
     _count_json_records,
-    _count_json_value_records,
     _extract_json_content,
     _merge_json_values,
     merge_envelopes,
@@ -326,30 +325,3 @@ def test_merge_envelopes_multiple_pages() -> None:
     result = merge_envelopes(base, [[3, 4], [5, 6]], assessment)
     json_val = _extract_json_content(result)
     assert json_val == [1, 2, 3, 4, 5, 6]
-
-
-# ---- _count_json_value_records ----
-
-
-def test_count_value_records_bare_list() -> None:
-    assert _count_json_value_records([1, 2, 3]) == 3
-
-
-def test_count_value_records_wrapped_data() -> None:
-    assert _count_json_value_records({"data": [1, 2]}) == 2
-
-
-def test_count_value_records_wrapped_items() -> None:
-    assert _count_json_value_records({"items": [1]}) == 1
-
-
-def test_count_value_records_no_known_key() -> None:
-    assert _count_json_value_records({"unknown": [1, 2]}) == 0
-
-
-def test_count_value_records_non_countable() -> None:
-    assert _count_json_value_records("scalar") == 0
-
-
-def test_count_value_records_empty_list() -> None:
-    assert _count_json_value_records([]) == 0

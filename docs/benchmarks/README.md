@@ -22,3 +22,5 @@ UV_CACHE_DIR=/tmp/uv-cache uv run python scripts/benchmark_large_payloads.py \
 
 Then add a matching markdown summary file with key p50/p95 metrics.
 
+Note: benchmark JSON currently includes `select`/`get` internal retrieval-kernel
+metrics as performance proxies; these are not public contract-v1 APIs.

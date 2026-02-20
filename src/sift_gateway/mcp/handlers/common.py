@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Any
 
+from sift_gateway.core.retrieval_helpers import extract_json_target
 from sift_gateway.core.rows import row_to_dict, rows_to_dicts
 
 __all__ = [
@@ -86,44 +87,6 @@ ENVELOPE_COLUMNS = [
     "payload_fs_path",
     "contains_binary_refs",
 ]
-
-
-# ---------------------------------------------------------------------------
-# Envelope helpers
-# ---------------------------------------------------------------------------
-
-
-def extract_json_target(
-    envelope: dict[str, Any], mapped_part_index: int | None
-) -> Any:
-    """Extract the JSON value that root_paths are relative to.
-
-    Mapping creates root_paths relative to the JSON content part value (e.g.
-    ``{"users": [...]}``), not the full envelope wrapper.  This helper extracts
-    that target so callers can evaluate root_path JSONPath expressions against
-    the correct object.
-
-    JSON-encoded string values within the target are resolved so that
-    JSONPath traversal can reach nested structures that the mapper
-    discovered during root discovery.
-
-    Returns the full *envelope* when *mapped_part_index* is ``None`` or doesn't
-    point at a valid JSON content part.
-    """
-    from sift_gateway.mapping.json_strings import resolve_json_strings
-
-    if not isinstance(mapped_part_index, int):
-        return envelope
-    content = envelope.get("content", [])
-    if 0 <= mapped_part_index < len(content):
-        part = content[mapped_part_index]
-        if (
-            isinstance(part, dict)
-            and part.get("type") == "json"
-            and "value" in part
-        ):
-            return resolve_json_strings(part["value"])
-    return envelope
 
 
 def touch_retrieval_artifacts(
