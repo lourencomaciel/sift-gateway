@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.2.7] - 2026-02-20
+
 ### Changed
 - **Breaking:** removed `sift-gateway code --expr`; CLI code queries now require `--code` or `--file`
 - **Breaking:** removed `sift-gateway run --stdin`; CLI captures are command-backed via `run -- <command>`
