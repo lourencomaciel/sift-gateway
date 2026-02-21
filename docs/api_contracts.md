@@ -34,7 +34,7 @@ Mirrored tool calls, pagination continuations, and code outputs follow:
 3. Detect pagination from raw parsed payload.
 4. Redact sensitive output values.
 5. Persist artifact.
-6. Build mapping + compact schema.
+6. Build mapping + schema-ref fallback data.
 7. Choose response mode.
 8. Return artifact-centric response.
 
@@ -125,10 +125,9 @@ Includes inline `payload`.
 Includes:
 
 - `artifact_id`
-- `schemas_compact`
-- `schema_legend`
-
-No verbose `schemas` field is part of the public contract.
+- either representative `sample_item` fields (`sample_item`, `sample_item_count`,
+  `sample_item_source_index`, optional `sample_item_text_truncated`)
+- or `schemas` (verbose schema fallback when sample preview is not representative)
 
 ## Response Mode Selection
 

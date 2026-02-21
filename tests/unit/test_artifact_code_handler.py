@@ -1040,6 +1040,12 @@ def test_code_query_rejects_output_above_transport_budget(
         "sift_gateway.core.artifact_code.execute_code_in_subprocess",
         lambda **_kwargs: [{"value": "x" * 200}],
     )
+    monkeypatch.setattr(
+        "sift_gateway.core.artifact_code.execute_artifact_describe",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("schema fallback should not run")
+        ),
+    )
 
     response = asyncio.run(
         server.handle_artifact(
@@ -1055,10 +1061,18 @@ def test_code_query_rejects_output_above_transport_budget(
     )
     assert response["response_mode"] == "schema_ref"
     assert response["artifact_id"].startswith("art_")
-    assert "schemas_compact" in response
+    assert "schemas" not in response
+    assert response["sample_item_source_index"] == 0
+    assert response["sample_item_count"] == 1
+    assert response["sample_item_text_truncated"] is True
+    sample_item = response["sample_item"]
+    assert isinstance(sample_item, dict)
+    sample_value = sample_item["value"]
+    assert isinstance(sample_value, str)
+    assert sample_value.endswith("more chars truncated)")
 
 
-def test_code_query_schema_ref_preserves_compact_describe_schema(
+def test_code_query_schema_ref_preserves_describe_schema(
     tmp_path: Path, monkeypatch
 ) -> None:
     conn = _SeqConnection(
@@ -1095,31 +1109,30 @@ def test_code_query_schema_ref_preserves_compact_describe_schema(
     )
     monkeypatch.setattr(
         "sift_gateway.core.artifact_code.execute_code_in_subprocess",
-        lambda **_kwargs: [{"value": "x" * 200}],
+        lambda **_kwargs: [{"value": "x" * 200}, {"value": 2}],
     )
     monkeypatch.setattr(
         "sift_gateway.core.artifact_code.execute_artifact_describe",
         lambda *_args, **_kwargs: {
             "schemas": [
                 {
-                    "v": "schema_v1",
-                    "h": "sha256:derived",
-                    "rp": "$",
-                    "m": "exact",
-                    "cv": {"c": "complete", "or": 1},
-                    "fd": {"oc": 1},
-                    "f": [
+                    "version": "schema_v1",
+                    "schema_hash": "sha256:derived",
+                    "root_path": "$",
+                    "mode": "exact",
+                    "coverage": {"completeness": "complete", "observed_records": 1},
+                    "fields": [
                         {
-                            "p": "$.id",
-                            "t": ["number"],
-                            "n": False,
-                            "r": True,
+                            "path": "$.id",
+                            "types": ["number"],
+                            "nullable": False,
+                            "required": True,
                         }
                     ],
-                    "d": {
-                        "dh": "sha256:dataset",
-                        "tv": "traversal_v1",
-                        "bf": None,
+                    "determinism": {
+                        "dataset_hash": "sha256:dataset",
+                        "traversal_contract_version": "traversal_v1",
+                        "map_budget_fingerprint": None,
                     },
                 }
             ]
@@ -1139,10 +1152,10 @@ def test_code_query_schema_ref_preserves_compact_describe_schema(
         )
     )
     assert response["response_mode"] == "schema_ref"
-    schema = response["schemas_compact"][0]
-    assert schema["rp"] == "$"
-    assert schema["h"] == "sha256:derived"
-    assert schema["cv"]["or"] == 1
+    schema = response["schemas"][0]
+    assert schema["root_path"] == "$"
+    assert schema["schema_hash"] == "sha256:derived"
+    assert schema["coverage"]["observed_records"] == 1
 
 
 def test_code_query_runtime_error_includes_traceback_details(

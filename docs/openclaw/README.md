@@ -78,8 +78,8 @@ metadata: {"openclaw":{"requires":{"bins":["sift-gateway"]},"install":[{"id":"uv
 
 - Prefer `--json` for all run/code invocations.
 - Keep only `artifact_id` and compact findings in prompt context.
-- If `response_mode` is `schema_ref`, inspect `schemas_compact` before writing code queries.
-- If `status` is `error` or `command_exit_code` is non-zero, fix capture first.
+- If `response_mode` is `schema_ref`, use `sample_item` first; if absent, inspect `schemas` before writing code queries.
+- If `sift-gateway run` exits non-zero, fix capture first.
 - Continue pagination only when `pagination.next.kind=="command"`.
 
 ## Troubleshooting
@@ -105,7 +105,7 @@ Cause:
 Fix:
 
 - run the command standalone first
-- inspect `status`, `command_exit_code`, and `payload` from `run --json`
+- inspect the `run --json` error payload and retry
 
 ### Symptom: pagination stopped early
 
