@@ -50,8 +50,7 @@ def gateway_tool_result(
     response_mode: str,
     artifact_id: str,
     payload: Any | None = None,
-    schemas_compact: list[dict[str, Any]] | None = None,
-    schema_legend: dict[str, Any] | None = None,
+    schemas: list[dict[str, Any]] | None = None,
     lineage: dict[str, Any] | None = None,
     pagination: dict[str, Any] | None = None,
     metadata: dict[str, Any] | None = None,
@@ -62,8 +61,7 @@ def gateway_tool_result(
         response_mode: ``"full"`` or ``"schema_ref"``.
         artifact_id: Unique artifact identifier.
         payload: Inline payload when ``response_mode == "full"``.
-        schemas_compact: Compact schema list for ``schema_ref`` mode.
-        schema_legend: Compact-schema legend for ``schema_ref`` mode.
+        schemas: Schema list for ``schema_ref`` mode.
         lineage: Lineage/chain metadata.
         pagination: Pagination metadata when present.
         metadata: Optional additional metadata.
@@ -82,11 +80,7 @@ def gateway_tool_result(
     if response_mode == "full":
         result["payload"] = payload
     else:
-        result["schemas_compact"] = (
-            list(schemas_compact) if isinstance(schemas_compact, list) else []
-        )
-        if schema_legend is not None:
-            result["schema_legend"] = schema_legend
+        result["schemas"] = list(schemas) if isinstance(schemas, list) else []
     if lineage is not None:
         result["lineage"] = lineage
     if pagination is not None:

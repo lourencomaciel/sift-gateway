@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+### Changed
+- Removed compact schema payload/legend from `schema_ref` responses (`schemas_compact`, `schema_legend`)
+- `schema_ref` now returns representative `sample_item` when item shape is consistent, with verbose `schemas` fallback
+- Trimmed `sift-gateway run --json` model output to drop transport noise fields (`command_exit_code`, `payload_total_bytes`, `capture_kind`, `expires_at`, `status`, `tags`)
+- Fixed usage hint root-path derivation to use sampled array paths (for example `$.items`) when schemas are absent
+
 ## [0.2.8] - 2026-02-20
 
 ### Changed

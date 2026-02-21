@@ -1171,6 +1171,132 @@ def test_handle_mirrored_tool_uses_passthrough_budget_for_mode_selection(
     assert usage.get("root_path") == "$"
 
 
+def test_handle_mirrored_tool_schema_ref_uses_sample_item_when_consistent(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    server = GatewayServer(
+        config=GatewayConfig(
+            data_dir=tmp_path,
+            passthrough_max_bytes=128,
+            quota_enforcement_enabled=False,
+        ),
+        upstreams=[_upstream()],
+        db_pool=_FakePool(None),  # type: ignore[arg-type]
+        metrics=GatewayMetrics(),
+    )
+    mirrored = server.mirrored_tools["demo.echo"]
+
+    async def _large_items_response(*_args, **_kwargs):
+        return {
+            "content": [],
+            "structuredContent": {
+                "items": [{"value": "x" * 300}],
+            },
+            "isError": False,
+            "meta": {"trace_id": "abc"},
+        }
+
+    monkeypatch.setattr(
+        "sift_gateway.mcp.server.call_upstream_tool",
+        _large_items_response,
+    )
+    monkeypatch.setattr(
+        "sift_gateway.mcp.handlers.mirrored_tool.persist_artifact",
+        lambda **_kwargs: _persisted_handle(),
+    )
+    monkeypatch.setattr(
+        server,
+        "_run_mapping_inline",
+        lambda *_args, **_kwargs: True,
+    )
+    _patch_schema_ready_describe(monkeypatch)
+
+    response = asyncio.run(
+        server.handle_mirrored_tool(
+            mirrored,
+            {
+                "_gateway_context": {"session_id": "sess_1"},
+                "message": "hello",
+            },
+        )
+    )
+
+    assert response["artifact_id"] == "art_new"
+    assert response["response_mode"] == "schema_ref"
+    assert "schemas" not in response
+    assert response["sample_item_source_index"] == 0
+    assert response["sample_item_count"] == 1
+    assert response["sample_item_text_truncated"] is True
+    metadata = response.get("metadata")
+    assert isinstance(metadata, dict)
+    usage = metadata.get("usage")
+    assert isinstance(usage, dict)
+    assert usage.get("root_path") == "$.items"
+
+
+def test_handle_mirrored_tool_schema_ref_falls_back_on_mixed_shapes(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    server = GatewayServer(
+        config=GatewayConfig(
+            data_dir=tmp_path,
+            passthrough_max_bytes=1,
+            quota_enforcement_enabled=False,
+        ),
+        upstreams=[_upstream()],
+        db_pool=_FakePool(None),  # type: ignore[arg-type]
+        metrics=GatewayMetrics(),
+    )
+    mirrored = server.mirrored_tools["demo.echo"]
+
+    async def _mixed_items_response(*_args, **_kwargs):
+        return {
+            "content": [],
+            "structuredContent": {
+                "items": [{"value": "x" * 300}, {"value": 2}],
+            },
+            "isError": False,
+            "meta": {"trace_id": "abc"},
+        }
+
+    monkeypatch.setattr(
+        "sift_gateway.mcp.server.call_upstream_tool",
+        _mixed_items_response,
+    )
+    monkeypatch.setattr(
+        "sift_gateway.mcp.handlers.mirrored_tool.persist_artifact",
+        lambda **_kwargs: _persisted_handle(),
+    )
+    monkeypatch.setattr(
+        server,
+        "_run_mapping_inline",
+        lambda *_args, **_kwargs: True,
+    )
+    _patch_schema_ready_describe(monkeypatch)
+
+    response = asyncio.run(
+        server.handle_mirrored_tool(
+            mirrored,
+            {
+                "_gateway_context": {"session_id": "sess_1"},
+                "message": "hello",
+            },
+        )
+    )
+
+    assert response["artifact_id"] == "art_new"
+    assert response["response_mode"] == "schema_ref"
+    assert "sample_item" not in response
+    assert "schemas" in response
+    metadata = response.get("metadata")
+    assert isinstance(metadata, dict)
+    usage = metadata.get("usage")
+    assert isinstance(usage, dict)
+    assert usage.get("root_path") == "$.items"
+
+
 def test_handle_mirrored_tool_fails_closed_when_redaction_errors(
     tmp_path: Path,
     monkeypatch,

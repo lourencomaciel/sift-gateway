@@ -54,9 +54,10 @@ from sift_gateway.pagination.extract import (
     assess_pagination,
 )
 from sift_gateway.request_identity import compute_request_identity
-from sift_gateway.schema_compact import (
-    SCHEMA_LEGEND,
-    compact_schema_payload,
+from sift_gateway.response_sample import (
+    build_representative_item_sample,
+    first_json_content_value,
+    resolve_item_sequence_with_path,
 )
 from sift_gateway.tools.artifact_describe import (
     FETCH_DESCRIBE_SQL,
@@ -66,7 +67,7 @@ from sift_gateway.tools.artifact_describe import (
 from sift_gateway.tools.artifact_schema import FETCH_SCHEMA_FIELDS_SQL
 from sift_gateway.tools.usage_hint import (
     build_code_query_usage,
-    compact_schema_primary_root_path,
+    schema_primary_root_path,
 )
 
 if TYPE_CHECKING:
@@ -512,31 +513,38 @@ def _describe_has_ready_schema(describe: dict[str, Any]) -> bool:
 
 def _schema_payload_from_describe(
     describe: dict[str, Any],
-) -> tuple[
-    dict[str, Any],
-    list[dict[str, Any]],
-    list[dict[str, Any]],
-    dict[str, Any] | None,
-]:
-    """Extract canonical schema-first payload fields from describe data."""
-    mapping = describe.get("mapping")
+) -> list[dict[str, Any]]:
+    """Extract verbose schema payload from describe data."""
     schemas = describe.get("schemas")
-    mapping_payload: dict[str, Any] = (
-        dict(mapping) if isinstance(mapping, dict) else {}
-    )
-    schema_payload_full: list[dict[str, Any]] = (
+    return (
         [item for item in schemas if isinstance(item, dict)]
         if isinstance(schemas, list)
         else []
     )
-    schema_payload_compact = compact_schema_payload(schema_payload_full)
-    schema_legend = SCHEMA_LEGEND if schema_payload_compact else None
-    return (
-        mapping_payload,
-        schema_payload_full,
-        schema_payload_compact,
-        schema_legend,
+
+
+def _representative_schema_ref_sample(
+    *,
+    payload_for_full: dict[str, Any],
+    schemas: list[dict[str, Any]],
+    max_jsonpath_length: int,
+    max_path_segments: int,
+    max_wildcard_expansion_total: int,
+) -> tuple[dict[str, Any] | None, str | None]:
+    """Build representative sample for mirrored schema-ref responses."""
+    json_value = first_json_content_value(payload_for_full)
+    if json_value is None:
+        return None, None
+    items, resolved_root_path = resolve_item_sequence_with_path(
+        json_value,
+        root_path=schema_primary_root_path(schemas),
+        max_jsonpath_length=max_jsonpath_length,
+        max_path_segments=max_path_segments,
+        max_wildcard_expansion_total=max_wildcard_expansion_total,
     )
+    if items is None:
+        return None, resolved_root_path
+    return build_representative_item_sample(items), resolved_root_path
 
 
 def _inject_pagination_state(
@@ -1256,14 +1264,7 @@ async def handle_mirrored_tool(
             persist_result.handle.artifact_id,
             extra_warnings=persist_result.pagination_warnings,
         )
-    (
-        mapping_payload,
-        _schema_payload,
-        schema_payload_compact,
-        schema_legend,
-    ) = (
-        _schema_payload_from_describe(persist_result.describe)
-    )
+    schemas = _schema_payload_from_describe(persist_result.describe)
     artifact_id = persist_result.handle.artifact_id
     lineage: dict[str, Any] = {
         "scope": "single",
@@ -1275,20 +1276,26 @@ async def handle_mirrored_tool(
         lineage["chain_seq"] = invocation.chain_seq
 
     payload_for_full = envelope.to_dict()
-
-    metadata: dict[str, Any] = {}
-    if isinstance(mapping_payload, dict) and mapping_payload:
-        metadata["mapping"] = mapping_payload
-    metadata["usage"] = build_code_query_usage(
-        interface="mcp",
-        artifact_id=artifact_id,
-        root_path=compact_schema_primary_root_path(schema_payload_compact),
-        configured_roots=ctx.config.code_query_allowed_import_roots,
+    representative_sample, sample_root_path = _representative_schema_ref_sample(
+        payload_for_full=payload_for_full,
+        schemas=schemas,
+        max_jsonpath_length=ctx.config.max_jsonpath_length,
+        max_path_segments=ctx.config.max_path_segments,
+        max_wildcard_expansion_total=ctx.config.max_wildcard_expansion_total,
     )
-    metadata["cache"] = {
-        "reason": "fresh",
-        "request_key": identity.request_key,
-        "artifact_id_origin": "fresh",
+    usage_root_path = (
+        sample_root_path
+        if isinstance(sample_root_path, str) and sample_root_path
+        else schema_primary_root_path(schemas)
+    )
+
+    metadata: dict[str, Any] = {
+        "usage": build_code_query_usage(
+            interface="mcp",
+            artifact_id=artifact_id,
+            root_path=usage_root_path,
+            configured_roots=ctx.config.code_query_allowed_import_roots,
+        )
     }
 
     full_payload = gateway_tool_result(
@@ -1302,12 +1309,14 @@ async def handle_mirrored_tool(
     schema_ref_payload = gateway_tool_result(
         response_mode="schema_ref",
         artifact_id=artifact_id,
-        schemas_compact=schema_payload_compact,
-        schema_legend=schema_legend or SCHEMA_LEGEND,
+        schemas=schemas,
         lineage=lineage,
         pagination=pagination_meta,
         metadata=metadata,
     )
+    if representative_sample is not None:
+        schema_ref_payload.pop("schemas", None)
+        schema_ref_payload.update(representative_sample)
     has_pagination = (
         pagination_meta is not None or invocation.parent_artifact_id is not None
     )

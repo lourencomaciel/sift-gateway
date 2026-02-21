@@ -435,7 +435,7 @@ def test_gateway_tool_result_includes_pagination() -> None:
     result = gateway_tool_result(
         response_mode="schema_ref",
         artifact_id="art_1",
-        schemas_compact=[],
+        schemas=[],
         pagination=pagination,
     )
     assert result["pagination"] == pagination

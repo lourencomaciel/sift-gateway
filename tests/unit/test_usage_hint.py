@@ -7,8 +7,8 @@ from sift_gateway.tools.usage_hint import (
     PAGINATION_COMPLETENESS_RULE,
     available_code_query_packages,
     build_code_query_usage,
-    compact_schema_primary_root_path,
     render_code_query_usage_hint,
+    schema_primary_root_path,
     summarize_code_query_packages,
     with_pagination_completeness_rule,
 )
@@ -105,15 +105,23 @@ def test_summarize_code_query_packages_reports_stdlib_when_only_stdlib_allowed(
     assert summary == "stdlib-only"
 
 
-def test_compact_schema_primary_root_path_defaults_to_root() -> None:
-    assert compact_schema_primary_root_path(None) == "$"
-    assert compact_schema_primary_root_path([]) == "$"
+def test_schema_primary_root_path_defaults_to_root() -> None:
+    assert schema_primary_root_path(None) == "$"
+    assert schema_primary_root_path([]) == "$"
 
 
-def test_compact_schema_primary_root_path_uses_first_schema() -> None:
-    root_path = compact_schema_primary_root_path(
-        [{"rp": "$.items"}, {"rp": "$.other"}]
+def test_schema_primary_root_path_uses_first_schema() -> None:
+    root_path = schema_primary_root_path(
+        [
+            {"root_path": "$.items"},
+            {"root_path": "$.other"},
+        ]
     )
+    assert root_path == "$.items"
+
+
+def test_schema_primary_root_path_supports_legacy_compact_key() -> None:
+    root_path = schema_primary_root_path([{"rp": "$.items"}])
     assert root_path == "$.items"
 
 
