@@ -623,6 +623,7 @@ def _emit_human_code(payload: dict[str, Any]) -> None:
 def _run_payload_metadata(payload: dict[str, Any]) -> dict[str, Any]:
     """Return run metadata, synthesizing from top-level fields if needed."""
     metadata = payload.get("metadata")
+    merged: dict[str, Any]
     if isinstance(metadata, dict):
         usage = metadata.get("usage")
         merged = {"usage": usage} if isinstance(usage, dict) else {}
@@ -638,7 +639,7 @@ def _run_payload_metadata(payload: dict[str, Any]) -> dict[str, Any]:
         "tags",
     ):
         if key in payload:
-            merged[key] = payload.get(key)
+            merged[key] = payload[key]
     if merged:
         return merged
     return {}
