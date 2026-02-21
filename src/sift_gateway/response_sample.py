@@ -75,26 +75,26 @@ def _truncate_sample_value(
         return _truncate_sample_text(value, max_chars=max_chars)
     if isinstance(value, list):
         truncated_any = False
-        normalized: list[Any] = []
+        normalized_list: list[Any] = []
         for item in value:
             next_item, truncated = _truncate_sample_value(
                 item,
                 max_chars=max_chars,
             )
-            normalized.append(next_item)
+            normalized_list.append(next_item)
             truncated_any = truncated_any or truncated
-        return normalized, truncated_any
+        return normalized_list, truncated_any
     if isinstance(value, dict):
         truncated_any = False
-        normalized: dict[Any, Any] = {}
+        normalized_dict: dict[Any, Any] = {}
         for key, item in value.items():
             next_item, truncated = _truncate_sample_value(
                 item,
                 max_chars=max_chars,
             )
-            normalized[key] = next_item
+            normalized_dict[key] = next_item
             truncated_any = truncated_any or truncated
-        return normalized, truncated_any
+        return normalized_dict, truncated_any
     return value, False
 
 
