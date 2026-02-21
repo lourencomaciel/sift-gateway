@@ -1,6 +1,6 @@
 # Sift
 
-**Artifact gateway** - Structured memory for AI agents. Keeps context usable in multi-step workflows.
+**Reliability gateway** - Schema-stable, secret-safe, pagination-complete JSON for AI agents.
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![PyPI](https://img.shields.io/pypi/v/sift-gateway.svg)](https://pypi.org/project/sift-gateway/)
@@ -8,9 +8,13 @@
 
 ---
 
-AI agents break when their tools return too much data. A single MCP call or CLI command can return 30-100 KB of JSON. That is roughly 8,000-25,000 tokens spent before the agent can do the next step. After a few calls, the model starts dropping details or making bad calls. See [Why Sift exists](docs/why.md) for research and open issues behind this pattern.
+Sift is built for workflows where data correctness matters as much as model quality: enterprise automation, research pipelines, and long-running agent sessions.
 
-Sift stores tool output as artifacts, infers schema metadata, and returns either inline payload (`full`) or an artifact reference (`schema_ref`). In `schema_ref`, Sift returns either a representative `sample_item` preview or verbose `schemas` fallback. The agent can keep context small and run focused Python queries against stored artifacts when it needs details.
+For one-off CLI tasks, plain `jq` or Python can be enough. Sift adds value when you need guarantees: consistent schema handling, secret redaction before data re-enters model context, explicit pagination continuation, and an auditable artifact history.
+
+Sift stores tool output as artifacts, infers schema metadata, and returns either inline payload (`full`) or an artifact reference (`schema_ref`). In `schema_ref`, Sift returns either a representative `sample_item` preview or verbose `schemas` fallback.
+
+Keeping large payloads out of prompt context is still a core benefit, but it is one outcome of these guarantees rather than the only goal. See [Why Sift exists](docs/why.md) for research and ecosystem context.
 
 Sift works with MCP clients (Claude Desktop, Claude Code, Cursor, VS Code, Windsurf, Zed) and CLI agents (OpenClaw, terminal automation). Same artifact store, same query interface, two entry points.
 
@@ -51,7 +55,7 @@ pipx install sift-gateway
 sift-gateway run -- kubectl get pods -A -o json
 ```
 
-Large output is stored and returned as an artifact ID plus `schema_ref` metadata. Example:
+Use this flow when you need reproducibility and policy controls on command output (not just ad-hoc extraction). Large output is stored and returned as an artifact ID plus `schema_ref` metadata. Example:
 
 ```bash
 sift-gateway code <artifact_id> '$.items' --code "def run(data, schema, params): return {'rows': len(data)}"
