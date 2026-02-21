@@ -1,26 +1,47 @@
 # Why Sift exists
 
-This page summarizes research and ecosystem evidence for one repeated failure mode in agent systems: tool output overwhelms model context.
+This page summarizes research and ecosystem evidence for a repeated failure mode
+in agent systems: tool data is available, but not reliably usable. Context
+overflow is one symptom. The broader issue is correctness, safety, and
+reproducibility across multi-step workflows.
 
 ## Short version
 
-Common workarounds map to features Sift already provides:
+Common workarounds map to behaviors Sift already provides:
 
-| Workaround | Why it fails | Sift equivalent |
+| Workaround | Why it breaks down | Sift behavior |
 |---|---|---|
-| Truncate tool output | Loses data permanently | Full output is persisted, schema reference is returned |
-| Summarize with an LLM | Lossy, adds latency and cost, can fail when context is already full | Lossless schema inference, no summarization call required |
-| Save to file + grep/jq | No schema awareness, agent must be Unix-skilled | Schema-aware code queries with pandas/numpy |
-| Paginate at the MCP server | Requires upstream changes per server | Transparent proxy, zero upstream changes |
-| Remove previous tool output | Loses ability to reference earlier results | Artifacts persist across the full session |
-| RAG on tool responses | Embedding overhead, approximate retrieval | Exact structured retrieval via code queries |
-| Compact old context | Usually triggers late, and compaction can fail under overflow | Large output stays out of context from the start |
+| Truncate tool output | Loses data permanently | Full output is persisted; responses can return `schema_ref` |
+| Summarize with an LLM | Lossy, adds latency/cost, can fail when context is already full | Lossless schema inference with artifact-backed follow-up queries |
+| Save to file + grep/jq | Works for one-offs, but schema handling and pagination discipline vary by operator | Schema-aware querying over persisted artifacts with lineage metadata |
+| Pass raw tool payloads to model | Risks accidental secret exposure and context blowups | Outbound secret redaction is enabled by default before return |
+| Paginate only at upstream server | Requires per-server changes and can leave clients unsure about completeness | Explicit pagination metadata and continuation contract (`next_page`, `run --continue-from`) |
+| Remove previous tool output | Loses provenance and repeatability | Artifacts persist with lineage and deterministic metadata |
+| RAG on tool responses | Embedding overhead and approximate retrieval | Exact structured retrieval via code queries |
+| Compact old context | Often runs late and can fail after overflow | Large outputs can stay out of prompt context from the start |
+
+## Where Sift is strongest
+
+- MCP workflows where clients otherwise pull full payloads into context.
+- Enterprise and research workflows that need consistent schema handling,
+  redaction controls, and reproducible artifact trails.
+- Repeated CLI/OpenClaw workflows where pagination, auditability, and policy
+  controls matter.
+
+For one-off CLI extraction tasks, plain `jq` or Python can be enough. Sift is
+most valuable when the requirement is trustworthy and repeatable outputs across
+runs, not just a fast one-time answer.
 
 ## Protocol creators acknowledge the gap
 
-Anthropic's MCP engineering write-up points to two scaling problems: tool definitions consume prompt space, and intermediate tool results add tokens at each step. Their direction is code execution so agents can process data before it enters context.
+Anthropic's MCP engineering write-up points to two scaling problems: tool
+definitions consume prompt space, and intermediate tool results add tokens at
+each step. Their direction is code execution so agents can process data before
+it enters context.
 
-Sift addresses the same bottleneck at the gateway layer. It persists output and returns references instead of raw payloads, then runs code queries against stored artifacts. This works without changing the protocol or upstream servers.
+Sift addresses the same bottleneck at the gateway layer. It persists output and
+returns references instead of raw payloads, then runs code queries against
+stored artifacts. This works without changing the protocol or upstream servers.
 
 Source: [Code execution with MCP](https://www.anthropic.com/engineering/code-execution-with-mcp) (Anthropic, 2025)
 
@@ -28,31 +49,42 @@ Source: [Code execution with MCP](https://www.anthropic.com/engineering/code-exe
 
 ### Memory pointers for tool output (IBM Research)
 
-IBM researchers proposed memory pointers so agents operate on references instead of full tool payloads. Their method preserved full output, required no tool changes, and used roughly 7x fewer tokens than conventional workflows. Sift follows this same architecture in production form: store full output, return compact references, query details on demand.
+IBM researchers proposed memory pointers so agents operate on references instead
+of full tool payloads. Their method preserved full output, required no tool
+changes, and used roughly 7x fewer tokens than conventional workflows. Sift
+follows this architecture in production form: store full output, return compact
+references, query details on demand.
 
 Source: [Solving Context Window Overflow in AI Agents](https://arxiv.org/abs/2511.22729) (Bulle Labate et al., November 2025)
 
 ### Context rot (Chroma)
 
-Chroma measured 18 LLMs and found performance drops as input length grows. Effective capacity is lower than advertised capacity, and larger windows mostly delay the failure mode.
+Chroma measured 18 LLMs and found performance drops as input length grows.
+Effective capacity is lower than advertised capacity, and larger windows mostly
+delay the failure mode.
 
 Source: [Context Rot research](https://research.trychroma.com/context-rot) (Hong et al., 2025), referenced in [The Context Window Problem](https://factory.ai/news/context-window-problem) (Factory.ai)
 
 ### Context management remains underresearched (JetBrains / NeurIPS 2025)
 
-Researchers from JetBrains and TU Munich found that agent-generated context often turns into noise, while efficiency-focused context management is still underresearched despite its effect on cost and reliability.
+Researchers from JetBrains and TU Munich found that agent-generated context
+often turns into noise, while efficiency-focused context management is still
+underresearched despite its effect on cost and reliability.
 
 Source: [Cutting Through the Noise: Smarter Context Management for LLM-Powered Agents](https://blog.jetbrains.com/research/2025/12/efficient-context-management/) (Lindenbauer et al., December 2025)
 
 ### Recursive context folding (Prime Intellect)
 
-Prime Intellect argues that token cost grows linearly with context length while model quality drops. Their approach delegates context handling to tools and subroutines instead of relying on larger windows.
+Prime Intellect argues that token cost grows linearly with context length while
+model quality drops. Their approach delegates context handling to tools and
+subroutines instead of relying on larger windows.
 
 Source: [Recursive Language Models: the paradigm of 2026](https://www.primeintellect.ai/blog/rlm) (Prime Intellect, 2025)
 
 ## What we see in production
 
-Issue trackers across agent ecosystems show the same pattern: large tool output floods context, reactive fixes run late, and sessions become hard to recover.
+Issue trackers across agent ecosystems show the same pattern: oversized tool
+output, unclear pagination completeness, and hard-to-recover sessions.
 
 ### OpenClaw issues
 
@@ -85,6 +117,9 @@ Issue trackers across agent ecosystems show the same pattern: large tool output 
 
 ## What this implies
 
-The ecosystem has tried truncation, summarization, file dumps, compaction, and RAG. Each helps in some cases, but each has failure modes: data loss, late intervention, extra infrastructure, or approximate retrieval.
+The ecosystem has many techniques for token control. The remaining gap is data
+reliability under agent execution pressure: stable schema handling, secret-safe
+transport, explicit pagination completeness, and reproducible provenance.
 
-Sift focuses on a narrower claim and does it directly: keep large tool payloads out of prompt context while preserving full output for exact follow-up queries.
+Sift focuses on that narrower claim: provide schema-stable, secret-safe,
+pagination-complete access to full payloads while keeping prompt context small.

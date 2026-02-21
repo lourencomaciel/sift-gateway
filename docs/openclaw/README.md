@@ -1,12 +1,25 @@
 # OpenClaw Integration Pack
 
-This pack provides a CLI-first OpenClaw skill for capturing large command output as artifacts and querying it without flooding model context.
+This pack provides a CLI-first OpenClaw skill for governed JSON workflows:
+schema-consistent querying, secret-safe outputs, explicit pagination handling,
+and reproducible artifact history.
 
 ## Included assets
 
 - installable skill file: `docs/openclaw/SKILL.md`
 - packaged mirror: `src/sift_gateway/openclaw/SKILL.md`
 - writer CLI: `sift-gateway-openclaw-skill`
+
+## When to use Sift vs direct CLI
+
+Use direct `jq`/Python for quick one-off local checks.
+
+Use this pack when you need:
+
+- repeatable results across runs or operators
+- explicit pagination continuity and completeness checks
+- redaction before output re-enters model context
+- a stored artifact trail for review or audit
 
 ## Quickstart (CLI mode)
 
@@ -63,7 +76,7 @@ sift-gateway run --json --continue-from <artifact_id> -- <next-command-with-next
 5. Add one short profile rule:
 
 ```text
-When output may exceed ~4KB, capture with `sift-gateway run --json` and analyze with `sift-gateway code --json`.
+Use `sift-gateway run --json` + `sift-gateway code --json` whenever output may be large, paginated, or requires reproducible and redacted handling.
 ```
 
 ## Load-time gating metadata
@@ -79,6 +92,7 @@ metadata: {"openclaw":{"requires":{"bins":["sift-gateway"]},"install":[{"id":"uv
 - Prefer `--json` for all run/code invocations.
 - Keep only `artifact_id` and compact findings in prompt context.
 - If `response_mode` is `schema_ref`, use `sample_item` first; if absent, inspect `schemas` before writing code queries.
+- Treat `artifact_id` + lineage metadata as the system of record for follow-up analysis.
 - If `sift-gateway run` exits non-zero, fix capture first.
 - Continue pagination only when `pagination.next.kind=="command"`.
 
@@ -88,7 +102,7 @@ metadata: {"openclaw":{"requires":{"bins":["sift-gateway"]},"install":[{"id":"uv
 
 Cause:
 
-- large commands are still executed directly.
+- large commands are still executed directly, bypassing artifact capture.
 
 Fix:
 

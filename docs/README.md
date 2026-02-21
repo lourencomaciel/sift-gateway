@@ -1,12 +1,13 @@
 # Documentation Map
 
-The documentation set is intentionally small and contract-focused.
+The documentation set is intentionally small, contract-focused, and centered on
+reliable agent data handling.
 
 ## Guides
 
 - [`quickstart.md`](quickstart.md) - install, init, and first run/code flow
 - [`recipes.md`](recipes.md) - practical usage patterns
-- [`openclaw/README.md`](openclaw/README.md) - OpenClaw-first usage
+- [`openclaw/README.md`](openclaw/README.md) - OpenClaw reliability workflow
 
 ## Reference
 

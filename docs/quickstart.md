@@ -40,10 +40,14 @@ See [CONTRIBUTING.md](../CONTRIBUTING.md) for the full development workflow.
 
 ## OpenClaw users
 
-If your main goal is preventing context overflow in OpenClaw, start with:
+If your OpenClaw workflow needs reproducibility, schema consistency,
+pagination discipline, or secret-safe outputs, start with:
 
 - [OpenClaw Integration Pack](openclaw/README.md)
 - [Installable skill file](openclaw/SKILL.md)
+
+For one-off shell extraction, direct `jq`/Python may be enough. Use Sift when
+the output needs to be trustworthy and repeatable across runs.
 
 ## Importing your MCP configuration
 
