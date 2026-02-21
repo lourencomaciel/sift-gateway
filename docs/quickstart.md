@@ -149,7 +149,8 @@ sift-gateway run --continue-from <artifact_id> -- <next-command-with-next-params
 2. Call an upstream mirrored tool through Sift.
 3. Receive a response with:
    - `response_mode="full"` with inline `payload`, or
-   - `response_mode="schema_ref"` with `artifact_id` and compact schema.
+   - `response_mode="schema_ref"` with `artifact_id` and either `sample_item`
+     preview or `schemas` fallback.
 4. If pagination is partial, continue with:
 
 ```python

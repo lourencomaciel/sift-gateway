@@ -157,8 +157,8 @@ export SIFT_GATEWAY_PASSTHROUGH_MAX_BYTES=8192  # Legacy name; inline-mode cap
 
 - If upstream pagination is present, Sift returns `response_mode="schema_ref"`.
 - If non-paginated full payload exceeds the cap, Sift returns `schema_ref`.
-- Under the cap, Sift returns `schema_ref` only when compact schema is at
-  least 50% smaller than full payload; otherwise it returns `full`.
+- Under the cap, Sift returns `schema_ref` only when the schema-ref payload is
+  at least 50% smaller than full payload; otherwise it returns `full`.
 
 To limit disk growth, tune storage quota settings instead:
 

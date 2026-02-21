@@ -34,7 +34,7 @@ For mirrored tool calls, CLI run captures, and code outputs:
 4. Redact sensitive output values.
 5. Persist artifact.
 6. Run mapping.
-7. Build compact schema payload (`schemas_compact` + `schema_legend`).
+7. Build schema-ref fallback payload (`sample_item` preview or `schemas`).
 8. Choose response mode (`full` or `schema_ref`).
 9. Return response with lineage and pagination metadata.
 
@@ -54,11 +54,10 @@ Returns inline `payload`.
 
 ### `schema_ref`
 
-Returns compact schema reference:
+Returns schema reference:
 
 - `artifact_id`
-- `schemas_compact`
-- `schema_legend`
+- either representative `sample_item` fields, or `schemas` fallback
 
 ### Mode selection
 

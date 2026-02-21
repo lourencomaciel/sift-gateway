@@ -93,16 +93,19 @@ def summarize_code_query_packages(
     return ",".join(shown)
 
 
-def compact_schema_primary_root_path(
-    schemas_compact: Sequence[Mapping[str, Any]] | None,
+def schema_primary_root_path(
+    schemas: Sequence[Mapping[str, Any]] | None,
     *,
     default: str = _DEFAULT_HINT_ROOT_PATH,
 ) -> str:
-    """Return the first compact-schema root path when available."""
-    if schemas_compact is None:
+    """Return first schema root path from a schema list."""
+    if schemas is None:
         return default
-    for schema in schemas_compact:
-        root_path = schema.get("rp")
+    for schema in schemas:
+        root_path = schema.get("root_path")
+        if not isinstance(root_path, str) or not root_path:
+            # Backward-compatible fallback for historic compact schema payloads.
+            root_path = schema.get("rp")
         if isinstance(root_path, str) and root_path:
             return root_path
     return default

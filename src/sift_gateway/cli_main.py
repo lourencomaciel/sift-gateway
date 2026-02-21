@@ -45,14 +45,14 @@ from sift_gateway.pagination.extract import (
     assess_pagination,
 )
 from sift_gateway.request_identity import compute_request_identity
-from sift_gateway.schema_compact import (
-    SCHEMA_LEGEND,
-    normalize_compact_schema_payload,
+from sift_gateway.response_sample import (
+    build_representative_item_sample,
+    resolve_item_sequence_with_path,
 )
 from sift_gateway.tools.usage_hint import (
     build_code_query_usage,
-    compact_schema_primary_root_path,
     render_code_query_usage_hint,
+    schema_primary_root_path,
 )
 
 _CLI_SESSION_ID = "cli"
@@ -602,7 +602,7 @@ def _emit_human_code(payload: dict[str, Any]) -> None:
         _write_line(f"artifact: {artifact_id}")
     _write_line(f"mode:     {payload.get('response_mode')}")
     if payload.get("response_mode") == "schema_ref":
-        schemas = payload.get("schemas_compact")
+        schemas = payload.get("schemas")
         if isinstance(schemas, list):
             _write_line(f"schema_roots: {len(schemas)}")
     metadata = payload.get("metadata")
@@ -621,10 +621,26 @@ def _emit_human_code(payload: dict[str, Any]) -> None:
 
 
 def _run_payload_metadata(payload: dict[str, Any]) -> dict[str, Any]:
-    """Return run payload metadata object or an empty dict."""
+    """Return run metadata, synthesizing from top-level fields if needed."""
     metadata = payload.get("metadata")
     if isinstance(metadata, dict):
-        return metadata
+        usage = metadata.get("usage")
+        merged = {"usage": usage} if isinstance(usage, dict) else {}
+    else:
+        merged = {}
+    for key in (
+        "records",
+        "command_exit_code",
+        "payload_total_bytes",
+        "capture_kind",
+        "expires_at",
+        "status",
+        "tags",
+    ):
+        if key in payload:
+            merged[key] = payload.get(key)
+    if merged:
+        return merged
     return {}
 
 
@@ -671,7 +687,7 @@ def _emit_human_run_continuation(
                 _write_line(f"next:     {command_line}")
 
     if payload.get("response_mode") == "schema_ref":
-        schemas = payload.get("schemas_compact")
+        schemas = payload.get("schemas")
         if isinstance(schemas, list):
             _write_line(f"schema_roots: {len(schemas)}")
 
@@ -965,8 +981,8 @@ def _resolve_run_schema_ref(
     runtime: GatewayArtifactQueryRuntime,
     *,
     artifact_id: str,
-) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
-    """Load compact schema payload for one run artifact."""
+) -> list[dict[str, Any]]:
+    """Load verbose schema payload for one run artifact."""
     try:
         describe = execute_artifact_describe(
             runtime,
@@ -977,18 +993,47 @@ def _resolve_run_schema_ref(
             },
         )
     except Exception:
-        return [], None
+        return []
     if not isinstance(describe, dict):
-        return [], None
+        return []
 
     raw_schemas = describe.get("schemas")
     if not isinstance(raw_schemas, list):
-        return [], None
-    schemas_full = [schema for schema in raw_schemas if isinstance(schema, dict)]
-    schemas_compact = normalize_compact_schema_payload(schemas_full)
-    if not schemas_compact:
-        return [], None
-    return schemas_compact, SCHEMA_LEGEND
+        return []
+    return [schema for schema in raw_schemas if isinstance(schema, dict)]
+
+
+def _runtime_jsonpath_limit(runtime: Any, field: str, default: int) -> int:
+    """Return a positive integer JSONPath limit from runtime or fallback."""
+    raw_value = getattr(runtime, field, default)
+    if isinstance(raw_value, int) and raw_value > 0:
+        return raw_value
+    return default
+
+
+def _resolve_run_sample_ref(
+    runtime: GatewayArtifactQueryRuntime,
+    *,
+    payload: Any,
+    root_path: str | None = None,
+) -> tuple[dict[str, Any] | None, str | None]:
+    """Build representative sample payload for run schema-ref responses."""
+    items, resolved_root_path = resolve_item_sequence_with_path(
+        payload,
+        root_path=root_path,
+        max_jsonpath_length=_runtime_jsonpath_limit(
+            runtime, "max_jsonpath_length", 4096
+        ),
+        max_path_segments=_runtime_jsonpath_limit(
+            runtime, "max_path_segments", 64
+        ),
+        max_wildcard_expansion_total=_runtime_jsonpath_limit(
+            runtime, "max_wildcard_expansion_total", 10_000
+        ),
+    )
+    if items is None:
+        return None, resolved_root_path
+    return build_representative_item_sample(items), resolved_root_path
 
 
 def _build_run_lineage(
@@ -1080,19 +1125,32 @@ def _execute_run(
             parent_artifact_id=parent_artifact_id,
             chain_seq=chain_seq,
         )
-        metadata: dict[str, Any] = {
-            "records": capture_payload.get("records"),
-            "command_exit_code": execution.command_exit_code,
-            "payload_total_bytes": capture_payload.get("payload_total_bytes"),
-            "capture_kind": capture_payload.get("capture_kind"),
-            "expires_at": capture_payload.get("expires_at"),
-            "status": capture_payload.get("status"),
-            "tags": tags,
-        }
+        records = capture_payload.get("records")
+        payload_total_bytes = capture_payload.get("payload_total_bytes")
+        capture_kind = capture_payload.get("capture_kind")
+        expires_at = capture_payload.get("expires_at")
+        status = capture_payload.get("status")
+        metadata: dict[str, Any] = {}
 
-        schemas_compact, schema_legend = _resolve_run_schema_ref(
+        representative_sample, sample_root_path = _resolve_run_sample_ref(
             runtime,
-            artifact_id=artifact_id,
+            payload=execution.payload,
+        )
+        schemas: list[dict[str, Any]] = []
+        if representative_sample is None:
+            schemas = _resolve_run_schema_ref(
+                runtime,
+                artifact_id=artifact_id,
+            )
+            representative_sample, sample_root_path = _resolve_run_sample_ref(
+                runtime,
+                payload=execution.payload,
+                root_path=schema_primary_root_path(schemas),
+            )
+        usage_root_path = (
+            sample_root_path
+            if isinstance(sample_root_path, str) and sample_root_path
+            else schema_primary_root_path(schemas)
         )
         configured_roots = getattr(
             runtime, "code_query_allowed_import_roots", None
@@ -1100,7 +1158,7 @@ def _execute_run(
         metadata["usage"] = build_code_query_usage(
             interface="cli",
             artifact_id=artifact_id,
-            root_path=compact_schema_primary_root_path(schemas_compact),
+            root_path=usage_root_path,
             configured_roots=configured_roots,
         )
         full_payload = gateway_tool_result(
@@ -1114,24 +1172,22 @@ def _execute_run(
         schema_ref_payload = gateway_tool_result(
             response_mode="schema_ref",
             artifact_id=artifact_id,
-            schemas_compact=schemas_compact,
-            schema_legend=schema_legend or SCHEMA_LEGEND,
+            schemas=schemas,
             lineage=lineage,
             pagination=pagination,
             metadata=metadata,
         )
+        if representative_sample is not None:
+            schema_ref_payload.pop("schemas", None)
+            schema_ref_payload.update(representative_sample)
         for response_payload in (full_payload, schema_ref_payload):
-            response_payload["records"] = metadata.get("records")
-            response_payload["command_exit_code"] = metadata.get(
-                "command_exit_code"
-            )
-            response_payload["payload_total_bytes"] = metadata.get(
-                "payload_total_bytes"
-            )
-            response_payload["capture_kind"] = metadata.get("capture_kind")
-            response_payload["expires_at"] = metadata.get("expires_at")
-            response_payload["status"] = metadata.get("status")
-            response_payload["tags"] = metadata.get("tags")
+            response_payload["records"] = records
+            response_payload["command_exit_code"] = execution.command_exit_code
+            response_payload["payload_total_bytes"] = payload_total_bytes
+            response_payload["capture_kind"] = capture_kind
+            response_payload["expires_at"] = expires_at
+            response_payload["status"] = status
+            response_payload["tags"] = tags
             if parent_artifact_id is not None:
                 response_payload["source_artifact_id"] = parent_artifact_id
         has_pagination = (
@@ -1348,6 +1404,22 @@ def _command_exit_code(mode: str, payload: dict[str, Any]) -> int | None:
     return None
 
 
+def _strip_run_model_noise_fields(payload: dict[str, Any]) -> dict[str, Any]:
+    """Remove run-only transport fields not useful for model reasoning."""
+    keys_to_drop = (
+        "command_exit_code",
+        "payload_total_bytes",
+        "capture_kind",
+        "expires_at",
+        "status",
+        "tags",
+    )
+    sanitized = dict(payload)
+    for key in keys_to_drop:
+        sanitized.pop(key, None)
+    return sanitized
+
+
 def serve(argv: list[str] | None = None) -> int:
     """Run artifact CLI mode and return an exit code."""
     args = _build_parser().parse_args(argv)
@@ -1364,12 +1436,15 @@ def serve(argv: list[str] | None = None) -> int:
         _emit_error_response(payload, json_mode=args.json)
         return 1
 
+    command_exit_code = _command_exit_code(mode, payload)
     if args.json:
-        _emit_json(payload)
+        emit_payload = payload
+        if mode == "run":
+            emit_payload = _strip_run_model_noise_fields(payload)
+        _emit_json(emit_payload)
     else:
         _emit_human_mode_payload(mode, payload)
 
-    command_exit_code = _command_exit_code(mode, payload)
     if command_exit_code is not None:
         return command_exit_code
     return 0

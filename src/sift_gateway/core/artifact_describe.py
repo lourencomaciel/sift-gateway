@@ -19,7 +19,6 @@ from sift_gateway.pagination.contract import (
     UpstreamNextKind,
     build_upstream_pagination_meta,
 )
-from sift_gateway.schema_compact import SCHEMA_LEGEND, compact_schema_payload
 from sift_gateway.storage.payload_store import reconstruct_envelope
 from sift_gateway.tools.artifact_describe import (
     FETCH_DESCRIBE_SQL,
@@ -313,25 +312,12 @@ def _validate_describe_anchor_row(
     return None
 
 
-def _compact_root_schemas(
+def _collect_root_schemas(
     runtime: ArtifactGetRuntime,
     root_entries: list[dict[str, Any]],
-) -> tuple[list[dict[str, Any]], bool]:
-    """Compact per-root schema payloads in place."""
-    roots = runtime.build_lineage_root_catalog(root_entries)
-    roots_with_schema = [
-        root for root in roots if isinstance(root.get("schema"), dict)
-    ]
-    if not roots_with_schema:
-        return roots, False
-    compact_root_schemas = compact_schema_payload(
-        [root["schema"] for root in roots_with_schema]
-    )
-    for root, compact_schema in zip(
-        roots_with_schema, compact_root_schemas, strict=True
-    ):
-        root["schema"] = compact_schema
-    return roots, True
+) -> list[dict[str, Any]]:
+    """Build root catalog from collected entries."""
+    return runtime.build_lineage_root_catalog(root_entries)
 
 
 def _build_describe_response(
@@ -344,8 +330,7 @@ def _build_describe_response(
     map_status_counts: dict[str, int],
     artifact_summaries: list[dict[str, Any]],
     roots: list[dict[str, Any]],
-    has_root_schema: bool,
-    compact_anchor_schemas: list[dict[str, Any]],
+    anchor_schemas: list[dict[str, Any]],
     pagination: dict[str, Any] | None,
 ) -> dict[str, Any]:
     """Build final describe response payload."""
@@ -367,10 +352,8 @@ def _build_describe_response(
         "artifacts": artifact_summaries,
         "roots": roots,
     }
-    if has_root_schema or compact_anchor_schemas:
-        response["schema_legend"] = SCHEMA_LEGEND
-    if scope == "single" and compact_anchor_schemas:
-        response["schemas"] = compact_anchor_schemas
+    if scope == "single" and anchor_schemas:
+        response["schemas"] = anchor_schemas
     if isinstance(pagination, dict):
         response["pagination"] = pagination
     return response
@@ -515,8 +498,7 @@ def execute_artifact_describe(
             anchor_artifact_id=anchor_artifact_id,
         )
 
-    roots, has_root_schema = _compact_root_schemas(runtime, root_entries)
-    compact_anchor_schemas = compact_schema_payload(anchor_schemas)
+    roots = _collect_root_schemas(runtime, root_entries)
     return _build_describe_response(
         runtime=runtime,
         scope=scope,
@@ -526,7 +508,6 @@ def execute_artifact_describe(
         map_status_counts=map_status_counts,
         artifact_summaries=artifact_summaries,
         roots=roots,
-        has_root_schema=has_root_schema,
-        compact_anchor_schemas=compact_anchor_schemas,
+        anchor_schemas=anchor_schemas,
         pagination=pagination_meta,
     )

@@ -270,8 +270,8 @@ def test_execute_artifact_describe_single_scope_returns_compact_roots() -> None:
     assert result["scope"] == "single"
     assert result["roots"][0]["root_path"] == "$.items"
     assert result["roots"][0]["compatible_for_select"] is True
-    assert "schema_legend" in result
     assert "schemas" in result
+    assert result["schemas"][0]["root_path"] == "$.items"
     assert runtime.touched == ["art_1"]
     assert conn.committed is True
 

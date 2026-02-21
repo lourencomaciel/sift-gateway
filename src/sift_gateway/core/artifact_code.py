@@ -45,10 +45,7 @@ from sift_gateway.envelope.responses import (
 )
 from sift_gateway.obs.logging import LogEvents, get_logger
 from sift_gateway.query.jsonpath import JsonPathError, evaluate_jsonpath
-from sift_gateway.schema_compact import (
-    SCHEMA_LEGEND,
-    normalize_compact_schema_payload,
-)
+from sift_gateway.response_sample import build_representative_item_sample
 from sift_gateway.storage.payload_store import reconstruct_envelope
 from sift_gateway.tools.artifact_get import FETCH_ARTIFACT_SQL
 from sift_gateway.tools.artifact_schema import FETCH_SCHEMA_FIELDS_SQL
@@ -1299,37 +1296,38 @@ def _build_code_response(
     if state.warnings:
         metadata["warnings"] = state.warnings
 
-    describe: dict[str, Any] | None = None
-    try:
-        describe_result = execute_artifact_describe(
-            runtime,
-            arguments={
-                "_gateway_context": {"session_id": request.session_id},
-                "artifact_id": derived_artifact_id,
-                "scope": "single",
-            },
-        )
-    except Exception as exc:
-        _logger.warning(
-            "code response describe failed; continuing without schema metadata",
-            artifact_id=derived_artifact_id,
-            error_type=type(exc).__name__,
-            exc_info=True,
-        )
-    else:
-        if isinstance(describe_result, dict):
-            describe = describe_result
-    schemas_compact: list[dict[str, Any]] = []
-    schema_legend: dict[str, Any] | None = None
-    if describe is not None:
-        raw_schemas = describe.get("schemas")
-        if isinstance(raw_schemas, list):
-            schemas_full = [
-                schema for schema in raw_schemas if isinstance(schema, dict)
-            ]
-            schemas_compact = normalize_compact_schema_payload(schemas_full)
-        if schemas_compact:
-            schema_legend = SCHEMA_LEGEND
+    representative_sample = build_representative_item_sample(normalized_items)
+    schemas: list[dict[str, Any]] = []
+    if representative_sample is None:
+        describe: dict[str, Any] | None = None
+        try:
+            describe_result = execute_artifact_describe(
+                runtime,
+                arguments={
+                    "_gateway_context": {"session_id": request.session_id},
+                    "artifact_id": derived_artifact_id,
+                    "scope": "single",
+                },
+            )
+        except Exception as exc:
+            _logger.warning(
+                (
+                    "code response describe failed; continuing without schema "
+                    "metadata"
+                ),
+                artifact_id=derived_artifact_id,
+                error_type=type(exc).__name__,
+                exc_info=True,
+            )
+        else:
+            if isinstance(describe_result, dict):
+                describe = describe_result
+        if describe is not None:
+            raw_schemas = describe.get("schemas")
+            if isinstance(raw_schemas, list):
+                schemas = [
+                    schema for schema in raw_schemas if isinstance(schema, dict)
+                ]
 
     full_payload = gateway_tool_result(
         response_mode="full",
@@ -1352,11 +1350,13 @@ def _build_code_response(
     schema_ref_payload = gateway_tool_result(
         response_mode="schema_ref",
         artifact_id=derived_artifact_id,
-        schemas_compact=schemas_compact,
-        schema_legend=schema_legend or SCHEMA_LEGEND,
+        schemas=schemas,
         lineage=lineage,
         metadata=metadata,
     )
+    if representative_sample is not None:
+        schema_ref_payload.pop("schemas", None)
+        schema_ref_payload.update(representative_sample)
     schema_ref_payload["total_matched"] = len(normalized_items)
     schema_ref_payload["truncated"] = False
     schema_ref_payload["stats"] = metadata["stats"]

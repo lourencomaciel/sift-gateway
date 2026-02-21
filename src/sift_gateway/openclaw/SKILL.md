@@ -48,15 +48,16 @@ sift-gateway code --json <artifact_id> '$' --code "def run(data, schema, params)
 
 - `artifact_id`: use this for follow-up queries.
 - `response_mode`: `"full"` or `"schema_ref"`.
-- `status` and `command_exit_code`: capture health/status.
+- `records`: captured item estimate.
 - `pagination.next.kind`: if `"command"`, run a continuation capture.
 - `payload`: present in `"full"` mode.
-- `schemas_compact` and `schema_legend`: present in `"schema_ref"` mode.
+- `schemas`: present in `"schema_ref"` fallback mode when sample preview is not available.
+- `sample_item`: present in `"schema_ref"` when the first item is representative.
 
 `sift-gateway code --json` returns:
 
 - `response_mode: "full"`: query output in `payload` and normalized rows in `items`.
-- `response_mode: "schema_ref"`: compact schema metadata (`schemas_compact`, `schema_legend`) without inline result rows.
+- `response_mode: "schema_ref"`: either representative sample preview (`sample_item`) or verbose `schemas`.
 
 ## Query methods
 
@@ -104,7 +105,6 @@ sift-gateway run --json --ttl 8h --tag events -- curl -s https://api.example.com
 
 - Never paste raw captured payloads back into context; keep `artifact_id` plus compact findings.
 - Use explicit continuation commands for partial pagination; do not assume auto-follow.
-- When `response_mode` is `"schema_ref"`, read `schemas_compact` field paths/types/examples before writing code queries.
-- If `status` is `"error"` or `command_exit_code` is non-zero, fix or rerun capture before normal analysis.
+- When `response_mode` is `"schema_ref"`, use `sample_item` first; if absent, use `schemas` field paths/types/examples before writing code queries.
 - Return focused results (counts, grouped stats, selected columns), not full records.
 - Treat each `run` capture as a fresh artifact; do not assume implicit dedupe.
