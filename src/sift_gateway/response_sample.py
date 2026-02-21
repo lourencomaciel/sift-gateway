@@ -6,6 +6,7 @@ from collections.abc import Mapping, Sequence
 import re
 from typing import Any
 
+from sift_gateway.mapping.json_strings import resolve_json_strings
 from sift_gateway.query.jsonpath import JsonPathError, evaluate_jsonpath
 
 DEFAULT_SAMPLE_MAX_TEXT_CHARS = 160
@@ -144,14 +145,19 @@ def resolve_item_sequence_with_path(
     max_path_segments: int = _DEFAULT_MAX_PATH_SEGMENTS,
     max_wildcard_expansion_total: int = _DEFAULT_MAX_WILDCARD_EXPANSION_TOTAL,
 ) -> tuple[list[Any] | None, str | None]:
-    """Resolve a representative item array and inferred root path."""
-    if isinstance(payload, list):
-        return list(payload), "$"
+    r"""Resolve a representative item array and inferred root path.
+
+    Normalize JSON-encoded strings first so payloads like
+    ``{"result": "{\"data\": [...]}"}`` can be sampled directly.
+    """
+    normalized_payload = resolve_json_strings(payload)
+    if isinstance(normalized_payload, list):
+        return list(normalized_payload), "$"
 
     if isinstance(root_path, str) and root_path:
         try:
             matches = evaluate_jsonpath(
-                payload,
+                normalized_payload,
                 root_path,
                 max_length=_as_positive_int(
                     max_jsonpath_length, _DEFAULT_MAX_JSONPATH_LENGTH
@@ -169,16 +175,16 @@ def resolve_item_sequence_with_path(
         if len(matches) == 1 and isinstance(matches[0], list):
             return list(matches[0]), root_path
 
-    if not isinstance(payload, Mapping):
+    if not isinstance(normalized_payload, Mapping):
         return None, None
 
-    items = payload.get("items")
+    items = normalized_payload.get("items")
     if isinstance(items, list):
         return list(items), "$.items"
 
     list_fields = [
         (str(key), value)
-        for key, value in payload.items()
+        for key, value in normalized_payload.items()
         if isinstance(value, list)
     ]
     if len(list_fields) == 1:

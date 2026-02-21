@@ -34,6 +34,27 @@ def test_resolve_item_sequence_with_path_handles_special_field_name() -> None:
     assert items == [{"id": 1}]
 
 
+def test_resolve_item_sequence_with_path_parses_json_encoded_root_path() -> None:
+    payload = {
+        "result": '{"data":[{"id":1,"name":"a"},{"id":2,"name":"b"}]}',
+    }
+    items, root_path = resolve_item_sequence_with_path(
+        payload,
+        root_path="$.result.data",
+    )
+
+    assert root_path == "$.result.data"
+    assert items == [{"id": 1, "name": "a"}, {"id": 2, "name": "b"}]
+
+
+def test_resolve_item_sequence_with_path_parses_json_encoded_items_field() -> None:
+    payload = '{"items":[{"id":1},{"id":2}]}'
+    items, root_path = resolve_item_sequence_with_path(payload)
+
+    assert root_path == "$.items"
+    assert items == [{"id": 1}, {"id": 2}]
+
+
 def test_resolve_item_sequence_with_path_returns_none_for_ambiguous_lists() -> None:
     items, root_path = resolve_item_sequence_with_path({"a": [1], "b": [2]})
 
