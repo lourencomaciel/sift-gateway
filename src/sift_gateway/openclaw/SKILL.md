@@ -1,23 +1,25 @@
 ---
 name: context-query-guard
-description: Capture large or paginated command output (gh api, curl, kubectl, logs) as artifacts and query them with Python instead of flooding context
+description: Capture command output (gh api, curl, kubectl, logs) as governed artifacts with schema consistency, redaction, pagination continuity, and reproducible queries
 metadata: {"openclaw":{"requires":{"bins":["sift-gateway"]},"install":[{"id":"uv","kind":"uv","package":"sift-gateway","bins":["sift-gateway"],"label":"Install Sift Gateway (uv)"}]}}
 ---
 
 # Context Query Guard
 
-Capture large command output as artifacts, keep it out of the context window, then query it for compact answers.
+Capture command output as artifacts, apply schema-first analysis, and return
+compact reproducible answers without pushing raw payloads back into context.
 
 ## Activation rules
 
-- Use for: API list calls (`gh api`, `curl`, `kubectl ... -o json`), large logs, long tables, repeated analysis.
-- Skip for: one-off output that is clearly small and does not need follow-up querying.
+- Use for: API list calls (`gh api`, `curl`, `kubectl ... -o json`), large logs, long tables, repeated analysis, or any workflow needing reproducibility/redaction/pagination discipline.
+- Skip for: one-off output that is clearly small and has no follow-up, policy, or audit requirement.
 
 ## Default playbook
 
 - Start with a single-artifact query and an explicit `root_path`.
 - Use `run(data, schema, params)` first; only switch to multi-artifact when you must combine artifacts.
 - Use pure Python first; do not assume `pandas` is installed.
+- Read `response_mode` and schema metadata before writing query logic.
 - Keep outputs compact (aggregates or top <= 20 rows).
 - Prefer `--scope single`; use pagination-chain expansion (`scope=all_related`) only when cross-artifact analysis is required.
 
