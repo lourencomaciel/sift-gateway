@@ -656,26 +656,31 @@ def test_serve_run_human_output_omits_expanded_schema_details(
             "scope": "single",
             "schemas": [
                 {
-                    "v": "schema_v1",
-                    "h": "sha256:test",
-                    "rp": "$",
-                    "m": "exact",
-                    "cv": {"c": "complete", "or": 1},
-                    "fd": {"oc": 1},
-                    "f": [
+                    "version": "schema_v1",
+                    "schema_hash": "sha256:test",
+                    "root_path": "$",
+                    "mode": "exact",
+                    "coverage": {
+                        "completeness": "complete",
+                        "observed_records": 1,
+                    },
+                    "fields": [
                         {
-                            "p": "$.email",
-                            "t": ["string"],
-                            "n": False,
-                            "r": True,
-                            "e": "joana@example.com",
-                            "dv": ["joana@example.com", "other@example.com"],
+                            "path": "$.email",
+                            "types": ["string"],
+                            "nullable": False,
+                            "required": True,
+                            "example_value": "joana@example.com",
+                            "distinct_values": [
+                                "joana@example.com",
+                                "other@example.com",
+                            ],
                         }
                     ],
-                    "d": {
-                        "dh": "sha256:data",
-                        "tv": "traversal_v1",
-                        "bf": None,
+                    "determinism": {
+                        "dataset_hash": "sha256:data",
+                        "traversal_contract_version": "traversal_v1",
+                        "map_budget_fingerprint": None,
                     },
                 }
             ],
@@ -1119,6 +1124,11 @@ def test_serve_run_schema_ref_falls_back_to_schema_for_mixed_item_shapes(
     assert payload["response_mode"] == "schema_ref"
     assert "sample_item" not in payload
     assert "schemas" in payload
+    metadata = payload.get("metadata")
+    assert isinstance(metadata, dict)
+    usage = metadata.get("usage")
+    assert isinstance(usage, dict)
+    assert usage.get("root_path") == "$.items"
 
 
 def test_serve_run_continue_from_links_lineage_and_page_number(

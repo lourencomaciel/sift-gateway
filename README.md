@@ -10,7 +10,7 @@
 
 AI agents break when their tools return too much data. A single MCP call or CLI command can return 30-100 KB of JSON. That is roughly 8,000-25,000 tokens spent before the agent can do the next step. After a few calls, the model starts dropping details or making bad calls. See [Why Sift exists](docs/why.md) for research and open issues behind this pattern.
 
-Sift stores tool output as artifacts, infers a schema, and returns a compact reference with field types and sample values. The agent can see the data shape without carrying full payloads in context. When it needs details, it runs focused Python queries against stored artifacts.
+Sift stores tool output as artifacts, infers schema metadata, and returns either inline payload (`full`) or an artifact reference (`schema_ref`). In `schema_ref`, Sift returns either a representative `sample_item` preview or verbose `schemas` fallback. The agent can keep context small and run focused Python queries against stored artifacts when it needs details.
 
 Sift works with MCP clients (Claude Desktop, Claude Code, Cursor, VS Code, Windsurf, Zed) and CLI agents (OpenClaw, terminal automation). Same artifact store, same query interface, two entry points.
 
@@ -51,7 +51,7 @@ pipx install sift-gateway
 sift-gateway run -- kubectl get pods -A -o json
 ```
 
-Large output is stored and returned as an artifact ID plus compact schema. Example:
+Large output is stored and returned as an artifact ID plus `schema_ref` metadata. Example:
 
 ```bash
 sift-gateway code <artifact_id> '$.items' --code "def run(data, schema, params): return {'rows': len(data)}"
@@ -81,15 +81,17 @@ With Sift, the agent gets a schema reference:
 {
   "response_mode": "schema_ref",
   "artifact_id": "art_9b2c...",
-  "schemas_compact": [{"rp": "$.monitors", "f": [
-    {"p": "$.name", "t": ["string"]},
-    {"p": "$.status", "t": ["string"], "examples": ["Alert", "OK", "Warn"]},
-    {"p": "$.type", "t": ["string"]},
-    {"p": "$.last_triggered", "t": ["datetime"]}
-  ]}],
-  "schema_legend": {"schema": {"rp": "root_path"}, "field": {"p": "path", "t": "types"}}
+  "sample_item": {
+    "name": "Payments monitor",
+    "status": "Alert",
+    "type": "query alert"
+  },
+  "sample_item_source_index": 0,
+  "sample_item_count": 120
 }
 ```
+
+If a representative sample is not valid for the result set, `schema_ref` falls back to `schemas`.
 
 The agent can then run a focused query:
 
@@ -115,7 +117,7 @@ Sift runs one processing pipeline for MCP and CLI:
 4. Redact sensitive values (enabled by default).
 5. Persist the artifact to SQLite.
 6. Map the schema (field types, sample values, cardinality).
-7. Choose response mode: `full` (inline) or `schema_ref` (compact reference).
+7. Choose response mode: `full` (inline) or `schema_ref` (sample preview or schema fallback).
 8. Return the artifact-centric response.
 
 ### Response mode selection

@@ -1290,6 +1290,11 @@ def test_handle_mirrored_tool_schema_ref_falls_back_on_mixed_shapes(
     assert response["response_mode"] == "schema_ref"
     assert "sample_item" not in response
     assert "schemas" in response
+    metadata = response.get("metadata")
+    assert isinstance(metadata, dict)
+    usage = metadata.get("usage")
+    assert isinstance(usage, dict)
+    assert usage.get("root_path") == "$.items"
 
 
 def test_handle_mirrored_tool_fails_closed_when_redaction_errors(
