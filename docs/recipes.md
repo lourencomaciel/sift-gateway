@@ -106,7 +106,8 @@ For both mirrored-tool and code responses:
 
 1. Check `response_mode`.
 2. If `full`, consume `payload` directly.
-3. If `schema_ref`, inspect `schemas_compact` and run focused code queries.
+3. If `schema_ref`, use `sample_item` first; if absent, inspect `schemas` and
+   run focused code queries.
 4. If pagination is present and partial, continue with `next_page` (MCP) or
    `run --continue-from` (CLI).
 

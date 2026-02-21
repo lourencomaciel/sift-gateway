@@ -327,7 +327,7 @@ For mirrored tool calls, Sift always persists/map-indexes responses and then
 chooses one response mode:
 
 - `full` (inline payload)
-- `schema_ref` (`artifact_id` + compact schema)
+- `schema_ref` (`artifact_id` + `sample_item` preview or `schemas` fallback)
 
 Mode policy:
 
