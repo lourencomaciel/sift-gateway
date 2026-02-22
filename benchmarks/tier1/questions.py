@@ -18,7 +18,7 @@ class Question:
     question_type: str
     gold_answer_fn: Callable[[Any], str]
     answer_type: str
-    tolerance: float = 0.01
+    tolerance: float = 0.0
 
 
 def _safe_float(val: Any) -> float:
@@ -571,6 +571,7 @@ QUESTIONS: list[Question] = [
         question_type="aggregation",
         gold_answer_fn=_eq_max_depth,
         answer_type="number",
+        tolerance=0.01,
     ),
     Question(
         dataset_name="earthquakes",
@@ -676,6 +677,7 @@ QUESTIONS: list[Question] = [
         question_type="aggregation",
         gold_answer_fn=_users_avg_weight,
         answer_type="number",
+        tolerance=0.01,
     ),
     Question(
         dataset_name="users",
@@ -730,6 +732,7 @@ QUESTIONS: list[Question] = [
         question_type="aggregation",
         gold_answer_fn=_comments_avg_body_len,
         answer_type="number",
+        tolerance=0.01,
     ),
     # photos (5)
     Question(
@@ -888,6 +891,7 @@ QUESTIONS: list[Question] = [
         question_type="aggregation",
         gold_answer_fn=_weather_avg_temp,
         answer_type="number",
+        tolerance=0.01,
     ),
     Question(
         dataset_name="weather",
@@ -899,6 +903,7 @@ QUESTIONS: list[Question] = [
         question_type="aggregation",
         gold_answer_fn=_weather_max_wind,
         answer_type="number",
+        tolerance=0.01,
     ),
     Question(
         dataset_name="weather",
@@ -918,6 +923,7 @@ QUESTIONS: list[Question] = [
         question_type="aggregation",
         gold_answer_fn=_weather_total_precip,
         answer_type="number",
+        tolerance=0.01,
     ),
 ]
 

@@ -29,7 +29,16 @@ _GATEWAY_CONTEXT: dict[str, str] = {"session_id": _SESSION_ID}
 
 
 def _is_error_response(payload: dict[str, Any]) -> bool:
-    return payload.get("type") == "gateway_error"
+    # artifact_describe / artifact_code errors include a type marker.
+    if payload.get("type") == "gateway_error":
+        return True
+    # artifact_capture errors use {code, message} without type.
+    # Distinguish from success payloads by the absence of artifact_id.
+    return (
+        isinstance(payload.get("code"), str)
+        and isinstance(payload.get("message"), str)
+        and "artifact_id" not in payload
+    )
 
 
 @contextmanager
