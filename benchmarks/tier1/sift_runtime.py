@@ -29,9 +29,7 @@ _GATEWAY_CONTEXT: dict[str, str] = {"session_id": _SESSION_ID}
 
 
 def _is_error_response(payload: dict[str, Any]) -> bool:
-    return isinstance(payload.get("code"), str) and isinstance(
-        payload.get("message"), str
-    )
+    return payload.get("type") == "gateway_error"
 
 
 @contextmanager

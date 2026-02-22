@@ -16,6 +16,8 @@ from typing import Any
 # manually setting PYTHONPATH.  The repo root is needed for
 # `from benchmarks.tier1...` imports, and `src/` is needed for
 # `from sift_gateway...` imports.
+# Not needed when using `uv run` (recommended) which sets up
+# the virtualenv and sys.path automatically.
 _REPO_ROOT = str(Path(__file__).resolve().parents[2])
 _SRC_DIR = str(Path(__file__).resolve().parents[2] / "src")
 if _REPO_ROOT not in sys.path:
@@ -97,11 +99,15 @@ def _truncate_for_baseline(
         while low <= high:
             mid = (low + high) // 2
             candidate = json.dumps(data[:mid], ensure_ascii=False)
-            if len(candidate.encode("utf-8")) <= max_bytes:
+            # String length is a lower bound on UTF-8 byte length,
+            # so skip the encode when the string alone exceeds cap.
+            if len(candidate) > max_bytes or (
+                len(candidate.encode("utf-8")) > max_bytes
+            ):
+                high = mid - 1
+            else:
                 best = mid
                 low = mid + 1
-            else:
-                high = mid - 1
         truncated = json.dumps(data[:best], ensure_ascii=False)
         return truncated, True
 
@@ -224,7 +230,13 @@ def _extract_code_from_response(text: str) -> str:
         if "def run" in candidate:
             return candidate
 
-    # No candidate contains def run — return first non-empty
+    # No candidate contains def run — will likely fail at execution
+    # and be retried with the error context appended.
+    print(
+        "  [warn] LLM response has no 'def run'; "
+        "using raw text as code",
+        file=sys.stderr,
+    )
     return candidates[0] if candidates else text.strip()
 
 
@@ -380,7 +392,7 @@ def _run_sift(
             )
             break
 
-        except RuntimeError as exc:
+        except Exception as exc:
             last_error = str(exc)
             attempts += 1
             if attempts > max_retries:
@@ -394,17 +406,6 @@ def _run_sift(
                     latency_ms=total_latency,
                     retries=attempts - 1,
                 )
-        except Exception as exc:
-            return _make_result(
-                question,
-                condition="sift",
-                gold=gold,
-                error=str(exc),
-                input_tokens=total_input_tokens,
-                output_tokens=total_output_tokens,
-                latency_ms=total_latency,
-                retries=attempts,
-            )
 
     # Step 2: Extract result from code execution
     code_output = ""
