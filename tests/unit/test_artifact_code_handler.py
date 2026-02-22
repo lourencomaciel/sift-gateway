@@ -1120,7 +1120,10 @@ def test_code_query_schema_ref_preserves_describe_schema(
                     "schema_hash": "sha256:derived",
                     "root_path": "$",
                     "mode": "exact",
-                    "coverage": {"completeness": "complete", "observed_records": 1},
+                    "coverage": {
+                        "completeness": "complete",
+                        "observed_records": 1,
+                    },
                     "fields": [
                         {
                             "path": "$.id",

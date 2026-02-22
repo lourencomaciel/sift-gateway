@@ -250,6 +250,7 @@ def _make_result(
         "dataset": question.dataset_name,
         "question_id": question.question_id,
         "question_type": question.question_type,
+        "difficulty": question.difficulty,
         "question_text": question.question_text,
         "gold_answer": gold,
         "llm_answer": llm_answer,
