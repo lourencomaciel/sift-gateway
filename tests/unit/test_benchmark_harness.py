@@ -17,6 +17,7 @@ from benchmarks.tier1.harness import (
     _format_schema_for_prompt,
     _is_direct_child,
     _make_result,
+    _run_baseline,
     _run_sift,
     _split_path_segments,
     _truncate_dict,
@@ -716,10 +717,7 @@ class TestFormatSchemaForPrompt:
         result = _format_schema_for_prompt(describe)
         assert "Nested field access" in result
         assert '["data"]["key.one"]["val"]' in result
-        assert (
-            'item.get("data", {}).get("key.one", {})'
-            '.get("val")'
-        ) in result
+        assert ('item.get("data", {}).get("key.one", {}).get("val")') in result
 
     def test_field_paths_displayed_from_path_key(self) -> None:
         """Describe result uses 'path' key, not 'field_path'."""
@@ -968,3 +966,94 @@ class TestExtractRootPathFromResponse:
         text = "# root_path: $\ndef run(data, schema, params):\n  return 1"
         result = _extract_root_path_from_response(text, ["$"])
         assert result == "$"
+
+
+# -- _run_baseline error handling --
+
+
+class TestRunBaselineError:
+    """Verify _run_baseline error handling with narrowed exceptions."""
+
+    def test_llm_api_error_caught_as_failed_result(self) -> None:
+        q = _stub_question()
+        with patch(
+            "benchmarks.tier1.harness.call_llm",
+            side_effect=LLMAPIError("rate limited"),
+        ):
+            result = _run_baseline(
+                q,
+                [1, 2, 3],
+                model="test",
+                api_key="k",
+                temperature=0.0,
+                max_baseline_bytes=1_000_000,
+                max_baseline_tokens=500_000,
+            )
+        assert result["attempted"] is False
+        assert "rate limited" in result["error"]
+        assert result["condition"] == "baseline"
+
+    def test_non_llm_exception_propagates(self) -> None:
+        q = _stub_question()
+        with (
+            patch(
+                "benchmarks.tier1.harness.call_llm",
+                side_effect=ValueError("bad config"),
+            ),
+            pytest.raises(ValueError, match="bad config"),
+        ):
+            _run_baseline(
+                q,
+                [1, 2, 3],
+                model="test",
+                api_key="k",
+                temperature=0.0,
+                max_baseline_bytes=1_000_000,
+                max_baseline_tokens=500_000,
+            )
+
+
+# -- _run_sift answer extraction error --
+
+
+class TestRunSiftAnswerError:
+    """Verify LLMAPIError during answer extraction is recorded."""
+
+    def test_answer_llm_error_recorded(self) -> None:
+        q = _stub_question()
+        call_count = 0
+
+        def llm_side_effect(**_kw: object) -> LLMResponse:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                # Codegen call succeeds.
+                return _llm_resp()
+            # Answer extraction call fails.
+            raise LLMAPIError("answer rate limited")
+
+        with (
+            patch(
+                "benchmarks.tier1.harness.call_llm",
+                side_effect=llm_side_effect,
+            ),
+            patch(
+                "benchmarks.tier1.harness.execute_code",
+                return_value={"items": [42]},
+            ),
+        ):
+            result = _run_sift(
+                q,
+                [1, 2],
+                runtime=None,
+                artifact_id="art_test",
+                root_paths=["$"],
+                schema_text="test schema",
+                model="test",
+                api_key="k",
+                temperature=0.0,
+                max_retries=0,
+            )
+        assert result["attempted"] is False
+        assert "answer extraction failed" in result["error"]
+        assert result["condition"] == "sift"

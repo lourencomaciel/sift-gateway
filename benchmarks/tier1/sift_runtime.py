@@ -38,11 +38,20 @@ _GATEWAY_CONTEXT: dict[str, str] = {"session_id": _SESSION_ID}
 
 
 def _is_error_response(payload: dict[str, Any]) -> bool:
-    # artifact_describe / artifact_code errors include a type marker.
+    """Detect whether a gateway response dict represents an error.
+
+    Two error formats exist:
+
+    1. **Typed errors** — ``artifact_describe`` and ``artifact_code``
+       return ``{"type": "gateway_error", "code": ..., "message": ...}``.
+    2. **Untyped capture errors** — ``artifact_capture`` returns
+       ``{"code": ..., "message": ...}`` *without* a ``type`` field.
+       Success payloads also contain ``code`` and ``message`` but
+       additionally include an ``artifact_id``; its absence is the
+       distinguishing heuristic.
+    """
     if payload.get("type") == "gateway_error":
         return True
-    # artifact_capture errors use {code, message} without type.
-    # Distinguish from success payloads by the absence of artifact_id.
     return (
         isinstance(payload.get("code"), str)
         and isinstance(payload.get("message"), str)

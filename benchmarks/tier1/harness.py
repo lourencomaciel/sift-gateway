@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 import argparse
-import copy
+from dataclasses import dataclass
 from datetime import UTC, datetime
 import json
 from pathlib import Path
@@ -147,9 +147,6 @@ def _truncate_dict(data: dict[str, Any], limit: int) -> str | None:
     array values to trim).
     """
     # Collect (key_path, original_length) for all arrays.
-    # key_path is a tuple: ("key",) for top-level, ("parent", "key")
-    # for one-level-deep.  This avoids identity-based container
-    # lookups that break across deepcopy boundaries.
     arrays: list[tuple[tuple[str, ...], int]] = []
     for key, val in data.items():
         if isinstance(val, list) and len(val) > 1:
@@ -163,19 +160,35 @@ def _truncate_dict(data: dict[str, Any], limit: int) -> str | None:
         return None
 
     # Binary search on the fraction of array elements to keep.
+    # Instead of deepcopy, build a shallow trial dict per iteration:
+    # non-array values are shared (safe — we only serialize to JSON,
+    # never mutate), and arrays are sliced to the desired length.
     low_f, high_f = 0.0, 1.0
     best_json: str | None = None
     for _ in range(30):
         mid_f = (low_f + high_f) / 2
-        trial = copy.deepcopy(data)
-        for key_path, orig_len in arrays:
-            keep = max(1, int(orig_len * mid_f))
-            if len(key_path) == 1:
-                trial[key_path[0]] = trial[key_path[0]][:keep]
+        # Compute keep counts for this fraction.
+        keeps: dict[tuple[str, ...], int] = {
+            kp: max(1, int(orig_len * mid_f)) for kp, orig_len in arrays
+        }
+        # Build a shallow trial dict with sliced arrays.
+        trial: dict[str, Any] = {}
+        for key, val in data.items():
+            if (key,) in keeps:
+                trial[key] = val[: keeps[(key,)]]
+            elif isinstance(val, dict) and any(
+                kp[0] == key and len(kp) == 2 for kp in keeps
+            ):
+                sub: dict[str, Any] = {}
+                for subkey, subval in val.items():
+                    kp = (key, subkey)
+                    if kp in keeps:
+                        sub[subkey] = subval[: keeps[kp]]
+                    else:
+                        sub[subkey] = subval
+                trial[key] = sub
             else:
-                trial[key_path[0]][key_path[1]] = trial[key_path[0]][
-                    key_path[1]
-                ][:keep]
+                trial[key] = val
 
         candidate = json.dumps(trial, ensure_ascii=False)
         if _fits(candidate, limit):
@@ -282,7 +295,7 @@ def _run_baseline(
             api_key=api_key,
             temperature=temperature,
         )
-    except Exception as exc:
+    except LLMAPIError as exc:
         elapsed = (time.monotonic() - start) * 1000.0
         return _make_result(
             question,
@@ -589,9 +602,7 @@ def _format_schema_for_prompt(describe_result: dict[str, Any]) -> str:
                 segments = _split_path_segments(relative)
                 if len(segments) < 2:
                     continue
-                access = "".join(
-                    f'["{s}"]' for s in segments
-                )
+                access = "".join(f'["{s}"]' for s in segments)
                 nested_examples.append((fp, access))
 
             if nested_examples:
@@ -602,9 +613,7 @@ def _format_schema_for_prompt(describe_result: dict[str, Any]) -> str:
                 )
                 fp_eg, access_eg = nested_examples[0]
                 # Build a .get()-chain for safe traversal.
-                eg_segments = _split_path_segments(
-                    fp_eg[len(prefix) :]
-                )
+                eg_segments = _split_path_segments(fp_eg[len(prefix) :])
                 get_chain = "item"
                 for seg in eg_segments[:-1]:
                     get_chain += f'.get("{seg}", {{}})'
@@ -646,6 +655,182 @@ def _extract_root_path_from_response(
     return None
 
 
+@dataclass(frozen=True)
+class _CodegenResult:
+    """Outcome of the code-generation + execution retry loop."""
+
+    code_result: dict[str, Any] | None
+    attempts: int
+    last_error: str
+    input_tokens: int
+    output_tokens: int
+    latency_ms: float
+
+
+@dataclass(frozen=True)
+class _AnswerResult:
+    """Outcome of the LLM answer-extraction call."""
+
+    text: str
+    input_tokens: int
+    output_tokens: int
+    latency_ms: float
+    error: str
+
+
+def _codegen_loop(
+    *,
+    codegen_msg: str,
+    root_paths: list[str],
+    runtime: Any,
+    artifact_id: str,
+    model: str,
+    api_key: str | None,
+    temperature: float,
+    max_retries: int,
+) -> _CodegenResult:
+    """Run the code-generation + execution retry loop.
+
+    ``LLMAPIError`` propagates immediately.  Only
+    ``CodeExecutionError`` triggers a retry.
+    """
+    multi_root = len(root_paths) > 1
+    attempts = 0
+    input_tokens = 0
+    output_tokens = 0
+    latency_ms = 0.0
+    last_error = ""
+    last_code = ""
+
+    while attempts <= max_retries:
+        # Build the effective message (append retry context when
+        # retrying so the LLM sees the previous failure).
+        if attempts > 0:
+            effective_msg = (
+                f"{codegen_msg}\n\n"
+                f"Previous code:\n```python\n{last_code}\n```\n\n"
+                f"Error:\n{last_error}\n"
+                f"Please fix the code."
+            )
+        else:
+            effective_msg = codegen_msg
+
+        codegen_resp = call_llm(
+            model=model,
+            system_prompt=_SIFT_CODEGEN_SYSTEM,
+            user_message=effective_msg,
+            api_key=api_key,
+            temperature=temperature,
+        )
+
+        input_tokens += codegen_resp.input_tokens
+        output_tokens += codegen_resp.output_tokens
+        latency_ms += codegen_resp.latency_ms
+
+        code = _extract_code_from_response(codegen_resp.text)
+
+        # Resolve which root_path to execute against.
+        if multi_root:
+            selected = _extract_root_path_from_response(
+                codegen_resp.text, root_paths
+            )
+            root_path = selected if selected else root_paths[0]
+        else:
+            root_path = root_paths[0]
+
+        # Execute the generated code.
+        try:
+            exec_start = time.monotonic()
+            code_result = execute_code(
+                runtime,
+                artifact_id=artifact_id,
+                root_path=root_path,
+                code=code,
+            )
+            latency_ms += (time.monotonic() - exec_start) * 1000.0
+            return _CodegenResult(
+                code_result=code_result,
+                attempts=attempts,
+                last_error="",
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                latency_ms=latency_ms,
+            )
+        except CodeExecutionError as exc:
+            latency_ms += (time.monotonic() - exec_start) * 1000.0
+            last_code = code
+            last_error = str(exc)
+            attempts += 1
+
+    # All retries exhausted.
+    return _CodegenResult(
+        code_result=None,
+        attempts=attempts - 1,
+        last_error=last_error,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        latency_ms=latency_ms,
+    )
+
+
+def _serialize_code_result(code_result: dict[str, Any]) -> str:
+    """Extract items/payload from a code result and return JSON."""
+    items = code_result.get("items")
+    payload = code_result.get("payload")
+    if isinstance(items, list):
+        if len(items) == 1:
+            return json.dumps(items[0], ensure_ascii=False)
+        return json.dumps(items, ensure_ascii=False)
+    if payload is not None:
+        return json.dumps(payload, ensure_ascii=False)
+    return json.dumps(code_result, ensure_ascii=False)
+
+
+def _extract_answer(
+    *,
+    question_text: str,
+    code_output: str,
+    model: str,
+    api_key: str | None,
+    temperature: float,
+) -> _AnswerResult:
+    """Call the LLM to extract a final answer from code output.
+
+    Catches ``LLMAPIError`` and returns an ``_AnswerResult`` with
+    ``error`` populated instead of propagating.
+    """
+    answer_msg = (
+        f"Question: {question_text}\n\n"
+        f"Code query result:\n{code_output}\n\n"
+        f"Give ONLY the final answer value."
+    )
+
+    try:
+        resp = call_llm(
+            model=model,
+            system_prompt=_SIFT_ANSWER_SYSTEM,
+            user_message=answer_msg,
+            api_key=api_key,
+            temperature=temperature,
+        )
+    except LLMAPIError as exc:
+        return _AnswerResult(
+            text="",
+            input_tokens=0,
+            output_tokens=0,
+            latency_ms=0.0,
+            error=f"answer extraction failed: {exc}",
+        )
+
+    return _AnswerResult(
+        text=resp.text,
+        input_tokens=resp.input_tokens,
+        output_tokens=resp.output_tokens,
+        latency_ms=resp.latency_ms,
+        error="",
+    )
+
+
 def _run_sift(
     question: Question,
     data: Any,
@@ -661,15 +846,10 @@ def _run_sift(
 ) -> dict[str, Any]:
     """Run a single Sift (schema_ref + codegen) question."""
     gold = question.gold_answer_fn(data)
-    total_input_tokens = 0
-    total_output_tokens = 0
-    total_latency = 0.0
 
-    multi_root = len(root_paths) > 1
-
-    # Step 1: Ask LLM to generate code
+    # Build the codegen prompt.
     root_selection_block = ""
-    if multi_root:
+    if len(root_paths) > 1:
         roots_list = "\n".join(f"  - {rp}" for rp in root_paths)
         root_selection_block = (
             f"\nAvailable root_paths (data at the chosen root "
@@ -688,130 +868,58 @@ def _run_sift(
         f"(not a string description)."
     )
 
-    attempts = 0
-    code_result: dict[str, Any] | None = None
-    last_error = ""
-    last_code = ""
-
-    while attempts <= max_retries:
-        # Step 1a: Generate code via LLM.  LLMAPIError propagates
-        # immediately — only CodeExecutionError triggers a retry.
-        if attempts > 0:
-            codegen_msg_retry = (
-                f"{codegen_msg}\n\n"
-                f"Previous code:\n```python\n{last_code}\n```\n\n"
-                f"Error:\n{last_error}\n"
-                f"Please fix the code."
-            )
-            codegen_resp = call_llm(
-                model=model,
-                system_prompt=_SIFT_CODEGEN_SYSTEM,
-                user_message=codegen_msg_retry,
-                api_key=api_key,
-                temperature=temperature,
-            )
-        else:
-            codegen_resp = call_llm(
-                model=model,
-                system_prompt=_SIFT_CODEGEN_SYSTEM,
-                user_message=codegen_msg,
-                api_key=api_key,
-                temperature=temperature,
-            )
-
-        total_input_tokens += codegen_resp.input_tokens
-        total_output_tokens += codegen_resp.output_tokens
-        total_latency += codegen_resp.latency_ms
-
-        code = _extract_code_from_response(codegen_resp.text)
-
-        # Resolve which root_path to execute against.
-        if multi_root:
-            selected = _extract_root_path_from_response(
-                codegen_resp.text, root_paths
-            )
-            root_path = selected if selected else root_paths[0]
-        else:
-            root_path = root_paths[0]
-
-        # Step 1b: Execute the generated code.
-        try:
-            exec_start = time.monotonic()
-            code_result = execute_code(
-                runtime,
-                artifact_id=artifact_id,
-                root_path=root_path,
-                code=code,
-            )
-            total_latency += (time.monotonic() - exec_start) * 1000.0
-            break
-        except CodeExecutionError as exc:
-            total_latency += (time.monotonic() - exec_start) * 1000.0
-            last_code = code
-            last_error = str(exc)
-            attempts += 1
-            if attempts > max_retries:
-                return _make_result(
-                    question,
-                    condition="sift",
-                    gold=gold,
-                    error=f"code execution failed: {last_error}",
-                    input_tokens=total_input_tokens,
-                    output_tokens=total_output_tokens,
-                    latency_ms=total_latency,
-                    retries=attempts - 1,
-                    attempted=False,
-                )
-
-    # Step 2: Extract result from code execution
-    code_output = ""
-    if code_result is not None:
-        items = code_result.get("items")
-        payload = code_result.get("payload")
-        if isinstance(items, list):
-            if len(items) == 1:
-                code_output = json.dumps(items[0], ensure_ascii=False)
-            else:
-                code_output = json.dumps(items, ensure_ascii=False)
-        elif payload is not None:
-            code_output = json.dumps(payload, ensure_ascii=False)
-        else:
-            code_output = json.dumps(code_result, ensure_ascii=False)
-
-    # Step 3: Ask LLM to extract final answer from code result
-    answer_msg = (
-        f"Question: {question.question_text}\n\n"
-        f"Code query result:\n{code_output}\n\n"
-        f"Give ONLY the final answer value."
+    # Step 1: Code generation + execution (with retries).
+    cg = _codegen_loop(
+        codegen_msg=codegen_msg,
+        root_paths=root_paths,
+        runtime=runtime,
+        artifact_id=artifact_id,
+        model=model,
+        api_key=api_key,
+        temperature=temperature,
+        max_retries=max_retries,
     )
 
-    try:
-        answer_resp = call_llm(
-            model=model,
-            system_prompt=_SIFT_ANSWER_SYSTEM,
-            user_message=answer_msg,
-            api_key=api_key,
-            temperature=temperature,
-        )
-    except Exception as exc:
+    if cg.code_result is None:
         return _make_result(
             question,
             condition="sift",
             gold=gold,
-            error=f"answer extraction failed: {exc}",
-            input_tokens=total_input_tokens,
-            output_tokens=total_output_tokens,
-            latency_ms=total_latency,
-            retries=attempts,
+            error=f"code execution failed: {cg.last_error}",
+            input_tokens=cg.input_tokens,
+            output_tokens=cg.output_tokens,
+            latency_ms=cg.latency_ms,
+            retries=cg.attempts,
             attempted=False,
         )
 
-    total_input_tokens += answer_resp.input_tokens
-    total_output_tokens += answer_resp.output_tokens
-    total_latency += answer_resp.latency_ms
+    # Step 2: Serialize code result.
+    code_output = _serialize_code_result(cg.code_result)
+
+    # Step 3: Extract final answer.
+    ans = _extract_answer(
+        question_text=question.question_text,
+        code_output=code_output,
+        model=model,
+        api_key=api_key,
+        temperature=temperature,
+    )
+
+    if ans.error:
+        return _make_result(
+            question,
+            condition="sift",
+            gold=gold,
+            error=ans.error,
+            input_tokens=cg.input_tokens,
+            output_tokens=cg.output_tokens,
+            latency_ms=cg.latency_ms,
+            retries=cg.attempts,
+            attempted=False,
+        )
 
     correct = evaluate_answer(
-        answer_resp.text,
+        ans.text,
         gold,
         answer_type=question.answer_type,
         tolerance=question.tolerance,
@@ -821,12 +929,12 @@ def _run_sift(
         question,
         condition="sift",
         gold=gold,
-        llm_answer=answer_resp.text,
+        llm_answer=ans.text,
         correct=correct,
-        input_tokens=total_input_tokens,
-        output_tokens=total_output_tokens,
-        latency_ms=total_latency,
-        retries=attempts,
+        input_tokens=cg.input_tokens + ans.input_tokens,
+        output_tokens=cg.output_tokens + ans.output_tokens,
+        latency_ms=cg.latency_ms + ans.latency_ms,
+        retries=cg.attempts,
     )
 
 
