@@ -24,11 +24,9 @@ def match_number(
 ) -> bool:
     """Check if LLM answer matches gold numerically within tolerance.
 
-    Tolerance is relative (fraction of gold value). For example,
-    ``tolerance=0.01`` accepts answers within 1% of gold.  The
-    default ``0.0`` requires exact numeric match — set an explicit
-    tolerance on questions with float-valued gold answers.
-    When ``gold_val == 0``, falls back to absolute comparison.
+    Tolerance is absolute.  For example, ``tolerance=0.01`` accepts
+    answers within +-0.01 of gold.  The default ``0.0`` requires
+    exact numeric match.
     """
     try:
         gold_val = float(gold_answer.replace(",", ""))
@@ -43,9 +41,7 @@ def match_number(
             return False
         llm_val = llm_val_maybe
 
-    if gold_val == 0:
-        return abs(llm_val) <= tolerance
-    return abs(llm_val - gold_val) / abs(gold_val) <= tolerance
+    return abs(llm_val - gold_val) <= tolerance
 
 
 def match_string(llm_answer: str, gold_answer: str) -> bool:

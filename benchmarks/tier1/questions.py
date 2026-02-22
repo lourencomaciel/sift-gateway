@@ -542,7 +542,7 @@ QUESTIONS: list[Question] = [
         question_type="aggregation",
         gold_answer_fn=_eq_avg_mag,
         answer_type="number",
-        tolerance=0.05,
+        tolerance=0.01,
     ),
     Question(
         dataset_name="earthquakes",
@@ -609,7 +609,7 @@ QUESTIONS: list[Question] = [
         question_type="aggregation",
         gold_answer_fn=_prod_avg_rating,
         answer_type="number",
-        tolerance=0.05,
+        tolerance=0.01,
     ),
     Question(
         dataset_name="products",
@@ -907,7 +907,7 @@ QUESTIONS: list[Question] = [
         question_type="aggregation",
         gold_answer_fn=_weather_max_wind,
         answer_type="number",
-        tolerance=0.01,
+        tolerance=0.1,
     ),
     Question(
         dataset_name="weather",

@@ -25,15 +25,15 @@ class TestMatchNumber:
         assert not match_number("501", "500")
         assert not match_number("499", "500")
 
-    def test_relative_tolerance_accepts_within_range(self) -> None:
-        # 1% of 200 = 2, so 201 is within range.
-        assert match_number("201", "200", tolerance=0.01)
+    def test_absolute_tolerance_accepts_within_range(self) -> None:
+        # tolerance=0.01 means +-0.01 absolute.
+        assert match_number("200.005", "200", tolerance=0.01)
 
-    def test_relative_tolerance_rejects_outside_range(self) -> None:
-        # 1% of 200 = 2, so 203 is outside.
-        assert not match_number("203", "200", tolerance=0.01)
+    def test_absolute_tolerance_rejects_outside_range(self) -> None:
+        assert not match_number("200.02", "200", tolerance=0.01)
+        assert not match_number("201", "200", tolerance=0.01)
 
-    def test_zero_gold_uses_absolute(self) -> None:
+    def test_zero_gold(self) -> None:
         assert match_number("0", "0")
         assert match_number("0.005", "0", tolerance=0.01)
         assert not match_number("1", "0")
@@ -147,7 +147,7 @@ class TestEvaluateAnswer:
 
     def test_tolerance_forwarded(self) -> None:
         assert evaluate_answer(
-            "201", "200", answer_type="number", tolerance=0.01
+            "200.005", "200", answer_type="number", tolerance=0.01
         )
         assert not evaluate_answer(
             "201", "200", answer_type="number", tolerance=0.0
