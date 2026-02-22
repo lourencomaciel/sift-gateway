@@ -18,6 +18,7 @@ from benchmarks.tier1.harness import (
     _is_direct_child,
     _make_result,
     _run_sift,
+    _split_path_segments,
     _truncate_dict,
     _truncate_for_baseline,
     _truncate_list,
@@ -278,6 +279,36 @@ class TestIsDirectChild:
         assert _is_direct_child("$.alpha", "$.alphabet") is None
 
 
+# -- _split_path_segments --
+
+
+class TestSplitPathSegments:
+    def test_dot_notation(self) -> None:
+        assert _split_path_segments("a.b.c") == ["a", "b", "c"]
+
+    def test_single_segment(self) -> None:
+        assert _split_path_segments("name") == ["name"]
+
+    def test_bracket_notation(self) -> None:
+        assert _split_path_segments("data['key.one']") == [
+            "data",
+            "key.one",
+        ]
+
+    def test_mixed_notation(self) -> None:
+        assert _split_path_segments("data['key.one'].sub") == [
+            "data",
+            "key.one",
+            "sub",
+        ]
+
+    def test_empty_string(self) -> None:
+        assert _split_path_segments("") == []
+
+    def test_consecutive_brackets(self) -> None:
+        assert _split_path_segments("d['a']['b']") == ["d", "a", "b"]
+
+
 # -- _build_nesting_hint --
 
 
@@ -457,7 +488,9 @@ class TestFormatSchemaForPrompt:
         # not the unsafe raw sum() pattern.
         assert "filter nulls first" in result
         assert "sum(valid)" in result
+        assert "len(valid)" in result
         assert 'sum(data["temp"])' not in result
+        assert 'len(data["temp"])' not in result
 
     def test_columnar_hint_no_nullable_warning_when_clean(self) -> None:
         describe = {
@@ -649,6 +682,44 @@ class TestFormatSchemaForPrompt:
         }
         result = _format_schema_for_prompt(describe)
         assert "Nested field access" not in result
+
+    def test_nested_hint_bracket_notation(self) -> None:
+        describe = {
+            "roots": [
+                {
+                    "root_path": "$",
+                    "count_estimate": 100,
+                    "root_shape": "array",
+                },
+            ],
+            "schemas": [
+                {
+                    "root_path": "$",
+                    "fields": [
+                        {"path": "$[*].id", "types": ["number"]},
+                        {
+                            "path": "$[*].data",
+                            "types": ["object"],
+                        },
+                        {
+                            "path": "$[*].data['key.one']",
+                            "types": ["object"],
+                        },
+                        {
+                            "path": "$[*].data['key.one'].val",
+                            "types": ["string"],
+                        },
+                    ],
+                },
+            ],
+        }
+        result = _format_schema_for_prompt(describe)
+        assert "Nested field access" in result
+        assert '["data"]["key.one"]["val"]' in result
+        assert (
+            'item.get("data", {}).get("key.one", {})'
+            '.get("val")'
+        ) in result
 
     def test_field_paths_displayed_from_path_key(self) -> None:
         """Describe result uses 'path' key, not 'field_path'."""

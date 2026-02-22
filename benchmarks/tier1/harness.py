@@ -372,6 +372,36 @@ def _field_has_type(field: dict[str, Any], type_name: str) -> bool:
 _MAX_NESTING_HINT_KEYS = 4
 
 
+def _split_path_segments(path: str) -> list[str]:
+    """Split a relative schema path into key segments.
+
+    Handles both dot notation (``a.b.c``) and bracket notation
+    (``a['key.with.dots'].c``) produced by ``normalize_path_segment``.
+    """
+    segments: list[str] = []
+    i = 0
+    while i < len(path):
+        if path[i] == ".":
+            i += 1
+            continue
+        if path[i : i + 2] == "['":
+            end = path.find("']", i + 2)
+            if end == -1:
+                break
+            segments.append(path[i + 2 : end])
+            i = end + 2
+        else:
+            # Dot-delimited segment: read up to next `.` or `['`.
+            end = len(path)
+            for delim in (".", "['"):
+                pos = path.find(delim, i)
+                if pos != -1 and pos < end:
+                    end = pos
+            segments.append(path[i:end])
+            i = end
+    return segments
+
+
 def _is_direct_child(parent_path: str, child_path: str) -> str | None:
     """Return the child key name if *child_path* is a direct child of *parent_path*.
 
@@ -520,7 +550,7 @@ def _format_schema_for_prompt(describe_result: dict[str, Any]) -> str:
                         f' data["{example_field}"]'
                         " if v is not None]"
                         f"\n  total = sum(valid)"
-                        f'\n  n = len(data["{example_field}"])'
+                        f"\n  n = len(valid)"
                     )
                 else:
                     example_block = (
@@ -556,9 +586,9 @@ def _format_schema_for_prompt(describe_result: dict[str, Any]) -> str:
                 if not fp.startswith(prefix):
                     continue
                 relative = fp[len(prefix) :]
-                if "." not in relative:
+                segments = _split_path_segments(relative)
+                if len(segments) < 2:
                     continue
-                segments = relative.split(".")
                 access = "".join(
                     f'["{s}"]' for s in segments
                 )
@@ -572,7 +602,9 @@ def _format_schema_for_prompt(describe_result: dict[str, Any]) -> str:
                 )
                 fp_eg, access_eg = nested_examples[0]
                 # Build a .get()-chain for safe traversal.
-                eg_segments = fp_eg[len(prefix) :].split(".")
+                eg_segments = _split_path_segments(
+                    fp_eg[len(prefix) :]
+                )
                 get_chain = "item"
                 for seg in eg_segments[:-1]:
                     get_chain += f'.get("{seg}", {{}})'
