@@ -123,6 +123,8 @@ def _eq_avg_mag_us_net(data: Any) -> str:
     return f"{sum(mags) / len(mags):.2f}" if mags else "0"
 
 
+# Boolean gold functions return "Yes"/"No" strings; match_boolean
+# accepts these as _TRUE_VARIANTS / _FALSE_VARIANTS respectively.
 def _eq_any_mag_gt7(data: Any) -> str:
     for f in data:
         if (
@@ -2059,6 +2061,8 @@ QUESTIONS: list[Question] = [
         answer_type="number",
         difficulty=3,
     ),
+    # Differs from prod_expensive_high_rated: rating threshold
+    # is 4.0 here vs 4.5 there — tests boundary sensitivity.
     Question(
         dataset_name="products",
         question_id="prod_price_gt50_rating_gt4",

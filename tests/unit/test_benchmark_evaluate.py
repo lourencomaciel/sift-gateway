@@ -279,8 +279,8 @@ class TestLatencyPercentiles:
         result = _latency_percentiles([100.0, 200.0])
         assert result["count"] == 2
         assert result["mean_ms"] == 150.0
-        # nearest-rank: p50 idx=min(1, int(2*0.5))=1 → 200
-        assert result["p50_ms"] == 200.0
+        # statistics.median interpolates midpoint for even n
+        assert result["p50_ms"] == 150.0
         # nearest-rank: p90 idx=min(1, int(2*0.9))=1 → 200
         assert result["p90_ms"] == 200.0
 
@@ -300,8 +300,8 @@ class TestLatencyPercentiles:
         result = _latency_percentiles(latencies)
         assert result["count"] == 10
         assert result["mean_ms"] == 55.0
-        # nearest-rank: p50 idx=min(9, int(10*0.5))=5 → 60.0
-        assert result["p50_ms"] == 60.0
+        # statistics.median: (50+60)/2 = 55.0 for even n
+        assert result["p50_ms"] == 55.0
         # nearest-rank: p90 idx=min(9, int(10*0.9))=9 → 100.0
         assert result["p90_ms"] == 100.0
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import statistics
 from typing import Any
 
 
@@ -138,18 +139,17 @@ def _latency_percentiles(
 ) -> dict[str, float | int]:
     """Compute p50, p90, and mean latency from a list of values.
 
-    Returns an empty dict when *latencies* is empty.  Uses
-    nearest-rank index calculation to avoid ``statistics.quantiles()``
-    edge cases with small sample sizes.
+    Returns an empty dict when *latencies* is empty.  p50 uses
+    ``statistics.median`` (interpolated midpoint for even *n*);
+    p90 uses nearest-rank indexing.
     """
     if not latencies:
         return {}
     s = sorted(latencies)
     n = len(s)
-    p50_idx = min(n - 1, int(n * 0.5))
     p90_idx = min(n - 1, int(n * 0.9))
     return {
-        "p50_ms": round(s[p50_idx], 1),
+        "p50_ms": round(statistics.median(s), 1),
         "p90_ms": round(s[p90_idx], 1),
         "mean_ms": round(sum(s) / n, 1),
         "count": n,
