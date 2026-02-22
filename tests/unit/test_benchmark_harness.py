@@ -15,6 +15,7 @@ from benchmarks.tier1.harness import (
     _field_type_names,
     _fits,
     _format_schema_for_prompt,
+    _is_direct_child,
     _make_result,
     _run_sift,
     _truncate_dict,
@@ -238,6 +239,40 @@ class TestFieldHelpers:
         assert not _field_has_type({"types": ["string"]}, "array")
 
 
+# -- _is_direct_child --
+
+
+class TestIsDirectChild:
+    def test_dot_notation_child(self) -> None:
+        assert _is_direct_child("$[*].country", "$[*].country.en") == "en"
+
+    def test_bracket_notation_child(self) -> None:
+        assert (
+            _is_direct_child("$[*].data", "$[*].data['special.key']")
+            == "special.key"
+        )
+
+    def test_not_a_child(self) -> None:
+        assert _is_direct_child("$[*].country", "$[*].name") is None
+
+    def test_grandchild_dot(self) -> None:
+        assert (
+            _is_direct_child("$[*].birth", "$[*].birth.place.country") is None
+        )
+
+    def test_grandchild_bracket(self) -> None:
+        assert _is_direct_child("$[*].d", "$[*].d['a']['b']") is None
+
+    def test_array_index_not_a_child(self) -> None:
+        assert _is_direct_child("$[*].tags", "$[*].tags[*]") is None
+
+    def test_same_path_not_a_child(self) -> None:
+        assert _is_direct_child("$[*].x", "$[*].x") is None
+
+    def test_prefix_mismatch(self) -> None:
+        assert _is_direct_child("$.alpha", "$.alphabet") is None
+
+
 # -- _build_nesting_hint --
 
 
@@ -297,6 +332,24 @@ class TestBuildNestingHint:
         ]
         hint = _build_nesting_hint("$.x", fields)
         assert hint == '{"a": string}'
+
+    def test_bracket_notation_children(self) -> None:
+        """Bracket-notation child paths are detected."""
+        fields = [
+            {"path": "$[*].data", "types": ["object"]},
+            {"path": "$[*].data['key.one']", "types": ["string"]},
+            {"path": "$[*].data.simple", "types": ["number"]},
+        ]
+        hint = _build_nesting_hint("$[*].data", fields)
+        assert hint == '{"key.one": string, "simple": number}'
+
+    def test_fallback_field_path_returns_none(self) -> None:
+        """Field with unresolvable path (?) is never a child."""
+        fields = [
+            {"path": "$[*].obj", "types": ["object"]},
+            {"types": ["string"]},
+        ]
+        assert _build_nesting_hint("$[*].obj", fields) is None
 
 
 # -- _format_schema_for_prompt: columnar hint --

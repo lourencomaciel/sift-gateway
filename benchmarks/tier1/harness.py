@@ -365,6 +365,40 @@ def _field_has_type(field: dict[str, Any], type_name: str) -> bool:
     return False
 
 
+_MAX_NESTING_HINT_KEYS = 4
+
+
+def _is_direct_child(parent_path: str, child_path: str) -> str | None:
+    """Return the child key name if *child_path* is a direct child of *parent_path*.
+
+    Handles both dot-notation (``.key``) and bracket-notation
+    (``['key.with.dots']``) segments produced by
+    ``normalize_path_segment``.
+
+    Returns ``None`` when *child_path* is not a direct child.
+    """
+    if not child_path.startswith(parent_path):
+        return None
+    tail = child_path[len(parent_path) :]
+    if tail.startswith("."):
+        key = tail[1:]
+        # No further nesting allowed.
+        if "." in key or "[" in key:
+            return None
+        return key
+    if tail.startswith("['"):
+        # Bracket-notation: ['some.key']
+        end = tail.find("']")
+        if end == -1:
+            return None
+        key = tail[2:end]
+        # Anything after the closing bracket means deeper nesting.
+        if len(tail) > end + 2:
+            return None
+        return key
+    return None
+
+
 def _build_nesting_hint(
     field_path: str,
     all_fields: list[dict[str, Any]],
@@ -375,27 +409,22 @@ def _build_nesting_hint(
     looks at direct children to produce a compact hint such as
     ``{"en": string, "no": string, "se": string}``.
     """
-    prefix = field_path + "."
     children: list[tuple[str, str]] = []
 
     for f in all_fields:
         fp = _field_path(f)
-        if not fp.startswith(prefix):
-            continue
-        remainder = fp[len(prefix) :]
-        # Only direct children — no further nesting.
-        if "." in remainder or "[" in remainder:
+        key = _is_direct_child(field_path, fp)
+        if key is None:
             continue
         types = _field_type_names(f)
         type_str = types[0] if len(types) == 1 else "/".join(types)
-        children.append((remainder, type_str))
+        children.append((key, type_str))
 
     if not children:
         return None
 
-    max_shown = 4
-    parts = [f'"{k}": {v}' for k, v in children[:max_shown]]
-    if len(children) > max_shown:
+    parts = [f'"{k}": {v}' for k, v in children[:_MAX_NESTING_HINT_KEYS]]
+    if len(children) > _MAX_NESTING_HINT_KEYS:
         return "{" + ", ".join(parts) + ", ...}"
     return "{" + ", ".join(parts) + "}"
 
