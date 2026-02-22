@@ -34,6 +34,7 @@ from benchmarks.tier1.evaluate import (
 from benchmarks.tier1.llm_client import call_llm
 from benchmarks.tier1.questions import Question, get_questions_for_dataset
 from benchmarks.tier1.sift_runtime import (
+    CodeExecutionError,
     capture_payload,
     create_runtime,
     describe_artifact,
@@ -41,7 +42,14 @@ from benchmarks.tier1.sift_runtime import (
     extract_root_paths,
 )
 
-_MAX_BASELINE_BYTES_DEFAULT = 800_000
+_MAX_BASELINE_BYTES_DEFAULT = 400_000
+
+# Conservative estimate: structured JSON tokenizes at roughly
+# 2 bytes per token (short keys, numbers, punctuation each become
+# separate tokens).  The limit leaves ~20K tokens headroom for
+# system prompt + question text.
+_MAX_BASELINE_TOKENS_DEFAULT = 180_000
+_BYTES_PER_TOKEN_JSON = 2
 
 _BASELINE_SYSTEM = (
     "You are a data analyst. Answer the question about the JSON data "
@@ -80,39 +88,125 @@ def _load_dataset(data_dir: Path, dataset_name: str) -> Any:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def _effective_max_bytes(
+    max_bytes: int,
+    max_tokens: int,
+) -> int:
+    """Return the smaller of the byte cap and the token-derived cap.
+
+    JSON tokenizes poorly (~2 bytes/token for structured data),
+    so a byte cap alone often exceeds the model's context window.
+    """
+    token_derived = max_tokens * _BYTES_PER_TOKEN_JSON
+    return min(max_bytes, token_derived)
+
+
+def _fits(candidate: str, limit: int) -> bool:
+    """Check if a JSON string fits within the byte limit."""
+    # String length is a lower bound on UTF-8 byte length,
+    # so skip the encode when the string alone exceeds cap.
+    if len(candidate) > limit:
+        return False
+    return len(candidate.encode("utf-8")) <= limit
+
+
+def _truncate_list(data: list[Any], limit: int) -> str:
+    """Binary search for the largest array prefix that fits."""
+    best_json = json.dumps(data[:1], ensure_ascii=False)
+    low, high = 1, len(data)
+    while low <= high:
+        mid = (low + high) // 2
+        candidate = json.dumps(data[:mid], ensure_ascii=False)
+        if not _fits(candidate, limit):
+            high = mid - 1
+        else:
+            best_json = candidate
+            low = mid + 1
+    return best_json
+
+
+def _truncate_dict(data: dict[str, Any], limit: int) -> str | None:
+    """Shrink array values inside a dict to fit within *limit* bytes.
+
+    Finds lists at the top level and one level deep, then binary-
+    searches on a keep-fraction applied uniformly to all of them.
+    Returns ``None`` if the dict cannot be shrunk to fit (e.g. no
+    array values to trim).
+    """
+    # Collect (container_dict, key, original_length) for all arrays.
+    arrays: list[tuple[dict[str, Any], str, int]] = []
+    for key, val in data.items():
+        if isinstance(val, list) and len(val) > 1:
+            arrays.append((data, key, len(val)))
+        elif isinstance(val, dict):
+            for subkey, subval in val.items():
+                if isinstance(subval, list) and len(subval) > 1:
+                    arrays.append((val, subkey, len(subval)))
+
+    if not arrays:
+        return None
+
+    import copy
+
+    # Binary search on the fraction of array elements to keep.
+    low_f, high_f = 0.0, 1.0
+    best_json: str | None = None
+    for _ in range(30):
+        mid_f = (low_f + high_f) / 2
+        trial = copy.deepcopy(data)
+        for container, key, orig_len in arrays:
+            # Navigate to the same container in the trial copy.
+            if container is data:
+                target = trial
+            else:
+                # One-level-deep: find the parent dict.
+                for pval in trial.values():
+                    if isinstance(pval, dict) and key in pval:
+                        target = pval
+                        break
+                else:
+                    target = trial
+            keep = max(1, int(orig_len * mid_f))
+            target[key] = target[key][:keep]
+
+        candidate = json.dumps(trial, ensure_ascii=False)
+        if _fits(candidate, limit):
+            best_json = candidate
+            low_f = mid_f
+        else:
+            high_f = mid_f
+
+    return best_json
+
+
 def _truncate_for_baseline(
     data: Any,
     *,
     max_bytes: int,
+    max_tokens: int,
 ) -> tuple[str, bool]:
-    """Serialize data for baseline, truncating array if too large."""
+    """Serialize data for baseline, truncating if too large.
+
+    Uses both a byte cap and a token-estimate cap to avoid
+    exceeding the model's context window.
+    """
+    limit = _effective_max_bytes(max_bytes, max_tokens)
     full_json = json.dumps(data, ensure_ascii=False)
-    if len(full_json.encode("utf-8")) <= max_bytes:
+    if _fits(full_json, limit):
         return full_json, False
 
     if isinstance(data, list):
-        # Binary search for the largest prefix that fits.  Each
-        # iteration serializes data[:mid], costing O(mid * avg_item)
-        # — acceptable here since max_bytes caps the output size.
-        low, high = 1, len(data)
-        best_json = json.dumps(data[:1], ensure_ascii=False)
-        while low <= high:
-            mid = (low + high) // 2
-            candidate = json.dumps(data[:mid], ensure_ascii=False)
-            # String length is a lower bound on UTF-8 byte length,
-            # so skip the encode when the string alone exceeds cap.
-            if len(candidate) > max_bytes or (
-                len(candidate.encode("utf-8")) > max_bytes
-            ):
-                high = mid - 1
-            else:
-                best_json = candidate
-                low = mid + 1
-        return best_json, True
+        return _truncate_list(data, limit), True
 
-    # Non-list (e.g. dict): return valid JSON with a truncation note
-    # rather than slicing the string at a byte boundary.
-    note = {"_truncated": True, "_note": "payload too large for baseline"}
+    if isinstance(data, dict):
+        shrunk = _truncate_dict(data, limit)
+        if shrunk is not None:
+            return shrunk, True
+
+    note = {
+        "_truncated": True,
+        "_note": "payload too large for baseline",
+    }
     return json.dumps(note, ensure_ascii=False), True
 
 
@@ -156,11 +250,14 @@ def _run_baseline(
     api_key: str | None,
     temperature: float,
     max_baseline_bytes: int,
+    max_baseline_tokens: int,
 ) -> dict[str, Any]:
     """Run a single baseline (context-stuffed) question."""
     gold = question.gold_answer_fn(data)
     data_json, truncated = _truncate_for_baseline(
-        data, max_bytes=max_baseline_bytes
+        data,
+        max_bytes=max_baseline_bytes,
+        max_tokens=max_baseline_tokens,
     )
 
     user_msg = (
@@ -290,11 +387,27 @@ def _format_schema_for_prompt(describe_result: dict[str, Any]) -> str:
                 1 for f in fields if str(f.get("types", "")).startswith("array")
             )
             if array_count >= len(fields) / 2:
+                # Pick the first array field name for the example.
+                example_field = next(
+                    (
+                        f.get("field_path", "").rsplit(".", 1)[-1]
+                        for f in fields
+                        if str(f.get("types", "")).startswith("array")
+                    ),
+                    "field",
+                )
                 parts.append(
-                    "\nNOTE: This root is columnar"
-                    " — `data` is a dict of parallel arrays."
-                    '\nAccess: data["field"][i],'
+                    "\nIMPORTANT — This root is columnar"
+                    " (dict of parallel arrays)."
+                    "\n`data` is a dict where each key maps"
+                    " to a list of values."
+                    "\nAll lists have the same length; index"
+                    " i corresponds to the same record."
+                    f'\nAccess: data["{example_field}"][i],'
                     ' NOT data[i]["field"].'
+                    "\nExample pattern:"
+                    f'\n  total = sum(data["{example_field}"])'
+                    f'\n  n = len(data["{example_field}"])'
                 )
 
     return "\n".join(parts)
@@ -370,45 +483,48 @@ def _run_sift(
     last_code = ""
 
     while attempts <= max_retries:
+        # Step 1a: Generate code via LLM.  LLMAPIError propagates
+        # immediately — only CodeExecutionError triggers a retry.
+        if attempts > 0:
+            codegen_msg_retry = (
+                f"{codegen_msg}\n\n"
+                f"Previous code:\n```python\n{last_code}\n```\n\n"
+                f"Error:\n{last_error}\n"
+                f"Please fix the code."
+            )
+            codegen_resp = call_llm(
+                model=model,
+                system_prompt=_SIFT_CODEGEN_SYSTEM,
+                user_message=codegen_msg_retry,
+                api_key=api_key,
+                temperature=temperature,
+            )
+        else:
+            codegen_resp = call_llm(
+                model=model,
+                system_prompt=_SIFT_CODEGEN_SYSTEM,
+                user_message=codegen_msg,
+                api_key=api_key,
+                temperature=temperature,
+            )
+
+        total_input_tokens += codegen_resp.input_tokens
+        total_output_tokens += codegen_resp.output_tokens
+        total_latency += codegen_resp.latency_ms
+
+        code = _extract_code_from_response(codegen_resp.text)
+
+        # Resolve which root_path to execute against.
+        if multi_root:
+            selected = _extract_root_path_from_response(
+                codegen_resp.text, root_paths
+            )
+            root_path = selected if selected else root_paths[0]
+        else:
+            root_path = root_paths[0]
+
+        # Step 1b: Execute the generated code.
         try:
-            if attempts > 0:
-                codegen_msg_retry = (
-                    f"{codegen_msg}\n\n"
-                    f"Previous code:\n```python\n{last_code}\n```\n\n"
-                    f"Error:\n{last_error}\n"
-                    f"Please fix the code."
-                )
-                codegen_resp = call_llm(
-                    model=model,
-                    system_prompt=_SIFT_CODEGEN_SYSTEM,
-                    user_message=codegen_msg_retry,
-                    api_key=api_key,
-                    temperature=temperature,
-                )
-            else:
-                codegen_resp = call_llm(
-                    model=model,
-                    system_prompt=_SIFT_CODEGEN_SYSTEM,
-                    user_message=codegen_msg,
-                    api_key=api_key,
-                    temperature=temperature,
-                )
-
-            total_input_tokens += codegen_resp.input_tokens
-            total_output_tokens += codegen_resp.output_tokens
-            total_latency += codegen_resp.latency_ms
-
-            code = _extract_code_from_response(codegen_resp.text)
-
-            # Resolve which root_path to execute against.
-            if multi_root:
-                selected = _extract_root_path_from_response(
-                    codegen_resp.text, root_paths
-                )
-                root_path = selected if selected else root_paths[0]
-            else:
-                root_path = root_paths[0]
-
             exec_start = time.monotonic()
             code_result = execute_code(
                 runtime,
@@ -418,10 +534,8 @@ def _run_sift(
             )
             total_latency += (time.monotonic() - exec_start) * 1000.0
             break
-
-        except RuntimeError as exc:
-            # RuntimeError comes from execute_code on code failures;
-            # infrastructure errors (e.g. LLM API) propagate as-is.
+        except CodeExecutionError as exc:
+            total_latency += (time.monotonic() - exec_start) * 1000.0
             last_code = code
             last_error = str(exc)
             attempts += 1
@@ -546,10 +660,22 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Sift data directory (default: temp dir per run)",
     )
     parser.add_argument(
+        "--questions",
+        nargs="*",
+        default=None,
+        help="Filter to specific question IDs (e.g. eq_mag_gte4)",
+    )
+    parser.add_argument(
         "--max-baseline-payload-bytes",
         type=int,
         default=_MAX_BASELINE_BYTES_DEFAULT,
         help="Max baseline payload size in bytes",
+    )
+    parser.add_argument(
+        "--max-baseline-tokens",
+        type=int,
+        default=_MAX_BASELINE_TOKENS_DEFAULT,
+        help="Max estimated baseline tokens (conservative)",
     )
     parser.add_argument(
         "--temperature",
@@ -575,7 +701,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--max-retries",
         type=int,
-        default=1,
+        default=2,
         help="Max code execution retries for Sift condition",
     )
     return parser
@@ -596,6 +722,9 @@ def _run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
             raise SystemExit(1)
 
     results: list[dict[str, Any]] = []
+    question_filter: set[str] | None = (
+        set(args.questions) if args.questions else None
+    )
 
     # Preload all datasets
     loaded: dict[str, Any] = {}
@@ -610,6 +739,8 @@ def _run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
             data = loaded[name]
             questions = get_questions_for_dataset(name)
             for q in questions:
+                if question_filter and q.question_id not in question_filter:
+                    continue
                 print(f"  [{name}] {q.question_id}: {q.question_text[:50]}...")
                 result = _run_baseline(
                     q,
@@ -618,6 +749,7 @@ def _run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
                     api_key=args.api_key,
                     temperature=args.temperature,
                     max_baseline_bytes=(args.max_baseline_payload_bytes),
+                    max_baseline_tokens=args.max_baseline_tokens,
                 )
                 status = "CORRECT" if result["correct"] else "WRONG"
                 print(
@@ -638,6 +770,7 @@ def _run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
                 loaded=loaded,
                 results=results,
                 sift_data_dir=sift_data_dir,
+                question_filter=question_filter,
                 args=args,
             )
         else:
@@ -647,6 +780,7 @@ def _run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
                     loaded=loaded,
                     results=results,
                     sift_data_dir=tmp,
+                    question_filter=question_filter,
                     args=args,
                 )
 
@@ -659,6 +793,7 @@ def _run_sift_condition(
     loaded: dict[str, Any],
     results: list[dict[str, Any]],
     sift_data_dir: str,
+    question_filter: set[str] | None,
     args: argparse.Namespace,
 ) -> None:
     """Execute Sift condition across datasets."""
@@ -666,6 +801,12 @@ def _run_sift_condition(
         for name in dataset_names:
             data = loaded[name]
             questions = get_questions_for_dataset(name)
+
+            # Skip dataset entirely if no questions match filter.
+            if question_filter and not any(
+                q.question_id in question_filter for q in questions
+            ):
+                continue
 
             print(f"  Capturing {name} ...")
             capture_result = capture_payload(
@@ -687,6 +828,8 @@ def _run_sift_condition(
             print(f"    root_paths: {root_paths}")
 
             for q in questions:
+                if question_filter and q.question_id not in question_filter:
+                    continue
                 print(f"  [{name}] {q.question_id}: {q.question_text[:50]}...")
                 result = _run_sift(
                     q,

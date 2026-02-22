@@ -8,6 +8,15 @@ from pathlib import Path
 import time
 from typing import Any
 
+
+class CodeExecutionError(RuntimeError):
+    """Raised when user-generated code fails during artifact execution.
+
+    Distinct from generic ``RuntimeError`` so callers can retry with
+    error context instead of treating it as an infrastructure failure.
+    """
+
+
 import sift_gateway  # bare import for __file__ path resolution
 from sift_gateway.config import load_gateway_config
 from sift_gateway.constants import CAPTURE_KIND_CLI_COMMAND
@@ -194,5 +203,5 @@ def execute_code(
             f"code execution failed: {result.get('code')}: "
             f"{result.get('message')}"
         )
-        raise RuntimeError(msg)
+        raise CodeExecutionError(msg)
     return result
