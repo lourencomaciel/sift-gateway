@@ -108,7 +108,7 @@ def _call_anthropic(
                 body = json.loads(resp.read().decode("utf-8", errors="replace"))
             break
         except urllib.error.HTTPError as exc:
-            if exc.code in (429, 529) and attempt < _MAX_RETRIES:
+            if exc.code in (429, 500, 529) and attempt < _MAX_RETRIES:
                 _log_retry(exc.code, attempt, backoff)
                 time.sleep(backoff)
                 backoff *= 2
@@ -177,7 +177,7 @@ def _call_openai(
                 body = json.loads(resp.read().decode("utf-8", errors="replace"))
             break
         except urllib.error.HTTPError as exc:
-            if exc.code in (429, 503) and attempt < _MAX_RETRIES:
+            if exc.code in (429, 500, 503) and attempt < _MAX_RETRIES:
                 _log_retry(exc.code, attempt, backoff)
                 time.sleep(backoff)
                 backoff *= 2

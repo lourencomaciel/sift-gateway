@@ -7,6 +7,8 @@ from unittest.mock import patch
 
 from benchmarks.tier1.harness import (
     _effective_max_bytes,
+    _extract_code_from_response,
+    _extract_root_path_from_response,
     _fits,
     _format_schema_for_prompt,
     _make_result,
@@ -41,15 +43,15 @@ def _stub_question(**overrides: object) -> Question:
 
 class TestEffectiveMaxBytes:
     def test_byte_cap_wins_when_smaller(self) -> None:
-        # 100_000 bytes < 200_000 * 2 = 400_000
+        # 100_000 bytes < 200_000 * 3 = 600_000
         assert _effective_max_bytes(100_000, 200_000) == 100_000
 
     def test_token_derived_wins_when_smaller(self) -> None:
-        # 500_000 bytes > 100_000 * 2 = 200_000
-        assert _effective_max_bytes(500_000, 100_000) == 200_000
+        # 500_000 bytes > 100_000 * 3 = 300_000
+        assert _effective_max_bytes(500_000, 100_000) == 300_000
 
     def test_equal_caps(self) -> None:
-        assert _effective_max_bytes(200_000, 100_000) == 200_000
+        assert _effective_max_bytes(300_000, 100_000) == 300_000
 
 
 # -- _fits --
@@ -171,13 +173,13 @@ class TestTruncateForBaseline:
         assert len(parsed) < 100_000
 
     def test_token_limit_caps_before_byte_limit(self) -> None:
-        # With max_tokens=100 and 2 bytes/token, effective limit = 200
+        # With max_tokens=100 and 3 bytes/token, effective limit = 300
         data = list(range(10_000))
         text, truncated = _truncate_for_baseline(
             data, max_bytes=1_000_000, max_tokens=100
         )
         assert truncated
-        assert len(text.encode("utf-8")) <= 200
+        assert len(text.encode("utf-8")) <= 300
 
     def test_truncates_dict_with_arrays(self) -> None:
         data = {"vals": list(range(10_000))}
@@ -363,3 +365,150 @@ class TestRunSiftRetryLoop:
                 temperature=0.0,
                 max_retries=1,
             )
+
+    def test_success_after_retry(self) -> None:
+        q = _stub_question()
+        call_count = 0
+
+        def exec_side_effect(*_a: object, **_kw: object) -> dict:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise CodeExecutionError("first fail")
+            return {"items": [42]}
+
+        with (
+            patch(
+                "benchmarks.tier1.harness.call_llm",
+                return_value=_llm_resp(
+                    "def run(data, schema, params):\n  return 42"
+                ),
+            ),
+            patch(
+                "benchmarks.tier1.harness.execute_code",
+                side_effect=exec_side_effect,
+            ),
+        ):
+            result = _run_sift(
+                q,
+                [1, 2],
+                runtime=None,
+                artifact_id="art_test",
+                root_paths=["$"],
+                schema_text="test schema",
+                model="test",
+                api_key="k",
+                temperature=0.0,
+                max_retries=2,
+            )
+        assert result["attempted"] is True
+        assert result["retries"] == 1
+
+    def test_max_retries_zero_no_retry(self) -> None:
+        q = _stub_question()
+        with (
+            patch(
+                "benchmarks.tier1.harness.call_llm",
+                return_value=_llm_resp(),
+            ),
+            patch(
+                "benchmarks.tier1.harness.execute_code",
+                side_effect=CodeExecutionError("fail"),
+            ),
+        ):
+            result = _run_sift(
+                q,
+                [1, 2],
+                runtime=None,
+                artifact_id="art_test",
+                root_paths=["$"],
+                schema_text="test schema",
+                model="test",
+                api_key="k",
+                temperature=0.0,
+                max_retries=0,
+            )
+        assert result["attempted"] is False
+        assert result["retries"] == 0
+
+
+# -- _extract_code_from_response --
+
+
+class TestExtractCodeFromResponse:
+    def test_python_fence(self) -> None:
+        text = "Here is the code:\n```python\ndef run(data, schema, params):\n  return 42\n```"
+        assert "def run" in _extract_code_from_response(text)
+        assert "return 42" in _extract_code_from_response(text)
+
+    def test_generic_fence_fallback(self) -> None:
+        text = "```\ndef run(data, schema, params):\n  return 99\n```"
+        result = _extract_code_from_response(text)
+        assert "def run" in result
+        assert "return 99" in result
+
+    def test_raw_text_fallback(self) -> None:
+        text = "def run(data, schema, params):\n  return 1"
+        assert "def run" in _extract_code_from_response(text)
+
+    def test_prefers_candidate_with_def_run(self) -> None:
+        text = (
+            "```python\nprint('hello')\n```\n\n"
+            "def run(data, schema, params):\n  return 5"
+        )
+        result = _extract_code_from_response(text)
+        assert "def run" in result
+
+    def test_no_def_run_uses_first_candidate(self) -> None:
+        text = "```python\nresult = 42\n```"
+        result = _extract_code_from_response(text)
+        assert "result = 42" in result
+
+    def test_multiple_python_fences_uses_first(self) -> None:
+        text = (
+            "```python\ndef run(data, schema, params):\n  return 1\n```\n"
+            "```python\ndef run(data, schema, params):\n  return 2\n```"
+        )
+        result = _extract_code_from_response(text)
+        assert "return 1" in result
+
+    def test_empty_text(self) -> None:
+        assert _extract_code_from_response("") == ""
+
+
+# -- _extract_root_path_from_response --
+
+
+class TestExtractRootPathFromResponse:
+    def test_parses_root_path_comment(self) -> None:
+        text = "# root_path: $.features\ndef run(data, schema, params):\n  return 1"
+        result = _extract_root_path_from_response(
+            text, ["$.features", "$.metadata"]
+        )
+        assert result == "$.features"
+
+    def test_returns_none_when_not_in_available(self) -> None:
+        text = (
+            "# root_path: $.unknown\ndef run(data, schema, params):\n  return 1"
+        )
+        result = _extract_root_path_from_response(text, ["$.features"])
+        assert result is None
+
+    def test_returns_none_when_no_comment(self) -> None:
+        text = "def run(data, schema, params):\n  return 1"
+        result = _extract_root_path_from_response(text, ["$.features"])
+        assert result is None
+
+    def test_picks_first_valid_line(self) -> None:
+        text = (
+            "# root_path: $.invalid\n"
+            "# root_path: $.valid\n"
+            "def run(data, schema, params):\n  return 1"
+        )
+        result = _extract_root_path_from_response(text, ["$.valid"])
+        assert result == "$.valid"
+
+    def test_dollar_root(self) -> None:
+        text = "# root_path: $\ndef run(data, schema, params):\n  return 1"
+        result = _extract_root_path_from_response(text, ["$"])
+        assert result == "$"

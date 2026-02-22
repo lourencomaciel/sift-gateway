@@ -32,8 +32,12 @@ from benchmarks.tier1.evaluate import (
     evaluate_answer,
     print_summary_table,
 )
-from benchmarks.tier1.llm_client import call_llm
-from benchmarks.tier1.questions import Question, get_questions_for_dataset
+from benchmarks.tier1.llm_client import LLMAPIError, call_llm
+from benchmarks.tier1.questions import (
+    Question,
+    get_questions_for_dataset,
+    question_set_hash,
+)
 from benchmarks.tier1.sift_runtime import (
     CodeExecutionError,
     capture_payload,
@@ -46,11 +50,11 @@ from benchmarks.tier1.sift_runtime import (
 _MAX_BASELINE_BYTES_DEFAULT = 400_000
 
 # Conservative estimate: structured JSON tokenizes at roughly
-# 2 bytes per token (short keys, numbers, punctuation each become
+# 3 bytes per token (short keys, numbers, punctuation each become
 # separate tokens).  The limit leaves ~20K tokens headroom for
 # system prompt + question text.
 _MAX_BASELINE_TOKENS_DEFAULT = 180_000
-_BYTES_PER_TOKEN_JSON = 2
+_BYTES_PER_TOKEN_JSON = 3
 
 _BASELINE_SYSTEM = (
     "You are a data analyst. Answer the question about the JSON data "
@@ -95,7 +99,7 @@ def _effective_max_bytes(
 ) -> int:
     """Return the smaller of the byte cap and the token-derived cap.
 
-    JSON tokenizes poorly (~2 bytes/token for structured data),
+    JSON tokenizes poorly (~3 bytes/token for structured data),
     so a byte cap alone often exceeds the model's context window.
     """
     token_derived = max_tokens * _BYTES_PER_TOKEN_JSON
@@ -704,6 +708,14 @@ def _build_parser() -> argparse.ArgumentParser:
         default=2,
         help="Max code execution retries for Sift condition",
     )
+    parser.add_argument(
+        "--continue-on-error",
+        action="store_true",
+        help=(
+            "Record LLM API errors as failed results instead of "
+            "aborting the benchmark run"
+        ),
+    )
     return parser
 
 
@@ -784,7 +796,11 @@ def _run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
                     args=args,
                 )
 
-    return build_report(results, model=args.model)
+    return build_report(
+        results,
+        model=args.model,
+        question_hash=question_set_hash(),
+    )
 
 
 def _run_sift_condition(
@@ -797,6 +813,7 @@ def _run_sift_condition(
     args: argparse.Namespace,
 ) -> None:
     """Execute Sift condition across datasets."""
+    continue_on_error = args.continue_on_error
     with create_runtime(data_dir=sift_data_dir) as runtime:
         for name in dataset_names:
             data = loaded[name]
@@ -831,18 +848,30 @@ def _run_sift_condition(
                 if question_filter and q.question_id not in question_filter:
                     continue
                 print(f"  [{name}] {q.question_id}: {q.question_text[:50]}...")
-                result = _run_sift(
-                    q,
-                    data,
-                    runtime=runtime,
-                    artifact_id=artifact_id,
-                    root_paths=root_paths,
-                    schema_text=schema_text,
-                    model=args.model,
-                    api_key=args.api_key,
-                    temperature=args.temperature,
-                    max_retries=args.max_retries,
-                )
+                try:
+                    result = _run_sift(
+                        q,
+                        data,
+                        runtime=runtime,
+                        artifact_id=artifact_id,
+                        root_paths=root_paths,
+                        schema_text=schema_text,
+                        model=args.model,
+                        api_key=args.api_key,
+                        temperature=args.temperature,
+                        max_retries=args.max_retries,
+                    )
+                except LLMAPIError as exc:
+                    if not continue_on_error:
+                        raise
+                    gold = q.gold_answer_fn(data)
+                    result = _make_result(
+                        q,
+                        condition="sift",
+                        gold=gold,
+                        error=f"LLM API error: {exc}",
+                        attempted=False,
+                    )
                 status = "CORRECT" if result["correct"] else "WRONG"
                 error_suffix = ""
                 if result.get("error"):

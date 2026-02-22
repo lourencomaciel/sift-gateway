@@ -9,6 +9,7 @@ from benchmarks.tier1.evaluate import (
     match_number,
     match_string,
 )
+from benchmarks.tier1.questions import question_set_hash
 import pytest
 
 # -- match_number --
@@ -146,6 +147,11 @@ class TestMatchList:
     def test_non_list_json(self) -> None:
         assert not match_list('{"a": 1}', '["a"]')
 
+    def test_duplicates_preserved(self) -> None:
+        assert not match_list('["a", "a"]', '["a"]')
+        assert not match_list('["a"]', '["a", "a"]')
+        assert match_list('["a", "a"]', '["a", "a"]')
+
 
 # -- evaluate_answer --
 
@@ -242,6 +248,87 @@ class TestBuildReport:
         report = build_report(results, model="test")
         assert report["summary"]["baseline_errors"] == 0
         assert report["per_dataset"]["ds1"]["baseline_errors"] == 0
+
+    def test_per_question_type_breakdown(self) -> None:
+        results = [
+            {
+                **_stub_result("baseline", "ds1", correct=True),
+                "question_type": "count",
+            },
+            {
+                **_stub_result("baseline", "ds1", correct=False),
+                "question_type": "aggregation",
+            },
+            {
+                **_stub_result("sift", "ds1", correct=True),
+                "question_type": "count",
+            },
+            {
+                **_stub_result("sift", "ds1", correct=True),
+                "question_type": "aggregation",
+            },
+        ]
+        report = build_report(results, model="test")
+        qt = report["per_question_type"]
+        assert qt["count"]["baseline_correct"] == 1
+        assert qt["count"]["baseline_total"] == 1
+        assert qt["count"]["sift_correct"] == 1
+        assert qt["count"]["sift_total"] == 1
+        assert qt["aggregation"]["baseline_correct"] == 0
+        assert qt["aggregation"]["baseline_total"] == 1
+        assert qt["aggregation"]["sift_correct"] == 1
+
+    def test_token_stats(self) -> None:
+        results = [
+            _stub_result("baseline", "ds1", correct=True),
+            _stub_result("sift", "ds1", correct=True),
+        ]
+        report = build_report(results, model="test")
+        s = report["summary"]
+        assert s["baseline_input_tokens"] == 100
+        assert s["baseline_output_tokens"] == 10
+        assert s["sift_input_tokens"] == 100
+        assert s["sift_output_tokens"] == 10
+
+    def test_token_reduction_clamped_to_zero(self) -> None:
+        results = [
+            {**_stub_result("baseline", "ds1"), "input_tokens": 10},
+            {**_stub_result("sift", "ds1"), "input_tokens": 100},
+        ]
+        report = build_report(results, model="test")
+        assert report["summary"]["token_reduction_pct"] == 0
+
+    def test_question_hash_included(self) -> None:
+        results = [_stub_result("baseline", "ds1")]
+        report = build_report(results, model="test", question_hash="abc123")
+        assert report["question_set_hash"] == "abc123"
+
+    def test_question_hash_empty_default(self) -> None:
+        results = [_stub_result("baseline", "ds1")]
+        report = build_report(results, model="test")
+        assert report["question_set_hash"] == ""
+
+    def test_empty_results(self) -> None:
+        report = build_report([], model="test")
+        s = report["summary"]
+        assert s["baseline_accuracy_pct"] == 0
+        assert s["sift_accuracy_pct"] == 0
+        assert s["token_reduction_pct"] == 0
+
+
+# -- question_set_hash --
+
+
+class TestQuestionSetHash:
+    def test_deterministic(self) -> None:
+        h1 = question_set_hash()
+        h2 = question_set_hash()
+        assert h1 == h2
+
+    def test_is_12_char_hex(self) -> None:
+        h = question_set_hash()
+        assert len(h) == 12
+        int(h, 16)  # raises ValueError if not hex
 
 
 if __name__ == "__main__":
