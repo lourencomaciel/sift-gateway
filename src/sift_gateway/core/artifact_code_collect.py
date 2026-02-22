@@ -82,7 +82,7 @@ def _with_locator(record: Any, locator: dict[str, Any]) -> dict[str, Any]:
         enriched["_locator"] = locator
         return enriched
     return {
-        "_locator": locator,
+        "_locator": {**locator, "_scalar": True},
         "value": record,
     }
 
