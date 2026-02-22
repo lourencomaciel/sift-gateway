@@ -51,10 +51,11 @@ _BASELINE_SYSTEM = (
 _SIFT_CODEGEN_SYSTEM = (
     "You are a data analyst. Given the schema of a dataset, write a "
     "Python function `def run(data, schema, params):` that answers "
-    "the question. The function receives the full dataset as `data` "
-    "(a list of dicts or a dict for columnar data), a `schema` dict "
-    "describing the fields, and an empty `params` dict. Return ONLY "
-    "the Python function — no explanation, no markdown fences."
+    "the question. `data` is the extracted value at the chosen "
+    "root_path — it may be a list of dicts, a list of scalars, or a "
+    "dict (e.g. columnar data). `schema` describes the fields and "
+    "`params` is an empty dict. Return ONLY the Python function — "
+    "no explanation, no markdown fences."
 )
 
 _SIFT_ANSWER_SYSTEM = (
@@ -88,6 +89,9 @@ def _truncate_for_baseline(
         return full_json, False
 
     if isinstance(data, list):
+        # Binary search for the largest prefix that fits.  Each
+        # iteration serializes data[:mid], costing O(mid * avg_item)
+        # — acceptable here since max_bytes caps the output size.
         low, high = 1, len(data)
         best = 1
         while low <= high:
@@ -105,6 +109,36 @@ def _truncate_for_baseline(
     # rather than slicing the string at a byte boundary.
     note = {"_truncated": True, "_note": "payload too large for baseline"}
     return json.dumps(note, ensure_ascii=False), True
+
+
+def _make_result(
+    question: Question,
+    *,
+    condition: str,
+    gold: str,
+    llm_answer: str = "",
+    correct: bool = False,
+    input_tokens: int = 0,
+    output_tokens: int = 0,
+    latency_ms: float = 0.0,
+    **extra: Any,
+) -> dict[str, Any]:
+    """Build a result dict with shared question metadata."""
+    result: dict[str, Any] = {
+        "condition": condition,
+        "dataset": question.dataset_name,
+        "question_id": question.question_id,
+        "question_type": question.question_type,
+        "question_text": question.question_text,
+        "gold_answer": gold,
+        "llm_answer": llm_answer,
+        "correct": correct,
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "latency_ms": latency_ms,
+    }
+    result.update(extra)
+    return result
 
 
 def _run_baseline(
@@ -138,21 +172,14 @@ def _run_baseline(
         )
     except Exception as exc:
         elapsed = (time.monotonic() - start) * 1000.0
-        return {
-            "condition": "baseline",
-            "dataset": question.dataset_name,
-            "question_id": question.question_id,
-            "question_type": question.question_type,
-            "question_text": question.question_text,
-            "gold_answer": gold,
-            "llm_answer": "",
-            "correct": False,
-            "error": str(exc),
-            "input_tokens": 0,
-            "output_tokens": 0,
-            "latency_ms": elapsed,
-            "truncated": truncated,
-        }
+        return _make_result(
+            question,
+            condition="baseline",
+            gold=gold,
+            error=str(exc),
+            latency_ms=elapsed,
+            truncated=truncated,
+        )
 
     correct = evaluate_answer(
         resp.text,
@@ -160,20 +187,17 @@ def _run_baseline(
         answer_type=question.answer_type,
         tolerance=question.tolerance,
     )
-    return {
-        "condition": "baseline",
-        "dataset": question.dataset_name,
-        "question_id": question.question_id,
-        "question_type": question.question_type,
-        "question_text": question.question_text,
-        "gold_answer": gold,
-        "llm_answer": resp.text,
-        "correct": correct,
-        "input_tokens": resp.input_tokens,
-        "output_tokens": resp.output_tokens,
-        "latency_ms": resp.latency_ms,
-        "truncated": truncated,
-    }
+    return _make_result(
+        question,
+        condition="baseline",
+        gold=gold,
+        llm_answer=resp.text,
+        correct=correct,
+        input_tokens=resp.input_tokens,
+        output_tokens=resp.output_tokens,
+        latency_ms=resp.latency_ms,
+        truncated=truncated,
+    )
 
 
 def _extract_code_from_response(text: str) -> str:
@@ -249,6 +273,10 @@ def _extract_root_path_from_response(
 
     Returns ``None`` when no valid selection is found so the caller
     can fall back to the first available root.
+
+    Note: this scans the raw LLM response (before
+    ``_extract_code_from_response`` strips fences).  The two
+    functions are coupled — both consume ``codegen_resp.text``.
     """
     for line in text.strip().splitlines():
         stripped = line.strip()
@@ -356,37 +384,27 @@ def _run_sift(
             last_error = str(exc)
             attempts += 1
             if attempts > max_retries:
-                return {
-                    "condition": "sift",
-                    "dataset": question.dataset_name,
-                    "question_id": question.question_id,
-                    "question_type": question.question_type,
-                    "question_text": question.question_text,
-                    "gold_answer": gold,
-                    "llm_answer": "",
-                    "correct": False,
-                    "error": f"code execution failed: {last_error}",
-                    "input_tokens": total_input_tokens,
-                    "output_tokens": total_output_tokens,
-                    "latency_ms": total_latency,
-                    "retries": attempts - 1,
-                }
+                return _make_result(
+                    question,
+                    condition="sift",
+                    gold=gold,
+                    error=f"code execution failed: {last_error}",
+                    input_tokens=total_input_tokens,
+                    output_tokens=total_output_tokens,
+                    latency_ms=total_latency,
+                    retries=attempts - 1,
+                )
         except Exception as exc:
-            return {
-                "condition": "sift",
-                "dataset": question.dataset_name,
-                "question_id": question.question_id,
-                "question_type": question.question_type,
-                "question_text": question.question_text,
-                "gold_answer": gold,
-                "llm_answer": "",
-                "correct": False,
-                "error": str(exc),
-                "input_tokens": total_input_tokens,
-                "output_tokens": total_output_tokens,
-                "latency_ms": total_latency,
-                "retries": attempts,
-            }
+            return _make_result(
+                question,
+                condition="sift",
+                gold=gold,
+                error=str(exc),
+                input_tokens=total_input_tokens,
+                output_tokens=total_output_tokens,
+                latency_ms=total_latency,
+                retries=attempts,
+            )
 
     # Step 2: Extract result from code execution
     code_output = ""
@@ -419,21 +437,16 @@ def _run_sift(
             temperature=temperature,
         )
     except Exception as exc:
-        return {
-            "condition": "sift",
-            "dataset": question.dataset_name,
-            "question_id": question.question_id,
-            "question_type": question.question_type,
-            "question_text": question.question_text,
-            "gold_answer": gold,
-            "llm_answer": "",
-            "correct": False,
-            "error": f"answer extraction failed: {exc}",
-            "input_tokens": total_input_tokens,
-            "output_tokens": total_output_tokens,
-            "latency_ms": total_latency,
-            "retries": attempts,
-        }
+        return _make_result(
+            question,
+            condition="sift",
+            gold=gold,
+            error=f"answer extraction failed: {exc}",
+            input_tokens=total_input_tokens,
+            output_tokens=total_output_tokens,
+            latency_ms=total_latency,
+            retries=attempts,
+        )
 
     total_input_tokens += answer_resp.input_tokens
     total_output_tokens += answer_resp.output_tokens
@@ -446,20 +459,17 @@ def _run_sift(
         tolerance=question.tolerance,
     )
 
-    return {
-        "condition": "sift",
-        "dataset": question.dataset_name,
-        "question_id": question.question_id,
-        "question_type": question.question_type,
-        "question_text": question.question_text,
-        "gold_answer": gold,
-        "llm_answer": answer_resp.text,
-        "correct": correct,
-        "input_tokens": total_input_tokens,
-        "output_tokens": total_output_tokens,
-        "latency_ms": total_latency,
-        "retries": attempts,
-    }
+    return _make_result(
+        question,
+        condition="sift",
+        gold=gold,
+        llm_answer=answer_resp.text,
+        correct=correct,
+        input_tokens=total_input_tokens,
+        output_tokens=total_output_tokens,
+        latency_ms=total_latency,
+        retries=attempts,
+    )
 
 
 def _build_parser() -> argparse.ArgumentParser:

@@ -22,7 +22,12 @@ def match_number(
     *,
     tolerance: float = 0.01,
 ) -> bool:
-    """Check if LLM answer matches gold numerically within tolerance."""
+    """Check if LLM answer matches gold numerically within tolerance.
+
+    Tolerance is relative (fraction of gold value). For example,
+    ``tolerance=0.01`` accepts answers within 1% of gold.  When
+    ``gold_val == 0``, falls back to absolute comparison.
+    """
     try:
         gold_val = float(gold_answer.replace(",", ""))
     except ValueError:
@@ -38,7 +43,7 @@ def match_number(
 
     if gold_val == 0:
         return abs(llm_val) <= tolerance
-    return abs(llm_val - gold_val) <= tolerance
+    return abs(llm_val - gold_val) / abs(gold_val) <= tolerance
 
 
 def match_string(llm_answer: str, gold_answer: str) -> bool:
