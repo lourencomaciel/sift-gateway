@@ -99,7 +99,7 @@ def _effective_max_bytes(
 ) -> int:
     """Return the smaller of the byte cap and the token-derived cap.
 
-    JSON tokenizes poorly (~2 bytes/token for structured data),
+    JSON tokenizes poorly (~3 bytes/token for structured data),
     so a byte cap alone often exceeds the model's context window.
     """
     token_derived = max_tokens * _BYTES_PER_TOKEN_JSON
@@ -813,7 +813,7 @@ def _run_sift_condition(
     args: argparse.Namespace,
 ) -> None:
     """Execute Sift condition across datasets."""
-    continue_on_error = getattr(args, "continue_on_error", False)
+    continue_on_error = args.continue_on_error
     with create_runtime(data_dir=sift_data_dir) as runtime:
         for name in dataset_names:
             data = loaded[name]

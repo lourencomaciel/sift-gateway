@@ -943,13 +943,13 @@ def get_questions_for_dataset(
 def question_set_hash() -> str:
     """Return a short SHA-256 hash identifying the current question set.
 
-    The hash covers question IDs, text, types, answer types, and gold
-    function names so that changes to the question set produce a
-    different hash for cross-run comparison validation.
+    The hash covers question IDs, text, types, answer types, tolerance,
+    and gold function names so that changes to the question set produce
+    a different hash for cross-run comparison validation.
     """
     parts = [
         f"{q.dataset_name}:{q.question_id}:{q.question_text}"
-        f":{q.question_type}:{q.answer_type}"
+        f":{q.question_type}:{q.answer_type}:{q.tolerance}"
         f":{q.gold_answer_fn.__name__}"
         for q in QUESTIONS
     ]

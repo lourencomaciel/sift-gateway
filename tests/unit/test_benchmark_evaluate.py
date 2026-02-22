@@ -9,6 +9,7 @@ from benchmarks.tier1.evaluate import (
     match_number,
     match_string,
 )
+from benchmarks.tier1.questions import question_set_hash
 import pytest
 
 # -- match_number --
@@ -320,15 +321,11 @@ class TestBuildReport:
 
 class TestQuestionSetHash:
     def test_deterministic(self) -> None:
-        from benchmarks.tier1.questions import question_set_hash
-
         h1 = question_set_hash()
         h2 = question_set_hash()
         assert h1 == h2
 
     def test_is_12_char_hex(self) -> None:
-        from benchmarks.tier1.questions import question_set_hash
-
         h = question_set_hash()
         assert len(h) == 12
         int(h, 16)  # raises ValueError if not hex
