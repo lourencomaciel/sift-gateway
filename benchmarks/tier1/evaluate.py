@@ -41,8 +41,17 @@ def match_number(
     return abs(llm_val - gold_val) <= tolerance
 
 
+_MIN_SUBSTRING_LEN = 4
+
+
 def match_string(llm_answer: str, gold_answer: str) -> bool:
-    """Check if LLM answer matches gold string."""
+    """Check if LLM answer matches gold string.
+
+    Accepts exact match, gold-in-LLM (the LLM elaborated), or
+    LLM-in-gold only when the LLM answer is at least
+    ``_MIN_SUBSTRING_LEN`` characters to avoid false positives
+    like ``"n"`` matching ``"london"``.
+    """
     llm_clean = llm_answer.strip().lower()
     gold_clean = gold_answer.strip().lower()
     if not llm_clean:
@@ -51,7 +60,9 @@ def match_string(llm_answer: str, gold_answer: str) -> bool:
         return True
     if gold_clean in llm_clean:
         return True
-    return llm_clean in gold_clean
+    # Only accept LLM-as-substring-of-gold for non-trivially-short
+    # answers to avoid false positives on 1-3 character fragments.
+    return len(llm_clean) >= _MIN_SUBSTRING_LEN and llm_clean in gold_clean
 
 
 def match_list(llm_answer: str, gold_answer: str) -> bool:

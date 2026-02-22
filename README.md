@@ -250,6 +250,10 @@ Sift answers 3x more questions correctly while using ~13x fewer tokens. The base
 ```bash
 python benchmarks/tier1/fetch_data.py
 python benchmarks/tier1/harness.py --model claude-sonnet-4-6
+
+# or with uv (recommended for clean clones)
+uv run python benchmarks/tier1/fetch_data.py
+uv run python benchmarks/tier1/harness.py --model claude-sonnet-4-6
 ```
 
 See `benchmarks/tier1/` for the full suite and per-dataset breakdown.

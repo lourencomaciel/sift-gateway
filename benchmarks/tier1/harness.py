@@ -13,10 +13,15 @@ import time
 from typing import Any
 
 # Allow running as `python benchmarks/tier1/harness.py` without
-# manually setting PYTHONPATH by ensuring the repo root is on sys.path.
+# manually setting PYTHONPATH.  The repo root is needed for
+# `from benchmarks.tier1...` imports, and `src/` is needed for
+# `from sift_gateway...` imports.
 _REPO_ROOT = str(Path(__file__).resolve().parents[2])
+_SRC_DIR = str(Path(__file__).resolve().parents[2] / "src")
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
+if _SRC_DIR not in sys.path:
+    sys.path.insert(0, _SRC_DIR)
 
 from benchmarks.tier1.datasets import ALL_DATASET_NAMES, DATASETS
 from benchmarks.tier1.evaluate import (
