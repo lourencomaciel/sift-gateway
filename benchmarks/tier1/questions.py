@@ -571,7 +571,6 @@ QUESTIONS: list[Question] = [
         question_type="aggregation",
         gold_answer_fn=_eq_max_depth,
         answer_type="number",
-        tolerance=0.5,
     ),
     Question(
         dataset_name="earthquakes",
@@ -677,7 +676,6 @@ QUESTIONS: list[Question] = [
         question_type="aggregation",
         gold_answer_fn=_users_avg_weight,
         answer_type="number",
-        tolerance=0.1,
     ),
     Question(
         dataset_name="users",
@@ -716,7 +714,7 @@ QUESTIONS: list[Question] = [
         dataset_name="comments",
         question_id="comments_top_post",
         question_text=("Which postId has the most comments?"),
-        question_type="cross_field",
+        question_type="aggregation",
         gold_answer_fn=_comments_most_commented_post,
         answer_type="number",
     ),
@@ -730,7 +728,6 @@ QUESTIONS: list[Question] = [
         question_type="aggregation",
         gold_answer_fn=_comments_avg_body_len,
         answer_type="number",
-        tolerance=1.0,
     ),
     # photos (5)
     Question(
@@ -753,7 +750,7 @@ QUESTIONS: list[Question] = [
         dataset_name="photos",
         question_id="photos_top_album",
         question_text="Which albumId has the most photos?",
-        question_type="cross_field",
+        question_type="aggregation",
         gold_answer_fn=_photos_most_photos_album,
         answer_type="number",
     ),
@@ -802,7 +799,6 @@ QUESTIONS: list[Question] = [
         question_type="aggregation",
         gold_answer_fn=_countries_europe_population,
         answer_type="number",
-        tolerance=1000,
     ),
     Question(
         dataset_name="countries",
@@ -890,7 +886,6 @@ QUESTIONS: list[Question] = [
         question_type="aggregation",
         gold_answer_fn=_weather_avg_temp,
         answer_type="number",
-        tolerance=0.1,
     ),
     Question(
         dataset_name="weather",
@@ -902,7 +897,6 @@ QUESTIONS: list[Question] = [
         question_type="aggregation",
         gold_answer_fn=_weather_max_wind,
         answer_type="number",
-        tolerance=0.2,
     ),
     Question(
         dataset_name="weather",
@@ -922,7 +916,6 @@ QUESTIONS: list[Question] = [
         question_type="aggregation",
         gold_answer_fn=_weather_total_precip,
         answer_type="number",
-        tolerance=0.5,
     ),
 ]
 

@@ -8,6 +8,7 @@ from pathlib import Path
 import time
 from typing import Any
 
+import sift_gateway
 from sift_gateway.config import load_gateway_config
 from sift_gateway.constants import CAPTURE_KIND_CLI_COMMAND
 from sift_gateway.core.artifact_capture import execute_artifact_capture
@@ -21,11 +22,7 @@ from sift_gateway.mcp.adapters.artifact_query_runtime import (
 from sift_gateway.mcp.server import GatewayServer
 
 _MIGRATIONS_DIR = (
-    Path(__file__).resolve().parents[2]
-    / "src"
-    / "sift_gateway"
-    / "db"
-    / "migrations_sqlite"
+    Path(sift_gateway.__file__).resolve().parent / "db" / "migrations_sqlite"
 )
 _SESSION_ID = "benchmark_tier1"
 _GATEWAY_CONTEXT: dict[str, str] = {"session_id": _SESSION_ID}
