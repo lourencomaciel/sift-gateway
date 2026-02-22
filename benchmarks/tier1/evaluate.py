@@ -20,9 +20,14 @@ def match_number(
     llm_answer: str,
     gold_answer: str,
     *,
-    tolerance: float = 0.01,
+    tolerance: float = 0.0,
 ) -> bool:
-    """Check if LLM answer matches gold numerically within tolerance."""
+    """Check if LLM answer matches gold numerically within tolerance.
+
+    Tolerance is absolute.  For example, ``tolerance=0.01`` accepts
+    answers within +-0.01 of gold.  The default ``0.0`` requires
+    exact numeric match.
+    """
     try:
         gold_val = float(gold_answer.replace(",", ""))
     except ValueError:
@@ -36,26 +41,38 @@ def match_number(
             return False
         llm_val = llm_val_maybe
 
-    if gold_val == 0:
-        return abs(llm_val) <= tolerance
     return abs(llm_val - gold_val) <= tolerance
 
 
 def match_string(llm_answer: str, gold_answer: str) -> bool:
     """Check if LLM answer matches gold string.
 
-    Accepts exact match or gold-in-LLM (the LLM elaborated).
-    Does NOT accept the reverse direction (LLM-in-gold) because
-    truncated or partial answers like ``"pari"`` would incorrectly
-    match ``"paris"``.
+    Accepts exact match or gold appearing as a whole-word sequence
+    inside the LLM answer (the LLM elaborated).  Uses word-boundary
+    anchors so short golds like ``"ak"`` do not false-match inside
+    unrelated words like ``"make"``.
     """
     llm_clean = llm_answer.strip().lower()
     gold_clean = gold_answer.strip().lower()
-    if not llm_clean:
-        return False
+    if not llm_clean or not gold_clean:
+        return llm_clean == gold_clean
     if llm_clean == gold_clean:
         return True
-    return gold_clean in llm_clean
+    # Use \b when the gold edge is a word char; otherwise require
+    # whitespace or string boundary so non-word chars like "+"
+    # don't mis-anchor.
+    start = (
+        r"\b"
+        if gold_clean[0].isalnum() or gold_clean[0] == "_"
+        else r"(?:^|(?<=\s))"
+    )
+    end = (
+        r"\b"
+        if gold_clean[-1].isalnum() or gold_clean[-1] == "_"
+        else r"(?:$|(?=\s))"
+    )
+    pattern = start + re.escape(gold_clean) + end
+    return re.search(pattern, llm_clean) is not None
 
 
 def match_list(llm_answer: str, gold_answer: str) -> bool:
@@ -80,7 +97,7 @@ def evaluate_answer(
     gold_answer: str,
     *,
     answer_type: str,
-    tolerance: float = 0.01,
+    tolerance: float = 0.0,
 ) -> bool:
     """Evaluate a single answer against gold."""
     if answer_type == "number":
