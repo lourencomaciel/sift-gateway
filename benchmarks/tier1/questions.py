@@ -804,9 +804,10 @@ def _eq_net_highest_avg_mag(data: Any) -> str:
         net_counts[net] = net_counts.get(net, 0) + 1
     if not net_sums:
         return ""
+    # Secondary sort on name for deterministic tie-breaking.
     return max(
         net_sums,
-        key=lambda n: net_sums[n] / net_counts[n],
+        key=lambda n: (net_sums[n] / net_counts[n], n),
     )
 
 
@@ -863,9 +864,10 @@ def _prod_category_highest_avg_price(data: Any) -> str:
         cat_counts[cat] = cat_counts.get(cat, 0) + 1
     if not cat_sums:
         return ""
+    # Secondary sort on name for deterministic tie-breaking.
     return max(
         cat_sums,
-        key=lambda c: cat_sums[c] / cat_counts[c],
+        key=lambda c: (cat_sums[c] / cat_counts[c], c),
     )
 
 
@@ -951,9 +953,10 @@ def _countries_region_highest_avg_pop(data: Any) -> str:
         region_counts[region] = region_counts.get(region, 0) + 1
     if not region_sums:
         return ""
+    # Secondary sort on name for deterministic tie-breaking.
     return max(
         region_sums,
-        key=lambda r: region_sums[r] / region_counts[r],
+        key=lambda r: (region_sums[r] / region_counts[r], r),
     )
 
 
@@ -1134,6 +1137,8 @@ def _weather_wind_temp_correlation(data: Any) -> str:
     n = len(pairs)
     mean_w = sum(ws) / n
     mean_t = sum(ts) / n
+    # Covariance sign equals correlation sign; normalizing by
+    # std-devs is unnecessary when we only need the direction.
     cov = sum((w - mean_w) * (t - mean_t) for w, t in pairs)
     return "positive" if cov > 0 else "negative"
 
@@ -2157,14 +2162,14 @@ QUESTIONS: list[Question] = [
         tolerance=0.1,
         difficulty=2,
     ),
-    # negation
+    # filter (threshold)
     Question(
         dataset_name="products",
         question_id="prod_low_discount",
         question_text=(
             "How many products have a discount percentage less than 1?"
         ),
-        question_type="negation",
+        question_type="filter",
         gold_answer_fn=_prod_low_discount,
         answer_type="number",
         difficulty=2,

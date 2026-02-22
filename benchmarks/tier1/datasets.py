@@ -16,6 +16,10 @@ class Dataset:
     dict_values_as_list: bool = False
 
 
+# Some datasets return live/rolling data (earthquakes, github_repos,
+# openlibrary).  Gold answers are computed at runtime from the fetched
+# snapshot, so results are reproducible within a single fetch but may
+# differ across fetches.
 DATASETS: dict[str, Dataset] = {
     "earthquakes": Dataset(
         name="earthquakes",
@@ -80,8 +84,6 @@ DATASETS: dict[str, Dataset] = {
         extraction_path=None,
         local_filename="weather.json",
     ),
-    # Results vary between fetches — gold answers are computed at
-    # runtime from the fetched snapshot.
     "github_repos": Dataset(
         name="github_repos",
         url=(

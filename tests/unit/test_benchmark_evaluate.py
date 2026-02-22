@@ -460,6 +460,24 @@ class TestBuildReport:
         assert pd["2"]["sift_correct"] == 1
         assert pd["2"]["sift_total"] == 1
 
+    def test_per_difficulty_latency_included(self) -> None:
+        results = [
+            {
+                **_stub_result("baseline", "ds1", difficulty=1),
+                "latency_ms": 100.0,
+            },
+            {
+                **_stub_result("sift", "ds1", difficulty=1),
+                "latency_ms": 200.0,
+            },
+        ]
+        report = build_report(results, model="test")
+        pd = report["per_difficulty"]["1"]
+        assert pd["baseline_latency"]["count"] == 1
+        assert pd["baseline_latency"]["mean_ms"] == 100.0
+        assert pd["sift_latency"]["count"] == 1
+        assert pd["sift_latency"]["mean_ms"] == 200.0
+
     def test_latency_percentiles_in_report(self) -> None:
         results = [
             {**_stub_result("baseline", "ds1"), "latency_ms": 100.0},
