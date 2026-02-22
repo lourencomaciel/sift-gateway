@@ -6,16 +6,57 @@ import argparse
 from collections.abc import Generator
 from contextlib import contextmanager
 from dataclasses import dataclass
-import hashlib
-import json
-import os
 from pathlib import Path
-import re
 import subprocess
 import sys
 from typing import Any, cast
 
 from sift_gateway import __version__
+from sift_gateway.cli.output import (
+    command_exit_code as _command_exit_code,
+)
+from sift_gateway.cli.output import (
+    emit_error_response as _emit_error_response,
+)
+from sift_gateway.cli.output import (
+    emit_human_mode_payload as _emit_human_mode_payload,
+)
+from sift_gateway.cli.output import (
+    emit_json as _emit_json,
+)
+from sift_gateway.cli.output import (
+    strip_run_model_noise_fields as _strip_run_model_noise_fields,
+)
+from sift_gateway.cli.output import (
+    write_line as _write_line,
+)
+from sift_gateway.cli.parse import (
+    environment_fingerprint as _environment_fingerprint,
+)
+from sift_gateway.cli.parse import (
+    extract_cli_flag_args as _extract_cli_flag_args,
+)
+from sift_gateway.cli.parse import (
+    load_code_source as _load_code_source,
+)
+from sift_gateway.cli.parse import (
+    normalize_command_argv as _normalize_command_argv,
+)
+from sift_gateway.cli.parse import (
+    normalize_tags as _normalize_tags,
+)
+from sift_gateway.cli.parse import (
+    parse_json_or_text_payload as _parse_json_or_text_payload,
+)
+from sift_gateway.cli.parse import (
+    parse_params_json as _parse_params_json,
+)
+from sift_gateway.cli.parse import (
+    parse_ttl_seconds as _parse_ttl_seconds,
+)
+from sift_gateway.cli.parse import (
+    resolve_code_target_arguments as _resolve_code_target_arguments,
+)
 from sift_gateway.config import load_gateway_config
 from sift_gateway.constants import (
     CAPTURE_KIND_CLI_COMMAND,
@@ -51,16 +92,12 @@ from sift_gateway.response_sample import (
 )
 from sift_gateway.tools.usage_hint import (
     build_code_query_usage,
-    render_code_query_usage_hint,
     schema_primary_root_path,
 )
 
 _CLI_SESSION_ID = "cli"
 _CLI_PREFIX = "cli"
 _CLI_UPSTREAM_INSTANCE_ID = "cli_local"
-_DEFAULT_TTL_RAW = "24h"
-_TTL_PATTERN = re.compile(r"^([1-9][0-9]*)([smhd]?)$")
-_INT_PATTERN = re.compile(r"^[+-]?[0-9]+$")
 
 _FETCH_CLI_CONTINUE_PARENT_SQL = """
 SELECT artifact_id, deleted_at, capture_kind, chain_seq
@@ -95,326 +132,6 @@ class _RunCaptureExecution:
 def _migrations_dir() -> Path:
     """Return the SQLite migrations directory path."""
     return Path(__file__).resolve().parent / "db" / "migrations_sqlite"
-
-
-def _parse_json_object(raw_value: str, *, flag: str) -> dict[str, Any]:
-    """Parse a JSON object flag payload."""
-    try:
-        parsed = json.loads(raw_value)
-    except json.JSONDecodeError as exc:
-        msg = f"invalid {flag} JSON: {exc}"
-        raise ValueError(msg) from exc
-    if not isinstance(parsed, dict):
-        msg = f"{flag} must decode to a JSON object"
-        raise ValueError(msg)
-    return dict(parsed)
-
-
-def _parse_params_json(raw_params: str | None) -> dict[str, Any]:
-    """Parse optional ``--params`` JSON object."""
-    if raw_params is None:
-        return {}
-    return _parse_json_object(raw_params, flag="--params")
-
-
-def _normalize_code_flag_values(
-    raw_values: list[str] | None,
-    *,
-    flag: str,
-) -> list[str]:
-    """Normalize repeatable ``code`` flags and enforce non-empty values."""
-    values = raw_values or []
-    normalized: list[str] = []
-    for raw_value in values:
-        value = raw_value.strip()
-        if not value:
-            msg = f"{flag} values must be non-empty strings"
-            raise ValueError(msg)
-        normalized.append(value)
-    return normalized
-
-
-def _resolve_code_target_arguments(
-    args: argparse.Namespace,
-) -> dict[str, Any]:
-    """Resolve code-target args into single-artifact or multi-artifact shape."""
-    raw_positional_artifact_id = getattr(args, "artifact_id", None)
-    positional_artifact_id = (
-        raw_positional_artifact_id.strip()
-        if isinstance(raw_positional_artifact_id, str)
-        and raw_positional_artifact_id.strip()
-        else None
-    )
-    raw_positional_root_path = getattr(args, "root_path", None)
-    positional_root_path = (
-        raw_positional_root_path.strip()
-        if isinstance(raw_positional_root_path, str)
-        and raw_positional_root_path.strip()
-        else None
-    )
-    raw_flag_artifact_ids = getattr(args, "artifact_ids", None)
-    raw_flag_root_paths = getattr(args, "root_paths", None)
-    flag_artifact_ids = _normalize_code_flag_values(
-        raw_flag_artifact_ids
-        if isinstance(raw_flag_artifact_ids, list)
-        else None,
-        flag="--artifact-id",
-    )
-    flag_root_paths = _normalize_code_flag_values(
-        raw_flag_root_paths if isinstance(raw_flag_root_paths, list) else None,
-        flag="--root-path",
-    )
-
-    has_positional_artifact = positional_artifact_id is not None
-    has_positional_root = positional_root_path is not None
-    uses_positionals = has_positional_artifact or has_positional_root
-    uses_flags = bool(flag_artifact_ids or flag_root_paths)
-
-    if uses_positionals and uses_flags:
-        msg = (
-            "cannot mix positional artifact_id/root_path with "
-            "--artifact-id/--root-path"
-        )
-        raise ValueError(msg)
-
-    if uses_positionals:
-        if not (has_positional_artifact and has_positional_root):
-            msg = "code positional mode requires both artifact_id and root_path"
-            raise ValueError(msg)
-        return {
-            "artifact_id": positional_artifact_id,
-            "root_path": positional_root_path,
-        }
-
-    if not flag_artifact_ids:
-        msg = (
-            "missing artifact target; provide positional artifact_id/root_path "
-            "or --artifact-id/--root-path"
-        )
-        raise ValueError(msg)
-    if not flag_root_paths:
-        msg = (
-            "missing root path; provide positional artifact_id/root_path "
-            "or --root-path"
-        )
-        raise ValueError(msg)
-    if len(set(flag_artifact_ids)) != len(flag_artifact_ids):
-        msg = "duplicate --artifact-id values are not supported"
-        raise ValueError(msg)
-
-    root_paths: dict[str, str]
-    if len(flag_root_paths) == 1:
-        root_paths = dict.fromkeys(flag_artifact_ids, flag_root_paths[0])
-    elif len(flag_root_paths) == len(flag_artifact_ids):
-        root_paths = dict(
-            zip(
-                flag_artifact_ids,
-                flag_root_paths,
-                strict=True,
-            )
-        )
-    else:
-        msg = (
-            "when using multiple --artifact-id values, provide one --root-path "
-            "or repeat --root-path once per --artifact-id"
-        )
-        raise ValueError(msg)
-
-    return {
-        "artifact_ids": flag_artifact_ids,
-        "root_paths": root_paths,
-    }
-
-
-def _load_code_source(args: argparse.Namespace) -> str:
-    """Load Python source from ``--code`` or ``--file``."""
-    if args.code_file is not None:
-        code_path = Path(args.code_file)
-        if not code_path.exists():
-            msg = f"code file not found: {args.code_file}"
-            raise ValueError(msg)
-        try:
-            return code_path.read_text(encoding="utf-8")
-        except OSError as exc:
-            msg = f"unable to read code file: {args.code_file}"
-            raise ValueError(msg) from exc
-    code_inline = args.code_inline
-    if isinstance(code_inline, str) and code_inline.strip():
-        return code_inline
-    msg = "missing code source; provide --code or --file"
-    raise ValueError(msg)
-
-
-def _parse_ttl_seconds(raw_ttl: str | None) -> int | None:
-    """Parse CLI TTL values (e.g., ``30m``, ``24h``, ``7d``)."""
-    env_ttl = os.environ.get("SIFT_GATEWAY_TTL")
-    if env_ttl is None:
-        env_ttl = os.environ.get("SIFT_TTL", _DEFAULT_TTL_RAW)
-    candidate = (
-        raw_ttl.strip().lower()
-        if isinstance(raw_ttl, str) and raw_ttl.strip()
-        else env_ttl.strip().lower()
-    )
-    if candidate in {"none", "off", "0"}:
-        return None
-    match = _TTL_PATTERN.fullmatch(candidate)
-    if match is None:
-        msg = f"invalid --ttl value: {candidate}"
-        raise ValueError(msg)
-    value = int(match.group(1))
-    suffix = match.group(2) or "s"
-    multiplier = {
-        "s": 1,
-        "m": 60,
-        "h": 60 * 60,
-        "d": 24 * 60 * 60,
-    }[suffix]
-    return value * multiplier
-
-
-def _parse_json_or_text_payload(text: str) -> tuple[Any, bool]:
-    """Return parsed JSON when possible, otherwise the raw text."""
-    if not text.strip():
-        return "", False
-    try:
-        return json.loads(text), True
-    except (json.JSONDecodeError, ValueError):
-        return text, False
-
-
-def _normalize_tags(raw_tags: list[str] | None) -> list[str]:
-    """Normalize repeated/comma-delimited tag values."""
-    tags = raw_tags or []
-    out: list[str] = []
-    seen: set[str] = set()
-    for raw in tags:
-        for segment in raw.split(","):
-            tag = segment.strip()
-            if not tag or tag in seen:
-                continue
-            seen.add(tag)
-            out.append(tag)
-    return out
-
-
-def _environment_fingerprint() -> str:
-    """Return stable hash of visible environment keys."""
-    keys = sorted(os.environ.keys())
-    payload = "\n".join(keys).encode("utf-8")
-    return hashlib.sha256(payload).hexdigest()
-
-
-def _normalize_command_argv(raw_argv: list[str]) -> list[str]:
-    """Normalize remainder argv for ``sift-gateway run -- <cmd>``."""
-    argv = list(raw_argv)
-    if argv and argv[0] == "--":
-        return argv[1:]
-    return argv
-
-
-def _coerce_cli_flag_value(raw_value: str) -> Any:
-    """Coerce a CLI flag value into stable JSON-friendly scalar types."""
-    value = raw_value.strip()
-    lowered = value.lower()
-    if lowered == "true":
-        return True
-    if lowered == "false":
-        return False
-    if _INT_PATTERN.fullmatch(value):
-        unsigned = value[1:] if value and value[0] in {"+", "-"} else value
-        # Preserve string cursor/token values that rely on leading zeroes.
-        if len(unsigned) > 1 and unsigned.startswith("0"):
-            return value
-        try:
-            return int(value)
-        except ValueError:
-            return value
-    return value
-
-
-def _is_cli_flag_token(token: str) -> bool:
-    """Return whether token should be interpreted as a CLI flag token."""
-    return bool(token) and token != "-" and token.startswith("-")
-
-
-def _raw_cli_flag_key(token: str) -> str | None:
-    """Extract raw key segment from one short/long option token."""
-    raw_key = token[2:] if token.startswith("--") else token[1:]
-    return raw_key if raw_key else None
-
-
-def _apply_inline_cli_flag_assignment(
-    raw_key: str,
-    parsed: dict[str, Any],
-) -> bool:
-    """Apply ``--key=value`` assignment when present."""
-    if "=" not in raw_key:
-        return False
-    key, raw_value = raw_key.split("=", 1)
-    key = key.strip()
-    if key:
-        parsed[key] = _coerce_cli_flag_value(raw_value)
-    return True
-
-
-def _is_cli_flag_value_token(token: str | None) -> bool:
-    """Return whether token can be consumed as a positional flag value."""
-    if not isinstance(token, str):
-        return False
-    return bool(token) and token != "--" and not token.startswith("-")
-
-
-def _consume_cli_flag_token(
-    *,
-    tokens: list[str],
-    index: int,
-    parsed: dict[str, Any],
-) -> int:
-    """Consume one flag token and return number of consumed argv entries."""
-    raw_key = _raw_cli_flag_key(tokens[index])
-    if raw_key is None:
-        return 1
-    if _apply_inline_cli_flag_assignment(raw_key, parsed):
-        return 1
-
-    key = raw_key.strip()
-    if not key:
-        return 1
-    if key.startswith("no-") and len(key) > 3:
-        parsed[key[3:]] = False
-        return 1
-
-    next_token = tokens[index + 1] if index + 1 < len(tokens) else None
-    if _is_cli_flag_value_token(next_token):
-        assert next_token is not None
-        parsed[key] = _coerce_cli_flag_value(next_token)
-        return 2
-
-    parsed[key] = True
-    return 1
-
-
-def _extract_cli_flag_args(command_argv: list[str]) -> dict[str, Any]:
-    """Best-effort parse of CLI-style flags from command argv."""
-    if len(command_argv) <= 1:
-        return {}
-
-    parsed: dict[str, Any] = {}
-    tokens = command_argv[1:]
-    index = 0
-    while index < len(tokens):
-        token = tokens[index]
-        if token == "--":
-            break
-        if not _is_cli_flag_token(token):
-            index += 1
-            continue
-        index += _consume_cli_flag_token(
-            tokens=tokens,
-            index=index,
-            parsed=parsed,
-        )
-    return parsed
 
 
 def _assess_cli_pagination(
@@ -574,156 +291,6 @@ def _is_error_response(payload: dict[str, Any]) -> bool:
     # Legacy CLI/core errors still return {"code","message"} without
     # the typed gateway_error envelope.
     return payload_type is None and "response_mode" not in payload
-
-
-def _write_line(text: str, *, stream: Any | None = None) -> None:
-    """Write one line to the given stream."""
-    target = stream if stream is not None else sys.stdout
-    target.write(text)
-    target.write("\n")
-
-
-def _emit_json(payload: dict[str, Any]) -> None:
-    """Emit payload as machine-readable JSON."""
-    _write_line(
-        json.dumps(
-            payload,
-            ensure_ascii=False,
-            sort_keys=True,
-            separators=(",", ":"),
-        )
-    )
-
-
-def _emit_human_code(payload: dict[str, Any]) -> None:
-    """Emit compact code-query summary."""
-    artifact_id = payload.get("artifact_id")
-    if isinstance(artifact_id, str):
-        _write_line(f"artifact: {artifact_id}")
-    _write_line(f"mode:     {payload.get('response_mode')}")
-    if payload.get("response_mode") == "schema_ref":
-        schemas = payload.get("schemas")
-        if isinstance(schemas, list):
-            _write_line(f"schema_roots: {len(schemas)}")
-    metadata = payload.get("metadata")
-    if isinstance(metadata, dict):
-        stats = metadata.get("stats")
-        if isinstance(stats, dict):
-            output_records = stats.get("output_records")
-            if isinstance(output_records, int):
-                _write_line(f"records:  {output_records}")
-            bytes_out = stats.get("bytes_out")
-            if isinstance(bytes_out, int):
-                _write_line(f"bytes:    {bytes_out}")
-    _write_line(
-        json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True)
-    )
-
-
-def _run_payload_metadata(payload: dict[str, Any]) -> dict[str, Any]:
-    """Return run metadata, synthesizing from top-level fields if needed."""
-    metadata = payload.get("metadata")
-    merged: dict[str, Any]
-    if isinstance(metadata, dict):
-        usage = metadata.get("usage")
-        merged = {"usage": usage} if isinstance(usage, dict) else {}
-    else:
-        merged = {}
-    for key in (
-        "records",
-        "command_exit_code",
-        "payload_total_bytes",
-        "capture_kind",
-        "expires_at",
-        "status",
-        "tags",
-    ):
-        if key in payload:
-            merged[key] = payload[key]
-    if merged:
-        return merged
-    return {}
-
-
-def _emit_human_run_metadata(meta: dict[str, Any]) -> int | None:
-    """Emit run metadata lines and return command exit code when available."""
-    records = meta.get("records")
-    if isinstance(records, int):
-        _write_line(f"records:  {records}")
-    else:
-        _write_line("records:  unknown")
-
-    _write_line(f"bytes:    {meta.get('payload_total_bytes')}")
-    capture_kind = meta.get("capture_kind")
-    if isinstance(capture_kind, str):
-        _write_line(f"capture:  {capture_kind}")
-    expires_at = meta.get("expires_at")
-    if isinstance(expires_at, str) and expires_at:
-        _write_line(f"expires:  {expires_at}")
-    tags = meta.get("tags")
-    if isinstance(tags, list) and tags:
-        _write_line(f"tags:     {', '.join(str(tag) for tag in tags)}")
-    command_exit_code = meta.get("command_exit_code")
-    if isinstance(command_exit_code, int):
-        _write_line(f"exit:     {command_exit_code}")
-        return command_exit_code
-    return None
-
-
-def _emit_human_run_continuation(
-    payload: dict[str, Any],
-    *,
-    artifact_id: str | None,
-    command_exit_code: int | None,
-) -> None:
-    """Emit run continuation, schema, and follow-up hint lines."""
-    pagination = payload.get("pagination")
-    if isinstance(pagination, dict):
-        next_payload = pagination.get("next")
-        if isinstance(next_payload, dict) and (
-            next_payload.get("kind") == "command"
-        ):
-            command_line = next_payload.get("command_line")
-            if isinstance(command_line, str) and command_line:
-                _write_line(f"next:     {command_line}")
-
-    if payload.get("response_mode") == "schema_ref":
-        schemas = payload.get("schemas")
-        if isinstance(schemas, list):
-            _write_line(f"schema_roots: {len(schemas)}")
-
-    if artifact_id is not None and command_exit_code == 0:
-        usage_hint = ""
-        metadata = payload.get("metadata")
-        if isinstance(metadata, dict):
-            raw_usage = metadata.get("usage")
-            if isinstance(raw_usage, dict):
-                usage_hint = render_code_query_usage_hint(raw_usage)
-        if not usage_hint:
-            usage_hint = render_code_query_usage_hint(
-                build_code_query_usage(
-                    interface="cli",
-                    artifact_id=artifact_id,
-                    root_path="$",
-                    configured_roots=None,
-                )
-            )
-        _write_line(f"hint:     {usage_hint}")
-
-
-def _emit_human_run(payload: dict[str, Any]) -> None:
-    """Emit compact run-capture summary."""
-    raw_artifact_id = payload.get("artifact_id")
-    artifact_id = raw_artifact_id if isinstance(raw_artifact_id, str) else None
-    if artifact_id is not None:
-        _write_line(f"artifact: {artifact_id}")
-    _write_line(f"mode:     {payload.get('response_mode')}")
-    command_exit_code = _emit_human_run_metadata(_run_payload_metadata(payload))
-    _emit_human_run_continuation(
-        payload,
-        artifact_id=artifact_id,
-        command_exit_code=command_exit_code,
-    )
 
 
 def _execute_code(
@@ -1368,57 +935,6 @@ def _dispatch_cli_payload(
         payload, mode = _dispatch_command(runtime, args)
         payload = _sanitize_cli_payload(runtime, payload)
     return payload, mode
-
-
-def _emit_error_response(payload: dict[str, Any], *, json_mode: bool) -> None:
-    """Emit one error payload in requested output mode."""
-    if json_mode:
-        _emit_json(payload)
-        return
-    _write_line(
-        f"{payload['code']}: {payload['message']}",
-        stream=sys.stderr,
-    )
-
-
-def _emit_human_mode_payload(mode: str, payload: dict[str, Any]) -> None:
-    """Emit successful payload in human mode by dispatch mode."""
-    emitters: dict[str, Any] = {
-        "code": _emit_human_code,
-        "run": _emit_human_run,
-    }
-    emitter = emitters.get(mode, _emit_human_code)
-    emitter(payload)
-
-
-def _command_exit_code(mode: str, payload: dict[str, Any]) -> int | None:
-    """Return command exit code for run mode, when present."""
-    if mode != "run":
-        return None
-    command_exit_code = payload.get("command_exit_code")
-    if not isinstance(command_exit_code, int):
-        metadata = payload.get("metadata")
-        if isinstance(metadata, dict):
-            command_exit_code = metadata.get("command_exit_code")
-    if isinstance(command_exit_code, int):
-        return command_exit_code
-    return None
-
-
-def _strip_run_model_noise_fields(payload: dict[str, Any]) -> dict[str, Any]:
-    """Remove run-only transport fields not useful for model reasoning."""
-    keys_to_drop = (
-        "command_exit_code",
-        "payload_total_bytes",
-        "capture_kind",
-        "expires_at",
-        "status",
-        "tags",
-    )
-    sanitized = dict(payload)
-    for key in keys_to_drop:
-        sanitized.pop(key, None)
-    return sanitized
 
 
 def serve(argv: list[str] | None = None) -> int:
