@@ -121,6 +121,11 @@ def build_report(
     baseline_total = len(baseline_results)
     sift_total = len(sift_results)
 
+    baseline_errors = sum(
+        1 for r in baseline_results if not r.get("attempted", True)
+    )
+    sift_errors = sum(1 for r in sift_results if not r.get("attempted", True))
+
     baseline_input_tokens = sum(
         r.get("input_tokens", 0) for r in baseline_results
     )
@@ -145,8 +150,10 @@ def build_report(
             datasets[ds] = {
                 "baseline_correct": 0,
                 "baseline_total": 0,
+                "baseline_errors": 0,
                 "sift_correct": 0,
                 "sift_total": 0,
+                "sift_errors": 0,
                 "baseline_input_tokens": 0,
                 "sift_input_tokens": 0,
             }
@@ -155,11 +162,15 @@ def build_report(
             entry["baseline_total"] += 1
             if r.get("correct"):
                 entry["baseline_correct"] += 1
+            if not r.get("attempted", True):
+                entry["baseline_errors"] += 1
             entry["baseline_input_tokens"] += r.get("input_tokens", 0)
         elif cond == "sift":
             entry["sift_total"] += 1
             if r.get("correct"):
                 entry["sift_correct"] += 1
+            if not r.get("attempted", True):
+                entry["sift_errors"] += 1
             entry["sift_input_tokens"] += r.get("input_tokens", 0)
 
     # Per-question-type breakdown
@@ -202,6 +213,10 @@ def build_report(
             "sift_input_tokens": sift_input_tokens,
             "sift_output_tokens": sift_output_tokens,
             "token_reduction_pct": round(token_reduction_pct, 1),
+            "baseline_errors": baseline_errors,
+            "baseline_attempted": baseline_total - baseline_errors,
+            "sift_errors": sift_errors,
+            "sift_attempted": sift_total - sift_errors,
         },
         "per_dataset": datasets,
         "per_question_type": qtypes,
@@ -217,18 +232,21 @@ def print_summary_table(report: dict[str, Any]) -> None:
     print("=" * 70)
     print(
         f"\n  {'Condition':<12} {'Accuracy':>10} "
+        f"{'Errors':>8} "
         f"{'Input Tok':>12} {'Output Tok':>12}"
     )
-    print("  " + "-" * 50)
+    print("  " + "-" * 58)
     print(
         f"  {'Baseline':<12} "
         f"{summary['baseline_accuracy']:>10} "
+        f"{summary.get('baseline_errors', 0):>8} "
         f"{summary['baseline_input_tokens']:>12,} "
         f"{summary['baseline_output_tokens']:>12,}"
     )
     print(
         f"  {'Sift':<12} "
         f"{summary['sift_accuracy']:>10} "
+        f"{summary.get('sift_errors', 0):>8} "
         f"{summary['sift_input_tokens']:>12,} "
         f"{summary['sift_output_tokens']:>12,}"
     )
@@ -248,7 +266,13 @@ def print_summary_table(report: dict[str, Any]) -> None:
             if ds["sift_total"]
             else "—"
         )
-        print(f"  {ds_name:<15} {b_acc:>10} {s_acc:>10}")
+        errors: list[str] = []
+        if ds.get("baseline_errors"):
+            errors.append(f"b_err={ds['baseline_errors']}")
+        if ds.get("sift_errors"):
+            errors.append(f"s_err={ds['sift_errors']}")
+        suffix = f"  ({', '.join(errors)})" if errors else ""
+        print(f"  {ds_name:<15} {b_acc:>10} {s_acc:>10}{suffix}")
 
     # Per-question-type
     print(f"\n  {'Question Type':<15} {'Baseline':>10} {'Sift':>10}")
