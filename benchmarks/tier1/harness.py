@@ -480,12 +480,15 @@ def _format_schema_for_prompt(describe_result: dict[str, Any]) -> str:
                 line += f" — e.g. {example_str}"
             parts.append(line)
 
-        # Detect columnar layout: object root where most fields
-        # are arrays (e.g. weather data stored as parallel arrays).
+        # Resolve the root entry once; reused by the columnar and
+        # nested-field hints below.
         matching_root = next(
             (r for r in roots if r.get("root_path") == rp),
             None,
         )
+
+        # Detect columnar layout: object root where most fields
+        # are arrays (e.g. weather data stored as parallel arrays).
         if (
             matching_root is not None
             and matching_root.get("root_shape") == "object"
@@ -507,16 +510,23 @@ def _format_schema_for_prompt(describe_result: dict[str, Any]) -> str:
                     for f in fields
                     if _field_has_type(f, "array")
                 )
-                null_hint = ""
                 if has_nullable:
-                    null_hint = (
-                        "\nWARNING: Array values may contain"
-                        " None/null entries."
-                        "\nAlways filter before aggregating:"
+                    # When arrays contain nulls, show only the
+                    # filter-then-aggregate pattern so the LLM
+                    # doesn't copy an unsafe sum() example.
+                    example_block = (
+                        "\nExample pattern (filter nulls first):"
                         f"\n  valid = [v for v in"
                         f' data["{example_field}"]'
                         " if v is not None]"
-                        "\n  total = sum(valid)"
+                        f"\n  total = sum(valid)"
+                        f'\n  n = len(data["{example_field}"])'
+                    )
+                else:
+                    example_block = (
+                        "\nExample pattern:"
+                        f'\n  total = sum(data["{example_field}"])'
+                        f'\n  n = len(data["{example_field}"])'
                     )
                 parts.append(
                     "\nIMPORTANT — This root is columnar"
@@ -527,18 +537,11 @@ def _format_schema_for_prompt(describe_result: dict[str, Any]) -> str:
                     " i corresponds to the same record."
                     f'\nAccess: data["{example_field}"][i],'
                     ' NOT data[i]["field"].'
-                    "\nExample pattern:"
-                    f'\n  total = sum(data["{example_field}"])'
-                    f'\n  n = len(data["{example_field}"])'
-                    f"{null_hint}"
+                    f"{example_block}"
                 )
 
         # Detect deeply nested fields in array roots and add a
         # path→code hint so the LLM navigates them correctly.
-        matching_root = matching_root or next(
-            (r for r in roots if r.get("root_path") == rp),
-            None,
-        )
         if (
             matching_root is not None
             and matching_root.get("root_shape") == "array"

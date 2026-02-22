@@ -452,8 +452,12 @@ class TestFormatSchemaForPrompt:
         }
         result = _format_schema_for_prompt(describe)
         assert "columnar" in result
-        assert "None/null" in result
         assert "is not None" in result
+        # Nullable example should show filter-then-aggregate,
+        # not the unsafe raw sum() pattern.
+        assert "filter nulls first" in result
+        assert "sum(valid)" in result
+        assert 'sum(data["temp"])' not in result
 
     def test_columnar_hint_no_nullable_warning_when_clean(self) -> None:
         describe = {
@@ -477,6 +481,8 @@ class TestFormatSchemaForPrompt:
         result = _format_schema_for_prompt(describe)
         assert "columnar" in result
         assert "None/null" not in result
+        # Non-nullable should show the direct sum() pattern.
+        assert 'sum(data["a"])' in result
 
     def test_no_columnar_hint_for_array_root(self) -> None:
         describe = {
@@ -616,7 +622,11 @@ class TestFormatSchemaForPrompt:
         result = _format_schema_for_prompt(describe)
         assert "Nested field access" in result
         assert '["birth"]["place"]["country"]["en"]' in result
-        assert ".get(" in result
+        # Verify the exact .get()-chain for safe traversal.
+        assert (
+            'item.get("birth", {}).get("place", {})'
+            '.get("country", {}).get("en")'
+        ) in result
 
     def test_no_nested_hint_for_shallow_fields(self) -> None:
         describe = {
