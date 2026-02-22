@@ -130,46 +130,34 @@ def describe_artifact(
     return result
 
 
-def extract_root_path(describe_result: dict[str, Any]) -> str:
-    """Extract the primary root_path from a describe result.
+def extract_root_paths(describe_result: dict[str, Any]) -> list[str]:
+    """Return all mapped root_paths from a describe result.
 
-    When multiple roots exist (e.g. columnar weather data with
-    ``$.hourly.time``, ``$.hourly.temperature_2m``, …), returns
-    ``$`` so that generated code receives the full object and can
-    cross-reference fields.  For single-root payloads, returns
-    that root directly.
-
-    Falls back to ``$`` if no roots are found.
+    Falls back to ``["$"]`` when no roots are found.
     """
     roots = describe_result.get("roots")
     if isinstance(roots, list):
-        root_paths = [
+        paths = [
             root.get("root_path")
             for root in roots
             if isinstance(root, dict)
             and isinstance(root.get("root_path"), str)
             and root.get("root_path")
         ]
-        if len(root_paths) == 1:
-            return root_paths[0]
-        if len(root_paths) > 1:
-            # Multiple roots — use $ so the code gets the full
-            # object and can access all fields.
-            return "$"
+        if paths:
+            return paths
     schemas = describe_result.get("schemas")
     if isinstance(schemas, list):
-        schema_paths = [
+        paths = [
             schema.get("root_path")
             for schema in schemas
             if isinstance(schema, dict)
             and isinstance(schema.get("root_path"), str)
             and schema.get("root_path")
         ]
-        if len(schema_paths) == 1:
-            return schema_paths[0]
-        if len(schema_paths) > 1:
-            return "$"
-    return "$"
+        if paths:
+            return paths
+    return ["$"]
 
 
 def execute_code(

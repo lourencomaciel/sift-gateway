@@ -36,7 +36,7 @@ from benchmarks.tier1.sift_runtime import (
     create_runtime,
     describe_artifact,
     execute_code,
-    extract_root_path,
+    extract_root_paths,
 )
 
 _MAX_BASELINE_BYTES_DEFAULT = 4_000_000
@@ -241,13 +241,31 @@ def _format_schema_for_prompt(describe_result: dict[str, Any]) -> str:
     return "\n".join(parts)
 
 
+def _extract_root_path_from_response(
+    text: str,
+    available: list[str],
+) -> str | None:
+    """Parse a ``# root_path: …`` comment from LLM output.
+
+    Returns ``None`` when no valid selection is found so the caller
+    can fall back to the first available root.
+    """
+    for line in text.strip().splitlines():
+        stripped = line.strip()
+        if stripped.startswith("# root_path:"):
+            candidate = stripped.split(":", 1)[1].strip()
+            if candidate in available:
+                return candidate
+    return None
+
+
 def _run_sift(
     question: Question,
     data: Any,
     *,
     runtime: Any,
     artifact_id: str,
-    root_path: str,
+    root_paths: list[str],
     schema_text: str,
     model: str,
     api_key: str | None,
@@ -260,10 +278,24 @@ def _run_sift(
     total_output_tokens = 0
     total_latency = 0.0
 
+    multi_root = len(root_paths) > 1
+
     # Step 1: Ask LLM to generate code
+    root_selection_block = ""
+    if multi_root:
+        roots_list = "\n".join(f"  - {rp}" for rp in root_paths)
+        root_selection_block = (
+            f"\nAvailable root_paths (data at the chosen root "
+            f"will be extracted and passed as `data`):\n"
+            f"{roots_list}\n\n"
+            f"On the FIRST line of your response, specify which "
+            f"root_path to use as a Python comment:\n"
+            f"# root_path: <chosen_path>\n"
+        )
     codegen_msg = (
         f"Dataset schema:\n{schema_text}\n\n"
         f"Question: {question.question_text}\n\n"
+        f"{root_selection_block}"
         f"Write ONLY the Python function `def run(data, schema, params):` "
         f"that computes the answer. Return the answer value directly "
         f"(not a string description)."
@@ -302,6 +334,15 @@ def _run_sift(
             total_latency += codegen_resp.latency_ms
 
             code = _extract_code_from_response(codegen_resp.text)
+
+            # Resolve which root_path to execute against.
+            if multi_root:
+                selected = _extract_root_path_from_response(
+                    codegen_resp.text, root_paths
+                )
+                root_path = selected if selected else root_paths[0]
+            else:
+                root_path = root_paths[0]
 
             code_result = execute_code(
                 runtime,
@@ -598,9 +639,9 @@ def _run_sift_condition(
                 runtime,
                 artifact_id=artifact_id,
             )
-            root_path = extract_root_path(describe_result)
+            root_paths = extract_root_paths(describe_result)
             schema_text = _format_schema_for_prompt(describe_result)
-            print(f"    root_path: {root_path}")
+            print(f"    root_paths: {root_paths}")
 
             for q in questions:
                 print(f"  [{name}] {q.question_id}: {q.question_text[:50]}...")
@@ -609,7 +650,7 @@ def _run_sift_condition(
                     data,
                     runtime=runtime,
                     artifact_id=artifact_id,
-                    root_path=root_path,
+                    root_paths=root_paths,
                     schema_text=schema_text,
                     model=args.model,
                     api_key=args.api_key,
