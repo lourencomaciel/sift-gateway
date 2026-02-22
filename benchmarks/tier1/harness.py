@@ -342,6 +342,64 @@ def _extract_code_from_response(text: str) -> str:
     return candidates[0] if candidates else text.strip()
 
 
+def _field_path(field: dict[str, Any]) -> str:
+    """Extract field path, supporting both ``path`` and ``field_path`` keys."""
+    return str(field.get("path") or field.get("field_path") or "?")
+
+
+def _field_type_names(field: dict[str, Any]) -> list[str]:
+    """Extract type names as a list from either list or string format."""
+    raw = field.get("types", [])
+    if isinstance(raw, list):
+        return [str(t) for t in raw]
+    if isinstance(raw, str):
+        return [raw]
+    return []
+
+
+def _field_has_type(field: dict[str, Any], type_name: str) -> bool:
+    """Check if a field contains a specific type (list or string format)."""
+    for t in _field_type_names(field):
+        if t == type_name or t.startswith(f"{type_name}<"):
+            return True
+    return False
+
+
+def _build_nesting_hint(
+    field_path: str,
+    all_fields: list[dict[str, Any]],
+) -> str | None:
+    """Build inline dict annotation for object-typed fields.
+
+    For a field like ``$[*].birth.place.country`` with type ``object``,
+    looks at direct children to produce a compact hint such as
+    ``{"en": string, "no": string, "se": string}``.
+    """
+    prefix = field_path + "."
+    children: list[tuple[str, str]] = []
+
+    for f in all_fields:
+        fp = _field_path(f)
+        if not fp.startswith(prefix):
+            continue
+        remainder = fp[len(prefix) :]
+        # Only direct children — no further nesting.
+        if "." in remainder or "[" in remainder:
+            continue
+        types = _field_type_names(f)
+        type_str = types[0] if len(types) == 1 else "/".join(types)
+        children.append((remainder, type_str))
+
+    if not children:
+        return None
+
+    max_shown = 4
+    parts = [f'"{k}": {v}' for k, v in children[:max_shown]]
+    if len(children) > max_shown:
+        return "{" + ", ".join(parts) + ", ...}"
+    return "{" + ", ".join(parts) + "}"
+
+
 def _format_schema_for_prompt(describe_result: dict[str, Any]) -> str:
     """Format schema info from describe result into a prompt string."""
     schemas = describe_result.get("schemas", [])
@@ -362,11 +420,18 @@ def _format_schema_for_prompt(describe_result: dict[str, Any]) -> str:
         parts.append(f"\nSchema for root '{rp}':")
         fields = schema.get("fields", [])
         for field in fields:
-            fp = field.get("field_path", "?")
+            fp = _field_path(field)
             types = field.get("types", "?")
             example = field.get("example_value")
             nullable = field.get("nullable", False)
-            line = f"  - {fp}: {types}"
+
+            # For object-typed fields, show inline nesting hint
+            # so the LLM knows to drill into nested keys.
+            nesting = None
+            if _field_has_type(field, "object"):
+                nesting = _build_nesting_hint(fp, fields)
+
+            line = f"  - {fp}: {nesting}" if nesting else f"  - {fp}: {types}"
             if nullable:
                 line += " (nullable)"
             if example is not None:
@@ -387,16 +452,14 @@ def _format_schema_for_prompt(describe_result: dict[str, Any]) -> str:
             and matching_root.get("root_shape") == "object"
             and fields
         ):
-            array_count = sum(
-                1 for f in fields if str(f.get("types", "")).startswith("array")
-            )
+            array_count = sum(1 for f in fields if _field_has_type(f, "array"))
             if array_count >= len(fields) / 2:
                 # Pick the first array field name for the example.
                 example_field = next(
                     (
-                        f.get("field_path", "").rsplit(".", 1)[-1]
+                        _field_path(f).rsplit(".", 1)[-1]
                         for f in fields
-                        if str(f.get("types", "")).startswith("array")
+                        if _field_has_type(f, "array")
                     ),
                     "field",
                 )

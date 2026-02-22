@@ -6,9 +6,13 @@ import json
 from unittest.mock import patch
 
 from benchmarks.tier1.harness import (
+    _build_nesting_hint,
     _effective_max_bytes,
     _extract_code_from_response,
     _extract_root_path_from_response,
+    _field_has_type,
+    _field_path,
+    _field_type_names,
     _fits,
     _format_schema_for_prompt,
     _make_result,
@@ -202,6 +206,99 @@ class TestTruncateForBaseline:
         assert parsed["_truncated"] is True
 
 
+# -- _field_path / _field_type_names / _field_has_type --
+
+
+class TestFieldHelpers:
+    def test_field_path_prefers_path_key(self) -> None:
+        assert _field_path({"path": "$.a", "field_path": "$.b"}) == "$.a"
+
+    def test_field_path_falls_back_to_field_path(self) -> None:
+        assert _field_path({"field_path": "$.b"}) == "$.b"
+
+    def test_field_path_default(self) -> None:
+        assert _field_path({}) == "?"
+
+    def test_field_type_names_list(self) -> None:
+        assert _field_type_names({"types": ["string"]}) == ["string"]
+
+    def test_field_type_names_string(self) -> None:
+        assert _field_type_names({"types": "number"}) == ["number"]
+
+    def test_field_type_names_empty(self) -> None:
+        assert _field_type_names({}) == []
+
+    def test_field_has_type_exact_match(self) -> None:
+        assert _field_has_type({"types": ["array"]}, "array")
+
+    def test_field_has_type_parametric(self) -> None:
+        assert _field_has_type({"types": "array<number>"}, "array")
+
+    def test_field_has_type_no_match(self) -> None:
+        assert not _field_has_type({"types": ["string"]}, "array")
+
+
+# -- _build_nesting_hint --
+
+
+class TestBuildNestingHint:
+    def test_simple_nesting(self) -> None:
+        fields = [
+            {"path": "$[*].country", "types": ["object"]},
+            {"path": "$[*].country.en", "types": ["string"]},
+            {"path": "$[*].country.no", "types": ["string"]},
+        ]
+        hint = _build_nesting_hint("$[*].country", fields)
+        assert hint == '{"en": string, "no": string}'
+
+    def test_no_children(self) -> None:
+        fields = [
+            {"path": "$[*].name", "types": ["string"]},
+        ]
+        assert _build_nesting_hint("$[*].name", fields) is None
+
+    def test_skips_nested_children(self) -> None:
+        fields = [
+            {"path": "$[*].birth", "types": ["object"]},
+            {"path": "$[*].birth.date", "types": ["string"]},
+            {"path": "$[*].birth.place", "types": ["object"]},
+            {"path": "$[*].birth.place.country", "types": ["object"]},
+        ]
+        hint = _build_nesting_hint("$[*].birth", fields)
+        # Should only show direct children, not deeper nesting.
+        assert hint == '{"date": string, "place": object}'
+
+    def test_truncates_many_keys(self) -> None:
+        fields = [{"path": "$[*].obj", "types": ["object"]}]
+        fields.extend(
+            {"path": f"$[*].obj.k{i}", "types": ["string"]} for i in range(6)
+        )
+        hint = _build_nesting_hint("$[*].obj", fields)
+        assert hint is not None
+        assert hint.endswith(", ...}")
+        # Should show at most 4 keys.
+        assert hint.count(":") == 4
+
+    def test_mixed_child_types(self) -> None:
+        fields = [
+            {"path": "$[*].meta", "types": ["object"]},
+            {"path": "$[*].meta.id", "types": ["number"]},
+            {"path": "$[*].meta.tags", "types": ["array"]},
+            {"path": "$[*].meta.active", "types": ["boolean", "null"]},
+        ]
+        hint = _build_nesting_hint("$[*].meta", fields)
+        assert hint == '{"id": number, "tags": array, "active": boolean/null}'
+
+    def test_field_path_key_fallback(self) -> None:
+        """Supports legacy field_path key for backward compat."""
+        fields = [
+            {"field_path": "$.x", "types": ["object"]},
+            {"field_path": "$.x.a", "types": ["string"]},
+        ]
+        hint = _build_nesting_hint("$.x", fields)
+        assert hint == '{"a": string}'
+
+
 # -- _format_schema_for_prompt: columnar hint --
 
 
@@ -219,12 +316,9 @@ class TestFormatSchemaForPrompt:
                 {
                     "root_path": "$",
                     "fields": [
-                        {"field_path": "$.temp", "types": "array<number>"},
-                        {
-                            "field_path": "$.humidity",
-                            "types": "array<number>",
-                        },
-                        {"field_path": "$.city", "types": "array<string>"},
+                        {"path": "$.temp", "types": ["array"]},
+                        {"path": "$.humidity", "types": ["array"]},
+                        {"path": "$.city", "types": ["array"]},
                     ],
                 },
             ],
@@ -236,6 +330,30 @@ class TestFormatSchemaForPrompt:
         # Should include a concrete code example with actual field name.
         assert 'data["temp"]' in result
         assert "sum(" in result
+
+    def test_columnar_hint_with_string_types(self) -> None:
+        """Columnar detection works with legacy string-format types."""
+        describe = {
+            "roots": [
+                {
+                    "root_path": "$",
+                    "count_estimate": 100,
+                    "root_shape": "object",
+                },
+            ],
+            "schemas": [
+                {
+                    "root_path": "$",
+                    "fields": [
+                        {"path": "$.temp", "types": "array<number>"},
+                        {"path": "$.humidity", "types": "array<number>"},
+                        {"path": "$.city", "types": "array<string>"},
+                    ],
+                },
+            ],
+        }
+        result = _format_schema_for_prompt(describe)
+        assert "columnar" in result
 
     def test_no_columnar_hint_for_array_root(self) -> None:
         describe = {
@@ -250,8 +368,8 @@ class TestFormatSchemaForPrompt:
                 {
                     "root_path": "$",
                     "fields": [
-                        {"field_path": "$.name", "types": "string"},
-                        {"field_path": "$.age", "types": "number"},
+                        {"path": "$.name", "types": ["string"]},
+                        {"path": "$.age", "types": ["number"]},
                     ],
                 },
             ],
@@ -272,15 +390,64 @@ class TestFormatSchemaForPrompt:
                 {
                     "root_path": "$",
                     "fields": [
-                        {"field_path": "$.name", "types": "string"},
-                        {"field_path": "$.age", "types": "number"},
-                        {"field_path": "$.tags", "types": "array<string>"},
+                        {"path": "$.name", "types": ["string"]},
+                        {"path": "$.age", "types": ["number"]},
+                        {"path": "$.tags", "types": ["array"]},
                     ],
                 },
             ],
         }
         result = _format_schema_for_prompt(describe)
         assert "columnar" not in result
+
+    def test_nesting_hint_for_object_fields(self) -> None:
+        describe = {
+            "roots": [
+                {
+                    "root_path": "$",
+                    "count_estimate": 100,
+                    "root_shape": "array",
+                },
+            ],
+            "schemas": [
+                {
+                    "root_path": "$",
+                    "fields": [
+                        {"path": "$[*].name", "types": ["string"]},
+                        {"path": "$[*].country", "types": ["object"]},
+                        {
+                            "path": "$[*].country.en",
+                            "types": ["string"],
+                        },
+                        {
+                            "path": "$[*].country.no",
+                            "types": ["string"],
+                        },
+                    ],
+                },
+            ],
+        }
+        result = _format_schema_for_prompt(describe)
+        assert '{"en": string, "no": string}' in result
+        # Child fields should still appear in the flat listing.
+        assert "$[*].country.en" in result
+
+    def test_field_paths_displayed_from_path_key(self) -> None:
+        """Describe result uses 'path' key, not 'field_path'."""
+        describe = {
+            "roots": [],
+            "schemas": [
+                {
+                    "root_path": "$",
+                    "fields": [
+                        {"path": "$[*].id", "types": ["number"]},
+                    ],
+                },
+            ],
+        }
+        result = _format_schema_for_prompt(describe)
+        assert "$[*].id" in result
+        assert "?" not in result
 
 
 # -- _make_result --
