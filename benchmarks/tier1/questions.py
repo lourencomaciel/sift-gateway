@@ -199,7 +199,9 @@ def _prod_expensive_high_rated(data: Any) -> str:
         1
         for p in data
         if isinstance(p, dict)
+        and p.get("price") is not None
         and _safe_float(p.get("price")) > 50
+        and p.get("rating") is not None
         and _safe_float(p.get("rating")) > 4.5
     )
     return str(count)
@@ -305,6 +307,9 @@ def _users_blood_group_count(data: Any) -> str:
 
 
 def _users_pct_over40(data: Any) -> str:
+    # Denominator is all user records, including those with missing
+    # age, so the percentage is "of all users" not "of users with
+    # known age".  This matches the question text intent.
     total = sum(1 for u in data if isinstance(u, dict))
     if total == 0:
         return "0"
@@ -685,6 +690,8 @@ def _weather_coldest_day(data: Any) -> str:
         return ""
     daily_sums: dict[str, float] = {}
     daily_counts: dict[str, int] = {}
+    # strict=False: gold functions must not crash on malformed data;
+    # the API contract guarantees equal lengths but we stay defensive.
     for t, temp in zip(times, temps, strict=False):
         if (
             not isinstance(t, str)
@@ -713,6 +720,7 @@ def _weather_cold_precip_hours(data: Any) -> str:
         return "0"
     count = sum(
         1
+        # strict=False: defensive; see _weather_coldest_day.
         for t, p in zip(temps, precip, strict=False)
         if isinstance(t, (int, float))
         and isinstance(p, (int, float))
@@ -1171,7 +1179,7 @@ QUESTIONS: list[Question] = [
         question_id="prod_top3_expensive",
         question_text=(
             "What are the titles of the 3 most expensive "
-            "products? Return a JSON array."
+            "products? Return a JSON array in any order."
         ),
         question_type="top_n",
         gold_answer_fn=_prod_top3_expensive,
