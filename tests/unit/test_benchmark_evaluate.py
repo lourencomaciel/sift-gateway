@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 from benchmarks.tier1.evaluate import (
-    _latency_percentiles,
     build_report,
     evaluate_answer,
+    latency_percentiles,
     match_boolean,
     match_list,
     match_number,
@@ -261,22 +261,22 @@ class TestEvaluateAnswer:
         assert not evaluate_answer("London", "Paris", answer_type="unknown")
 
 
-# -- _latency_percentiles --
+# -- latency_percentiles --
 
 
 class TestLatencyPercentiles:
     def test_empty_list(self) -> None:
-        assert _latency_percentiles([]) == {}
+        assert latency_percentiles([]) == {}
 
     def test_single_value(self) -> None:
-        result = _latency_percentiles([100.0])
+        result = latency_percentiles([100.0])
         assert result["p50_ms"] == 100.0
         assert result["p90_ms"] == 100.0
         assert result["mean_ms"] == 100.0
         assert result["count"] == 1
 
     def test_two_values(self) -> None:
-        result = _latency_percentiles([100.0, 200.0])
+        result = latency_percentiles([100.0, 200.0])
         assert result["count"] == 2
         assert result["mean_ms"] == 150.0
         # statistics.median interpolates midpoint for even n
@@ -297,7 +297,7 @@ class TestLatencyPercentiles:
             90.0,
             100.0,
         ]
-        result = _latency_percentiles(latencies)
+        result = latency_percentiles(latencies)
         assert result["count"] == 10
         assert result["mean_ms"] == 55.0
         # statistics.median: (50+60)/2 = 55.0 for even n

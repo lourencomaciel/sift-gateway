@@ -197,6 +197,7 @@ def _prod_total_stock(data: Any) -> str:
     return str(total)
 
 
+# price>50 & rating>4.5 (stricter variant; cf. _prod_price_gt50_rating_gt4)
 def _prod_expensive_high_rated(data: Any) -> str:
     count = sum(
         1
@@ -828,6 +829,7 @@ def _eq_california_count(data: Any) -> str:
 # products (round 2)
 
 
+# price>50 & rating>4.0 (relaxed variant; cf. _prod_expensive_high_rated)
 def _prod_price_gt50_rating_gt4(data: Any) -> str:
     count = sum(
         1
@@ -1010,7 +1012,8 @@ def _laureates_oldest_living_birth_year(data: Any) -> str:
     for la in data:
         if not isinstance(la, dict):
             continue
-        if "death" in la:
+        death = la.get("death")
+        if isinstance(death, dict) and death.get("date"):
             continue
         born = la.get("birth", {})
         if not isinstance(born, dict):
@@ -1093,7 +1096,7 @@ def _weather_peak_temp_hour(data: Any) -> str:
         return ""
     best = max(
         hour_sums,
-        key=lambda h: hour_sums[h] / hour_counts[h],
+        key=lambda h: (hour_sums[h] / hour_counts[h], h),
     )
     return str(best)
 
@@ -1816,6 +1819,7 @@ QUESTIONS: list[Question] = [
         question_type="count",
         gold_answer_fn=_laureates_distinct_birth_countries,
         answer_type="number",
+        difficulty=2,
     ),
     # weather (5)
     Question(
