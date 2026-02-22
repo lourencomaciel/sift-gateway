@@ -809,6 +809,10 @@ QUESTIONS: list[Question] = [
         question_type="aggregation",
         gold_answer_fn=_countries_europe_population,
         answer_type="number",
+        # Population sum (~741 M) can differ by small amounts
+        # when LLM-generated code uses float arithmetic instead
+        # of exact int sums.
+        tolerance=1000,
     ),
     Question(
         dataset_name="countries",

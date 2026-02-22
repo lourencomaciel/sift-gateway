@@ -49,12 +49,16 @@ from benchmarks.tier1.sift_runtime import (
 
 _MAX_BASELINE_BYTES_DEFAULT = 400_000
 
-# Conservative estimate: structured JSON tokenizes at roughly
-# 3 bytes per token (short keys, numbers, punctuation each become
-# separate tokens).  The limit leaves ~20K tokens headroom for
+# Conservative estimate: structured JSON tokenizes poorly — short
+# keys, numbers, and punctuation each become separate tokens.
+# Empirically, GeoJSON and similar structured data tokenize at
+# ~2 bytes/token; plain-text JSON is closer to 3.  Using 2 here
+# ensures the token-derived cap actually constrains the payload
+# (at 3, the byte cap always wins and the token limit is dead
+# code).  The token limit leaves ~20K tokens headroom for the
 # system prompt + question text.
 _MAX_BASELINE_TOKENS_DEFAULT = 180_000
-_BYTES_PER_TOKEN_JSON = 3
+_BYTES_PER_TOKEN_JSON = 2
 
 _BASELINE_SYSTEM = (
     "You are a data analyst. Answer the question about the JSON data "
@@ -368,6 +372,36 @@ def _field_has_type(field: dict[str, Any], type_name: str) -> bool:
 _MAX_NESTING_HINT_KEYS = 4
 
 
+def _split_path_segments(path: str) -> list[str]:
+    """Split a relative schema path into key segments.
+
+    Handles both dot notation (``a.b.c``) and bracket notation
+    (``a['key.with.dots'].c``) produced by ``normalize_path_segment``.
+    """
+    segments: list[str] = []
+    i = 0
+    while i < len(path):
+        if path[i] == ".":
+            i += 1
+            continue
+        if path[i : i + 2] == "['":
+            end = path.find("']", i + 2)
+            if end == -1:
+                break
+            segments.append(path[i + 2 : end])
+            i = end + 2
+        else:
+            # Dot-delimited segment: read up to next `.` or `['`.
+            end = len(path)
+            for delim in (".", "['"):
+                pos = path.find(delim, i)
+                if pos != -1 and pos < end:
+                    end = pos
+            segments.append(path[i:end])
+            i = end
+    return segments
+
+
 def _is_direct_child(parent_path: str, child_path: str) -> str | None:
     """Return the child key name if *child_path* is a direct child of *parent_path*.
 
@@ -476,12 +510,15 @@ def _format_schema_for_prompt(describe_result: dict[str, Any]) -> str:
                 line += f" — e.g. {example_str}"
             parts.append(line)
 
-        # Detect columnar layout: object root where most fields
-        # are arrays (e.g. weather data stored as parallel arrays).
+        # Resolve the root entry once; reused by the columnar and
+        # nested-field hints below.
         matching_root = next(
             (r for r in roots if r.get("root_path") == rp),
             None,
         )
+
+        # Detect columnar layout: object root where most fields
+        # are arrays (e.g. weather data stored as parallel arrays).
         if (
             matching_root is not None
             and matching_root.get("root_shape") == "object"
@@ -498,6 +535,29 @@ def _format_schema_for_prompt(describe_result: dict[str, Any]) -> str:
                     ),
                     "field",
                 )
+                has_nullable = any(
+                    f.get("nullable", False)
+                    for f in fields
+                    if _field_has_type(f, "array")
+                )
+                if has_nullable:
+                    # When arrays contain nulls, show only the
+                    # filter-then-aggregate pattern so the LLM
+                    # doesn't copy an unsafe sum() example.
+                    example_block = (
+                        "\nExample pattern (filter nulls first):"
+                        f"\n  valid = [v for v in"
+                        f' data["{example_field}"]'
+                        " if v is not None]"
+                        f"\n  total = sum(valid)"
+                        f"\n  n = len(valid)"
+                    )
+                else:
+                    example_block = (
+                        "\nExample pattern:"
+                        f'\n  total = sum(data["{example_field}"])'
+                        f'\n  n = len(data["{example_field}"])'
+                    )
                 parts.append(
                     "\nIMPORTANT — This root is columnar"
                     " (dict of parallel arrays)."
@@ -507,9 +567,58 @@ def _format_schema_for_prompt(describe_result: dict[str, Any]) -> str:
                     " i corresponds to the same record."
                     f'\nAccess: data["{example_field}"][i],'
                     ' NOT data[i]["field"].'
-                    "\nExample pattern:"
-                    f'\n  total = sum(data["{example_field}"])'
-                    f'\n  n = len(data["{example_field}"])'
+                    f"{example_block}"
+                )
+
+        # Detect deeply nested fields in array roots and add a
+        # path→code hint so the LLM navigates them correctly.
+        if (
+            matching_root is not None
+            and matching_root.get("root_shape") == "array"
+            and fields
+        ):
+            # Find the deepest nested example (most dots after
+            # stripping the $[*]. prefix).
+            prefix = rp.rstrip(".") + "[*]."
+            nested_examples: list[tuple[str, str]] = []
+            for f in fields:
+                fp = _field_path(f)
+                if not fp.startswith(prefix):
+                    continue
+                relative = fp[len(prefix) :]
+                segments = _split_path_segments(relative)
+                if len(segments) < 2:
+                    continue
+                access = "".join(
+                    f'["{s}"]' for s in segments
+                )
+                nested_examples.append((fp, access))
+
+            if nested_examples:
+                # Pick the deepest path as the example.
+                nested_examples.sort(
+                    key=lambda t: t[0].count("."),
+                    reverse=True,
+                )
+                fp_eg, access_eg = nested_examples[0]
+                # Build a .get()-chain for safe traversal.
+                eg_segments = _split_path_segments(
+                    fp_eg[len(prefix) :]
+                )
+                get_chain = "item"
+                for seg in eg_segments[:-1]:
+                    get_chain += f'.get("{seg}", {{}})'
+                get_chain += f'.get("{eg_segments[-1]}")'
+                parts.append(
+                    "\nNested field access: schema paths"
+                    " use dots for nesting."
+                    "\nTranslate each dot segment into"
+                    " a dict lookup."
+                    f"\n  {fp_eg}"
+                    f"\n  → item{access_eg}"
+                    "\nUse .get() for safe nested"
+                    " traversal to avoid KeyError:"
+                    f"\n  {get_chain}"
                 )
 
     return "\n".join(parts)
