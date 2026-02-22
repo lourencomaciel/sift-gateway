@@ -48,15 +48,20 @@ def _stub_question(**overrides: object) -> Question:
 
 class TestEffectiveMaxBytes:
     def test_byte_cap_wins_when_smaller(self) -> None:
-        # 100_000 bytes < 200_000 * 3 = 600_000
+        # 100_000 bytes < 200_000 * 2 = 400_000
         assert _effective_max_bytes(100_000, 200_000) == 100_000
 
     def test_token_derived_wins_when_smaller(self) -> None:
-        # 500_000 bytes > 100_000 * 3 = 300_000
-        assert _effective_max_bytes(500_000, 100_000) == 300_000
+        # 500_000 bytes > 100_000 * 2 = 200_000
+        assert _effective_max_bytes(500_000, 100_000) == 200_000
 
     def test_equal_caps(self) -> None:
-        assert _effective_max_bytes(300_000, 100_000) == 300_000
+        assert _effective_max_bytes(200_000, 100_000) == 200_000
+
+    def test_default_caps_token_derived_wins(self) -> None:
+        # With defaults (400K bytes, 180K tokens), the token-
+        # derived cap (360K) is smaller and should be effective.
+        assert _effective_max_bytes(400_000, 180_000) == 360_000
 
 
 # -- _fits --
@@ -178,13 +183,13 @@ class TestTruncateForBaseline:
         assert len(parsed) < 100_000
 
     def test_token_limit_caps_before_byte_limit(self) -> None:
-        # With max_tokens=100 and 3 bytes/token, effective limit = 300
+        # With max_tokens=100 and 2 bytes/token, effective limit = 200
         data = list(range(10_000))
         text, truncated = _truncate_for_baseline(
             data, max_bytes=1_000_000, max_tokens=100
         )
         assert truncated
-        assert len(text.encode("utf-8")) <= 300
+        assert len(text.encode("utf-8")) <= 200
 
     def test_truncates_dict_with_arrays(self) -> None:
         data = {"vals": list(range(10_000))}
@@ -417,6 +422,62 @@ class TestFormatSchemaForPrompt:
         result = _format_schema_for_prompt(describe)
         assert "columnar" in result
 
+    def test_columnar_hint_nullable_warning(self) -> None:
+        describe = {
+            "roots": [
+                {
+                    "root_path": "$",
+                    "count_estimate": 100,
+                    "root_shape": "object",
+                },
+            ],
+            "schemas": [
+                {
+                    "root_path": "$",
+                    "fields": [
+                        {
+                            "path": "$.temp",
+                            "types": ["array"],
+                            "nullable": True,
+                        },
+                        {
+                            "path": "$.wind",
+                            "types": ["array"],
+                            "nullable": True,
+                        },
+                        {"path": "$.time", "types": ["array"]},
+                    ],
+                },
+            ],
+        }
+        result = _format_schema_for_prompt(describe)
+        assert "columnar" in result
+        assert "None/null" in result
+        assert "is not None" in result
+
+    def test_columnar_hint_no_nullable_warning_when_clean(self) -> None:
+        describe = {
+            "roots": [
+                {
+                    "root_path": "$",
+                    "count_estimate": 100,
+                    "root_shape": "object",
+                },
+            ],
+            "schemas": [
+                {
+                    "root_path": "$",
+                    "fields": [
+                        {"path": "$.a", "types": ["array"]},
+                        {"path": "$.b", "types": ["array"]},
+                    ],
+                },
+            ],
+        }
+        result = _format_schema_for_prompt(describe)
+        assert "columnar" in result
+        assert "None/null" not in result
+
     def test_no_columnar_hint_for_array_root(self) -> None:
         describe = {
             "roots": [
@@ -516,6 +577,68 @@ class TestFormatSchemaForPrompt:
         }
         result = _format_schema_for_prompt(describe)
         assert 'object/string {"en": string}' in result
+
+    def test_nested_field_hint_for_array_root(self) -> None:
+        describe = {
+            "roots": [
+                {
+                    "root_path": "$",
+                    "count_estimate": 100,
+                    "root_shape": "array",
+                },
+            ],
+            "schemas": [
+                {
+                    "root_path": "$",
+                    "fields": [
+                        {"path": "$[*].id", "types": ["number"]},
+                        {"path": "$[*].birth", "types": ["object"]},
+                        {
+                            "path": "$[*].birth.date",
+                            "types": ["string"],
+                        },
+                        {
+                            "path": "$[*].birth.place",
+                            "types": ["object"],
+                        },
+                        {
+                            "path": "$[*].birth.place.country",
+                            "types": ["object"],
+                        },
+                        {
+                            "path": "$[*].birth.place.country.en",
+                            "types": ["string"],
+                        },
+                    ],
+                },
+            ],
+        }
+        result = _format_schema_for_prompt(describe)
+        assert "Nested field access" in result
+        assert '["birth"]["place"]["country"]["en"]' in result
+        assert ".get(" in result
+
+    def test_no_nested_hint_for_shallow_fields(self) -> None:
+        describe = {
+            "roots": [
+                {
+                    "root_path": "$",
+                    "count_estimate": 50,
+                    "root_shape": "array",
+                },
+            ],
+            "schemas": [
+                {
+                    "root_path": "$",
+                    "fields": [
+                        {"path": "$[*].name", "types": ["string"]},
+                        {"path": "$[*].age", "types": ["number"]},
+                    ],
+                },
+            ],
+        }
+        result = _format_schema_for_prompt(describe)
+        assert "Nested field access" not in result
 
     def test_field_paths_displayed_from_path_key(self) -> None:
         """Describe result uses 'path' key, not 'field_path'."""

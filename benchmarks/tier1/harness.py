@@ -49,12 +49,16 @@ from benchmarks.tier1.sift_runtime import (
 
 _MAX_BASELINE_BYTES_DEFAULT = 400_000
 
-# Conservative estimate: structured JSON tokenizes at roughly
-# 3 bytes per token (short keys, numbers, punctuation each become
-# separate tokens).  The limit leaves ~20K tokens headroom for
+# Conservative estimate: structured JSON tokenizes poorly — short
+# keys, numbers, and punctuation each become separate tokens.
+# Empirically, GeoJSON and similar structured data tokenize at
+# ~2 bytes/token; plain-text JSON is closer to 3.  Using 2 here
+# ensures the token-derived cap actually constrains the payload
+# (at 3, the byte cap always wins and the token limit is dead
+# code).  The token limit leaves ~20K tokens headroom for the
 # system prompt + question text.
 _MAX_BASELINE_TOKENS_DEFAULT = 180_000
-_BYTES_PER_TOKEN_JSON = 3
+_BYTES_PER_TOKEN_JSON = 2
 
 _BASELINE_SYSTEM = (
     "You are a data analyst. Answer the question about the JSON data "
@@ -498,6 +502,22 @@ def _format_schema_for_prompt(describe_result: dict[str, Any]) -> str:
                     ),
                     "field",
                 )
+                has_nullable = any(
+                    f.get("nullable", False)
+                    for f in fields
+                    if _field_has_type(f, "array")
+                )
+                null_hint = ""
+                if has_nullable:
+                    null_hint = (
+                        "\nWARNING: Array values may contain"
+                        " None/null entries."
+                        "\nAlways filter before aggregating:"
+                        f"\n  valid = [v for v in"
+                        f' data["{example_field}"]'
+                        " if v is not None]"
+                        "\n  total = sum(valid)"
+                    )
                 parts.append(
                     "\nIMPORTANT — This root is columnar"
                     " (dict of parallel arrays)."
@@ -510,6 +530,60 @@ def _format_schema_for_prompt(describe_result: dict[str, Any]) -> str:
                     "\nExample pattern:"
                     f'\n  total = sum(data["{example_field}"])'
                     f'\n  n = len(data["{example_field}"])'
+                    f"{null_hint}"
+                )
+
+        # Detect deeply nested fields in array roots and add a
+        # path→code hint so the LLM navigates them correctly.
+        matching_root = matching_root or next(
+            (r for r in roots if r.get("root_path") == rp),
+            None,
+        )
+        if (
+            matching_root is not None
+            and matching_root.get("root_shape") == "array"
+            and fields
+        ):
+            # Find the deepest nested example (most dots after
+            # stripping the $[*]. prefix).
+            prefix = rp.rstrip(".") + "[*]."
+            nested_examples: list[tuple[str, str]] = []
+            for f in fields:
+                fp = _field_path(f)
+                if not fp.startswith(prefix):
+                    continue
+                relative = fp[len(prefix) :]
+                if "." not in relative:
+                    continue
+                segments = relative.split(".")
+                access = "".join(
+                    f'["{s}"]' for s in segments
+                )
+                nested_examples.append((fp, access))
+
+            if nested_examples:
+                # Pick the deepest path as the example.
+                nested_examples.sort(
+                    key=lambda t: t[0].count("."),
+                    reverse=True,
+                )
+                fp_eg, access_eg = nested_examples[0]
+                # Build a .get()-chain for safe traversal.
+                eg_segments = fp_eg[len(prefix) :].split(".")
+                get_chain = "item"
+                for seg in eg_segments[:-1]:
+                    get_chain += f'.get("{seg}", {{}})'
+                get_chain += f'.get("{eg_segments[-1]}")'
+                parts.append(
+                    "\nNested field access: schema paths"
+                    " use dots for nesting."
+                    "\nTranslate each dot segment into"
+                    " a dict lookup."
+                    f"\n  {fp_eg}"
+                    f"\n  → item{access_eg}"
+                    "\nUse .get() for safe nested"
+                    " traversal to avoid KeyError:"
+                    f"\n  {get_chain}"
                 )
 
     return "\n".join(parts)
