@@ -86,6 +86,7 @@ def _call_anthropic(
     }
 
     backoff = _INITIAL_BACKOFF_S
+    start = time.monotonic()  # total wall-clock including retries
     for attempt in range(_MAX_RETRIES + 1):
         request = urllib.request.Request(
             "https://api.anthropic.com/v1/messages",
@@ -93,7 +94,6 @@ def _call_anthropic(
             data=data,
             headers=headers,
         )
-        start = time.monotonic()
         try:
             with urllib.request.urlopen(request, timeout=120) as resp:
                 body = json.loads(
@@ -157,6 +157,7 @@ def _call_openai(
     }
 
     backoff = _INITIAL_BACKOFF_S
+    start = time.monotonic()  # total wall-clock including retries
     for attempt in range(_MAX_RETRIES + 1):
         request = urllib.request.Request(
             "https://api.openai.com/v1/chat/completions",
@@ -164,7 +165,6 @@ def _call_openai(
             data=data,
             headers=headers,
         )
-        start = time.monotonic()
         try:
             with urllib.request.urlopen(request, timeout=120) as resp:
                 body = json.loads(
@@ -172,7 +172,7 @@ def _call_openai(
                 )
             break
         except urllib.error.HTTPError as exc:
-            if exc.code == 429 and attempt < _MAX_RETRIES:
+            if exc.code in (429, 503) and attempt < _MAX_RETRIES:
                 _log_retry(exc.code, attempt, backoff)
                 time.sleep(backoff)
                 backoff *= 2

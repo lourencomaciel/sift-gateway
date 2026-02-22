@@ -8,7 +8,7 @@ from pathlib import Path
 import time
 from typing import Any
 
-import sift_gateway
+import sift_gateway  # bare import for __file__ path resolution
 from sift_gateway.config import load_gateway_config
 from sift_gateway.constants import CAPTURE_KIND_CLI_COMMAND
 from sift_gateway.core.artifact_capture import execute_artifact_capture
@@ -51,6 +51,7 @@ def create_runtime(
     # Default max_root_discovery_k (3) drops array roots for datasets
     # with more than 3 parallel arrays (e.g. weather has 4 hourly
     # arrays).  Raise the limit so all roots are discoverable.
+    # GatewayConfig (BaseSettings) is not frozen — mutation is safe.
     config.max_root_discovery_k = 20
     config.state_dir.mkdir(parents=True, exist_ok=True)
     config.resources_dir.mkdir(parents=True, exist_ok=True)

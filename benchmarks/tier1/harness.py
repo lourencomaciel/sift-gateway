@@ -57,7 +57,7 @@ _SIFT_CODEGEN_SYSTEM = (
     "root_path — it may be a list of dicts, a list of scalars, or a "
     "dict (e.g. columnar data). `schema` describes the fields and "
     "`params` is an empty dict. Return ONLY the Python function — "
-    "no explanation, no markdown fences."
+    "no explanation."
 )
 
 _SIFT_ANSWER_SYSTEM = (
@@ -77,7 +77,7 @@ def _load_dataset(data_dir: Path, dataset_name: str) -> Any:
             f"Run: python benchmarks/tier1/fetch_data.py"
         )
         raise FileNotFoundError(msg)
-    return json.loads(path.read_bytes().decode("utf-8"))
+    return json.loads(path.read_text(encoding="utf-8"))
 
 
 def _truncate_for_baseline(

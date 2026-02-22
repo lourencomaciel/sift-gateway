@@ -455,6 +455,10 @@ def _laureates_distinct_birth_countries(data: Any) -> str:
 
 
 # -- weather --
+# Gold functions receive the raw downloaded dict (with top-level
+# "hourly" key), NOT the Sift-extracted root_path slice.  The
+# harness calls gold_answer_fn(loaded[name]) before any Sift
+# capture or root selection.
 
 
 def _weather_hourly_count(data: Any) -> str:
