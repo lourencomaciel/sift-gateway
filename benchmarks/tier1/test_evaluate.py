@@ -138,9 +138,7 @@ class TestEvaluateAnswer:
         assert not evaluate_answer("London", "Paris", answer_type="string")
 
     def test_routes_list(self) -> None:
-        assert evaluate_answer(
-            '["a", "b"]', '["b", "a"]', answer_type="list"
-        )
+        assert evaluate_answer('["a", "b"]', '["b", "a"]', answer_type="list")
 
     def test_tolerance_forwarded(self) -> None:
         assert evaluate_answer(

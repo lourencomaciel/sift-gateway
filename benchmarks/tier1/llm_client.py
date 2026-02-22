@@ -96,9 +96,7 @@ def _call_anthropic(
         )
         try:
             with urllib.request.urlopen(request, timeout=120) as resp:
-                body = json.loads(
-                    resp.read().decode("utf-8", errors="replace")
-                )
+                body = json.loads(resp.read().decode("utf-8", errors="replace"))
             break
         except urllib.error.HTTPError as exc:
             if exc.code in (429, 529) and attempt < _MAX_RETRIES:
@@ -111,9 +109,7 @@ def _call_anthropic(
                 f"Anthropic API error ({exc.code}): {error_body}"
             ) from exc
         except urllib.error.URLError as exc:
-            raise RuntimeError(
-                f"Anthropic API request failed: {exc}"
-            ) from exc
+            raise RuntimeError(f"Anthropic API request failed: {exc}") from exc
     latency = (time.monotonic() - start) * 1000.0
 
     text = ""
@@ -167,9 +163,7 @@ def _call_openai(
         )
         try:
             with urllib.request.urlopen(request, timeout=120) as resp:
-                body = json.loads(
-                    resp.read().decode("utf-8", errors="replace")
-                )
+                body = json.loads(resp.read().decode("utf-8", errors="replace"))
             break
         except urllib.error.HTTPError as exc:
             if exc.code in (429, 503) and attempt < _MAX_RETRIES:
@@ -182,9 +176,7 @@ def _call_openai(
                 f"OpenAI API error ({exc.code}): {error_body}"
             ) from exc
         except urllib.error.URLError as exc:
-            raise RuntimeError(
-                f"OpenAI API request failed: {exc}"
-            ) from exc
+            raise RuntimeError(f"OpenAI API request failed: {exc}") from exc
     latency = (time.monotonic() - start) * 1000.0
 
     text = ""

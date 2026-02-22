@@ -233,8 +233,7 @@ def _extract_code_from_response(text: str) -> str:
     # No candidate contains def run — will likely fail at execution
     # and be retried with the error context appended.
     print(
-        "  [warn] LLM response has no 'def run'; "
-        "using raw text as code",
+        "  [warn] LLM response has no 'def run'; using raw text as code",
         file=sys.stderr,
     )
     return candidates[0] if candidates else text.strip()
