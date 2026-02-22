@@ -35,6 +35,10 @@ task_plan.md
 quota_plan.md
 security_best_practices_report.md
 
+# Benchmark data and results
+benchmarks/tier1/data/
+benchmarks/tier1/results/
+
 # Local agent/plan artifacts
 /AGENTS.md
 plans/
