@@ -100,6 +100,12 @@ class TestMatchString:
         # LLM-in-gold direction is not accepted
         assert not match_string("pari", "paris")
 
+    def test_empty_gold_rejects(self) -> None:
+        assert not match_string("anything", "")
+
+    def test_both_empty(self) -> None:
+        assert match_string("", "")
+
 
 # -- match_list --
 

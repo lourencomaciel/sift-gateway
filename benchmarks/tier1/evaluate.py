@@ -58,8 +58,8 @@ def match_string(llm_answer: str, gold_answer: str) -> bool:
     """
     llm_clean = llm_answer.strip().lower()
     gold_clean = gold_answer.strip().lower()
-    if not llm_clean:
-        return False
+    if not llm_clean or not gold_clean:
+        return llm_clean == gold_clean
     if llm_clean == gold_clean:
         return True
     pattern = r"\b" + re.escape(gold_clean) + r"\b"
