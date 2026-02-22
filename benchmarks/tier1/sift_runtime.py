@@ -41,6 +41,10 @@ def create_runtime(
 ) -> Generator[GatewayArtifactQueryRuntime, None, None]:
     """Create a temporary Sift runtime for benchmark operations."""
     config = load_gateway_config(data_dir_override=data_dir)
+    # Default max_root_discovery_k (3) drops array roots for datasets
+    # with more than 3 parallel arrays (e.g. weather has 4 hourly
+    # arrays).  Raise the limit so all roots are discoverable.
+    config.max_root_discovery_k = 20
     config.state_dir.mkdir(parents=True, exist_ok=True)
     config.resources_dir.mkdir(parents=True, exist_ok=True)
     config.blobs_bin_dir.mkdir(parents=True, exist_ok=True)

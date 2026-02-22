@@ -49,10 +49,10 @@ def match_number(
 def match_string(llm_answer: str, gold_answer: str) -> bool:
     """Check if LLM answer matches gold string.
 
-    Accepts exact match or gold-in-LLM (the LLM elaborated).
-    Does NOT accept the reverse direction (LLM-in-gold) because
-    truncated or partial answers like ``"pari"`` would incorrectly
-    match ``"paris"``.
+    Accepts exact match or gold appearing as a whole-word sequence
+    inside the LLM answer (the LLM elaborated).  Uses word-boundary
+    anchors so short golds like ``"ak"`` do not false-match inside
+    unrelated words like ``"make"``.
     """
     llm_clean = llm_answer.strip().lower()
     gold_clean = gold_answer.strip().lower()
@@ -60,7 +60,8 @@ def match_string(llm_answer: str, gold_answer: str) -> bool:
         return False
     if llm_clean == gold_clean:
         return True
-    return gold_clean in llm_clean
+    pattern = r"\b" + re.escape(gold_clean) + r"\b"
+    return re.search(pattern, llm_clean) is not None
 
 
 def match_list(llm_answer: str, gold_answer: str) -> bool:
