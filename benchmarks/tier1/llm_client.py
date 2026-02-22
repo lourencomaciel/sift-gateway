@@ -15,6 +15,15 @@ _MAX_RETRIES = 5
 _INITIAL_BACKOFF_S = 2.0
 
 
+class LLMAPIError(RuntimeError):
+    """Raised when an LLM API call fails (network, auth, rate-limit).
+
+    Distinct from ``CodeExecutionError`` so the harness retry loop
+    can let infrastructure failures propagate immediately instead of
+    misinterpreting them as user-code errors.
+    """
+
+
 @dataclass(frozen=True)
 class LLMResponse:
     """Response from an LLM API call."""
@@ -105,13 +114,13 @@ def _call_anthropic(
                 backoff *= 2
                 continue
             error_body = exc.read().decode("utf-8", errors="replace")
-            raise RuntimeError(
+            raise LLMAPIError(
                 f"Anthropic API error ({exc.code}): {error_body}"
             ) from exc
         except urllib.error.URLError as exc:
-            raise RuntimeError(f"Anthropic API request failed: {exc}") from exc
+            raise LLMAPIError(f"Anthropic API request failed: {exc}") from exc
     else:
-        raise RuntimeError("Anthropic API: exhausted retries")
+        raise LLMAPIError("Anthropic API: exhausted retries")
     latency = (time.monotonic() - start) * 1000.0
 
     text = ""
@@ -174,13 +183,13 @@ def _call_openai(
                 backoff *= 2
                 continue
             error_body = exc.read().decode("utf-8", errors="replace")
-            raise RuntimeError(
+            raise LLMAPIError(
                 f"OpenAI API error ({exc.code}): {error_body}"
             ) from exc
         except urllib.error.URLError as exc:
-            raise RuntimeError(f"OpenAI API request failed: {exc}") from exc
+            raise LLMAPIError(f"OpenAI API request failed: {exc}") from exc
     else:
-        raise RuntimeError("OpenAI API: exhausted retries")
+        raise LLMAPIError("OpenAI API: exhausted retries")
     latency = (time.monotonic() - start) * 1000.0
 
     text = ""
