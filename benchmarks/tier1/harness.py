@@ -16,6 +16,8 @@ from typing import Any
 # manually setting PYTHONPATH.  The repo root is needed for
 # `from benchmarks.tier1...` imports, and `src/` is needed for
 # `from sift_gateway...` imports.
+# Not needed when using `uv run` (recommended) which sets up
+# the virtualenv and sys.path automatically.
 _REPO_ROOT = str(Path(__file__).resolve().parents[2])
 _SRC_DIR = str(Path(__file__).resolve().parents[2] / "src")
 if _REPO_ROOT not in sys.path:
@@ -51,10 +53,11 @@ _BASELINE_SYSTEM = (
 _SIFT_CODEGEN_SYSTEM = (
     "You are a data analyst. Given the schema of a dataset, write a "
     "Python function `def run(data, schema, params):` that answers "
-    "the question. The function receives the full dataset as `data` "
-    "(a list of dicts or a dict for columnar data), a `schema` dict "
-    "describing the fields, and an empty `params` dict. Return ONLY "
-    "the Python function — no explanation, no markdown fences."
+    "the question. `data` is the extracted value at the chosen "
+    "root_path — it may be a list of dicts, a list of scalars, or a "
+    "dict (e.g. columnar data). `schema` describes the fields and "
+    "`params` is an empty dict. Return ONLY the Python function — "
+    "no explanation."
 )
 
 _SIFT_ANSWER_SYSTEM = (
@@ -74,7 +77,7 @@ def _load_dataset(data_dir: Path, dataset_name: str) -> Any:
             f"Run: python benchmarks/tier1/fetch_data.py"
         )
         raise FileNotFoundError(msg)
-    return json.loads(path.read_bytes().decode("utf-8"))
+    return json.loads(path.read_text(encoding="utf-8"))
 
 
 def _truncate_for_baseline(
@@ -88,23 +91,59 @@ def _truncate_for_baseline(
         return full_json, False
 
     if isinstance(data, list):
+        # Binary search for the largest prefix that fits.  Each
+        # iteration serializes data[:mid], costing O(mid * avg_item)
+        # — acceptable here since max_bytes caps the output size.
         low, high = 1, len(data)
-        best = 1
+        best_json = json.dumps(data[:1], ensure_ascii=False)
         while low <= high:
             mid = (low + high) // 2
             candidate = json.dumps(data[:mid], ensure_ascii=False)
-            if len(candidate.encode("utf-8")) <= max_bytes:
-                best = mid
-                low = mid + 1
-            else:
+            # String length is a lower bound on UTF-8 byte length,
+            # so skip the encode when the string alone exceeds cap.
+            if len(candidate) > max_bytes or (
+                len(candidate.encode("utf-8")) > max_bytes
+            ):
                 high = mid - 1
-        truncated = json.dumps(data[:best], ensure_ascii=False)
-        return truncated, True
+            else:
+                best_json = candidate
+                low = mid + 1
+        return best_json, True
 
     # Non-list (e.g. dict): return valid JSON with a truncation note
     # rather than slicing the string at a byte boundary.
     note = {"_truncated": True, "_note": "payload too large for baseline"}
     return json.dumps(note, ensure_ascii=False), True
+
+
+def _make_result(
+    question: Question,
+    *,
+    condition: str,
+    gold: str,
+    llm_answer: str = "",
+    correct: bool = False,
+    input_tokens: int = 0,
+    output_tokens: int = 0,
+    latency_ms: float = 0.0,
+    **extra: Any,
+) -> dict[str, Any]:
+    """Build a result dict with shared question metadata."""
+    result: dict[str, Any] = {
+        "condition": condition,
+        "dataset": question.dataset_name,
+        "question_id": question.question_id,
+        "question_type": question.question_type,
+        "question_text": question.question_text,
+        "gold_answer": gold,
+        "llm_answer": llm_answer,
+        "correct": correct,
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "latency_ms": latency_ms,
+    }
+    result.update(extra)
+    return result
 
 
 def _run_baseline(
@@ -138,21 +177,14 @@ def _run_baseline(
         )
     except Exception as exc:
         elapsed = (time.monotonic() - start) * 1000.0
-        return {
-            "condition": "baseline",
-            "dataset": question.dataset_name,
-            "question_id": question.question_id,
-            "question_type": question.question_type,
-            "question_text": question.question_text,
-            "gold_answer": gold,
-            "llm_answer": "",
-            "correct": False,
-            "error": str(exc),
-            "input_tokens": 0,
-            "output_tokens": 0,
-            "latency_ms": elapsed,
-            "truncated": truncated,
-        }
+        return _make_result(
+            question,
+            condition="baseline",
+            gold=gold,
+            error=str(exc),
+            latency_ms=elapsed,
+            truncated=truncated,
+        )
 
     correct = evaluate_answer(
         resp.text,
@@ -160,20 +192,17 @@ def _run_baseline(
         answer_type=question.answer_type,
         tolerance=question.tolerance,
     )
-    return {
-        "condition": "baseline",
-        "dataset": question.dataset_name,
-        "question_id": question.question_id,
-        "question_type": question.question_type,
-        "question_text": question.question_text,
-        "gold_answer": gold,
-        "llm_answer": resp.text,
-        "correct": correct,
-        "input_tokens": resp.input_tokens,
-        "output_tokens": resp.output_tokens,
-        "latency_ms": resp.latency_ms,
-        "truncated": truncated,
-    }
+    return _make_result(
+        question,
+        condition="baseline",
+        gold=gold,
+        llm_answer=resp.text,
+        correct=correct,
+        input_tokens=resp.input_tokens,
+        output_tokens=resp.output_tokens,
+        latency_ms=resp.latency_ms,
+        truncated=truncated,
+    )
 
 
 def _extract_code_from_response(text: str) -> str:
@@ -200,7 +229,12 @@ def _extract_code_from_response(text: str) -> str:
         if "def run" in candidate:
             return candidate
 
-    # No candidate contains def run — return first non-empty
+    # No candidate contains def run — will likely fail at execution
+    # and be retried with the error context appended.
+    print(
+        "  [warn] LLM response has no 'def run'; using raw text as code",
+        file=sys.stderr,
+    )
     return candidates[0] if candidates else text.strip()
 
 
@@ -249,6 +283,10 @@ def _extract_root_path_from_response(
 
     Returns ``None`` when no valid selection is found so the caller
     can fall back to the first available root.
+
+    Note: this scans the raw LLM response (before
+    ``_extract_code_from_response`` strips fences).  The two
+    functions are coupled — both consume ``codegen_resp.text``.
     """
     for line in text.strip().splitlines():
         stripped = line.strip()
@@ -344,49 +382,32 @@ def _run_sift(
             else:
                 root_path = root_paths[0]
 
+            exec_start = time.monotonic()
             code_result = execute_code(
                 runtime,
                 artifact_id=artifact_id,
                 root_path=root_path,
                 code=code,
             )
+            total_latency += (time.monotonic() - exec_start) * 1000.0
             break
 
         except RuntimeError as exc:
+            # RuntimeError comes from execute_code on code failures;
+            # infrastructure errors (e.g. LLM API) propagate as-is.
             last_error = str(exc)
             attempts += 1
             if attempts > max_retries:
-                return {
-                    "condition": "sift",
-                    "dataset": question.dataset_name,
-                    "question_id": question.question_id,
-                    "question_type": question.question_type,
-                    "question_text": question.question_text,
-                    "gold_answer": gold,
-                    "llm_answer": "",
-                    "correct": False,
-                    "error": f"code execution failed: {last_error}",
-                    "input_tokens": total_input_tokens,
-                    "output_tokens": total_output_tokens,
-                    "latency_ms": total_latency,
-                    "retries": attempts - 1,
-                }
-        except Exception as exc:
-            return {
-                "condition": "sift",
-                "dataset": question.dataset_name,
-                "question_id": question.question_id,
-                "question_type": question.question_type,
-                "question_text": question.question_text,
-                "gold_answer": gold,
-                "llm_answer": "",
-                "correct": False,
-                "error": str(exc),
-                "input_tokens": total_input_tokens,
-                "output_tokens": total_output_tokens,
-                "latency_ms": total_latency,
-                "retries": attempts,
-            }
+                return _make_result(
+                    question,
+                    condition="sift",
+                    gold=gold,
+                    error=f"code execution failed: {last_error}",
+                    input_tokens=total_input_tokens,
+                    output_tokens=total_output_tokens,
+                    latency_ms=total_latency,
+                    retries=attempts - 1,
+                )
 
     # Step 2: Extract result from code execution
     code_output = ""
@@ -419,21 +440,16 @@ def _run_sift(
             temperature=temperature,
         )
     except Exception as exc:
-        return {
-            "condition": "sift",
-            "dataset": question.dataset_name,
-            "question_id": question.question_id,
-            "question_type": question.question_type,
-            "question_text": question.question_text,
-            "gold_answer": gold,
-            "llm_answer": "",
-            "correct": False,
-            "error": f"answer extraction failed: {exc}",
-            "input_tokens": total_input_tokens,
-            "output_tokens": total_output_tokens,
-            "latency_ms": total_latency,
-            "retries": attempts,
-        }
+        return _make_result(
+            question,
+            condition="sift",
+            gold=gold,
+            error=f"answer extraction failed: {exc}",
+            input_tokens=total_input_tokens,
+            output_tokens=total_output_tokens,
+            latency_ms=total_latency,
+            retries=attempts,
+        )
 
     total_input_tokens += answer_resp.input_tokens
     total_output_tokens += answer_resp.output_tokens
@@ -446,20 +462,17 @@ def _run_sift(
         tolerance=question.tolerance,
     )
 
-    return {
-        "condition": "sift",
-        "dataset": question.dataset_name,
-        "question_id": question.question_id,
-        "question_type": question.question_type,
-        "question_text": question.question_text,
-        "gold_answer": gold,
-        "llm_answer": answer_resp.text,
-        "correct": correct,
-        "input_tokens": total_input_tokens,
-        "output_tokens": total_output_tokens,
-        "latency_ms": total_latency,
-        "retries": attempts,
-    }
+    return _make_result(
+        question,
+        condition="sift",
+        gold=gold,
+        llm_answer=answer_resp.text,
+        correct=correct,
+        input_tokens=total_input_tokens,
+        output_tokens=total_output_tokens,
+        latency_ms=total_latency,
+        retries=attempts,
+    )
 
 
 def _build_parser() -> argparse.ArgumentParser:

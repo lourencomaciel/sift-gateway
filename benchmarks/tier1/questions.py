@@ -18,7 +18,7 @@ class Question:
     question_type: str
     gold_answer_fn: Callable[[Any], str]
     answer_type: str
-    tolerance: float = 0.01
+    tolerance: float = 0.0
 
 
 def _safe_float(val: Any) -> float:
@@ -455,6 +455,10 @@ def _laureates_distinct_birth_countries(data: Any) -> str:
 
 
 # -- weather --
+# Gold functions receive the raw downloaded dict (with top-level
+# "hourly" key), NOT the Sift-extracted root_path slice.  The
+# harness calls gold_answer_fn(loaded[name]) before any Sift
+# capture or root selection.
 
 
 def _weather_hourly_count(data: Any) -> str:
@@ -538,7 +542,7 @@ QUESTIONS: list[Question] = [
         question_type="aggregation",
         gold_answer_fn=_eq_avg_mag,
         answer_type="number",
-        tolerance=0.05,
+        tolerance=0.01,
     ),
     Question(
         dataset_name="earthquakes",
@@ -571,7 +575,7 @@ QUESTIONS: list[Question] = [
         question_type="aggregation",
         gold_answer_fn=_eq_max_depth,
         answer_type="number",
-        tolerance=0.5,
+        tolerance=0.01,
     ),
     Question(
         dataset_name="earthquakes",
@@ -605,7 +609,7 @@ QUESTIONS: list[Question] = [
         question_type="aggregation",
         gold_answer_fn=_prod_avg_rating,
         answer_type="number",
-        tolerance=0.05,
+        tolerance=0.01,
     ),
     Question(
         dataset_name="products",
@@ -677,7 +681,7 @@ QUESTIONS: list[Question] = [
         question_type="aggregation",
         gold_answer_fn=_users_avg_weight,
         answer_type="number",
-        tolerance=0.1,
+        tolerance=0.01,
     ),
     Question(
         dataset_name="users",
@@ -712,11 +716,13 @@ QUESTIONS: list[Question] = [
         gold_answer_fn=_comments_email_by_id,
         answer_type="string",
     ),
+    # answer_type="number" so match_number handles the str→float
+    # conversion from the gold function's str(Counter(...)) output.
     Question(
         dataset_name="comments",
         question_id="comments_top_post",
         question_text=("Which postId has the most comments?"),
-        question_type="cross_field",
+        question_type="aggregation",
         gold_answer_fn=_comments_most_commented_post,
         answer_type="number",
     ),
@@ -730,7 +736,7 @@ QUESTIONS: list[Question] = [
         question_type="aggregation",
         gold_answer_fn=_comments_avg_body_len,
         answer_type="number",
-        tolerance=1.0,
+        tolerance=0.01,
     ),
     # photos (5)
     Question(
@@ -753,7 +759,7 @@ QUESTIONS: list[Question] = [
         dataset_name="photos",
         question_id="photos_top_album",
         question_text="Which albumId has the most photos?",
-        question_type="cross_field",
+        question_type="aggregation",
         gold_answer_fn=_photos_most_photos_album,
         answer_type="number",
     ),
@@ -802,7 +808,6 @@ QUESTIONS: list[Question] = [
         question_type="aggregation",
         gold_answer_fn=_countries_europe_population,
         answer_type="number",
-        tolerance=1000,
     ),
     Question(
         dataset_name="countries",
@@ -890,7 +895,7 @@ QUESTIONS: list[Question] = [
         question_type="aggregation",
         gold_answer_fn=_weather_avg_temp,
         answer_type="number",
-        tolerance=0.1,
+        tolerance=0.01,
     ),
     Question(
         dataset_name="weather",
@@ -902,7 +907,7 @@ QUESTIONS: list[Question] = [
         question_type="aggregation",
         gold_answer_fn=_weather_max_wind,
         answer_type="number",
-        tolerance=0.2,
+        tolerance=0.1,
     ),
     Question(
         dataset_name="weather",
@@ -922,7 +927,7 @@ QUESTIONS: list[Question] = [
         question_type="aggregation",
         gold_answer_fn=_weather_total_precip,
         answer_type="number",
-        tolerance=0.5,
+        tolerance=0.01,
     ),
 ]
 

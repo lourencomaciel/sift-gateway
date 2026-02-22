@@ -8,6 +8,7 @@ from pathlib import Path
 import time
 from typing import Any
 
+import sift_gateway  # bare import for __file__ path resolution
 from sift_gateway.config import load_gateway_config
 from sift_gateway.constants import CAPTURE_KIND_CLI_COMMAND
 from sift_gateway.core.artifact_capture import execute_artifact_capture
@@ -21,19 +22,22 @@ from sift_gateway.mcp.adapters.artifact_query_runtime import (
 from sift_gateway.mcp.server import GatewayServer
 
 _MIGRATIONS_DIR = (
-    Path(__file__).resolve().parents[2]
-    / "src"
-    / "sift_gateway"
-    / "db"
-    / "migrations_sqlite"
+    Path(sift_gateway.__file__).resolve().parent / "db" / "migrations_sqlite"
 )
 _SESSION_ID = "benchmark_tier1"
 _GATEWAY_CONTEXT: dict[str, str] = {"session_id": _SESSION_ID}
 
 
 def _is_error_response(payload: dict[str, Any]) -> bool:
-    return isinstance(payload.get("code"), str) and isinstance(
-        payload.get("message"), str
+    # artifact_describe / artifact_code errors include a type marker.
+    if payload.get("type") == "gateway_error":
+        return True
+    # artifact_capture errors use {code, message} without type.
+    # Distinguish from success payloads by the absence of artifact_id.
+    return (
+        isinstance(payload.get("code"), str)
+        and isinstance(payload.get("message"), str)
+        and "artifact_id" not in payload
     )
 
 
@@ -44,6 +48,11 @@ def create_runtime(
 ) -> Generator[GatewayArtifactQueryRuntime, None, None]:
     """Create a temporary Sift runtime for benchmark operations."""
     config = load_gateway_config(data_dir_override=data_dir)
+    # Default max_root_discovery_k (3) drops array roots for datasets
+    # with more than 3 parallel arrays (e.g. weather has 4 hourly
+    # arrays).  Raise the limit so all roots are discoverable.
+    # GatewayConfig (BaseSettings) is not frozen — mutation is safe.
+    config.max_root_discovery_k = 20
     config.state_dir.mkdir(parents=True, exist_ok=True)
     config.resources_dir.mkdir(parents=True, exist_ok=True)
     config.blobs_bin_dir.mkdir(parents=True, exist_ok=True)
