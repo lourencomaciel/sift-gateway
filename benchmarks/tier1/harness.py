@@ -89,7 +89,10 @@ def _truncate_for_baseline(
         truncated = json.dumps(data[:best], ensure_ascii=False)
         return truncated, True
 
-    return full_json[:max_bytes], True
+    # Non-list (e.g. dict): return valid JSON with a truncation note
+    # rather than slicing the string at a byte boundary.
+    note = {"_truncated": True, "_note": "payload too large for baseline"}
+    return json.dumps(note, ensure_ascii=False), True
 
 
 def _run_baseline(
@@ -162,18 +165,31 @@ def _run_baseline(
 
 
 def _extract_code_from_response(text: str) -> str:
-    """Extract Python code from LLM response."""
+    """Extract Python code from LLM response.
+
+    Tries markdown fences first, then falls back to raw text.
+    Validates that the result contains ``def run`` to avoid
+    passing explanation prose as code.
+    """
+    candidates: list[str] = []
+
     if "```python" in text:
         parts = text.split("```python", 1)
         if len(parts) > 1:
-            code_block = parts[1].split("```", 1)[0]
-            return code_block.strip()
-    if "```" in text:
+            candidates.append(parts[1].split("```", 1)[0].strip())
+    if "```" in text and not candidates:
         parts = text.split("```", 1)
         if len(parts) > 1:
-            code_block = parts[1].split("```", 1)[0]
-            return code_block.strip()
-    return text.strip()
+            candidates.append(parts[1].split("```", 1)[0].strip())
+
+    candidates.append(text.strip())
+
+    for candidate in candidates:
+        if "def run" in candidate:
+            return candidate
+
+    # No candidate contains def run — return first non-empty
+    return candidates[0] if candidates else text.strip()
 
 
 def _format_schema_for_prompt(describe_result: dict[str, Any]) -> str:

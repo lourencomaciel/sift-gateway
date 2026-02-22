@@ -84,6 +84,8 @@ def _call_anthropic(
         raise RuntimeError(
             f"Anthropic API error ({exc.code}): {error_body}"
         ) from exc
+    except urllib.error.URLError as exc:
+        raise RuntimeError(f"Anthropic API request failed: {exc}") from exc
     latency = (time.monotonic() - start) * 1000.0
 
     text = ""
@@ -138,6 +140,8 @@ def _call_openai(
         raise RuntimeError(
             f"OpenAI API error ({exc.code}): {error_body}"
         ) from exc
+    except urllib.error.URLError as exc:
+        raise RuntimeError(f"OpenAI API request failed: {exc}") from exc
     latency = (time.monotonic() - start) * 1000.0
 
     text = ""

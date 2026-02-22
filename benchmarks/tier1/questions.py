@@ -159,7 +159,7 @@ def _prod_category_count(data: Any) -> str:
 
 def _prod_total_stock(data: Any) -> str:
     total = sum(
-        int(p["stock"])
+        int(_safe_float(p["stock"]))
         for p in data
         if isinstance(p, dict) and isinstance(p.get("stock"), (int, float))
     )
