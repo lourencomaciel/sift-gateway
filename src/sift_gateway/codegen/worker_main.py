@@ -114,6 +114,29 @@ def _validate_run_callable(
     return "invalid", None
 
 
+def _strip_locators(records: list[Any]) -> None:
+    """Remove ``_locator`` metadata in place before user code runs.
+
+    The ``_locator`` dict is entirely gateway-constructed.  Scalar
+    wrappers are identified by ``_locator["_scalar"] is True`` — a
+    flag that only the scalar branch of ``_with_locator`` sets — and
+    unwrapped to their ``value``.  Dict records have ``_locator``
+    removed.
+    """
+    for i, record in enumerate(records):
+        if not isinstance(record, dict) or "_locator" not in record:
+            continue
+        locator = record["_locator"]
+        if (
+            isinstance(locator, dict)
+            and locator.get("_scalar") is True
+            and "value" in record
+        ):
+            records[i] = record["value"]
+        else:
+            del record["_locator"]
+
+
 def _execute(payload: dict[str, Any]) -> dict[str, Any]:
     global _ALLOWED_IMPORT_ROOTS
 
@@ -220,6 +243,9 @@ def _execute(payload: dict[str, Any]) -> dict[str, Any]:
             data_arg = single_rows
         if isinstance(single_schema, dict):
             schema_arg = single_schema
+
+    for rows in artifacts_val.values():
+        _strip_locators(rows)
 
     try:
         if run_mode == "legacy":
