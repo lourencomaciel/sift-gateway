@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
-import pytest
-
 from benchmarks.tier1.evaluate import (
     evaluate_answer,
     match_list,
     match_number,
     match_string,
 )
+import pytest
 
 # -- match_number --
 
