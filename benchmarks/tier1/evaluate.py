@@ -135,7 +135,7 @@ def evaluate_answer(
     return match_string(llm_answer, gold_answer)
 
 
-def _latency_percentiles(
+def latency_percentiles(
     latencies: list[float],
 ) -> dict[str, float | int]:
     """Compute p50, p90, and mean latency from a list of values.
@@ -294,10 +294,10 @@ def build_report(
             "sift_correct": entry["sift_correct"],
             "sift_total": entry["sift_total"],
             "sift_retries": entry["sift_retries"],
-            "baseline_latency": _latency_percentiles(
+            "baseline_latency": latency_percentiles(
                 entry["baseline_latencies"],
             ),
-            "sift_latency": _latency_percentiles(
+            "sift_latency": latency_percentiles(
                 entry["sift_latencies"],
             ),
         }
@@ -327,8 +327,8 @@ def build_report(
             "sift_attempted": sift_total - sift_errors,
         },
         "latency": {
-            "baseline": _latency_percentiles(baseline_latencies),
-            "sift": _latency_percentiles(sift_latencies),
+            "baseline": latency_percentiles(baseline_latencies),
+            "sift": latency_percentiles(sift_latencies),
         },
         "per_dataset": datasets,
         "per_question_type": qtypes,
