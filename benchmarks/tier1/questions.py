@@ -4,8 +4,11 @@ from __future__ import annotations
 
 from collections import Counter
 from collections.abc import Callable
+import contextlib
 from dataclasses import dataclass
 import hashlib
+import json
+import statistics
 from typing import Any
 
 
@@ -107,6 +110,30 @@ def _eq_most_reporting_net(data: Any) -> str:
     return Counter(nets).most_common(1)[0][0]
 
 
+def _eq_avg_mag_us_net(data: Any) -> str:
+    mags = [
+        _safe_float(f["properties"]["mag"])
+        for f in data
+        if isinstance(f, dict)
+        and isinstance(f.get("properties"), dict)
+        and f["properties"].get("mag") is not None
+        and f["properties"].get("net") == "us"
+    ]
+    return f"{sum(mags) / len(mags):.2f}" if mags else "0"
+
+
+def _eq_any_mag_gt7(data: Any) -> str:
+    for f in data:
+        if (
+            isinstance(f, dict)
+            and isinstance(f.get("properties"), dict)
+            and f["properties"].get("mag") is not None
+            and _safe_float(f["properties"]["mag"]) > 7
+        ):
+            return "Yes"
+    return "No"
+
+
 # -- products --
 
 
@@ -167,6 +194,61 @@ def _prod_total_stock(data: Any) -> str:
     return str(total)
 
 
+def _prod_expensive_high_rated(data: Any) -> str:
+    count = sum(
+        1
+        for p in data
+        if isinstance(p, dict)
+        and _safe_float(p.get("price")) > 50
+        and _safe_float(p.get("rating")) > 4.5
+    )
+    return str(count)
+
+
+def _prod_avg_rating_expensive(data: Any) -> str:
+    ratings = [
+        _safe_float(p["rating"])
+        for p in data
+        if isinstance(p, dict)
+        and p.get("rating") is not None
+        and _safe_float(p.get("price")) > 50
+    ]
+    if not ratings:
+        return "0"
+    return f"{sum(ratings) / len(ratings):.2f}"
+
+
+def _prod_top3_expensive(data: Any) -> str:
+    valid = [
+        p for p in data if isinstance(p, dict) and p.get("price") is not None
+    ]
+    valid.sort(key=lambda p: _safe_float(p["price"]), reverse=True)
+    titles = [str(p.get("title", "")) for p in valid[:3]]
+    return json.dumps(titles)
+
+
+def _prod_median_price(data: Any) -> str:
+    prices = [
+        _safe_float(p["price"])
+        for p in data
+        if isinstance(p, dict) and p.get("price") is not None
+    ]
+    if not prices:
+        return "0"
+    return f"{statistics.median(prices):.2f}"
+
+
+def _prod_mens_category_count(data: Any) -> str:
+    count = sum(
+        1
+        for p in data
+        if isinstance(p, dict)
+        and isinstance(p.get("category"), str)
+        and p["category"].startswith("mens-")
+    )
+    return str(count)
+
+
 # -- users --
 
 
@@ -220,6 +302,20 @@ def _users_blood_group_count(data: Any) -> str:
         1 for u in data if isinstance(u, dict) and u.get("bloodGroup") == "A+"
     )
     return str(count)
+
+
+def _users_pct_over40(data: Any) -> str:
+    total = sum(1 for u in data if isinstance(u, dict))
+    if total == 0:
+        return "0"
+    over40 = sum(
+        1
+        for u in data
+        if isinstance(u, dict)
+        and isinstance(u.get("age"), (int, float))
+        and u["age"] > 40
+    )
+    return f"{over40 / total * 100:.1f}"
 
 
 # -- comments --
@@ -381,6 +477,40 @@ def _countries_largest_area(data: Any) -> str:
     return ""
 
 
+def _countries_not_landlocked(data: Any) -> str:
+    return str(
+        sum(
+            1
+            for c in data
+            if isinstance(c, dict) and c.get("landlocked") is False
+        )
+    )
+
+
+def _countries_europe_vs_africa_avg_pop(data: Any) -> str:
+    europe_pops = [
+        c["population"]
+        for c in data
+        if isinstance(c, dict)
+        and c.get("region") == "Europe"
+        and isinstance(c.get("population"), (int, float))
+        and c["population"] > 0
+    ]
+    africa_pops = [
+        c["population"]
+        for c in data
+        if isinstance(c, dict)
+        and c.get("region") == "Africa"
+        and isinstance(c.get("population"), (int, float))
+        and c["population"] > 0
+    ]
+    if not europe_pops or not africa_pops:
+        return "No"
+    avg_eu = sum(europe_pops) / len(europe_pops)
+    avg_af = sum(africa_pops) / len(africa_pops)
+    return "Yes" if avg_eu > avg_af else "No"
+
+
 # -- laureates --
 
 
@@ -455,6 +585,34 @@ def _laureates_distinct_birth_countries(data: Any) -> str:
     return str(len(countries))
 
 
+def _laureates_avg_birth_year_physics(data: Any) -> str:
+    years: list[int] = []
+    for la in data:
+        if not isinstance(la, dict):
+            continue
+        prizes = la.get("nobelPrizes")
+        if not isinstance(prizes, list):
+            continue
+        has_physics = any(
+            isinstance(p, dict)
+            and isinstance(p.get("category"), dict)
+            and p["category"].get("en") == "Physics"
+            for p in prizes
+        )
+        if not has_physics:
+            continue
+        born = la.get("birth", {})
+        if not isinstance(born, dict):
+            continue
+        date = born.get("date")
+        if isinstance(date, str) and len(date) >= 4:
+            with contextlib.suppress(ValueError):
+                years.append(int(date[:4]))
+    if not years:
+        return "0"
+    return str(round(sum(years) / len(years)))
+
+
 # -- weather --
 # Gold functions receive the raw downloaded dict (with top-level
 # "hourly" key), NOT the Sift-extracted root_path slice.  The
@@ -515,6 +673,53 @@ def _weather_total_precip(data: Any) -> str:
         return "0"
     total = sum(p for p in precip if isinstance(p, (int, float)))
     return f"{total:.2f}"
+
+
+def _weather_coldest_day(data: Any) -> str:
+    hourly = data.get("hourly") if isinstance(data, dict) else None
+    if not isinstance(hourly, dict):
+        return ""
+    times = hourly.get("time")
+    temps = hourly.get("temperature_2m")
+    if not isinstance(times, list) or not isinstance(temps, list):
+        return ""
+    daily_sums: dict[str, float] = {}
+    daily_counts: dict[str, int] = {}
+    for t, temp in zip(times, temps, strict=False):
+        if (
+            not isinstance(t, str)
+            or not isinstance(temp, (int, float))
+            or len(t) < 10
+        ):
+            continue
+        day = t[:10]
+        daily_sums[day] = daily_sums.get(day, 0.0) + temp
+        daily_counts[day] = daily_counts.get(day, 0) + 1
+    if not daily_sums:
+        return ""
+    return min(
+        daily_sums,
+        key=lambda d: daily_sums[d] / daily_counts[d],
+    )
+
+
+def _weather_cold_precip_hours(data: Any) -> str:
+    hourly = data.get("hourly") if isinstance(data, dict) else None
+    if not isinstance(hourly, dict):
+        return "0"
+    temps = hourly.get("temperature_2m")
+    precip = hourly.get("precipitation")
+    if not isinstance(temps, list) or not isinstance(precip, list):
+        return "0"
+    count = sum(
+        1
+        for t, p in zip(temps, precip, strict=False)
+        if isinstance(t, (int, float))
+        and isinstance(p, (int, float))
+        and t < 0
+        and p > 0
+    )
+    return str(count)
 
 
 # -- question registry --
@@ -933,6 +1138,167 @@ QUESTIONS: list[Question] = [
         gold_answer_fn=_weather_total_precip,
         answer_type="number",
         tolerance=0.01,
+    ),
+    # -- new gap-coverage questions (13) --
+    # Gap #1: multi-condition filters
+    Question(
+        dataset_name="products",
+        question_id="prod_expensive_high_rated",
+        question_text=(
+            "How many products have a price greater than 50 "
+            "and a rating greater than 4.5?"
+        ),
+        question_type="multi_condition",
+        gold_answer_fn=_prod_expensive_high_rated,
+        answer_type="number",
+    ),
+    # Gap #2: conditional aggregation
+    Question(
+        dataset_name="products",
+        question_id="prod_avg_rating_expensive",
+        question_text=(
+            "What is the average rating of products with a "
+            "price greater than 50? Give two decimal places."
+        ),
+        question_type="conditional_aggregation",
+        gold_answer_fn=_prod_avg_rating_expensive,
+        answer_type="number",
+        tolerance=0.01,
+    ),
+    # Gap #3: top-N / ranking (also exercises list answer type)
+    Question(
+        dataset_name="products",
+        question_id="prod_top3_expensive",
+        question_text=(
+            "What are the titles of the 3 most expensive "
+            "products? Return a JSON array."
+        ),
+        question_type="top_n",
+        gold_answer_fn=_prod_top3_expensive,
+        answer_type="list",
+    ),
+    # Gap #4: percentage / ratio
+    Question(
+        dataset_name="users",
+        question_id="users_pct_over40",
+        question_text=(
+            "What percentage of users are older than 40? "
+            "Give one decimal place."
+        ),
+        question_type="percentage",
+        gold_answer_fn=_users_pct_over40,
+        answer_type="number",
+        tolerance=0.1,
+    ),
+    # Gap #5: median / percentile
+    Question(
+        dataset_name="products",
+        question_id="prod_median_price",
+        question_text=(
+            "What is the median price across all products? "
+            "Give two decimal places."
+        ),
+        question_type="median",
+        gold_answer_fn=_prod_median_price,
+        answer_type="number",
+        tolerance=0.01,
+    ),
+    # Gap #6: negation
+    Question(
+        dataset_name="countries",
+        question_id="countries_not_landlocked",
+        question_text="How many countries are not landlocked?",
+        question_type="negation",
+        gold_answer_fn=_countries_not_landlocked,
+        answer_type="number",
+    ),
+    # Gap #7: group-by with aggregation
+    Question(
+        dataset_name="earthquakes",
+        question_id="eq_avg_mag_us_net",
+        question_text=(
+            "What is the average magnitude of earthquakes "
+            "reported by the 'us' network? Give two decimal "
+            "places."
+        ),
+        question_type="group_aggregation",
+        gold_answer_fn=_eq_avg_mag_us_net,
+        answer_type="number",
+        tolerance=0.01,
+    ),
+    # Gap #8: date/time parsing + Gap #7: group-by
+    Question(
+        dataset_name="weather",
+        question_id="weather_coldest_day",
+        question_text=(
+            "On which date was the average hourly temperature "
+            "the lowest? Give the date in YYYY-MM-DD format."
+        ),
+        question_type="datetime",
+        gold_answer_fn=_weather_coldest_day,
+        answer_type="string",
+    ),
+    # Gap #9: string operations
+    Question(
+        dataset_name="products",
+        question_id="prod_mens_category_count",
+        question_text=(
+            "How many products belong to a category that starts with 'mens-'?"
+        ),
+        question_type="string_op",
+        gold_answer_fn=_prod_mens_category_count,
+        answer_type="number",
+    ),
+    # Gap #10: comparison between groups
+    Question(
+        dataset_name="countries",
+        question_id="countries_europe_vs_africa_avg_pop",
+        question_text=(
+            "Is the average population of European countries "
+            "higher than that of African countries in this "
+            "dataset? Answer 'Yes' or 'No'."
+        ),
+        question_type="comparison",
+        gold_answer_fn=_countries_europe_vs_africa_avg_pop,
+        answer_type="string",
+    ),
+    # Gap #11: existence / boolean
+    Question(
+        dataset_name="earthquakes",
+        question_id="eq_any_mag_gt7",
+        question_text=(
+            "Is there any earthquake in this dataset with a "
+            "magnitude greater than 7? Answer 'Yes' or 'No'."
+        ),
+        question_type="existence",
+        gold_answer_fn=_eq_any_mag_gt7,
+        answer_type="string",
+    ),
+    # Gap #2 + #8: conditional aggregation + date/time parsing
+    Question(
+        dataset_name="laureates",
+        question_id="laureates_avg_birth_year_physics",
+        question_text=(
+            "What is the average birth year of laureates who "
+            "won a Physics prize? Round to the nearest whole "
+            "number."
+        ),
+        question_type="conditional_aggregation",
+        gold_answer_fn=_laureates_avg_birth_year_physics,
+        answer_type="number",
+        tolerance=1.0,
+    ),
+    # Gap #1: multi-condition (columnar variant)
+    Question(
+        dataset_name="weather",
+        question_id="weather_cold_precip_hours",
+        question_text=(
+            "How many hours had a temperature below 0 and "
+            "precipitation greater than 0 at the same time?"
+        ),
+        question_type="multi_condition",
+        gold_answer_fn=_weather_cold_precip_hours,
+        answer_type="number",
     ),
 ]
 
