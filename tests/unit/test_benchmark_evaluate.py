@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from benchmarks.tier1.evaluate import (
+    build_report,
     evaluate_answer,
     match_list,
     match_number,
@@ -172,6 +173,75 @@ class TestEvaluateAnswer:
     def test_unknown_answer_type_falls_through_to_string(self) -> None:
         assert evaluate_answer("Paris", "Paris", answer_type="unknown")
         assert not evaluate_answer("London", "Paris", answer_type="unknown")
+
+
+# -- build_report --
+
+
+def _stub_result(
+    condition: str,
+    dataset: str,
+    *,
+    correct: bool = False,
+    attempted: bool = True,
+) -> dict:
+    """Minimal result dict for report tests."""
+    return {
+        "condition": condition,
+        "dataset": dataset,
+        "question_id": "q1",
+        "question_type": "number",
+        "question_text": "stub",
+        "gold_answer": "42",
+        "llm_answer": "42" if correct else "0",
+        "correct": correct,
+        "input_tokens": 100,
+        "output_tokens": 10,
+        "latency_ms": 50.0,
+        "attempted": attempted,
+    }
+
+
+class TestBuildReport:
+    def test_error_counts_tracked(self) -> None:
+        results = [
+            _stub_result("baseline", "ds1", correct=True),
+            _stub_result("baseline", "ds1", attempted=False),
+            _stub_result("sift", "ds1", correct=True),
+            _stub_result("sift", "ds1", attempted=False),
+            _stub_result("sift", "ds1", attempted=False),
+        ]
+        report = build_report(results, model="test")
+        s = report["summary"]
+        assert s["baseline_errors"] == 1
+        assert s["baseline_attempted"] == 1
+        assert s["sift_errors"] == 2
+        assert s["sift_attempted"] == 1
+
+        ds = report["per_dataset"]["ds1"]
+        assert ds["baseline_errors"] == 1
+        assert ds["sift_errors"] == 2
+
+    def test_backward_compat_no_attempted(self) -> None:
+        results = [
+            {
+                "condition": "baseline",
+                "dataset": "ds1",
+                "question_id": "q1",
+                "question_type": "number",
+                "question_text": "stub",
+                "gold_answer": "42",
+                "llm_answer": "42",
+                "correct": True,
+                "input_tokens": 100,
+                "output_tokens": 10,
+                "latency_ms": 50.0,
+                # No "attempted" key — should default to True.
+            },
+        ]
+        report = build_report(results, model="test")
+        assert report["summary"]["baseline_errors"] == 0
+        assert report["per_dataset"]["ds1"]["baseline_errors"] == 0
 
 
 if __name__ == "__main__":
