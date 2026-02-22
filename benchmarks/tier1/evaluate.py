@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import re
 import statistics
 from typing import Any
@@ -147,7 +148,7 @@ def _latency_percentiles(
         return {}
     s = sorted(latencies)
     n = len(s)
-    p90_idx = min(n - 1, int(n * 0.9))
+    p90_idx = math.ceil(n * 0.9) - 1
     return {
         "p50_ms": round(statistics.median(s), 1),
         "p90_ms": round(s[p90_idx], 1),

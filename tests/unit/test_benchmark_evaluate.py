@@ -281,7 +281,7 @@ class TestLatencyPercentiles:
         assert result["mean_ms"] == 150.0
         # statistics.median interpolates midpoint for even n
         assert result["p50_ms"] == 150.0
-        # nearest-rank: p90 idx=min(1, int(2*0.9))=1 → 200
+        # nearest-rank: p90 idx=ceil(2*0.9)-1=1 → 200
         assert result["p90_ms"] == 200.0
 
     def test_multiple_values(self) -> None:
@@ -302,8 +302,8 @@ class TestLatencyPercentiles:
         assert result["mean_ms"] == 55.0
         # statistics.median: (50+60)/2 = 55.0 for even n
         assert result["p50_ms"] == 55.0
-        # nearest-rank: p90 idx=min(9, int(10*0.9))=9 → 100.0
-        assert result["p90_ms"] == 100.0
+        # nearest-rank: p90 idx=ceil(10*0.9)-1=8 → 90.0
+        assert result["p90_ms"] == 90.0
 
 
 # -- build_report --
