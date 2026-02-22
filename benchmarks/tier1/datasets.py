@@ -13,8 +13,13 @@ class Dataset:
     url: str
     extraction_path: str | None
     local_filename: str
+    dict_values_as_list: bool = False
 
 
+# Some datasets return live/rolling data (earthquakes, github_repos,
+# openlibrary).  Gold answers are computed at runtime from the fetched
+# snapshot, so results are reproducible within a single fetch but may
+# differ across fetches.
 DATASETS: dict[str, Dataset] = {
     "earthquakes": Dataset(
         name="earthquakes",
@@ -78,6 +83,40 @@ DATASETS: dict[str, Dataset] = {
         ),
         extraction_path=None,
         local_filename="weather.json",
+    ),
+    "github_repos": Dataset(
+        name="github_repos",
+        url=(
+            "https://api.github.com/search/repositories"
+            "?q=stars:>50000&sort=stars&order=desc&per_page=100"
+        ),
+        extraction_path="items",
+        local_filename="github_repos.json",
+    ),
+    "pokemon": Dataset(
+        name="pokemon",
+        url=(
+            "https://raw.githubusercontent.com/fanzeyi"
+            "/pokemon.json/master/pokedex.json"
+        ),
+        extraction_path=None,
+        local_filename="pokemon.json",
+    ),
+    "openlibrary": Dataset(
+        name="openlibrary",
+        url=("https://openlibrary.org/subjects/science.json?limit=200"),
+        extraction_path="works",
+        local_filename="openlibrary.json",
+    ),
+    "airports": Dataset(
+        name="airports",
+        url=(
+            "https://raw.githubusercontent.com/mwgg"
+            "/Airports/master/airports.json"
+        ),
+        extraction_path=None,
+        local_filename="airports.json",
+        dict_values_as_list=True,
     ),
 }
 

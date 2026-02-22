@@ -24,8 +24,7 @@ def test_rule_constant_is_stable() -> None:
 def test_with_rule_returns_rule_for_blank_text() -> None:
     assert with_pagination_completeness_rule("") == PAGINATION_COMPLETENESS_RULE
     assert (
-        with_pagination_completeness_rule("   ")
-        == PAGINATION_COMPLETENESS_RULE
+        with_pagination_completeness_rule("   ") == PAGINATION_COMPLETENESS_RULE
     )
 
 
@@ -60,7 +59,9 @@ def test_summarize_code_query_packages_compacts_output(
 ) -> None:
     monkeypatch.setattr(
         "sift_gateway.tools.usage_hint._is_importable_root",
-        lambda root: root in {"jmespath", "numpy", "pandas", "scipy", "matplotlib"},
+        lambda root: (
+            root in {"jmespath", "numpy", "pandas", "scipy", "matplotlib"}
+        ),
     )
     summary = summarize_code_query_packages(
         configured_roots=[
@@ -185,7 +186,7 @@ def test_build_code_query_usage_cli_mentions_packages(monkeypatch) -> None:
     assert usage["multi_input_shape"] == "dict[artifact_id -> list[dict]]"
     assert (
         usage["example"]
-        == 'sift-gateway code art_1 \'$.items\' --code "def run(data, schema, params): return len(data)"'
+        == "sift-gateway code art_1 '$.items' --code \"def run(data, schema, params): return len(data)\""
     )
 
 
@@ -210,7 +211,7 @@ def test_render_code_query_usage_hint_cli() -> None:
     hint = render_code_query_usage_hint(
         {
             "interface": "cli",
-            "example": 'sift-gateway code art_1 \'$.items\' --code "def run(data, schema, params): return len(data)"',
+            "example": "sift-gateway code art_1 '$.items' --code \"def run(data, schema, params): return len(data)\"",
             "packages": "pandas",
         }
     )
@@ -224,7 +225,7 @@ def test_render_code_query_usage_hint_mcp() -> None:
     hint = render_code_query_usage_hint(
         {
             "interface": "mcp",
-            "example": 'artifact(action=\"query\", query_kind=\"code\", artifact_id=\"art_1\", root_path=\"$.items\", code=\"def run(data, schema, params): ...\", params={})',
+            "example": 'artifact(action="query", query_kind="code", artifact_id="art_1", root_path="$.items", code="def run(data, schema, params): ...", params={})',
             "packages": "jmespath,numpy",
         }
     )

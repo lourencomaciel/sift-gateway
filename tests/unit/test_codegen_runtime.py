@@ -134,7 +134,9 @@ def run(artifacts, schemas, params):
     assert result == [{"records": 3}]
 
 
-def test_execute_code_in_subprocess_multi_signature_accepts_single_input() -> None:
+def test_execute_code_in_subprocess_multi_signature_accepts_single_input() -> (
+    None
+):
     result = execute_code_in_subprocess(
         code="""
 def run(artifacts, schemas, params):
@@ -236,8 +238,14 @@ def run(artifacts, schemas, params):
 """,
         artifacts={
             "temps": [
-                {"_locator": {"artifact_id": "t1", "_scalar": True}, "value": 1.0},
-                {"_locator": {"artifact_id": "t2", "_scalar": True}, "value": 2.0},
+                {
+                    "_locator": {"artifact_id": "t1", "_scalar": True},
+                    "value": 1.0,
+                },
+                {
+                    "_locator": {"artifact_id": "t2", "_scalar": True},
+                    "value": 2.0,
+                },
             ],
             "quakes": [
                 {"mag": 4.5, "_locator": {"artifact_id": "q1"}},

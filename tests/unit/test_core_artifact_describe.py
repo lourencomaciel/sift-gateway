@@ -371,7 +371,11 @@ def test_execute_artifact_describe_surfaces_upstream_pagination_meta() -> None:
                                 "upstream_prefix": "cli",
                                 "tool_name": "run",
                                 "original_args": {
-                                    "command_argv": ["fake-api", "--after", "C1"]
+                                    "command_argv": [
+                                        "fake-api",
+                                        "--after",
+                                        "C1",
+                                    ]
                                 },
                                 "next_params": {"after": "C2"},
                                 "page_number": 0,
@@ -408,7 +412,9 @@ def test_execute_artifact_describe_surfaces_upstream_pagination_meta() -> None:
     }
 
 
-def test_execute_artifact_describe_surfaces_next_page_for_mirrored_state() -> None:
+def test_execute_artifact_describe_surfaces_next_page_for_mirrored_state() -> (
+    None
+):
     conn = _SeqConnection(
         [
             _FakeCursor(

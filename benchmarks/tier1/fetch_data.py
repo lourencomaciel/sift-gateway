@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 import sys
 from typing import Any
@@ -31,9 +32,18 @@ def fetch_dataset(
     dest = data_dir / dataset.local_filename
     print(f"  Fetching {dataset.name} from {dataset.url} ...")
 
+    headers: dict[str, str] = {"User-Agent": "sift-benchmark/1.0"}
+
+    # GitHub search API rate-limits unauthenticated requests
+    # aggressively (10/min).  Pass GITHUB_TOKEN when available.
+    if "api.github.com" in dataset.url:
+        token = os.environ.get("GITHUB_TOKEN", "")
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+
     request = urllib.request.Request(
         dataset.url,
-        headers={"User-Agent": "sift-benchmark/1.0"},
+        headers=headers,
     )
     try:
         with urllib.request.urlopen(request, timeout=60) as response:
@@ -55,6 +65,9 @@ def fetch_dataset(
             )
         else:
             parsed = extracted
+
+    if dataset.dict_values_as_list and isinstance(parsed, dict):
+        parsed = list(parsed.values())
 
     out_bytes = json.dumps(parsed, ensure_ascii=False).encode("utf-8")
     dest.write_bytes(out_bytes)
