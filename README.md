@@ -240,12 +240,12 @@ The Tier 1 benchmark compares Sift's schema_ref + codegen approach against naive
 
 | Model | Condition | Accuracy | Input Tokens | Token Reduction |
 |---|---|---|---|---|
-| claude-sonnet-4-6 | Baseline | 11/43 (25.6%) | 2,053,966 | — |
-| claude-sonnet-4-6 | **Sift** | **33/43 (76.7%)** | **158,620** | **92.3%** |
-| claude-opus-4-6 | Baseline | 13/43 (30.2%) | 2,053,966 | — |
-| claude-opus-4-6 | **Sift** | **28/43 (65.1%)** | **179,661** | **91.3%** |
+| claude-sonnet-4-6 | Baseline | 17/43 (39.5%) | 4,294,346 | — |
+| claude-sonnet-4-6 | **Sift** | **43/43 (100%)** | **213,718** | **95.0%** |
+| claude-opus-4-6 | Baseline | 19/43 (44.2%) | 4,294,346 | — |
+| claude-opus-4-6 | **Sift** | **43/43 (100%)** | **218,941** | **94.9%** |
 
-Sift answers 3x more questions correctly while using ~13x fewer tokens. The baseline fails entirely on large datasets (earthquakes, laureates, photos) where payloads exceed context limits, while Sift handles them through artifact queries.
+Sift achieves perfect accuracy on both models while using ~95% fewer input tokens. The baseline struggles on large and deeply nested datasets (earthquakes, laureates, products) where payloads crowd the context window, while Sift handles them through artifact queries.
 
 ```bash
 python benchmarks/tier1/fetch_data.py
