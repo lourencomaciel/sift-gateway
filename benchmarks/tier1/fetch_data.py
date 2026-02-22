@@ -10,6 +10,12 @@ from typing import Any
 import urllib.error
 import urllib.request
 
+# Allow running as `python benchmarks/tier1/fetch_data.py` without
+# manually setting PYTHONPATH.
+_REPO_ROOT = str(Path(__file__).resolve().parents[2])
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
+
 from benchmarks.tier1.datasets import DATASETS, Dataset
 
 

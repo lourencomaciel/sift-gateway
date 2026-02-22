@@ -12,6 +12,12 @@ import tempfile
 import time
 from typing import Any
 
+# Allow running as `python benchmarks/tier1/harness.py` without
+# manually setting PYTHONPATH by ensuring the repo root is on sys.path.
+_REPO_ROOT = str(Path(__file__).resolve().parents[2])
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
+
 from benchmarks.tier1.datasets import ALL_DATASET_NAMES, DATASETS
 from benchmarks.tier1.evaluate import (
     build_report,
@@ -25,6 +31,7 @@ from benchmarks.tier1.sift_runtime import (
     create_runtime,
     describe_artifact,
     execute_code,
+    extract_root_path,
 )
 
 _MAX_BASELINE_BYTES_DEFAULT = 4_000_000
@@ -235,6 +242,7 @@ def _run_sift(
     *,
     runtime: Any,
     artifact_id: str,
+    root_path: str,
     schema_text: str,
     model: str,
     api_key: str | None,
@@ -293,6 +301,7 @@ def _run_sift(
             code_result = execute_code(
                 runtime,
                 artifact_id=artifact_id,
+                root_path=root_path,
                 code=code,
             )
             break
@@ -584,7 +593,9 @@ def _run_sift_condition(
                 runtime,
                 artifact_id=artifact_id,
             )
+            root_path = extract_root_path(describe_result)
             schema_text = _format_schema_for_prompt(describe_result)
+            print(f"    root_path: {root_path}")
 
             for q in questions:
                 print(f"  [{name}] {q.question_id}: {q.question_text[:50]}...")
@@ -593,6 +604,7 @@ def _run_sift_condition(
                     data,
                     runtime=runtime,
                     artifact_id=artifact_id,
+                    root_path=root_path,
                     schema_text=schema_text,
                     model=args.model,
                     api_key=args.api_key,

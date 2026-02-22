@@ -130,10 +130,33 @@ def describe_artifact(
     return result
 
 
+def extract_root_path(describe_result: dict[str, Any]) -> str:
+    """Extract the primary root_path from a describe result.
+
+    Falls back to ``$`` if no roots are found.
+    """
+    roots = describe_result.get("roots")
+    if isinstance(roots, list):
+        for root in roots:
+            if isinstance(root, dict):
+                rp = root.get("root_path")
+                if isinstance(rp, str) and rp:
+                    return rp
+    schemas = describe_result.get("schemas")
+    if isinstance(schemas, list):
+        for schema in schemas:
+            if isinstance(schema, dict):
+                rp = schema.get("root_path")
+                if isinstance(rp, str) and rp:
+                    return rp
+    return "$"
+
+
 def execute_code(
     runtime: GatewayArtifactQueryRuntime,
     *,
     artifact_id: str,
+    root_path: str,
     code: str,
     params: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
@@ -143,7 +166,7 @@ def execute_code(
         {
             "_gateway_context": _GATEWAY_CONTEXT,
             "artifact_id": artifact_id,
-            "root_path": "$",
+            "root_path": root_path,
             "scope": "single",
             "code": code,
             "params": params or {},

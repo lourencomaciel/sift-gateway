@@ -45,6 +45,8 @@ def match_string(llm_answer: str, gold_answer: str) -> bool:
     """Check if LLM answer matches gold string."""
     llm_clean = llm_answer.strip().lower()
     gold_clean = gold_answer.strip().lower()
+    if not llm_clean:
+        return False
     if llm_clean == gold_clean:
         return True
     if gold_clean in llm_clean:
