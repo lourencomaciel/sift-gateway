@@ -234,6 +234,26 @@ Full reference: [docs/config.md](docs/config.md)
 | [Observability](docs/observability.md) | Structured logging and metrics |
 | [Architecture](docs/architecture.md) | Design and invariants |
 
+## Benchmarks
+
+The Tier 1 benchmark compares Sift's schema_ref + codegen approach against naive full-JSON context stuffing across 8 real-world datasets and 43 factual questions.
+
+Results with `claude-sonnet-4-20250514`:
+
+| Condition | Accuracy | Input Tokens | Token Reduction |
+|---|---|---|---|
+| Baseline (context-stuffed) | 12/43 (27.9%) | 2,053,939 | — |
+| **Sift (schema_ref + code)** | **20/43 (46.5%)** | **193,522** | **90.6%** |
+
+Sift answers more questions correctly while using ~10x fewer tokens. The baseline fails entirely on large datasets (earthquakes, laureates) where payloads exceed context limits, while Sift handles them through artifact queries.
+
+```bash
+python benchmarks/tier1/fetch_data.py
+python benchmarks/tier1/harness.py --model claude-sonnet-4-20250514
+```
+
+See `benchmarks/tier1/` for the full suite and per-dataset breakdown.
+
 ## Development
 
 ```bash
