@@ -41,7 +41,7 @@ from benchmarks.tier1.sift_runtime import (
     extract_root_paths,
 )
 
-_MAX_BASELINE_BYTES_DEFAULT = 4_000_000
+_MAX_BASELINE_BYTES_DEFAULT = 800_000
 
 _BASELINE_SYSTEM = (
     "You are a data analyst. Answer the question about the JSON data "
@@ -126,6 +126,7 @@ def _make_result(
     input_tokens: int = 0,
     output_tokens: int = 0,
     latency_ms: float = 0.0,
+    attempted: bool = True,
     **extra: Any,
 ) -> dict[str, Any]:
     """Build a result dict with shared question metadata."""
@@ -141,6 +142,7 @@ def _make_result(
         "input_tokens": input_tokens,
         "output_tokens": output_tokens,
         "latency_ms": latency_ms,
+        "attempted": attempted,
     }
     result.update(extra)
     return result
@@ -184,6 +186,7 @@ def _run_baseline(
             error=str(exc),
             latency_ms=elapsed,
             truncated=truncated,
+            attempted=False,
         )
 
     correct = evaluate_answer(
@@ -272,6 +275,28 @@ def _format_schema_for_prompt(describe_result: dict[str, Any]) -> str:
                 line += f" — e.g. {example_str}"
             parts.append(line)
 
+        # Detect columnar layout: object root where most fields
+        # are arrays (e.g. weather data stored as parallel arrays).
+        matching_root = next(
+            (r for r in roots if r.get("root_path") == rp),
+            None,
+        )
+        if (
+            matching_root is not None
+            and matching_root.get("root_shape") == "object"
+            and fields
+        ):
+            array_count = sum(
+                1 for f in fields if str(f.get("types", "")).startswith("array")
+            )
+            if array_count >= len(fields) / 2:
+                parts.append(
+                    "\nNOTE: This root is columnar"
+                    " — `data` is a dict of parallel arrays."
+                    '\nAccess: data["field"][i],'
+                    ' NOT data[i]["field"].'
+                )
+
     return "\n".join(parts)
 
 
@@ -342,13 +367,15 @@ def _run_sift(
     attempts = 0
     code_result: dict[str, Any] | None = None
     last_error = ""
+    last_code = ""
 
     while attempts <= max_retries:
         try:
             if attempts > 0:
                 codegen_msg_retry = (
                     f"{codegen_msg}\n\n"
-                    f"Previous attempt failed with error:\n{last_error}\n"
+                    f"Previous code:\n```python\n{last_code}\n```\n\n"
+                    f"Error:\n{last_error}\n"
                     f"Please fix the code."
                 )
                 codegen_resp = call_llm(
@@ -395,6 +422,7 @@ def _run_sift(
         except RuntimeError as exc:
             # RuntimeError comes from execute_code on code failures;
             # infrastructure errors (e.g. LLM API) propagate as-is.
+            last_code = code
             last_error = str(exc)
             attempts += 1
             if attempts > max_retries:
@@ -407,6 +435,7 @@ def _run_sift(
                     output_tokens=total_output_tokens,
                     latency_ms=total_latency,
                     retries=attempts - 1,
+                    attempted=False,
                 )
 
     # Step 2: Extract result from code execution
@@ -449,6 +478,7 @@ def _run_sift(
             output_tokens=total_output_tokens,
             latency_ms=total_latency,
             retries=attempts,
+            attempted=False,
         )
 
     total_input_tokens += answer_resp.input_tokens
