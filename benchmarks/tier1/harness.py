@@ -423,7 +423,9 @@ def _build_nesting_hint(
     if not children:
         return None
 
-    parts = [f'"{k}": {v}' for k, v in children[:_MAX_NESTING_HINT_KEYS]]
+    parts = [
+        f"{json.dumps(k)}: {v}" for k, v in children[:_MAX_NESTING_HINT_KEYS]
+    ]
     if len(children) > _MAX_NESTING_HINT_KEYS:
         return "{" + ", ".join(parts) + ", ...}"
     return "{" + ", ".join(parts) + "}"
@@ -460,11 +462,11 @@ def _format_schema_for_prompt(describe_result: dict[str, Any]) -> str:
             if _field_has_type(field, "object"):
                 nesting = _build_nesting_hint(fp, fields)
 
-            line = (
-                f"  - {fp}: object {nesting}"
-                if nesting
-                else f"  - {fp}: {types}"
-            )
+            if nesting:
+                type_label = "/".join(_field_type_names(field))
+                line = f"  - {fp}: {type_label} {nesting}"
+            else:
+                line = f"  - {fp}: {types}"
             if nullable:
                 line += " (nullable)"
             if example is not None:

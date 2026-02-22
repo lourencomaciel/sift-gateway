@@ -343,6 +343,15 @@ class TestBuildNestingHint:
         hint = _build_nesting_hint("$[*].data", fields)
         assert hint == '{"key.one": string, "simple": number}'
 
+    def test_key_with_quotes_is_escaped(self) -> None:
+        """Keys containing quotes are JSON-escaped in the hint."""
+        fields = [
+            {"path": "$[*].obj", "types": ["object"]},
+            {"path": "$[*].obj['a\"b']", "types": ["string"]},
+        ]
+        hint = _build_nesting_hint("$[*].obj", fields)
+        assert hint == '{"a\\"b": string}'
+
     def test_fallback_field_path_returns_none(self) -> None:
         """Field with unresolvable path (?) is never a child."""
         fields = [
@@ -484,6 +493,29 @@ class TestFormatSchemaForPrompt:
         assert 'object {"en": string, "no": string}' in result
         # Child fields should still appear in the flat listing.
         assert "$[*].country.en" in result
+
+    def test_nesting_hint_preserves_union_types(self) -> None:
+        """Mixed-type fields show all types, not just 'object'."""
+        describe = {
+            "roots": [],
+            "schemas": [
+                {
+                    "root_path": "$",
+                    "fields": [
+                        {
+                            "path": "$[*].val",
+                            "types": ["object", "string"],
+                        },
+                        {
+                            "path": "$[*].val.en",
+                            "types": ["string"],
+                        },
+                    ],
+                },
+            ],
+        }
+        result = _format_schema_for_prompt(describe)
+        assert 'object/string {"en": string}' in result
 
     def test_field_paths_displayed_from_path_key(self) -> None:
         """Describe result uses 'path' key, not 'field_path'."""
