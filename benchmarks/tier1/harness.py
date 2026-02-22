@@ -95,7 +95,7 @@ def _truncate_for_baseline(
         # iteration serializes data[:mid], costing O(mid * avg_item)
         # — acceptable here since max_bytes caps the output size.
         low, high = 1, len(data)
-        best = 1
+        best_json = json.dumps(data[:1], ensure_ascii=False)
         while low <= high:
             mid = (low + high) // 2
             candidate = json.dumps(data[:mid], ensure_ascii=False)
@@ -106,10 +106,9 @@ def _truncate_for_baseline(
             ):
                 high = mid - 1
             else:
-                best = mid
+                best_json = candidate
                 low = mid + 1
-        truncated = json.dumps(data[:best], ensure_ascii=False)
-        return truncated, True
+        return best_json, True
 
     # Non-list (e.g. dict): return valid JSON with a truncation note
     # rather than slicing the string at a byte boundary.
@@ -383,15 +382,19 @@ def _run_sift(
             else:
                 root_path = root_paths[0]
 
+            exec_start = time.monotonic()
             code_result = execute_code(
                 runtime,
                 artifact_id=artifact_id,
                 root_path=root_path,
                 code=code,
             )
+            total_latency += (time.monotonic() - exec_start) * 1000.0
             break
 
-        except Exception as exc:
+        except RuntimeError as exc:
+            # RuntimeError comes from execute_code on code failures;
+            # infrastructure errors (e.g. LLM API) propagate as-is.
             last_error = str(exc)
             attempts += 1
             if attempts > max_retries:

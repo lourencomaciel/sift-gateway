@@ -59,6 +59,16 @@ class TestMatchNumber:
         assert match_number("-5", "-5")
         assert not match_number("5", "-5")
 
+    def test_close_floats_without_tolerance(self) -> None:
+        # Different floats must not match at default tolerance=0.0.
+        assert not match_number("3.14159", "3.14")
+
+    def test_first_number_wins(self) -> None:
+        # Extracts first numeric token — may mis-score if LLM
+        # elaborates before answering.
+        assert match_number("There are 42 items", "42")
+        assert not match_number("There are 10 items costing 42", "42")
+
 
 # -- match_string --
 
@@ -104,6 +114,12 @@ class TestMatchString:
 
     def test_both_empty(self) -> None:
         assert match_string("", "")
+
+    def test_gold_with_regex_metacharacters(self) -> None:
+        # re.escape should handle metacharacters in gold.
+        assert match_string("I use C++", "C++")
+        assert match_string("file.txt", "file.txt")
+        assert not match_string("filetxt", "file.txt")
 
 
 # -- match_list --
@@ -152,6 +168,10 @@ class TestEvaluateAnswer:
         assert not evaluate_answer(
             "201", "200", answer_type="number", tolerance=0.0
         )
+
+    def test_unknown_answer_type_falls_through_to_string(self) -> None:
+        assert evaluate_answer("Paris", "Paris", answer_type="unknown")
+        assert not evaluate_answer("London", "Paris", answer_type="unknown")
 
 
 if __name__ == "__main__":

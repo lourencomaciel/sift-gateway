@@ -58,7 +58,20 @@ def match_string(llm_answer: str, gold_answer: str) -> bool:
         return llm_clean == gold_clean
     if llm_clean == gold_clean:
         return True
-    pattern = r"\b" + re.escape(gold_clean) + r"\b"
+    # Use \b when the gold edge is a word char; otherwise require
+    # whitespace or string boundary so non-word chars like "+"
+    # don't mis-anchor.
+    start = (
+        r"\b"
+        if gold_clean[0].isalnum() or gold_clean[0] == "_"
+        else r"(?:^|(?<=\s))"
+    )
+    end = (
+        r"\b"
+        if gold_clean[-1].isalnum() or gold_clean[-1] == "_"
+        else r"(?:$|(?=\s))"
+    )
+    pattern = start + re.escape(gold_clean) + end
     return re.search(pattern, llm_clean) is not None
 
 
