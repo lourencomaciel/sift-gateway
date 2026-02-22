@@ -18,6 +18,7 @@ from benchmarks.tier1.harness import (
     _is_direct_child,
     _make_result,
     _run_sift,
+    _split_path_segments,
     _truncate_dict,
     _truncate_for_baseline,
     _truncate_list,
@@ -48,15 +49,20 @@ def _stub_question(**overrides: object) -> Question:
 
 class TestEffectiveMaxBytes:
     def test_byte_cap_wins_when_smaller(self) -> None:
-        # 100_000 bytes < 200_000 * 3 = 600_000
+        # 100_000 bytes < 200_000 * 2 = 400_000
         assert _effective_max_bytes(100_000, 200_000) == 100_000
 
     def test_token_derived_wins_when_smaller(self) -> None:
-        # 500_000 bytes > 100_000 * 3 = 300_000
-        assert _effective_max_bytes(500_000, 100_000) == 300_000
+        # 500_000 bytes > 100_000 * 2 = 200_000
+        assert _effective_max_bytes(500_000, 100_000) == 200_000
 
     def test_equal_caps(self) -> None:
-        assert _effective_max_bytes(300_000, 100_000) == 300_000
+        assert _effective_max_bytes(200_000, 100_000) == 200_000
+
+    def test_default_caps_token_derived_wins(self) -> None:
+        # With defaults (400K bytes, 180K tokens), the token-
+        # derived cap (360K) is smaller and should be effective.
+        assert _effective_max_bytes(400_000, 180_000) == 360_000
 
 
 # -- _fits --
@@ -178,13 +184,13 @@ class TestTruncateForBaseline:
         assert len(parsed) < 100_000
 
     def test_token_limit_caps_before_byte_limit(self) -> None:
-        # With max_tokens=100 and 3 bytes/token, effective limit = 300
+        # With max_tokens=100 and 2 bytes/token, effective limit = 200
         data = list(range(10_000))
         text, truncated = _truncate_for_baseline(
             data, max_bytes=1_000_000, max_tokens=100
         )
         assert truncated
-        assert len(text.encode("utf-8")) <= 300
+        assert len(text.encode("utf-8")) <= 200
 
     def test_truncates_dict_with_arrays(self) -> None:
         data = {"vals": list(range(10_000))}
@@ -271,6 +277,36 @@ class TestIsDirectChild:
 
     def test_prefix_mismatch(self) -> None:
         assert _is_direct_child("$.alpha", "$.alphabet") is None
+
+
+# -- _split_path_segments --
+
+
+class TestSplitPathSegments:
+    def test_dot_notation(self) -> None:
+        assert _split_path_segments("a.b.c") == ["a", "b", "c"]
+
+    def test_single_segment(self) -> None:
+        assert _split_path_segments("name") == ["name"]
+
+    def test_bracket_notation(self) -> None:
+        assert _split_path_segments("data['key.one']") == [
+            "data",
+            "key.one",
+        ]
+
+    def test_mixed_notation(self) -> None:
+        assert _split_path_segments("data['key.one'].sub") == [
+            "data",
+            "key.one",
+            "sub",
+        ]
+
+    def test_empty_string(self) -> None:
+        assert _split_path_segments("") == []
+
+    def test_consecutive_brackets(self) -> None:
+        assert _split_path_segments("d['a']['b']") == ["d", "a", "b"]
 
 
 # -- _build_nesting_hint --
@@ -417,6 +453,70 @@ class TestFormatSchemaForPrompt:
         result = _format_schema_for_prompt(describe)
         assert "columnar" in result
 
+    def test_columnar_hint_nullable_warning(self) -> None:
+        describe = {
+            "roots": [
+                {
+                    "root_path": "$",
+                    "count_estimate": 100,
+                    "root_shape": "object",
+                },
+            ],
+            "schemas": [
+                {
+                    "root_path": "$",
+                    "fields": [
+                        {
+                            "path": "$.temp",
+                            "types": ["array"],
+                            "nullable": True,
+                        },
+                        {
+                            "path": "$.wind",
+                            "types": ["array"],
+                            "nullable": True,
+                        },
+                        {"path": "$.time", "types": ["array"]},
+                    ],
+                },
+            ],
+        }
+        result = _format_schema_for_prompt(describe)
+        assert "columnar" in result
+        assert "is not None" in result
+        # Nullable example should show filter-then-aggregate,
+        # not the unsafe raw sum() pattern.
+        assert "filter nulls first" in result
+        assert "sum(valid)" in result
+        assert "len(valid)" in result
+        assert 'sum(data["temp"])' not in result
+        assert 'len(data["temp"])' not in result
+
+    def test_columnar_hint_no_nullable_warning_when_clean(self) -> None:
+        describe = {
+            "roots": [
+                {
+                    "root_path": "$",
+                    "count_estimate": 100,
+                    "root_shape": "object",
+                },
+            ],
+            "schemas": [
+                {
+                    "root_path": "$",
+                    "fields": [
+                        {"path": "$.a", "types": ["array"]},
+                        {"path": "$.b", "types": ["array"]},
+                    ],
+                },
+            ],
+        }
+        result = _format_schema_for_prompt(describe)
+        assert "columnar" in result
+        assert "None/null" not in result
+        # Non-nullable should show the direct sum() pattern.
+        assert 'sum(data["a"])' in result
+
     def test_no_columnar_hint_for_array_root(self) -> None:
         describe = {
             "roots": [
@@ -516,6 +616,110 @@ class TestFormatSchemaForPrompt:
         }
         result = _format_schema_for_prompt(describe)
         assert 'object/string {"en": string}' in result
+
+    def test_nested_field_hint_for_array_root(self) -> None:
+        describe = {
+            "roots": [
+                {
+                    "root_path": "$",
+                    "count_estimate": 100,
+                    "root_shape": "array",
+                },
+            ],
+            "schemas": [
+                {
+                    "root_path": "$",
+                    "fields": [
+                        {"path": "$[*].id", "types": ["number"]},
+                        {"path": "$[*].birth", "types": ["object"]},
+                        {
+                            "path": "$[*].birth.date",
+                            "types": ["string"],
+                        },
+                        {
+                            "path": "$[*].birth.place",
+                            "types": ["object"],
+                        },
+                        {
+                            "path": "$[*].birth.place.country",
+                            "types": ["object"],
+                        },
+                        {
+                            "path": "$[*].birth.place.country.en",
+                            "types": ["string"],
+                        },
+                    ],
+                },
+            ],
+        }
+        result = _format_schema_for_prompt(describe)
+        assert "Nested field access" in result
+        assert '["birth"]["place"]["country"]["en"]' in result
+        # Verify the exact .get()-chain for safe traversal.
+        assert (
+            'item.get("birth", {}).get("place", {})'
+            '.get("country", {}).get("en")'
+        ) in result
+
+    def test_no_nested_hint_for_shallow_fields(self) -> None:
+        describe = {
+            "roots": [
+                {
+                    "root_path": "$",
+                    "count_estimate": 50,
+                    "root_shape": "array",
+                },
+            ],
+            "schemas": [
+                {
+                    "root_path": "$",
+                    "fields": [
+                        {"path": "$[*].name", "types": ["string"]},
+                        {"path": "$[*].age", "types": ["number"]},
+                    ],
+                },
+            ],
+        }
+        result = _format_schema_for_prompt(describe)
+        assert "Nested field access" not in result
+
+    def test_nested_hint_bracket_notation(self) -> None:
+        describe = {
+            "roots": [
+                {
+                    "root_path": "$",
+                    "count_estimate": 100,
+                    "root_shape": "array",
+                },
+            ],
+            "schemas": [
+                {
+                    "root_path": "$",
+                    "fields": [
+                        {"path": "$[*].id", "types": ["number"]},
+                        {
+                            "path": "$[*].data",
+                            "types": ["object"],
+                        },
+                        {
+                            "path": "$[*].data['key.one']",
+                            "types": ["object"],
+                        },
+                        {
+                            "path": "$[*].data['key.one'].val",
+                            "types": ["string"],
+                        },
+                    ],
+                },
+            ],
+        }
+        result = _format_schema_for_prompt(describe)
+        assert "Nested field access" in result
+        assert '["data"]["key.one"]["val"]' in result
+        assert (
+            'item.get("data", {}).get("key.one", {})'
+            '.get("val")'
+        ) in result
 
     def test_field_paths_displayed_from_path_key(self) -> None:
         """Describe result uses 'path' key, not 'field_path'."""
