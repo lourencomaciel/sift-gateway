@@ -460,7 +460,11 @@ def _format_schema_for_prompt(describe_result: dict[str, Any]) -> str:
             if _field_has_type(field, "object"):
                 nesting = _build_nesting_hint(fp, fields)
 
-            line = f"  - {fp}: {nesting}" if nesting else f"  - {fp}: {types}"
+            line = (
+                f"  - {fp}: object {nesting}"
+                if nesting
+                else f"  - {fp}: {types}"
+            )
             if nullable:
                 line += " (nullable)"
             if example is not None:

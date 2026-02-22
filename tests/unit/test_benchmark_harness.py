@@ -481,7 +481,7 @@ class TestFormatSchemaForPrompt:
             ],
         }
         result = _format_schema_for_prompt(describe)
-        assert '{"en": string, "no": string}' in result
+        assert 'object {"en": string, "no": string}' in result
         # Child fields should still appear in the flat listing.
         assert "$[*].country.en" in result
 
