@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass
+import hashlib
 from typing import Any
 
 
@@ -937,3 +938,20 @@ def get_questions_for_dataset(
 ) -> list[Question]:
     """Return questions for a specific dataset."""
     return [q for q in QUESTIONS if q.dataset_name == dataset_name]
+
+
+def question_set_hash() -> str:
+    """Return a short SHA-256 hash identifying the current question set.
+
+    The hash covers question IDs, text, types, answer types, and gold
+    function names so that changes to the question set produce a
+    different hash for cross-run comparison validation.
+    """
+    parts = [
+        f"{q.dataset_name}:{q.question_id}:{q.question_text}"
+        f":{q.question_type}:{q.answer_type}"
+        f":{q.gold_answer_fn.__name__}"
+        for q in QUESTIONS
+    ]
+    digest = hashlib.sha256("\n".join(parts).encode()).hexdigest()
+    return digest[:12]
