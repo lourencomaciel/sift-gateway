@@ -76,7 +76,11 @@ def match_string(llm_answer: str, gold_answer: str) -> bool:
 
 
 def match_list(llm_answer: str, gold_answer: str) -> bool:
-    """Check if LLM answer matches gold list (set comparison)."""
+    """Check if LLM answer matches gold list (order-insensitive).
+
+    Uses sorted multiset comparison so duplicate elements are
+    preserved (``["a", "a"]`` does NOT match ``["a"]``).
+    """
     try:
         llm_list = json.loads(llm_answer)
     except json.JSONDecodeError:
@@ -87,9 +91,9 @@ def match_list(llm_answer: str, gold_answer: str) -> bool:
         return False
     if not isinstance(llm_list, list) or not isinstance(gold_list, list):
         return False
-    llm_set = {str(x).strip().lower() for x in llm_list}
-    gold_set = {str(x).strip().lower() for x in gold_list}
-    return llm_set == gold_set
+    llm_norm = sorted(str(x).strip().lower() for x in llm_list)
+    gold_norm = sorted(str(x).strip().lower() for x in gold_list)
+    return llm_norm == gold_norm
 
 
 def evaluate_answer(
@@ -111,6 +115,7 @@ def build_report(
     results: list[dict[str, Any]],
     *,
     model: str,
+    question_hash: str = "",
 ) -> dict[str, Any]:
     """Build a summary report from individual question results."""
     baseline_results = [r for r in results if r.get("condition") == "baseline"]
@@ -136,7 +141,7 @@ def build_report(
     sift_output_tokens = sum(r.get("output_tokens", 0) for r in sift_results)
 
     token_reduction_pct = (
-        (1 - sift_input_tokens / baseline_input_tokens) * 100
+        max(0, (1 - sift_input_tokens / baseline_input_tokens) * 100)
         if baseline_input_tokens > 0
         else 0
     )
@@ -197,6 +202,7 @@ def build_report(
 
     return {
         "model": model,
+        "question_set_hash": question_hash,
         "summary": {
             "baseline_accuracy": (f"{baseline_correct}/{baseline_total}"),
             "baseline_accuracy_pct": round(
