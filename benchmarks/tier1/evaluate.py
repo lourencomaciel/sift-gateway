@@ -75,6 +75,26 @@ def match_string(llm_answer: str, gold_answer: str) -> bool:
     return re.search(pattern, llm_clean) is not None
 
 
+_TRUE_VARIANTS = frozenset({"yes", "true", "1"})
+_FALSE_VARIANTS = frozenset({"no", "false", "0"})
+
+
+def match_boolean(llm_answer: str, gold_answer: str) -> bool:
+    """Check if LLM answer matches gold boolean value.
+
+    Recognises ``yes/true/1`` as truthy and ``no/false/0`` as falsy.
+    Both inputs are stripped and lowercased before comparison.
+    Returns ``False`` when gold is not a recognised boolean variant.
+    """
+    llm_clean = llm_answer.strip().lower()
+    gold_clean = gold_answer.strip().lower()
+    if gold_clean in _TRUE_VARIANTS:
+        return llm_clean in _TRUE_VARIANTS
+    if gold_clean in _FALSE_VARIANTS:
+        return llm_clean in _FALSE_VARIANTS
+    return False
+
+
 def match_list(llm_answer: str, gold_answer: str) -> bool:
     """Check if LLM answer matches gold list (order-insensitive).
 
@@ -106,9 +126,34 @@ def evaluate_answer(
     """Evaluate a single answer against gold."""
     if answer_type == "number":
         return match_number(llm_answer, gold_answer, tolerance=tolerance)
+    if answer_type == "boolean":
+        return match_boolean(llm_answer, gold_answer)
     if answer_type == "list":
         return match_list(llm_answer, gold_answer)
     return match_string(llm_answer, gold_answer)
+
+
+def _latency_percentiles(
+    latencies: list[float],
+) -> dict[str, float | int]:
+    """Compute p50, p90, and mean latency from a list of values.
+
+    Returns an empty dict when *latencies* is empty.  Uses
+    nearest-rank index calculation to avoid ``statistics.quantiles()``
+    edge cases with small sample sizes.
+    """
+    if not latencies:
+        return {}
+    s = sorted(latencies)
+    n = len(s)
+    p50_idx = min(n - 1, int(n * 0.5))
+    p90_idx = min(n - 1, int(n * 0.9))
+    return {
+        "p50_ms": round(s[p50_idx], 1),
+        "p90_ms": round(s[p90_idx], 1),
+        "mean_ms": round(sum(s) / n, 1),
+        "count": n,
+    }
 
 
 def build_report(
@@ -200,6 +245,62 @@ def build_report(
             if r.get("correct"):
                 entry["sift_correct"] += 1
 
+    # Latency percentiles
+    baseline_latencies = [
+        r["latency_ms"]
+        for r in baseline_results
+        if r.get("latency_ms") is not None
+    ]
+    sift_latencies = [
+        r["latency_ms"] for r in sift_results if r.get("latency_ms") is not None
+    ]
+
+    # Per-difficulty breakdown
+    diffs: dict[str, dict[str, Any]] = {}
+    for r in results:
+        d = str(r.get("difficulty", 1))
+        cond = r.get("condition", "unknown")
+        if d not in diffs:
+            diffs[d] = {
+                "baseline_correct": 0,
+                "baseline_total": 0,
+                "sift_correct": 0,
+                "sift_total": 0,
+                "sift_retries": 0,
+                "baseline_latencies": [],
+                "sift_latencies": [],
+            }
+        entry = diffs[d]
+        if cond == "baseline":
+            entry["baseline_total"] += 1
+            if r.get("correct"):
+                entry["baseline_correct"] += 1
+            if r.get("latency_ms") is not None:
+                entry["baseline_latencies"].append(r["latency_ms"])
+        elif cond == "sift":
+            entry["sift_total"] += 1
+            if r.get("correct"):
+                entry["sift_correct"] += 1
+            entry["sift_retries"] += r.get("retries", 0)
+            if r.get("latency_ms") is not None:
+                entry["sift_latencies"].append(r["latency_ms"])
+
+    per_difficulty: dict[str, dict[str, Any]] = {}
+    for d, entry in diffs.items():
+        per_difficulty[d] = {
+            "baseline_correct": entry["baseline_correct"],
+            "baseline_total": entry["baseline_total"],
+            "sift_correct": entry["sift_correct"],
+            "sift_total": entry["sift_total"],
+            "sift_retries": entry["sift_retries"],
+            "baseline_latency": _latency_percentiles(
+                entry["baseline_latencies"],
+            ),
+            "sift_latency": _latency_percentiles(
+                entry["sift_latencies"],
+            ),
+        }
+
     return {
         "model": model,
         "question_set_hash": question_hash,
@@ -224,8 +325,13 @@ def build_report(
             "sift_errors": sift_errors,
             "sift_attempted": sift_total - sift_errors,
         },
+        "latency": {
+            "baseline": _latency_percentiles(baseline_latencies),
+            "sift": _latency_percentiles(sift_latencies),
+        },
         "per_dataset": datasets,
         "per_question_type": qtypes,
+        "per_difficulty": per_difficulty,
         "results": results,
     }
 
@@ -257,6 +363,31 @@ def print_summary_table(report: dict[str, Any]) -> None:
         f"{summary['sift_output_tokens']:>12,}"
     )
     print(f"\n  Token reduction: {summary['token_reduction_pct']}%")
+
+    # Latency percentiles
+    latency = report.get("latency", {})
+    bl = latency.get("baseline", {})
+    sl = latency.get("sift", {})
+    if bl or sl:
+        print(
+            f"\n  {'Latency':<12} {'p50 (ms)':>10} "
+            f"{'p90 (ms)':>10} {'mean (ms)':>10}"
+        )
+        print("  " + "-" * 44)
+        if bl:
+            print(
+                f"  {'Baseline':<12} "
+                f"{bl.get('p50_ms', 0):>10.1f} "
+                f"{bl.get('p90_ms', 0):>10.1f} "
+                f"{bl.get('mean_ms', 0):>10.1f}"
+            )
+        if sl:
+            print(
+                f"  {'Sift':<12} "
+                f"{sl.get('p50_ms', 0):>10.1f} "
+                f"{sl.get('p90_ms', 0):>10.1f} "
+                f"{sl.get('mean_ms', 0):>10.1f}"
+            )
 
     # Per-dataset
     print(f"\n  {'Dataset':<15} {'Baseline':>10} {'Sift':>10}")
@@ -295,5 +426,30 @@ def print_summary_table(report: dict[str, Any]) -> None:
             else "—"
         )
         print(f"  {qt_name:<15} {b_acc:>10} {s_acc:>10}")
+
+    # Per-difficulty
+    per_diff = report.get("per_difficulty", {})
+    if per_diff:
+        diff_labels = {"1": "easy", "2": "medium", "3": "hard"}
+        print(
+            f"\n  {'Difficulty':<12} {'Baseline':>10} "
+            f"{'Sift':>10} {'Retries':>8}"
+        )
+        print("  " + "-" * 44)
+        for d, dd in sorted(per_diff.items()):
+            label = diff_labels.get(d, f"L{d}")
+            b_acc = (
+                f"{dd['baseline_correct']}/{dd['baseline_total']}"
+                if dd["baseline_total"]
+                else "—"
+            )
+            s_acc = (
+                f"{dd['sift_correct']}/{dd['sift_total']}"
+                if dd["sift_total"]
+                else "—"
+            )
+            print(
+                f"  {label:<12} {b_acc:>10} {s_acc:>10} {dd['sift_retries']:>8}"
+            )
 
     print("=" * 70 + "\n")

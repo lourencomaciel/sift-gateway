@@ -23,6 +23,7 @@ class Question:
     gold_answer_fn: Callable[[Any], str]
     answer_type: str
     tolerance: float = 0.0
+    difficulty: int = 1
 
 
 def _safe_float(val: Any) -> float:
@@ -730,6 +731,707 @@ def _weather_cold_precip_hours(data: Any) -> str:
     return str(count)
 
 
+# -- gap-coverage: round 2 --
+
+# earthquakes (round 2)
+
+
+def _eq_mag_gte3_depth_gt100(data: Any) -> str:
+    count = sum(
+        1
+        for f in data
+        if isinstance(f, dict)
+        and isinstance(f.get("properties"), dict)
+        and f["properties"].get("mag") is not None
+        and _safe_float(f["properties"]["mag"]) >= 3.0
+        and isinstance(f.get("geometry"), dict)
+        and isinstance(f["geometry"].get("coordinates"), list)
+        and len(f["geometry"]["coordinates"]) >= 3
+        and _safe_float(f["geometry"]["coordinates"][2]) > 100
+    )
+    return str(count)
+
+
+def _eq_avg_depth_mag_gte4(data: Any) -> str:
+    depths = [
+        _safe_float(f["geometry"]["coordinates"][2])
+        for f in data
+        if isinstance(f, dict)
+        and isinstance(f.get("properties"), dict)
+        and f["properties"].get("mag") is not None
+        and _safe_float(f["properties"]["mag"]) >= 4.0
+        and isinstance(f.get("geometry"), dict)
+        and isinstance(f["geometry"].get("coordinates"), list)
+        and len(f["geometry"]["coordinates"]) >= 3
+    ]
+    if not depths:
+        return "0"
+    return f"{sum(depths) / len(depths):.2f}"
+
+
+def _eq_top3_deepest_places(data: Any) -> str:
+    valid = [
+        f
+        for f in data
+        if isinstance(f, dict)
+        and isinstance(f.get("geometry"), dict)
+        and isinstance(f["geometry"].get("coordinates"), list)
+        and len(f["geometry"]["coordinates"]) >= 3
+        and isinstance(f.get("properties"), dict)
+    ]
+    valid.sort(
+        key=lambda f: _safe_float(f["geometry"]["coordinates"][2]),
+        reverse=True,
+    )
+    places = [str(f["properties"].get("place", "")) for f in valid[:3]]
+    return json.dumps(places)
+
+
+def _eq_net_highest_avg_mag(data: Any) -> str:
+    net_sums: dict[str, float] = {}
+    net_counts: dict[str, int] = {}
+    for f in data:
+        if not isinstance(f, dict):
+            continue
+        props = f.get("properties")
+        if not isinstance(props, dict):
+            continue
+        net = props.get("net")
+        mag = props.get("mag")
+        if not isinstance(net, str) or mag is None:
+            continue
+        net_sums[net] = net_sums.get(net, 0.0) + _safe_float(mag)
+        net_counts[net] = net_counts.get(net, 0) + 1
+    if not net_sums:
+        return ""
+    return max(
+        net_sums,
+        key=lambda n: net_sums[n] / net_counts[n],
+    )
+
+
+def _eq_california_count(data: Any) -> str:
+    count = sum(
+        1
+        for f in data
+        if isinstance(f, dict)
+        and isinstance(f.get("properties"), dict)
+        and isinstance(f["properties"].get("place"), str)
+        and "California" in f["properties"]["place"]
+    )
+    return str(count)
+
+
+# products (round 2)
+
+
+def _prod_price_gt50_rating_gt4(data: Any) -> str:
+    count = sum(
+        1
+        for p in data
+        if isinstance(p, dict)
+        and p.get("price") is not None
+        and _safe_float(p["price"]) > 50
+        and p.get("rating") is not None
+        and _safe_float(p["rating"]) > 4.0
+    )
+    return str(count)
+
+
+def _prod_low_discount(data: Any) -> str:
+    count = sum(
+        1
+        for p in data
+        if isinstance(p, dict)
+        and p.get("discountPercentage") is not None
+        and _safe_float(p["discountPercentage"]) < 1
+    )
+    return str(count)
+
+
+def _prod_category_highest_avg_price(data: Any) -> str:
+    cat_sums: dict[str, float] = {}
+    cat_counts: dict[str, int] = {}
+    for p in data:
+        if not isinstance(p, dict):
+            continue
+        cat = p.get("category")
+        price = p.get("price")
+        if not isinstance(cat, str) or price is None:
+            continue
+        cat_sums[cat] = cat_sums.get(cat, 0.0) + _safe_float(price)
+        cat_counts[cat] = cat_counts.get(cat, 0) + 1
+    if not cat_sums:
+        return ""
+    return max(
+        cat_sums,
+        key=lambda c: cat_sums[c] / cat_counts[c],
+    )
+
+
+def _prod_vowel_titles(data: Any) -> str:
+    count = sum(
+        1
+        for p in data
+        if isinstance(p, dict)
+        and isinstance(p.get("title"), str)
+        and p["title"]
+        and p["title"][0].upper() in "AEIOU"
+    )
+    return str(count)
+
+
+# users (round 2)
+
+
+def _users_over30_us(data: Any) -> str:
+    count = sum(
+        1
+        for u in data
+        if isinstance(u, dict)
+        and isinstance(u.get("age"), (int, float))
+        and u["age"] > 30
+        and isinstance(u.get("address"), dict)
+        and isinstance(u["address"].get("country"), str)
+        and u["address"]["country"] == "United States"
+    )
+    return str(count)
+
+
+# countries (round 2)
+
+
+def _countries_avg_area_landlocked(data: Any) -> str:
+    areas = [
+        _safe_float(c["area"])
+        for c in data
+        if isinstance(c, dict)
+        and c.get("landlocked") is True
+        and isinstance(c.get("area"), (int, float))
+    ]
+    if not areas:
+        return "0"
+    return f"{sum(areas) / len(areas):.2f}"
+
+
+def _countries_top5_populous(data: Any) -> str:
+    valid = [
+        c
+        for c in data
+        if isinstance(c, dict)
+        and isinstance(c.get("population"), (int, float))
+        and isinstance(c.get("name"), dict)
+    ]
+    valid.sort(key=lambda c: c["population"], reverse=True)
+    names = [str(c["name"].get("common", "")) for c in valid[:5]]
+    return json.dumps(names)
+
+
+def _countries_pct_landlocked(data: Any) -> str:
+    total = sum(1 for c in data if isinstance(c, dict))
+    if total == 0:
+        return "0"
+    landlocked = sum(
+        1 for c in data if isinstance(c, dict) and c.get("landlocked") is True
+    )
+    return f"{landlocked / total * 100:.1f}"
+
+
+def _countries_region_highest_avg_pop(data: Any) -> str:
+    region_sums: dict[str, float] = {}
+    region_counts: dict[str, int] = {}
+    for c in data:
+        if not isinstance(c, dict):
+            continue
+        region = c.get("region")
+        pop = c.get("population")
+        if not isinstance(region, str) or not isinstance(pop, (int, float)):
+            continue
+        region_sums[region] = region_sums.get(region, 0.0) + pop
+        region_counts[region] = region_counts.get(region, 0) + 1
+    if not region_sums:
+        return ""
+    return max(
+        region_sums,
+        key=lambda r: region_sums[r] / region_counts[r],
+    )
+
+
+def _countries_any_pop_gt2b(data: Any) -> str:
+    for c in data:
+        if (
+            isinstance(c, dict)
+            and isinstance(c.get("population"), (int, float))
+            and c["population"] > 2_000_000_000
+        ):
+            return "Yes"
+    return "No"
+
+
+# laureates (round 2)
+
+
+def _laureates_pct_female(data: Any) -> str:
+    total = sum(1 for la in data if isinstance(la, dict))
+    if total == 0:
+        return "0"
+    female = sum(
+        1
+        for la in data
+        if isinstance(la, dict) and la.get("gender") == "female"
+    )
+    return f"{female / total * 100:.1f}"
+
+
+def _laureates_born_1940s(data: Any) -> str:
+    count = 0
+    for la in data:
+        if not isinstance(la, dict):
+            continue
+        born = la.get("birth", {})
+        if not isinstance(born, dict):
+            continue
+        date = born.get("date")
+        if isinstance(date, str) and len(date) >= 4:
+            with contextlib.suppress(ValueError):
+                year = int(date[:4])
+                if 1940 <= year <= 1949:
+                    count += 1
+    return str(count)
+
+
+def _laureates_oldest_living_birth_year(data: Any) -> str:
+    oldest_year: int | None = None
+    for la in data:
+        if not isinstance(la, dict):
+            continue
+        if "death" in la:
+            continue
+        born = la.get("birth", {})
+        if not isinstance(born, dict):
+            continue
+        date = born.get("date")
+        if isinstance(date, str) and len(date) >= 4:
+            with contextlib.suppress(ValueError):
+                year = int(date[:4])
+                if oldest_year is None or year < oldest_year:
+                    oldest_year = year
+    return str(oldest_year) if oldest_year is not None else ""
+
+
+def _laureates_multi_prize(data: Any) -> str:
+    count = sum(
+        1
+        for la in data
+        if isinstance(la, dict)
+        and isinstance(la.get("nobelPrizes"), list)
+        and len(la["nobelPrizes"]) > 1
+    )
+    return str(count)
+
+
+def _laureates_physics_top_affiliation(data: Any) -> str:
+    affiliations: list[str] = []
+    for la in data:
+        if not isinstance(la, dict):
+            continue
+        prizes = la.get("nobelPrizes")
+        if not isinstance(prizes, list):
+            continue
+        for prize in prizes:
+            if not isinstance(prize, dict):
+                continue
+            cat = prize.get("category")
+            if not isinstance(cat, dict) or cat.get("en") != "Physics":
+                continue
+            affs = prize.get("affiliations")
+            if not isinstance(affs, list):
+                continue
+            for aff in affs:
+                if isinstance(aff, dict):
+                    name = aff.get("name")
+                    if isinstance(name, dict):
+                        en = name.get("en")
+                        if isinstance(en, str):
+                            affiliations.append(en)
+    if not affiliations:
+        return ""
+    return Counter(affiliations).most_common(1)[0][0]
+
+
+# weather (round 2)
+
+
+def _weather_peak_temp_hour(data: Any) -> str:
+    hourly = data.get("hourly") if isinstance(data, dict) else None
+    if not isinstance(hourly, dict):
+        return ""
+    times = hourly.get("time")
+    temps = hourly.get("temperature_2m")
+    if not isinstance(times, list) or not isinstance(temps, list):
+        return ""
+    hour_sums: dict[int, float] = {}
+    hour_counts: dict[int, int] = {}
+    # strict=False: defensive; see _weather_coldest_day.
+    for t, temp in zip(times, temps, strict=False):
+        if (
+            not isinstance(t, str)
+            or not isinstance(temp, (int, float))
+            or len(t) < 13
+        ):
+            continue
+        with contextlib.suppress(ValueError):
+            hour = int(t[11:13])
+            hour_sums[hour] = hour_sums.get(hour, 0.0) + temp
+            hour_counts[hour] = hour_counts.get(hour, 0) + 1
+    if not hour_sums:
+        return ""
+    best = max(
+        hour_sums,
+        key=lambda h: hour_sums[h] / hour_counts[h],
+    )
+    return str(best)
+
+
+def _weather_avg_temp_during_precip(data: Any) -> str:
+    hourly = data.get("hourly") if isinstance(data, dict) else None
+    if not isinstance(hourly, dict):
+        return "0"
+    temps = hourly.get("temperature_2m")
+    precip = hourly.get("precipitation")
+    if not isinstance(temps, list) or not isinstance(precip, list):
+        return "0"
+    filtered_temps = [
+        t
+        # strict=False: defensive; see _weather_coldest_day.
+        for t, p in zip(temps, precip, strict=False)
+        if isinstance(t, (int, float)) and isinstance(p, (int, float)) and p > 0
+    ]
+    if not filtered_temps:
+        return "0"
+    avg = sum(filtered_temps) / len(filtered_temps)
+    return f"{avg:.2f}"
+
+
+def _weather_wind_temp_correlation(data: Any) -> str:
+    hourly = data.get("hourly") if isinstance(data, dict) else None
+    if not isinstance(hourly, dict):
+        return ""
+    winds = hourly.get("wind_speed_10m")
+    temps = hourly.get("temperature_2m")
+    if not isinstance(winds, list) or not isinstance(temps, list):
+        return ""
+    pairs = [
+        (w, t)
+        # strict=False: defensive; see _weather_coldest_day.
+        for w, t in zip(winds, temps, strict=False)
+        if isinstance(w, (int, float)) and isinstance(t, (int, float))
+    ]
+    if len(pairs) < 2:
+        return ""
+    ws = [p[0] for p in pairs]
+    ts = [p[1] for p in pairs]
+    n = len(pairs)
+    mean_w = sum(ws) / n
+    mean_t = sum(ts) / n
+    cov = sum((w - mean_w) * (t - mean_t) for w, t in pairs)
+    return "positive" if cov > 0 else "negative"
+
+
+# -- github_repos --
+
+
+def _gh_stars_gt100k(data: Any) -> str:
+    count = sum(
+        1
+        for r in data
+        if isinstance(r, dict)
+        and isinstance(r.get("stargazers_count"), (int, float))
+        and r["stargazers_count"] > 100_000
+    )
+    return str(count)
+
+
+def _gh_avg_forks(data: Any) -> str:
+    forks = [
+        _safe_float(r["forks_count"])
+        for r in data
+        if isinstance(r, dict) and r.get("forks_count") is not None
+    ]
+    if not forks:
+        return "0"
+    return f"{sum(forks) / len(forks):.2f}"
+
+
+def _gh_most_starred_name(data: Any) -> str:
+    best = max(
+        (
+            r
+            for r in data
+            if isinstance(r, dict) and r.get("stargazers_count") is not None
+        ),
+        key=lambda r: _safe_float(r["stargazers_count"]),
+        default=None,
+    )
+    if best is None:
+        return ""
+    return str(best.get("name", ""))
+
+
+def _gh_top_language(data: Any) -> str:
+    langs: list[str] = [
+        r["language"]
+        for r in data
+        if isinstance(r, dict) and isinstance(r.get("language"), str)
+    ]
+    if not langs:
+        return ""
+    return Counter(langs).most_common(1)[0][0]
+
+
+def _gh_owner_most_starred(data: Any) -> str:
+    best = max(
+        (
+            r
+            for r in data
+            if isinstance(r, dict) and r.get("stargazers_count") is not None
+        ),
+        key=lambda r: _safe_float(r["stargazers_count"]),
+        default=None,
+    )
+    if best is None:
+        return ""
+    owner = best.get("owner")
+    if isinstance(owner, dict):
+        return str(owner.get("login", ""))
+    return ""
+
+
+def _gh_mit_license_count(data: Any) -> str:
+    count = sum(
+        1
+        for r in data
+        if isinstance(r, dict)
+        and isinstance(r.get("license"), dict)
+        and r["license"].get("spdx_id") == "MIT"
+    )
+    return str(count)
+
+
+# -- pokemon --
+
+
+def _poke_total(data: Any) -> str:
+    return str(len(data))
+
+
+def _poke_avg_hp(data: Any) -> str:
+    hps = [
+        _safe_float(p["base"]["HP"])
+        for p in data
+        if isinstance(p, dict)
+        and isinstance(p.get("base"), dict)
+        and p["base"].get("HP") is not None
+    ]
+    if not hps:
+        return "0"
+    return f"{sum(hps) / len(hps):.2f}"
+
+
+def _poke_highest_attack(data: Any) -> str:
+    best = max(
+        (
+            p
+            for p in data
+            if isinstance(p, dict)
+            and isinstance(p.get("base"), dict)
+            and p["base"].get("Attack") is not None
+        ),
+        key=lambda p: _safe_float(p["base"]["Attack"]),
+        default=None,
+    )
+    if best is None:
+        return ""
+    name = best.get("name")
+    if isinstance(name, dict):
+        return str(name.get("english", ""))
+    return ""
+
+
+def _poke_fire_count(data: Any) -> str:
+    count = sum(
+        1
+        for p in data
+        if isinstance(p, dict)
+        and isinstance(p.get("type"), list)
+        and "Fire" in p["type"]
+    )
+    return str(count)
+
+
+def _poke_top_type(data: Any) -> str:
+    types: list[str] = []
+    for p in data:
+        if not isinstance(p, dict):
+            continue
+        t = p.get("type")
+        if isinstance(t, list):
+            types.extend(typ for typ in t if isinstance(typ, str))
+    if not types:
+        return ""
+    return Counter(types).most_common(1)[0][0]
+
+
+def _poke_avg_speed_water(data: Any) -> str:
+    speeds = [
+        _safe_float(p["base"]["Speed"])
+        for p in data
+        if isinstance(p, dict)
+        and isinstance(p.get("type"), list)
+        and "Water" in p["type"]
+        and isinstance(p.get("base"), dict)
+        and p["base"].get("Speed") is not None
+    ]
+    if not speeds:
+        return "0"
+    return f"{sum(speeds) / len(speeds):.2f}"
+
+
+# -- openlibrary --
+
+
+def _ol_total_works(data: Any) -> str:
+    return str(len(data))
+
+
+def _ol_avg_editions(data: Any) -> str:
+    editions = [
+        _safe_float(w["edition_count"])
+        for w in data
+        if isinstance(w, dict) and w.get("edition_count") is not None
+    ]
+    if not editions:
+        return "0"
+    return f"{sum(editions) / len(editions):.2f}"
+
+
+def _ol_oldest_title(data: Any) -> str:
+    best = min(
+        (
+            w
+            for w in data
+            if isinstance(w, dict)
+            and isinstance(w.get("first_publish_year"), (int, float))
+        ),
+        key=lambda w: w["first_publish_year"],
+        default=None,
+    )
+    if best is None:
+        return ""
+    return str(best.get("title", ""))
+
+
+def _ol_multi_author_count(data: Any) -> str:
+    count = sum(
+        1
+        for w in data
+        if isinstance(w, dict)
+        and isinstance(w.get("authors"), list)
+        and len(w["authors"]) > 1
+    )
+    return str(count)
+
+
+def _ol_top_author(data: Any) -> str:
+    names: list[str] = []
+    for w in data:
+        if not isinstance(w, dict):
+            continue
+        authors = w.get("authors")
+        if not isinstance(authors, list):
+            continue
+        for a in authors:
+            if isinstance(a, dict):
+                name = a.get("name")
+                if isinstance(name, str):
+                    names.append(name)
+    if not names:
+        return ""
+    return Counter(names).most_common(1)[0][0]
+
+
+def _ol_has_cover_count(data: Any) -> str:
+    count = sum(
+        1 for w in data if isinstance(w, dict) and w.get("cover_id") is not None
+    )
+    return str(count)
+
+
+# -- airports --
+
+
+def _air_count_us(data: Any) -> str:
+    count = sum(
+        1 for a in data if isinstance(a, dict) and a.get("country") == "US"
+    )
+    return str(count)
+
+
+def _air_avg_elevation(data: Any) -> str:
+    elevations = [
+        _safe_float(a["elevation"])
+        for a in data
+        if isinstance(a, dict) and a.get("elevation") is not None
+    ]
+    if not elevations:
+        return "0"
+    return f"{sum(elevations) / len(elevations):.2f}"
+
+
+def _air_lookup_lax(data: Any) -> str:
+    for a in data:
+        if isinstance(a, dict) and a.get("iata") == "LAX":
+            return str(a.get("name", ""))
+    return ""
+
+
+def _air_highest_elevation(data: Any) -> str:
+    best = max(
+        (
+            a
+            for a in data
+            if isinstance(a, dict) and a.get("elevation") is not None
+        ),
+        key=lambda a: _safe_float(a["elevation"]),
+        default=None,
+    )
+    if best is None:
+        return ""
+    return str(best.get("name", ""))
+
+
+def _air_top_country(data: Any) -> str:
+    countries: list[str] = [
+        a["country"]
+        for a in data
+        if isinstance(a, dict) and isinstance(a.get("country"), str)
+    ]
+    if not countries:
+        return ""
+    return Counter(countries).most_common(1)[0][0]
+
+
+def _air_northernmost(data: Any) -> str:
+    best = max(
+        (a for a in data if isinstance(a, dict) and a.get("lat") is not None),
+        key=lambda a: _safe_float(a["lat"]),
+        default=None,
+    )
+    if best is None:
+        return ""
+    return str(best.get("name", ""))
+
+
 # -- question registry --
 
 
@@ -757,6 +1459,7 @@ QUESTIONS: list[Question] = [
         gold_answer_fn=_eq_avg_mag,
         answer_type="number",
         tolerance=0.01,
+        difficulty=2,
     ),
     Question(
         dataset_name="earthquakes",
@@ -790,6 +1493,7 @@ QUESTIONS: list[Question] = [
         gold_answer_fn=_eq_max_depth,
         answer_type="number",
         tolerance=0.01,
+        difficulty=2,
     ),
     Question(
         dataset_name="earthquakes",
@@ -801,6 +1505,7 @@ QUESTIONS: list[Question] = [
         question_type="cross_field",
         gold_answer_fn=_eq_most_reporting_net,
         answer_type="string",
+        difficulty=2,
     ),
     # products (6)
     Question(
@@ -824,6 +1529,7 @@ QUESTIONS: list[Question] = [
         gold_answer_fn=_prod_avg_rating,
         answer_type="number",
         tolerance=0.01,
+        difficulty=2,
     ),
     Question(
         dataset_name="products",
@@ -840,6 +1546,7 @@ QUESTIONS: list[Question] = [
         question_type="cross_field",
         gold_answer_fn=_prod_top_brand,
         answer_type="string",
+        difficulty=2,
     ),
     Question(
         dataset_name="products",
@@ -858,6 +1565,7 @@ QUESTIONS: list[Question] = [
         question_type="aggregation",
         gold_answer_fn=_prod_total_stock,
         answer_type="number",
+        difficulty=2,
     ),
     # users (5)
     Question(
@@ -885,6 +1593,7 @@ QUESTIONS: list[Question] = [
         question_type="cross_field",
         gold_answer_fn=_users_most_common_city,
         answer_type="string",
+        difficulty=2,
     ),
     Question(
         dataset_name="users",
@@ -896,6 +1605,7 @@ QUESTIONS: list[Question] = [
         gold_answer_fn=_users_avg_weight,
         answer_type="number",
         tolerance=0.01,
+        difficulty=2,
     ),
     Question(
         dataset_name="users",
@@ -939,6 +1649,7 @@ QUESTIONS: list[Question] = [
         question_type="aggregation",
         gold_answer_fn=_comments_most_commented_post,
         answer_type="number",
+        difficulty=2,
     ),
     Question(
         dataset_name="comments",
@@ -951,6 +1662,7 @@ QUESTIONS: list[Question] = [
         gold_answer_fn=_comments_avg_body_len,
         answer_type="number",
         tolerance=0.01,
+        difficulty=2,
     ),
     # photos (5)
     Question(
@@ -976,6 +1688,7 @@ QUESTIONS: list[Question] = [
         question_type="aggregation",
         gold_answer_fn=_photos_most_photos_album,
         answer_type="number",
+        difficulty=2,
     ),
     Question(
         dataset_name="photos",
@@ -1026,6 +1739,7 @@ QUESTIONS: list[Question] = [
         # when LLM-generated code uses float arithmetic instead
         # of exact int sums.
         tolerance=1000,
+        difficulty=2,
     ),
     Question(
         dataset_name="countries",
@@ -1034,6 +1748,7 @@ QUESTIONS: list[Question] = [
         question_type="cross_field",
         gold_answer_fn=_countries_most_countries_subregion,
         answer_type="string",
+        difficulty=2,
     ),
     Question(
         dataset_name="countries",
@@ -1075,6 +1790,7 @@ QUESTIONS: list[Question] = [
         question_type="cross_field",
         gold_answer_fn=_laureates_most_common_category,
         answer_type="string",
+        difficulty=2,
     ),
     Question(
         dataset_name="laureates",
@@ -1114,6 +1830,7 @@ QUESTIONS: list[Question] = [
         gold_answer_fn=_weather_avg_temp,
         answer_type="number",
         tolerance=0.01,
+        difficulty=2,
     ),
     Question(
         dataset_name="weather",
@@ -1126,6 +1843,7 @@ QUESTIONS: list[Question] = [
         gold_answer_fn=_weather_max_wind,
         answer_type="number",
         tolerance=0.1,
+        difficulty=2,
     ),
     Question(
         dataset_name="weather",
@@ -1146,6 +1864,7 @@ QUESTIONS: list[Question] = [
         gold_answer_fn=_weather_total_precip,
         answer_type="number",
         tolerance=0.01,
+        difficulty=2,
     ),
     # -- new gap-coverage questions (13) --
     # Gap #1: multi-condition filters
@@ -1159,6 +1878,7 @@ QUESTIONS: list[Question] = [
         question_type="multi_condition",
         gold_answer_fn=_prod_expensive_high_rated,
         answer_type="number",
+        difficulty=3,
     ),
     # Gap #2: conditional aggregation
     Question(
@@ -1172,6 +1892,7 @@ QUESTIONS: list[Question] = [
         gold_answer_fn=_prod_avg_rating_expensive,
         answer_type="number",
         tolerance=0.01,
+        difficulty=3,
     ),
     # Gap #3: top-N / ranking (also exercises list answer type)
     Question(
@@ -1184,6 +1905,7 @@ QUESTIONS: list[Question] = [
         question_type="top_n",
         gold_answer_fn=_prod_top3_expensive,
         answer_type="list",
+        difficulty=3,
     ),
     # Gap #4: percentage / ratio
     Question(
@@ -1197,6 +1919,7 @@ QUESTIONS: list[Question] = [
         gold_answer_fn=_users_pct_over40,
         answer_type="number",
         tolerance=0.1,
+        difficulty=2,
     ),
     # Gap #5: median / percentile
     Question(
@@ -1210,6 +1933,7 @@ QUESTIONS: list[Question] = [
         gold_answer_fn=_prod_median_price,
         answer_type="number",
         tolerance=0.01,
+        difficulty=3,
     ),
     # Gap #6: negation
     Question(
@@ -1219,6 +1943,7 @@ QUESTIONS: list[Question] = [
         question_type="negation",
         gold_answer_fn=_countries_not_landlocked,
         answer_type="number",
+        difficulty=2,
     ),
     # Gap #7: group-by with aggregation
     Question(
@@ -1233,6 +1958,7 @@ QUESTIONS: list[Question] = [
         gold_answer_fn=_eq_avg_mag_us_net,
         answer_type="number",
         tolerance=0.01,
+        difficulty=3,
     ),
     # Gap #8: date/time parsing + Gap #7: group-by
     Question(
@@ -1245,6 +1971,7 @@ QUESTIONS: list[Question] = [
         question_type="datetime",
         gold_answer_fn=_weather_coldest_day,
         answer_type="string",
+        difficulty=3,
     ),
     # Gap #9: string operations
     Question(
@@ -1256,6 +1983,7 @@ QUESTIONS: list[Question] = [
         question_type="string_op",
         gold_answer_fn=_prod_mens_category_count,
         answer_type="number",
+        difficulty=2,
     ),
     # Gap #10: comparison between groups
     Question(
@@ -1268,7 +1996,8 @@ QUESTIONS: list[Question] = [
         ),
         question_type="comparison",
         gold_answer_fn=_countries_europe_vs_africa_avg_pop,
-        answer_type="string",
+        answer_type="boolean",
+        difficulty=2,
     ),
     # Gap #11: existence / boolean
     Question(
@@ -1280,7 +2009,8 @@ QUESTIONS: list[Question] = [
         ),
         question_type="existence",
         gold_answer_fn=_eq_any_mag_gt7,
-        answer_type="string",
+        answer_type="boolean",
+        difficulty=2,
     ),
     # Gap #2 + #8: conditional aggregation + date/time parsing
     Question(
@@ -1295,6 +2025,7 @@ QUESTIONS: list[Question] = [
         gold_answer_fn=_laureates_avg_birth_year_physics,
         answer_type="number",
         tolerance=1.0,
+        difficulty=3,
     ),
     # Gap #1: multi-condition (columnar variant)
     Question(
@@ -1307,6 +2038,532 @@ QUESTIONS: list[Question] = [
         question_type="multi_condition",
         gold_answer_fn=_weather_cold_precip_hours,
         answer_type="number",
+        difficulty=3,
+    ),
+    # -- gap-coverage: round 2 (22) --
+    # multi-condition filters
+    Question(
+        dataset_name="earthquakes",
+        question_id="eq_mag_gte3_depth_gt100",
+        question_text=(
+            "How many earthquakes have magnitude >= 3.0 "
+            "AND depth greater than 100 km?"
+        ),
+        question_type="multi_condition",
+        gold_answer_fn=_eq_mag_gte3_depth_gt100,
+        answer_type="number",
+        difficulty=3,
+    ),
+    Question(
+        dataset_name="products",
+        question_id="prod_price_gt50_rating_gt4",
+        question_text=(
+            "How many products have a price greater than "
+            "50 and a rating greater than 4.0?"
+        ),
+        question_type="multi_condition",
+        gold_answer_fn=_prod_price_gt50_rating_gt4,
+        answer_type="number",
+        difficulty=3,
+    ),
+    Question(
+        dataset_name="users",
+        question_id="users_over30_us",
+        question_text=(
+            "How many users are over 30 years old and "
+            "live in the United States?"
+        ),
+        question_type="multi_condition",
+        gold_answer_fn=_users_over30_us,
+        answer_type="number",
+        difficulty=3,
+    ),
+    # conditional aggregation
+    Question(
+        dataset_name="earthquakes",
+        question_id="eq_avg_depth_mag_gte4",
+        question_text=(
+            "What is the average depth (in km) of "
+            "earthquakes with magnitude >= 4.0? "
+            "Give two decimal places."
+        ),
+        question_type="conditional_aggregation",
+        gold_answer_fn=_eq_avg_depth_mag_gte4,
+        answer_type="number",
+        tolerance=0.01,
+        difficulty=3,
+    ),
+    Question(
+        dataset_name="countries",
+        question_id="countries_avg_area_landlocked",
+        question_text=(
+            "What is the average area of landlocked "
+            "countries? Give two decimal places."
+        ),
+        question_type="conditional_aggregation",
+        gold_answer_fn=_countries_avg_area_landlocked,
+        answer_type="number",
+        tolerance=0.01,
+        difficulty=3,
+    ),
+    # top-N / list
+    Question(
+        dataset_name="countries",
+        question_id="countries_top5_populous",
+        question_text=(
+            "What are the names of the 5 most populous "
+            "countries? Return a JSON array."
+        ),
+        question_type="top_n",
+        gold_answer_fn=_countries_top5_populous,
+        answer_type="list",
+        difficulty=3,
+    ),
+    Question(
+        dataset_name="earthquakes",
+        question_id="eq_top3_deepest_places",
+        question_text=(
+            "What are the place names of the 3 deepest "
+            "earthquakes? Return a JSON array."
+        ),
+        question_type="top_n",
+        gold_answer_fn=_eq_top3_deepest_places,
+        answer_type="list",
+        difficulty=3,
+    ),
+    # percentage / ratio
+    Question(
+        dataset_name="countries",
+        question_id="countries_pct_landlocked",
+        question_text=(
+            "What percentage of countries are "
+            "landlocked? Give one decimal place."
+        ),
+        question_type="percentage",
+        gold_answer_fn=_countries_pct_landlocked,
+        answer_type="number",
+        tolerance=0.1,
+        difficulty=2,
+    ),
+    Question(
+        dataset_name="laureates",
+        question_id="laureates_pct_female",
+        question_text=(
+            "What percentage of laureates are female? Give one decimal place."
+        ),
+        question_type="percentage",
+        gold_answer_fn=_laureates_pct_female,
+        answer_type="number",
+        tolerance=0.1,
+        difficulty=2,
+    ),
+    # negation
+    Question(
+        dataset_name="products",
+        question_id="prod_low_discount",
+        question_text=(
+            "How many products have a discount percentage less than 1?"
+        ),
+        question_type="negation",
+        gold_answer_fn=_prod_low_discount,
+        answer_type="number",
+        difficulty=2,
+    ),
+    # group-by + aggregation
+    Question(
+        dataset_name="earthquakes",
+        question_id="eq_net_highest_avg_mag",
+        question_text=(
+            "Which reporting network has the highest average magnitude?"
+        ),
+        question_type="group_aggregation",
+        gold_answer_fn=_eq_net_highest_avg_mag,
+        answer_type="string",
+        difficulty=3,
+    ),
+    Question(
+        dataset_name="products",
+        question_id="prod_category_highest_avg_price",
+        question_text=("Which product category has the highest average price?"),
+        question_type="group_aggregation",
+        gold_answer_fn=_prod_category_highest_avg_price,
+        answer_type="string",
+        difficulty=3,
+    ),
+    Question(
+        dataset_name="countries",
+        question_id="countries_region_highest_avg_pop",
+        question_text=(
+            "Which region has the highest average population per country?"
+        ),
+        question_type="group_aggregation",
+        gold_answer_fn=_countries_region_highest_avg_pop,
+        answer_type="string",
+        difficulty=3,
+    ),
+    # date/time parsing
+    Question(
+        dataset_name="laureates",
+        question_id="laureates_born_1940s",
+        question_text=(
+            "How many laureates were born in the 1940s (1940-1949)?"
+        ),
+        question_type="datetime",
+        gold_answer_fn=_laureates_born_1940s,
+        answer_type="number",
+        difficulty=2,
+    ),
+    Question(
+        dataset_name="laureates",
+        question_id="laureates_oldest_living_birth_year",
+        question_text=(
+            "What is the birth year of the oldest "
+            "living laureate (one without a death "
+            "date)?"
+        ),
+        question_type="datetime",
+        gold_answer_fn=_laureates_oldest_living_birth_year,
+        answer_type="number",
+        difficulty=3,
+    ),
+    Question(
+        dataset_name="weather",
+        question_id="weather_peak_temp_hour",
+        question_text=(
+            "What hour of the day (0-23) has the highest average temperature?"
+        ),
+        question_type="datetime",
+        gold_answer_fn=_weather_peak_temp_hour,
+        answer_type="number",
+        difficulty=3,
+    ),
+    # string operations
+    Question(
+        dataset_name="earthquakes",
+        question_id="eq_california_count",
+        question_text=(
+            "How many earthquakes have 'California' in their place name?"
+        ),
+        question_type="string_op",
+        gold_answer_fn=_eq_california_count,
+        answer_type="number",
+        difficulty=2,
+    ),
+    Question(
+        dataset_name="products",
+        question_id="prod_vowel_titles",
+        question_text=(
+            "How many products have a title that "
+            "starts with a vowel (A, E, I, O, U)?"
+        ),
+        question_type="string_op",
+        gold_answer_fn=_prod_vowel_titles,
+        answer_type="number",
+        difficulty=2,
+    ),
+    # cross-root / correlation
+    Question(
+        dataset_name="weather",
+        question_id="weather_avg_temp_during_precip",
+        question_text=(
+            "What is the average temperature during "
+            "hours with precipitation greater than 0? "
+            "Give two decimal places."
+        ),
+        question_type="cross_root",
+        gold_answer_fn=_weather_avg_temp_during_precip,
+        answer_type="number",
+        tolerance=0.01,
+        difficulty=3,
+    ),
+    Question(
+        dataset_name="weather",
+        question_id="weather_wind_temp_correlation",
+        question_text=(
+            "Is the correlation between wind speed "
+            "and temperature positive or negative? "
+            "Answer 'positive' or 'negative'."
+        ),
+        question_type="cross_root",
+        gold_answer_fn=_weather_wind_temp_correlation,
+        answer_type="string",
+        difficulty=3,
+    ),
+    # existence / boolean
+    Question(
+        dataset_name="countries",
+        question_id="countries_any_pop_gt2b",
+        question_text=(
+            "Is there any country with a population "
+            "greater than 2 billion? Answer 'Yes' "
+            "or 'No'."
+        ),
+        question_type="existence",
+        gold_answer_fn=_countries_any_pop_gt2b,
+        answer_type="boolean",
+        difficulty=2,
+    ),
+    # deep nesting
+    Question(
+        dataset_name="laureates",
+        question_id="laureates_multi_prize",
+        question_text=(
+            "How many laureates have won more than one Nobel Prize?"
+        ),
+        question_type="deep_nesting",
+        gold_answer_fn=_laureates_multi_prize,
+        answer_type="number",
+        difficulty=3,
+    ),
+    Question(
+        dataset_name="laureates",
+        question_id="laureates_physics_top_affiliation",
+        question_text=(
+            "What is the most common affiliation name among Physics laureates?"
+        ),
+        question_type="deep_nesting",
+        gold_answer_fn=_laureates_physics_top_affiliation,
+        answer_type="string",
+        difficulty=3,
+    ),
+    # -- new dataset questions (24) --
+    # github_repos (6)
+    Question(
+        dataset_name="github_repos",
+        question_id="gh_stars_gt100k",
+        question_text=("How many repos have more than 100,000 stars?"),
+        question_type="count",
+        gold_answer_fn=_gh_stars_gt100k,
+        answer_type="number",
+    ),
+    Question(
+        dataset_name="github_repos",
+        question_id="gh_avg_forks",
+        question_text=(
+            "Average number of forks across all repos? Give two decimal places."
+        ),
+        question_type="aggregation",
+        gold_answer_fn=_gh_avg_forks,
+        answer_type="number",
+        tolerance=0.01,
+        difficulty=2,
+    ),
+    Question(
+        dataset_name="github_repos",
+        question_id="gh_most_starred_name",
+        question_text=("What is the name of the repo with the most stars?"),
+        question_type="lookup",
+        gold_answer_fn=_gh_most_starred_name,
+        answer_type="string",
+    ),
+    Question(
+        dataset_name="github_repos",
+        question_id="gh_top_language",
+        question_text=("Which programming language has the most repos?"),
+        question_type="cross_field",
+        gold_answer_fn=_gh_top_language,
+        answer_type="string",
+        difficulty=2,
+    ),
+    Question(
+        dataset_name="github_repos",
+        question_id="gh_owner_most_starred",
+        question_text=("What is the owner login of the most starred repo?"),
+        question_type="lookup",
+        gold_answer_fn=_gh_owner_most_starred,
+        answer_type="string",
+    ),
+    Question(
+        dataset_name="github_repos",
+        question_id="gh_mit_license_count",
+        question_text=("How many repos use the MIT License?"),
+        question_type="filter",
+        gold_answer_fn=_gh_mit_license_count,
+        answer_type="number",
+    ),
+    # pokemon (6)
+    Question(
+        dataset_name="pokemon",
+        question_id="poke_total",
+        question_text=("How many Pokemon are in this dataset?"),
+        question_type="count",
+        gold_answer_fn=_poke_total,
+        answer_type="number",
+    ),
+    Question(
+        dataset_name="pokemon",
+        question_id="poke_avg_hp",
+        question_text=(
+            "What is the average base HP across all Pokemon? "
+            "Give two decimal places."
+        ),
+        question_type="aggregation",
+        gold_answer_fn=_poke_avg_hp,
+        answer_type="number",
+        tolerance=0.01,
+        difficulty=2,
+    ),
+    Question(
+        dataset_name="pokemon",
+        question_id="poke_highest_attack",
+        question_text=(
+            "What is the English name of the Pokemon with "
+            "the highest Attack stat?"
+        ),
+        question_type="lookup",
+        gold_answer_fn=_poke_highest_attack,
+        answer_type="string",
+    ),
+    Question(
+        dataset_name="pokemon",
+        question_id="poke_fire_count",
+        question_text=("How many Pokemon have Fire as one of their types?"),
+        question_type="filter",
+        gold_answer_fn=_poke_fire_count,
+        answer_type="number",
+    ),
+    Question(
+        dataset_name="pokemon",
+        question_id="poke_top_type",
+        question_text=(
+            "What is the most common type? Count each type per Pokemon."
+        ),
+        question_type="cross_field",
+        gold_answer_fn=_poke_top_type,
+        answer_type="string",
+        difficulty=2,
+    ),
+    Question(
+        dataset_name="pokemon",
+        question_id="poke_avg_speed_water",
+        question_text=(
+            "What is the average Speed stat of Water-type "
+            "Pokemon? Give two decimal places."
+        ),
+        question_type="conditional_aggregation",
+        gold_answer_fn=_poke_avg_speed_water,
+        answer_type="number",
+        tolerance=0.01,
+        difficulty=3,
+    ),
+    # openlibrary (6)
+    Question(
+        dataset_name="openlibrary",
+        question_id="ol_total_works",
+        question_text="How many works are in this dataset?",
+        question_type="count",
+        gold_answer_fn=_ol_total_works,
+        answer_type="number",
+    ),
+    Question(
+        dataset_name="openlibrary",
+        question_id="ol_avg_editions",
+        question_text=(
+            "What is the average edition count across all "
+            "works? Give two decimal places."
+        ),
+        question_type="aggregation",
+        gold_answer_fn=_ol_avg_editions,
+        answer_type="number",
+        tolerance=0.01,
+        difficulty=2,
+    ),
+    Question(
+        dataset_name="openlibrary",
+        question_id="ol_oldest_title",
+        question_text=(
+            "What is the title of the work with the earliest "
+            "first publish year?"
+        ),
+        question_type="lookup",
+        gold_answer_fn=_ol_oldest_title,
+        answer_type="string",
+    ),
+    Question(
+        dataset_name="openlibrary",
+        question_id="ol_multi_author_count",
+        question_text=("How many works have more than 1 author?"),
+        question_type="filter",
+        gold_answer_fn=_ol_multi_author_count,
+        answer_type="number",
+    ),
+    Question(
+        dataset_name="openlibrary",
+        question_id="ol_top_author",
+        question_text=("Which author name appears in the most works?"),
+        question_type="cross_field",
+        gold_answer_fn=_ol_top_author,
+        answer_type="string",
+        difficulty=2,
+    ),
+    Question(
+        dataset_name="openlibrary",
+        question_id="ol_has_cover_count",
+        question_text=("How many works have a non-null cover_id?"),
+        question_type="existence",
+        gold_answer_fn=_ol_has_cover_count,
+        answer_type="number",
+        difficulty=2,
+    ),
+    # airports (6)
+    Question(
+        dataset_name="airports",
+        question_id="air_count_us",
+        question_text=("How many airports are in the US (country='US')?"),
+        question_type="count",
+        gold_answer_fn=_air_count_us,
+        answer_type="number",
+    ),
+    Question(
+        dataset_name="airports",
+        question_id="air_avg_elevation",
+        question_text=(
+            "What is the average elevation of all airports? "
+            "Give two decimal places."
+        ),
+        question_type="aggregation",
+        gold_answer_fn=_air_avg_elevation,
+        answer_type="number",
+        tolerance=0.01,
+        difficulty=2,
+    ),
+    Question(
+        dataset_name="airports",
+        question_id="air_lookup_lax",
+        question_text=("What is the name of the airport with IATA code 'LAX'?"),
+        question_type="lookup",
+        gold_answer_fn=_air_lookup_lax,
+        answer_type="string",
+    ),
+    Question(
+        dataset_name="airports",
+        question_id="air_highest_elevation",
+        question_text=(
+            "What is the name of the airport with the highest elevation?"
+        ),
+        question_type="lookup",
+        gold_answer_fn=_air_highest_elevation,
+        answer_type="string",
+    ),
+    Question(
+        dataset_name="airports",
+        question_id="air_top_country",
+        question_text=("Which country has the most airports?"),
+        question_type="cross_field",
+        gold_answer_fn=_air_top_country,
+        answer_type="string",
+        difficulty=2,
+    ),
+    Question(
+        dataset_name="airports",
+        question_id="air_northernmost",
+        question_text=(
+            "What is the name of the northernmost airport (highest latitude)?"
+        ),
+        question_type="lookup",
+        gold_answer_fn=_air_northernmost,
+        answer_type="string",
+        difficulty=2,
     ),
 ]
 
@@ -1328,7 +2585,7 @@ def question_set_hash() -> str:
     parts = [
         f"{q.dataset_name}:{q.question_id}:{q.question_text}"
         f":{q.question_type}:{q.answer_type}:{q.tolerance}"
-        f":{q.gold_answer_fn.__name__}"
+        f":{q.difficulty}:{q.gold_answer_fn.__name__}"
         for q in QUESTIONS
     ]
     digest = hashlib.sha256("\n".join(parts).encode()).hexdigest()

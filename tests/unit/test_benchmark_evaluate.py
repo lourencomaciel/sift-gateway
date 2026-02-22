@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 from benchmarks.tier1.evaluate import (
+    _latency_percentiles,
     build_report,
     evaluate_answer,
+    match_boolean,
     match_list,
     match_number,
     match_string,
@@ -124,6 +126,79 @@ class TestMatchString:
         assert not match_string("filetxt", "file.txt")
 
 
+# -- match_boolean --
+
+
+class TestMatchBoolean:
+    def test_yes_matches_yes(self) -> None:
+        assert match_boolean("Yes", "Yes")
+
+    def test_true_matches_yes(self) -> None:
+        assert match_boolean("true", "Yes")
+
+    def test_one_matches_yes(self) -> None:
+        assert match_boolean("1", "Yes")
+
+    def test_no_matches_no(self) -> None:
+        assert match_boolean("No", "No")
+
+    def test_false_matches_no(self) -> None:
+        assert match_boolean("false", "No")
+
+    def test_zero_matches_no(self) -> None:
+        assert match_boolean("0", "No")
+
+    def test_yes_rejects_no(self) -> None:
+        assert not match_boolean("Yes", "No")
+
+    def test_no_rejects_yes(self) -> None:
+        assert not match_boolean("No", "Yes")
+
+    def test_case_insensitive(self) -> None:
+        assert match_boolean("YES", "yes")
+        assert match_boolean("no", "NO")
+
+    def test_whitespace_stripped(self) -> None:
+        assert match_boolean("  yes  ", "  Yes  ")
+        assert match_boolean("  no  ", "No")
+
+    def test_unrecognized_gold_returns_false(self) -> None:
+        assert not match_boolean("yes", "maybe")
+        assert not match_boolean("no", "unknown")
+
+    def test_verbose_llm_rejected(self) -> None:
+        # match_boolean is strict — no word-boundary extraction.
+        assert not match_boolean("Yes, there is", "Yes")
+        assert not match_boolean("No, there is not", "No")
+
+    def test_cross_variant_yes_matches_true_gold(self) -> None:
+        assert match_boolean("yes", "true")
+        assert match_boolean("YES", "True")
+
+    def test_cross_variant_no_matches_false_gold(self) -> None:
+        assert match_boolean("no", "false")
+        assert match_boolean("NO", "False")
+
+    def test_zero_matches_false_gold(self) -> None:
+        assert match_boolean("0", "false")
+
+    def test_one_matches_true_gold(self) -> None:
+        assert match_boolean("1", "true")
+
+    def test_empty_llm_rejected(self) -> None:
+        assert not match_boolean("", "Yes")
+        assert not match_boolean("", "No")
+
+    def test_empty_gold_rejected(self) -> None:
+        assert not match_boolean("Yes", "")
+        assert not match_boolean("No", "")
+
+    def test_numeric_non_boolean_rejected(self) -> None:
+        # Only "1" and "0" are valid; other numerics are not.
+        assert not match_boolean("2", "yes")
+        assert not match_boolean("-1", "no")
+
+
 # -- match_list --
 
 
@@ -165,6 +240,11 @@ class TestEvaluateAnswer:
         assert evaluate_answer("Paris", "Paris", answer_type="string")
         assert not evaluate_answer("London", "Paris", answer_type="string")
 
+    def test_routes_boolean(self) -> None:
+        assert evaluate_answer("Yes", "Yes", answer_type="boolean")
+        assert evaluate_answer("true", "Yes", answer_type="boolean")
+        assert not evaluate_answer("No", "Yes", answer_type="boolean")
+
     def test_routes_list(self) -> None:
         assert evaluate_answer('["a", "b"]', '["b", "a"]', answer_type="list")
 
@@ -181,6 +261,51 @@ class TestEvaluateAnswer:
         assert not evaluate_answer("London", "Paris", answer_type="unknown")
 
 
+# -- _latency_percentiles --
+
+
+class TestLatencyPercentiles:
+    def test_empty_list(self) -> None:
+        assert _latency_percentiles([]) == {}
+
+    def test_single_value(self) -> None:
+        result = _latency_percentiles([100.0])
+        assert result["p50_ms"] == 100.0
+        assert result["p90_ms"] == 100.0
+        assert result["mean_ms"] == 100.0
+        assert result["count"] == 1
+
+    def test_two_values(self) -> None:
+        result = _latency_percentiles([100.0, 200.0])
+        assert result["count"] == 2
+        assert result["mean_ms"] == 150.0
+        # nearest-rank: p50 idx=min(1, int(2*0.5))=1 → 200
+        assert result["p50_ms"] == 200.0
+        # nearest-rank: p90 idx=min(1, int(2*0.9))=1 → 200
+        assert result["p90_ms"] == 200.0
+
+    def test_multiple_values(self) -> None:
+        latencies = [
+            10.0,
+            20.0,
+            30.0,
+            40.0,
+            50.0,
+            60.0,
+            70.0,
+            80.0,
+            90.0,
+            100.0,
+        ]
+        result = _latency_percentiles(latencies)
+        assert result["count"] == 10
+        assert result["mean_ms"] == 55.0
+        # nearest-rank: p50 idx=min(9, int(10*0.5))=5 → 60.0
+        assert result["p50_ms"] == 60.0
+        # nearest-rank: p90 idx=min(9, int(10*0.9))=9 → 100.0
+        assert result["p90_ms"] == 100.0
+
+
 # -- build_report --
 
 
@@ -190,6 +315,7 @@ def _stub_result(
     *,
     correct: bool = False,
     attempted: bool = True,
+    difficulty: int = 1,
 ) -> dict:
     """Minimal result dict for report tests."""
     return {
@@ -197,6 +323,7 @@ def _stub_result(
         "dataset": dataset,
         "question_id": "q1",
         "question_type": "number",
+        "difficulty": difficulty,
         "question_text": "stub",
         "gold_answer": "42",
         "llm_answer": "42" if correct else "0",
@@ -314,6 +441,65 @@ class TestBuildReport:
         assert s["baseline_accuracy_pct"] == 0
         assert s["sift_accuracy_pct"] == 0
         assert s["token_reduction_pct"] == 0
+
+    def test_per_difficulty_breakdown(self) -> None:
+        results = [
+            _stub_result("baseline", "ds1", correct=True, difficulty=1),
+            _stub_result("baseline", "ds1", correct=False, difficulty=2),
+            _stub_result("sift", "ds1", correct=True, difficulty=1),
+            _stub_result("sift", "ds1", correct=True, difficulty=2),
+        ]
+        report = build_report(results, model="test")
+        pd = report["per_difficulty"]
+        assert pd["1"]["baseline_correct"] == 1
+        assert pd["1"]["baseline_total"] == 1
+        assert pd["1"]["sift_correct"] == 1
+        assert pd["1"]["sift_total"] == 1
+        assert pd["2"]["baseline_correct"] == 0
+        assert pd["2"]["baseline_total"] == 1
+        assert pd["2"]["sift_correct"] == 1
+        assert pd["2"]["sift_total"] == 1
+
+    def test_latency_percentiles_in_report(self) -> None:
+        results = [
+            {**_stub_result("baseline", "ds1"), "latency_ms": 100.0},
+            {**_stub_result("baseline", "ds1"), "latency_ms": 200.0},
+            {**_stub_result("sift", "ds1"), "latency_ms": 50.0},
+            {**_stub_result("sift", "ds1"), "latency_ms": 150.0},
+        ]
+        report = build_report(results, model="test")
+        lat = report["latency"]
+        assert lat["baseline"]["count"] == 2
+        assert lat["baseline"]["mean_ms"] == 150.0
+        assert lat["sift"]["count"] == 2
+        assert lat["sift"]["mean_ms"] == 100.0
+
+    def test_difficulty_retries_tracked(self) -> None:
+        results = [
+            {
+                **_stub_result("sift", "ds1", difficulty=2),
+                "retries": 1,
+            },
+            {
+                **_stub_result("sift", "ds1", difficulty=2),
+                "retries": 2,
+            },
+            {
+                **_stub_result("sift", "ds1", difficulty=1),
+                "retries": 0,
+            },
+        ]
+        report = build_report(results, model="test")
+        pd = report["per_difficulty"]
+        assert pd["2"]["sift_retries"] == 3
+        assert pd["1"]["sift_retries"] == 0
+
+    def test_latency_empty_results(self) -> None:
+        report = build_report([], model="test")
+        lat = report["latency"]
+        assert lat["baseline"] == {}
+        assert lat["sift"] == {}
+        assert report["per_difficulty"] == {}
 
 
 # -- question_set_hash --

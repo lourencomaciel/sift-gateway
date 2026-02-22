@@ -65,7 +65,9 @@ def test_resolve_sift_command_preserves_path_symlink(
     tmp_path: Path,
 ) -> None:
     path_bin = tmp_path / "bin" / "sift-gateway"
-    real_bin = tmp_path / "cellar" / "sift-gateway" / "1.0.0" / "bin" / "sift-gateway"
+    real_bin = (
+        tmp_path / "cellar" / "sift-gateway" / "1.0.0" / "bin" / "sift-gateway"
+    )
     real_bin.parent.mkdir(parents=True, exist_ok=True)
     real_bin.write_text("#!/bin/sh\n", encoding="utf-8")
     path_bin.parent.mkdir(parents=True, exist_ok=True)
