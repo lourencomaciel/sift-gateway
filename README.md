@@ -238,12 +238,12 @@ Full reference: [docs/config.md](docs/config.md)
 
 The Tier 1 benchmark compares Sift's schema_ref + codegen approach against naive full-JSON context stuffing across 8 real-world datasets and 43 factual questions.
 
-Results with `claude-sonnet-4-6`:
-
-| Condition | Accuracy | Input Tokens | Token Reduction |
-|---|---|---|---|
-| Baseline (context-stuffed) | 11/43 (25.6%) | 2,053,966 | — |
-| **Sift (schema_ref + code)** | **33/43 (76.7%)** | **158,620** | **92.3%** |
+| Model | Condition | Accuracy | Input Tokens | Token Reduction |
+|---|---|---|---|---|
+| claude-sonnet-4-6 | Baseline | 11/43 (25.6%) | 2,053,966 | — |
+| claude-sonnet-4-6 | **Sift** | **33/43 (76.7%)** | **158,620** | **92.3%** |
+| claude-opus-4-6 | Baseline | 13/43 (30.2%) | 2,053,966 | — |
+| claude-opus-4-6 | **Sift** | **28/43 (65.1%)** | **179,661** | **91.3%** |
 
 Sift answers 3x more questions correctly while using ~13x fewer tokens. The baseline fails entirely on large datasets (earthquakes, laureates, photos) where payloads exceed context limits, while Sift handles them through artifact queries.
 
