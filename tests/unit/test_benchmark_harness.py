@@ -3,17 +3,22 @@
 from __future__ import annotations
 
 import json
+from unittest.mock import patch
 
 from benchmarks.tier1.harness import (
     _effective_max_bytes,
     _fits,
     _format_schema_for_prompt,
     _make_result,
+    _run_sift,
     _truncate_dict,
     _truncate_for_baseline,
     _truncate_list,
 )
+from benchmarks.tier1.llm_client import LLMAPIError, LLMResponse
 from benchmarks.tier1.questions import Question
+from benchmarks.tier1.sift_runtime import CodeExecutionError
+import pytest
 
 
 def _stub_question(**overrides: object) -> Question:
@@ -82,6 +87,14 @@ class TestTruncateList:
         result = _truncate_list(data, 100_000)
         assert json.loads(result) == [{"id": 1}]
 
+    def test_single_item_exceeds_limit(self) -> None:
+        data = [{"big": "x" * 500}]
+        result = _truncate_list(data, 10)
+        # Best-effort: returns valid JSON even though it exceeds limit.
+        parsed = json.loads(result)
+        assert isinstance(parsed, list)
+        assert len(parsed) == 1
+
 
 # -- _truncate_dict --
 
@@ -118,6 +131,21 @@ class TestTruncateDict:
         data = {"a": 1, "b": "hello"}
         result = _truncate_dict(data, 5)
         assert result is None
+
+    def test_duplicate_keys_across_nesting_levels(self) -> None:
+        # "vals" appears under two different parent dicts.
+        # Both should be truncated independently.
+        data = {
+            "group_a": {"vals": list(range(500))},
+            "group_b": {"vals": list(range(500))},
+        }
+        limit = 300
+        result = _truncate_dict(data, limit)
+        assert result is not None
+        assert len(result.encode("utf-8")) <= limit
+        parsed = json.loads(result)
+        assert len(parsed["group_a"]["vals"]) < 500
+        assert len(parsed["group_b"]["vals"]) < 500
 
 
 # -- _truncate_for_baseline --
@@ -266,3 +294,72 @@ class TestMakeResult:
         q = _stub_question()
         r = _make_result(q, condition="sift", gold="2", attempted=False)
         assert r["attempted"] is False
+
+
+# -- _run_sift retry loop --
+
+
+def _llm_resp(
+    text: str = "def run(data, schema, params):\n  return 42",
+) -> LLMResponse:
+    return LLMResponse(
+        text=text,
+        input_tokens=10,
+        output_tokens=10,
+        model="test",
+        latency_ms=1.0,
+    )
+
+
+class TestRunSiftRetryLoop:
+    """Verify that CodeExecutionError triggers retries while LLMAPIError propagates."""
+
+    def test_code_execution_error_retried(self) -> None:
+        q = _stub_question()
+        with (
+            patch(
+                "benchmarks.tier1.harness.call_llm",
+                return_value=_llm_resp(),
+            ),
+            patch(
+                "benchmarks.tier1.harness.execute_code",
+                side_effect=CodeExecutionError("bad code"),
+            ),
+        ):
+            result = _run_sift(
+                q,
+                [1, 2],
+                runtime=None,
+                artifact_id="art_test",
+                root_paths=["$"],
+                schema_text="test schema",
+                model="test",
+                api_key="k",
+                temperature=0.0,
+                max_retries=1,
+            )
+        # Should exhaust retries and mark as not attempted.
+        assert result["attempted"] is False
+        assert result["retries"] == 1
+
+    def test_llm_api_error_propagates(self) -> None:
+        q = _stub_question()
+        with (
+            patch(
+                "benchmarks.tier1.harness.call_llm",
+                side_effect=LLMAPIError("rate limited"),
+            ),
+            pytest.raises(LLMAPIError, match="rate limited"),
+        ):
+            _run_sift(
+                q,
+                [1, 2],
+                runtime=None,
+                artifact_id="art_test",
+                root_paths=["$"],
+                schema_text="test schema",
+                model="test",
+                api_key="k",
+                temperature=0.0,
+                max_retries=1,
+            )

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import copy
 from datetime import UTC, datetime
 import json
 from pathlib import Path
@@ -113,6 +114,10 @@ def _fits(candidate: str, limit: int) -> bool:
 def _truncate_list(data: list[Any], limit: int) -> str:
     """Binary search for the largest array prefix that fits."""
     best_json = json.dumps(data[:1], ensure_ascii=False)
+    if not _fits(best_json, limit):
+        # Even a single item exceeds the limit — return it anyway
+        # so callers always get valid JSON (best-effort).
+        return best_json
     low, high = 1, len(data)
     while low <= high:
         mid = (low + high) // 2
@@ -133,20 +138,21 @@ def _truncate_dict(data: dict[str, Any], limit: int) -> str | None:
     Returns ``None`` if the dict cannot be shrunk to fit (e.g. no
     array values to trim).
     """
-    # Collect (container_dict, key, original_length) for all arrays.
-    arrays: list[tuple[dict[str, Any], str, int]] = []
+    # Collect (key_path, original_length) for all arrays.
+    # key_path is a tuple: ("key",) for top-level, ("parent", "key")
+    # for one-level-deep.  This avoids identity-based container
+    # lookups that break across deepcopy boundaries.
+    arrays: list[tuple[tuple[str, ...], int]] = []
     for key, val in data.items():
         if isinstance(val, list) and len(val) > 1:
-            arrays.append((data, key, len(val)))
+            arrays.append(((key,), len(val)))
         elif isinstance(val, dict):
             for subkey, subval in val.items():
                 if isinstance(subval, list) and len(subval) > 1:
-                    arrays.append((val, subkey, len(subval)))
+                    arrays.append(((key, subkey), len(subval)))
 
     if not arrays:
         return None
-
-    import copy
 
     # Binary search on the fraction of array elements to keep.
     low_f, high_f = 0.0, 1.0
@@ -154,20 +160,14 @@ def _truncate_dict(data: dict[str, Any], limit: int) -> str | None:
     for _ in range(30):
         mid_f = (low_f + high_f) / 2
         trial = copy.deepcopy(data)
-        for container, key, orig_len in arrays:
-            # Navigate to the same container in the trial copy.
-            if container is data:
-                target = trial
-            else:
-                # One-level-deep: find the parent dict.
-                for pval in trial.values():
-                    if isinstance(pval, dict) and key in pval:
-                        target = pval
-                        break
-                else:
-                    target = trial
+        for key_path, orig_len in arrays:
             keep = max(1, int(orig_len * mid_f))
-            target[key] = target[key][:keep]
+            if len(key_path) == 1:
+                trial[key_path[0]] = trial[key_path[0]][:keep]
+            else:
+                trial[key_path[0]][key_path[1]] = trial[key_path[0]][
+                    key_path[1]
+                ][:keep]
 
         candidate = json.dumps(trial, ensure_ascii=False)
         if _fits(candidate, limit):
