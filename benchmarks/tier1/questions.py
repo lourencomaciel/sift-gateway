@@ -710,6 +710,8 @@ QUESTIONS: list[Question] = [
         gold_answer_fn=_comments_email_by_id,
         answer_type="string",
     ),
+    # answer_type="number" so match_number handles the str→float
+    # conversion from the gold function's str(Counter(...)) output.
     Question(
         dataset_name="comments",
         question_id="comments_top_post",

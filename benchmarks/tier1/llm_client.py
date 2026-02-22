@@ -5,10 +5,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 import json
 import os
+import sys
 import time
 from typing import Any
 import urllib.error
 import urllib.request
+
+_MAX_RETRIES = 5
+_INITIAL_BACKOFF_S = 2.0
 
 
 @dataclass(frozen=True)
@@ -20,6 +24,15 @@ class LLMResponse:
     output_tokens: int
     model: str
     latency_ms: float
+
+
+def _log_retry(status: int, attempt: int, backoff: float) -> None:
+    print(
+        f"  [rate-limit] HTTP {status}, "
+        f"retry {attempt + 1}/{_MAX_RETRIES} "
+        f"in {backoff:.0f}s",
+        file=sys.stderr,
+    )
 
 
 def _detect_provider(model: str) -> str:
@@ -65,27 +78,42 @@ def _call_anthropic(
         "system": system_prompt,
         "messages": [{"role": "user", "content": user_message}],
     }
-    request = urllib.request.Request(
-        "https://api.anthropic.com/v1/messages",
-        method="POST",
-        data=json.dumps(payload).encode("utf-8"),
-        headers={
-            "x-api-key": api_key,
-            "anthropic-version": "2023-06-01",
-            "Content-Type": "application/json",
-        },
-    )
-    start = time.monotonic()
-    try:
-        with urllib.request.urlopen(request, timeout=120) as resp:
-            body = json.loads(resp.read().decode("utf-8", errors="replace"))
-    except urllib.error.HTTPError as exc:
-        error_body = exc.read().decode("utf-8", errors="replace")
-        raise RuntimeError(
-            f"Anthropic API error ({exc.code}): {error_body}"
-        ) from exc
-    except urllib.error.URLError as exc:
-        raise RuntimeError(f"Anthropic API request failed: {exc}") from exc
+    data = json.dumps(payload).encode("utf-8")
+    headers = {
+        "x-api-key": api_key,
+        "anthropic-version": "2023-06-01",
+        "Content-Type": "application/json",
+    }
+
+    backoff = _INITIAL_BACKOFF_S
+    for attempt in range(_MAX_RETRIES + 1):
+        request = urllib.request.Request(
+            "https://api.anthropic.com/v1/messages",
+            method="POST",
+            data=data,
+            headers=headers,
+        )
+        start = time.monotonic()
+        try:
+            with urllib.request.urlopen(request, timeout=120) as resp:
+                body = json.loads(
+                    resp.read().decode("utf-8", errors="replace")
+                )
+            break
+        except urllib.error.HTTPError as exc:
+            if exc.code in (429, 529) and attempt < _MAX_RETRIES:
+                _log_retry(exc.code, attempt, backoff)
+                time.sleep(backoff)
+                backoff *= 2
+                continue
+            error_body = exc.read().decode("utf-8", errors="replace")
+            raise RuntimeError(
+                f"Anthropic API error ({exc.code}): {error_body}"
+            ) from exc
+        except urllib.error.URLError as exc:
+            raise RuntimeError(
+                f"Anthropic API request failed: {exc}"
+            ) from exc
     latency = (time.monotonic() - start) * 1000.0
 
     text = ""
@@ -122,26 +150,41 @@ def _call_openai(
             {"role": "user", "content": user_message},
         ],
     }
-    request = urllib.request.Request(
-        "https://api.openai.com/v1/chat/completions",
-        method="POST",
-        data=json.dumps(payload).encode("utf-8"),
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-        },
-    )
-    start = time.monotonic()
-    try:
-        with urllib.request.urlopen(request, timeout=120) as resp:
-            body = json.loads(resp.read().decode("utf-8", errors="replace"))
-    except urllib.error.HTTPError as exc:
-        error_body = exc.read().decode("utf-8", errors="replace")
-        raise RuntimeError(
-            f"OpenAI API error ({exc.code}): {error_body}"
-        ) from exc
-    except urllib.error.URLError as exc:
-        raise RuntimeError(f"OpenAI API request failed: {exc}") from exc
+    data = json.dumps(payload).encode("utf-8")
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+
+    backoff = _INITIAL_BACKOFF_S
+    for attempt in range(_MAX_RETRIES + 1):
+        request = urllib.request.Request(
+            "https://api.openai.com/v1/chat/completions",
+            method="POST",
+            data=data,
+            headers=headers,
+        )
+        start = time.monotonic()
+        try:
+            with urllib.request.urlopen(request, timeout=120) as resp:
+                body = json.loads(
+                    resp.read().decode("utf-8", errors="replace")
+                )
+            break
+        except urllib.error.HTTPError as exc:
+            if exc.code == 429 and attempt < _MAX_RETRIES:
+                _log_retry(exc.code, attempt, backoff)
+                time.sleep(backoff)
+                backoff *= 2
+                continue
+            error_body = exc.read().decode("utf-8", errors="replace")
+            raise RuntimeError(
+                f"OpenAI API error ({exc.code}): {error_body}"
+            ) from exc
+        except urllib.error.URLError as exc:
+            raise RuntimeError(
+                f"OpenAI API request failed: {exc}"
+            ) from exc
     latency = (time.monotonic() - start) * 1000.0
 
     text = ""

@@ -65,6 +65,9 @@ DATASETS: dict[str, Dataset] = {
         extraction_path="laureates",
         local_filename="laureates.json",
     ),
+    # Date range is fixed for reproducibility — gold answers are
+    # computed at runtime from the fetched data, but pinning the
+    # range ensures consistent item counts across runs.
     "weather": Dataset(
         name="weather",
         url=(
