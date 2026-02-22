@@ -66,14 +66,6 @@ JOIN payload_blobs pb ON pb.workspace_id = a.workspace_id
 WHERE a.workspace_id = %s AND a.artifact_id = %s
 """
 
-# SQL to touch artifact.last_referenced_at (only if not deleted)
-TOUCH_ARTIFACT_SQL = """
-UPDATE artifacts
-SET last_referenced_at = NOW()
-WHERE workspace_id = %s AND artifact_id = %s AND deleted_at IS NULL
-"""
-
-
 def is_sampled_only(artifact_row: dict[str, Any]) -> bool:
     """Return ``True`` if the artifact uses partial mapping.
 
