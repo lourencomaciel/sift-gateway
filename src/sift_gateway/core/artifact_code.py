@@ -21,6 +21,7 @@ from sift_gateway.codegen.runtime import (
     encode_json_bytes,
     execute_code_in_subprocess,
 )
+from sift_gateway.codegen.validate import validate_code_for_execution
 from sift_gateway.constants import (
     TRAVERSAL_CONTRACT_VERSION,
 )
@@ -520,7 +521,9 @@ def _prepare_code_request_state(
     *,
     runtime: ArtifactCodeRuntime,
     arguments: dict[str, Any],
-) -> tuple[_CodeRequest | None, _CodeCollectionState | None, dict[str, Any] | None]:
+) -> tuple[
+    _CodeRequest | None, _CodeCollectionState | None, dict[str, Any] | None
+]:
     """Parse inputs and collect query state required for code execution."""
     parsed_args, args_err = _parse_code_args(arguments)
     if args_err is not None:
@@ -602,6 +605,34 @@ def execute_artifact_code(
         input_records=state.input_count,
         input_bytes=state.input_bytes,
     )
+
+    # Pre-validate code AST before launching subprocess.
+    validation = validate_code_for_execution(
+        request.code,
+        allowed_import_roots_override=(runtime.code_query_allowed_import_roots),
+    )
+    if not validation.valid:
+        runtime.increment_metric("codegen_failure")
+        error_message = validation.error_message or "code validation failed"
+        if validation.error_code == "CODE_ENTRYPOINT_MISSING":
+            error_message = _enrich_entrypoint_hint(
+                error_message,
+                details_code=validation.error_code,
+                multi_artifact=(len(request.requested_artifact_ids) > 1),
+            )
+        if validation.error_code == "CODE_IMPORT_NOT_ALLOWED":
+            error_message = _enrich_install_hint(error_message)
+        _logger.info(
+            LogEvents.CODEGEN_REJECTED,
+            artifact_id=request.anchor_artifact_id,
+            root_path=request.root_path_log,
+            code=validation.error_code,
+            message=error_message,
+        )
+        return _code_error(
+            error_message,
+            details_code=(validation.error_code or "CODE_AST_REJECTED"),
+        )
 
     runtime_result, runtime_err = _execute_code_runtime(
         runtime=runtime,
