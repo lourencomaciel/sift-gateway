@@ -35,6 +35,15 @@ def run(artifacts, schemas, params):
     assert module is not None
 
 
+def test_validate_code_ast_accepts_async_def_run() -> None:
+    code = """
+async def run(data, schema, params):
+    return [len(data)]
+"""
+    module = validate_code_ast(code)
+    assert module is not None
+
+
 def test_validate_code_ast_rejects_forbidden_import() -> None:
     code = """
 import os
