@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import builtins as _builtins
 import inspect
 import sys
@@ -261,6 +262,8 @@ def _execute(payload: dict[str, Any]) -> dict[str, Any]:
             result = run_fn(data_arg, schema_arg, params_val)
         else:
             result = run_fn(artifacts_val, schemas_val, params_val)
+        if inspect.iscoroutine(result):
+            result = asyncio.run(result)
     except MemoryError:
         return _worker_error(
             "CODE_RUNTIME_MEMORY_LIMIT",

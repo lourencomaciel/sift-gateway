@@ -163,7 +163,6 @@ def format_schema_for_prompt(
         fields = schema.get("fields", [])
         for field in fields:
             fp = _field_path(field)
-            types = field.get("types", "?")
             example = field.get("example_value")
             nullable = field.get("nullable", False)
 
@@ -173,11 +172,11 @@ def format_schema_for_prompt(
             if _field_has_type(field, "object"):
                 nesting = _build_nesting_hint(fp, fields)
 
+            type_label = "/".join(_field_type_names(field)) or "?"
             if nesting:
-                type_label = "/".join(_field_type_names(field))
                 line = f"  - {fp}: {type_label} {nesting}"
             else:
-                line = f"  - {fp}: {types}"
+                line = f"  - {fp}: {type_label}"
             if nullable:
                 line += " (nullable)"
             if example is not None:
