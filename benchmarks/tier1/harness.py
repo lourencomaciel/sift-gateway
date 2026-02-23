@@ -46,9 +46,9 @@ from benchmarks.tier1.sift_runtime import (
     execute_code,
     extract_root_paths,
 )
-from sift_gateway.codegen.extract import extract_code, extract_root_path_comment
-from sift_gateway.codegen.result import unwrap_code_result
-from sift_gateway.mapping.prompt import format_schema_for_prompt
+from benchmarks.tier1.code_extract import extract_code, extract_root_path_comment
+from benchmarks.tier1.code_result import unwrap_code_result
+from benchmarks.tier1.schema_prompt import format_schema_for_prompt
 
 _MAX_BASELINE_BYTES_DEFAULT = 400_000
 

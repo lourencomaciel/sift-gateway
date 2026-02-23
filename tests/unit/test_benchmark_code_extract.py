@@ -1,8 +1,8 @@
-"""Unit tests for sift_gateway.codegen.extract."""
+"""Unit tests for benchmarks.tier1.code_extract."""
 
 from __future__ import annotations
 
-from sift_gateway.codegen.extract import (
+from benchmarks.tier1.code_extract import (
     extract_code,
     extract_root_path_comment,
 )

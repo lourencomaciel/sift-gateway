@@ -1,8 +1,8 @@
-"""Unit tests for sift_gateway.codegen.result."""
+"""Unit tests for benchmarks.tier1.code_result."""
 
 from __future__ import annotations
 
-from sift_gateway.codegen.result import unwrap_code_result
+from benchmarks.tier1.code_result import unwrap_code_result
 
 
 class TestUnwrapCodeResult:

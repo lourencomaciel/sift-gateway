@@ -1,4 +1,4 @@
-"""Unwrap code-query execution responses."""
+"""Unwrap code-query execution responses for LLM answer extraction."""
 
 from __future__ import annotations
 

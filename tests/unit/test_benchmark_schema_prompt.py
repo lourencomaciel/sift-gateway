@@ -1,8 +1,8 @@
-"""Unit tests for sift_gateway.mapping.prompt."""
+"""Unit tests for benchmarks.tier1.schema_prompt."""
 
 from __future__ import annotations
 
-from sift_gateway.mapping.prompt import (
+from benchmarks.tier1.schema_prompt import (
     _build_nesting_hint,
     _field_has_type,
     _field_path,
