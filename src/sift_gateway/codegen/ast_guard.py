@@ -204,7 +204,9 @@ def _ensure_allowed_urllib(
                 )
 
 
-def _validate_run_signature(node: ast.FunctionDef) -> None:
+def _validate_run_signature(
+    node: ast.FunctionDef | ast.AsyncFunctionDef,
+) -> None:
     """Validate supported `run` signatures exactly."""
     allowed = [
         ["data", "schema", "params"],
@@ -252,9 +254,12 @@ def validate_code_ast(
             message=f"syntax error: {exc.msg}",
         ) from exc
 
-    run_node: ast.FunctionDef | None = None
+    run_node: ast.FunctionDef | ast.AsyncFunctionDef | None = None
     for node in module.body:
-        if isinstance(node, ast.FunctionDef) and node.name == "run":
+        if (
+            isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and node.name == "run"
+        ):
             run_node = node
             break
 
