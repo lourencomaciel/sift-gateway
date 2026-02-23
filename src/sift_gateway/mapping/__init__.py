@@ -1,5 +1,6 @@
 """Re-export mapping runner, worker, and data model API."""
 
+from sift_gateway.mapping.prompt import format_schema_for_prompt
 from sift_gateway.mapping.runner import (
     MappingInput,
     MappingResult,
@@ -25,6 +26,7 @@ __all__ = [
     "SelectedJsonPart",
     "WorkerContext",
     "check_worker_safety",
+    "format_schema_for_prompt",
     "persist_mapping_result",
     "run_mapping",
     "run_mapping_worker",
