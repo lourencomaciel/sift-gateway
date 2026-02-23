@@ -263,6 +263,8 @@ def _execute(payload: dict[str, Any]) -> dict[str, Any]:
         else:
             result = run_fn(artifacts_val, schemas_val, params_val)
         if inspect.iscoroutine(result):
+            # Creates a fresh event loop; nested asyncio.run()
+            # inside user code will raise RuntimeError.
             result = asyncio.run(result)
     except MemoryError:
         return _worker_error(

@@ -11,8 +11,10 @@ def unwrap_code_result(response: dict[str, Any]) -> Any:
     Handles three response shapes:
 
     - ``items`` list: unwraps single-element lists to the bare value,
-      returns multi-element lists as-is.
-    - ``payload`` fallback: returns the payload directly.
+      returns multi-element lists as-is.  Empty lists are returned
+      as ``[]`` (not the full response dict).
+    - ``payload`` fallback: returns the payload directly, including
+      explicit ``None`` values.
     - Error responses: passed through unchanged.
 
     Args:
