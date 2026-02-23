@@ -198,6 +198,11 @@ def _parse_steps(
                     f"steps[{idx}] name must be a non-empty string",
                 )
             step_name = step_name.strip()
+            if len(step_name) > 128:
+                return None, gateway_error(
+                    "INVALID_ARGUMENT",
+                    f"steps[{idx}] name exceeds 128 characters",
+                )
         parsed.append(
             _CodeStep(
                 code=step_code,

@@ -438,6 +438,9 @@ def test_pipeline_two_steps_chains_artifacts(
     assert pipeline["step_count"] == 2
     assert len(pipeline["steps"]) == 2
     assert pipeline["intermediate_artifact_ids"] == ["art_derived_1"]
+    # Steps without names should have name=None in metadata.
+    for step_info in pipeline["steps"]:
+        assert step_info["name"] is None
 
 
 def test_pipeline_single_step_equivalent(

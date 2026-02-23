@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 import json
 from pathlib import Path
+import re
 import sys
 import tempfile
 import time
@@ -88,8 +89,11 @@ _SIFT_PIPELINE_SYSTEM = (
     "TWO-STEP Python pipeline to answer the question.\n\n"
     "Step 1 (SCOUT): Write `def run(data, schema, params):` that "
     "extracts the relevant subset of data needed to answer the "
-    "question. Do NOT compute the final answer — filter, group, or "
-    "reshape the data into a compact intermediate result.\n\n"
+    "question. `data` is the extracted value at the chosen "
+    "root_path — it may be a list of dicts, a list of scalars, "
+    "or a dict (e.g. columnar data). Do NOT compute the final "
+    "answer — filter, group, or reshape the data into a compact "
+    "intermediate result.\n\n"
     "Step 2 (REFINE): Write `def run(data, schema, params):` that "
     "computes the final answer from the intermediate data produced "
     "by Step 1. `data` will be a list containing the Step 1 output. "
@@ -799,8 +803,6 @@ def _extract_pipeline_codes(text: str) -> tuple[str, str] | None:
     first, then falls back to the first two ``python`` blocks
     containing ``def run``.  Returns ``None`` if parsing fails.
     """
-    import re
-
     # Try labeled fences first.
     scout_match = re.search(
         r"```python\s+SCOUT\s*\n(.*?)```",

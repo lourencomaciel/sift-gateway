@@ -177,3 +177,29 @@ def test_parse_steps_empty_name_rejected() -> None:
     assert steps is None
     assert err is not None
     assert "steps[0] name must be a non-empty string" in err["message"]
+
+
+def test_parse_steps_name_too_long_rejected() -> None:
+    raw = [
+        {
+            "code": "def run(data, schema, params): return data",
+            "name": "x" * 129,
+        },
+    ]
+    steps, err = _parse_steps(raw)
+    assert steps is None
+    assert err is not None
+    assert "steps[0] name exceeds 128 characters" in err["message"]
+
+
+def test_parse_steps_name_at_max_length_accepted() -> None:
+    raw = [
+        {
+            "code": "def run(data, schema, params): return data",
+            "name": "x" * 128,
+        },
+    ]
+    steps, err = _parse_steps(raw)
+    assert err is None
+    assert steps is not None
+    assert steps[0].name == "x" * 128

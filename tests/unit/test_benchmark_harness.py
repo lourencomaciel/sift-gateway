@@ -9,6 +9,7 @@ from benchmarks.tier1.harness import (
     _build_nesting_hint,
     _effective_max_bytes,
     _extract_code_from_response,
+    _extract_pipeline_codes,
     _extract_root_path_from_response,
     _field_has_type,
     _field_path,
@@ -1057,3 +1058,88 @@ class TestRunSiftAnswerError:
         assert result["attempted"] is False
         assert "answer extraction failed" in result["error"]
         assert result["condition"] == "sift"
+
+
+# -- _extract_pipeline_codes --
+
+
+class TestExtractPipelineCodes:
+    def test_labeled_fences(self) -> None:
+        text = (
+            "```python SCOUT\n"
+            "def run(data, schema, params):\n"
+            "  return data[:5]\n"
+            "```\n"
+            "```python REFINE\n"
+            "def run(data, schema, params):\n"
+            "  return len(data)\n"
+            "```"
+        )
+        result = _extract_pipeline_codes(text)
+        assert result is not None
+        scout, refine = result
+        assert "return data[:5]" in scout
+        assert "return len(data)" in refine
+
+    def test_labeled_fences_case_insensitive(self) -> None:
+        text = (
+            "```python scout\n"
+            "def run(data, schema, params):\n"
+            "  return data\n"
+            "```\n"
+            "```python Refine\n"
+            "def run(data, schema, params):\n"
+            "  return 42\n"
+            "```"
+        )
+        result = _extract_pipeline_codes(text)
+        assert result is not None
+
+    def test_fallback_unlabeled_blocks(self) -> None:
+        text = (
+            "```python\n"
+            "def run(data, schema, params):\n"
+            "  return data[:5]\n"
+            "```\n"
+            "```python\n"
+            "def run(data, schema, params):\n"
+            "  return len(data)\n"
+            "```"
+        )
+        result = _extract_pipeline_codes(text)
+        assert result is not None
+        scout, refine = result
+        assert "return data[:5]" in scout
+        assert "return len(data)" in refine
+
+    def test_returns_none_when_single_block(self) -> None:
+        text = "```python\ndef run(data, schema, params):\n  return data\n```"
+        assert _extract_pipeline_codes(text) is None
+
+    def test_returns_none_when_no_blocks(self) -> None:
+        text = "Just some explanation text."
+        assert _extract_pipeline_codes(text) is None
+
+    def test_returns_none_when_no_def_run(self) -> None:
+        text = "```python SCOUT\nx = 42\n```\n```python REFINE\ny = 99\n```"
+        assert _extract_pipeline_codes(text) is None
+
+    def test_skips_blocks_without_def_run_in_fallback(self) -> None:
+        text = (
+            "```python\n"
+            "x = 42\n"
+            "```\n"
+            "```python\n"
+            "def run(data, schema, params):\n"
+            "  return data\n"
+            "```\n"
+            "```python\n"
+            "def run(data, schema, params):\n"
+            "  return 99\n"
+            "```"
+        )
+        result = _extract_pipeline_codes(text)
+        assert result is not None
+        scout, refine = result
+        assert "return data" in scout
+        assert "return 99" in refine
