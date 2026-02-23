@@ -52,9 +52,7 @@ def configure_logging(
             structlog.processors.format_exc_info,
             renderer,
         ],
-        wrapper_class=structlog.make_filtering_bound_logger(
-            minimum_level
-        ),
+        wrapper_class=structlog.make_filtering_bound_logger(minimum_level),
         context_class=dict,
         logger_factory=structlog.PrintLoggerFactory(file=sys.stderr),
         cache_logger_on_first_use=True,

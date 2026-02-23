@@ -37,7 +37,7 @@ def artifact_tool_description(
         'Use action="query" with query_kind="code" to run Python over '
         "stored artifacts. "
         f"Code-query packages: {code_query_package_summary}. "
-        "Use action=\"next_page\" to fetch additional upstream pages for a "
+        'Use action="next_page" to fetch additional upstream pages for a '
         "paginated artifact. "
         f"{PAGINATION_COMPLETENESS_RULE}"
     )
@@ -226,4 +226,3 @@ def normalize_upstream_content(
             }
         )
     return normalized
-

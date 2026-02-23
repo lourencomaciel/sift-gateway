@@ -193,7 +193,9 @@ def _reconstruct_code_envelope(
         envelope = reconstruct_envelope(
             payload_fs_path=payload_fs_path,
             blobs_payload_dir=blobs_payload_dir,
-            encoding=str(artifact_row.get("envelope_canonical_encoding", "none")),
+            encoding=str(
+                artifact_row.get("envelope_canonical_encoding", "none")
+            ),
             expected_hash=str(artifact_row.get("payload_hash_full", "")),
         )
     except ValueError as exc:
@@ -265,7 +267,9 @@ def _collect_envelope_candidate_records(
 ) -> tuple[bool, dict[str, Any] | None]:
     """Collect envelope-derived rows for one candidate artifact."""
     artifact_row = row_to_dict(
-        connection.execute(fetch_artifact_sql, (WORKSPACE_ID, artifact_id)).fetchone(),
+        connection.execute(
+            fetch_artifact_sql, (WORKSPACE_ID, artifact_id)
+        ).fetchone(),
         ENVELOPE_COLUMNS,
     )
     if artifact_row is None:
@@ -279,7 +283,9 @@ def _collect_envelope_candidate_records(
     if envelope is None:
         return False, gateway_error("INTERNAL", "missing envelope")
 
-    json_target = extract_json_target(envelope, artifact_row.get("mapped_part_index"))
+    json_target = extract_json_target(
+        envelope, artifact_row.get("mapped_part_index")
+    )
     try:
         root_values = evaluate_jsonpath(
             json_target,
@@ -418,18 +424,20 @@ def _collect_code_inputs(
 
         all_related_ids: set[str] = set()
         for requested_artifact_id in request.requested_artifact_ids:
-            stop_collection, collect_err = _collect_code_inputs_for_requested_artifact(
-                runtime=runtime,
-                connection=connection,
-                state=state,
-                request=request,
-                requested_artifact_id=requested_artifact_id,
-                all_related_ids=all_related_ids,
-                fetch_artifact_sql=fetch_artifact_sql,
-                fetch_schema_fields_sql=fetch_schema_fields_sql,
-                fetch_samples_sql=fetch_samples_sql,
-                max_input_records=max_input_records,
-                max_input_bytes=max_input_bytes,
+            stop_collection, collect_err = (
+                _collect_code_inputs_for_requested_artifact(
+                    runtime=runtime,
+                    connection=connection,
+                    state=state,
+                    request=request,
+                    requested_artifact_id=requested_artifact_id,
+                    all_related_ids=all_related_ids,
+                    fetch_artifact_sql=fetch_artifact_sql,
+                    fetch_schema_fields_sql=fetch_schema_fields_sql,
+                    fetch_samples_sql=fetch_samples_sql,
+                    max_input_records=max_input_records,
+                    max_input_bytes=max_input_bytes,
+                )
             )
             if collect_err is not None:
                 return None, collect_err
@@ -462,7 +470,9 @@ def _collect_code_inputs_for_requested_artifact(
     max_input_bytes: int,
 ) -> tuple[bool, dict[str, Any] | None]:
     """Collect schema and records for one requested artifact anchor."""
-    root_path_for_requested = request.requested_root_paths[requested_artifact_id]
+    root_path_for_requested = request.requested_root_paths[
+        requested_artifact_id
+    ]
     resolved_candidates, resolve_err = _resolve_requested_code_candidates(
         runtime=runtime,
         connection=connection,
@@ -484,10 +494,12 @@ def _collect_code_inputs_for_requested_artifact(
         resolved_candidates=resolved_candidates,
     )
 
-    requested_schema, schema_hash, schema_err = _load_code_schema_for_requested_artifact(
-        connection=connection,
-        candidate_rows=resolved_candidates.candidate_rows,
-        fetch_schema_fields_sql=fetch_schema_fields_sql,
+    requested_schema, schema_hash, schema_err = (
+        _load_code_schema_for_requested_artifact(
+            connection=connection,
+            candidate_rows=resolved_candidates.candidate_rows,
+            fetch_schema_fields_sql=fetch_schema_fields_sql,
+        )
     )
     if schema_err is not None:
         return False, schema_err
@@ -687,4 +699,3 @@ def _append_overlapping_dataset_warning(
             "overlaps": overlaps,
         }
     )
-

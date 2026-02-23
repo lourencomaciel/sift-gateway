@@ -5,7 +5,7 @@ against traditional context-stuffing approaches.
 
 ## Tier 1 — Factual Q&A on Structured Data
 
-Compares two conditions across 8 real-world JSON datasets and 44 questions:
+Compares two conditions across 12 real-world JSON datasets and 103 questions:
 
 | Condition | How it works |
 |-----------|-------------|
@@ -53,9 +53,14 @@ uv run python benchmarks/tier1/harness.py
 | countries | REST Countries | population, capital, region, area |
 | laureates | Nobel Prize API | gender, birth, prizes, categories |
 | weather | Open-Meteo | hourly temperature, wind, precipitation |
+| github_repos | GitHub API | stars, forks, language, license |
+| pokemon | Pokemon JSON | type, base stats, hp, attack, speed |
+| openlibrary | OpenLibrary API | edition count, authors, cover |
+| airports | Airports JSON | elevation, latitude, country |
 
-Each dataset has 5–6 questions spanning count, aggregation, lookup, filter,
-and cross-field question types.
+Each dataset has 5–15 questions spanning count, aggregation, lookup, filter,
+cross-field, cross-root, datetime, string operation, median, percentage,
+and multi-condition question types.
 
 ### File layout
 
@@ -63,7 +68,7 @@ and cross-field question types.
 benchmarks/tier1/
 ├── harness.py        # Orchestration: runs both conditions, generates reports
 ├── datasets.py       # Dataset definitions (URLs, extraction paths, filenames)
-├── questions.py      # 44 questions with gold-answer functions and tolerances
+├── questions.py      # 103 questions with gold-answer functions and tolerances
 ├── sift_runtime.py   # Wrapper around Sift artifact capture/describe/execute
 ├── llm_client.py     # Anthropic + OpenAI API client (zero third-party deps)
 ├── evaluate.py       # Answer matching (number/string/list) and reporting
@@ -72,13 +77,46 @@ benchmarks/tier1/
 └── results/          # Timestamped JSON benchmark reports
 ```
 
-### Results
+### Latest results (2026-02-22)
+
+| Model | Baseline | Sift | Token reduction |
+|-------|----------|------|-----------------|
+| claude-sonnet-4-6 | 31/103 (30.1%) | 99/103 (96.1%) | 95.3% |
+| claude-opus-4-6 | 34/103 (33.0%) | 98/103 (95.1%) | 95.3% |
+
+**Per-dataset accuracy (Sift condition):**
+
+| Dataset | Sonnet 4.6 | Opus 4.6 |
+|---------|-----------|---------|
+| airports | 6/6 | 6/6 |
+| comments | 5/5 | 5/5 |
+| countries | 13/13 | 13/13 |
+| earthquakes | 13/13 | 13/13 |
+| github_repos | 6/6 | 6/6 |
+| laureates | 10/11 | 11/11 |
+| openlibrary | 6/6 | 6/6 |
+| photos | 5/5 | 5/5 |
+| pokemon | 6/6 | 6/6 |
+| products | 15/15 | 15/15 |
+| users | 7/7 | 7/7 |
+| weather | 7/10 | 5/10 |
+
+**Latency (Sift condition):**
+
+| Model | p50 | p90 | mean |
+|-------|-----|-----|------|
+| claude-sonnet-4-6 | 2,846 ms | 4,687 ms | 3,321 ms |
+| claude-opus-4-6 | 4,574 ms | 6,653 ms | 5,424 ms |
+
+### Report format
 
 Reports are saved as `tier1_<model>_<timestamp>.json` in the results
 directory. Each report includes:
 
 - Overall accuracy for baseline and Sift conditions
 - Input/output token counts and token reduction percentage
+- Latency percentiles (p50, p90) and mean for both conditions
 - Per-dataset and per-question-type breakdowns
+- Per-difficulty breakdowns (easy, medium, hard) with retry counts
 - Detailed per-question results with gold answers, LLM answers, and
   correctness flags

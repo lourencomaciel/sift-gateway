@@ -157,6 +157,7 @@ Lineage query rules for `artifact(action="query")`:
 | `code_query_max_memory_mb` | int | `512` | `SIFT_GATEWAY_CODE_QUERY_MAX_MEMORY_MB` | Best-effort subprocess memory cap |
 | `code_query_max_input_records` | int | `100000` | `SIFT_GATEWAY_CODE_QUERY_MAX_INPUT_RECORDS` | Max root records passed to code runtime |
 | `code_query_max_input_bytes` | int | `50000000` | `SIFT_GATEWAY_CODE_QUERY_MAX_INPUT_BYTES` | Max serialized runtime input size |
+| `code_query_max_steps` | int | `5` | `SIFT_GATEWAY_CODE_QUERY_MAX_STEPS` | Maximum allowed steps in a code pipeline (1–10) |
 
 Example env override:
 

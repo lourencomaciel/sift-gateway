@@ -83,6 +83,29 @@ _SIFT_ANSWER_SYSTEM = (
     "answer value — no explanation, no units, no surrounding text."
 )
 
+_SIFT_SCOUT_SYSTEM = (
+    "You are a data analyst. Given the schema of a dataset, write a "
+    "Python function `def run(data, schema, params):` that extracts "
+    "the relevant subset of the data needed to answer the question. "
+    "Do NOT compute the final answer — just filter, group, or "
+    "reshape the data into a compact intermediate result that "
+    "contains everything needed for the final computation. "
+    "`data` is the extracted value at the chosen root_path — it may "
+    "be a list of dicts, a list of scalars, or a dict (e.g. columnar "
+    "data). `schema` describes the fields and `params` is an empty "
+    "dict. Return ONLY the Python function — no explanation."
+)
+
+_SIFT_REFINE_SYSTEM = (
+    "You are a data analyst. Given the intermediate result of a "
+    "previous data extraction step, write a Python function "
+    "`def run(data, schema, params):` that computes the final "
+    "answer from this intermediate data. `data` is a list containing "
+    "the intermediate result. Return the answer value directly "
+    "(not a string description). Return ONLY the Python function — "
+    "no explanation."
+)
+
 
 def _load_dataset(data_dir: Path, dataset_name: str) -> Any:
     """Load a dataset from disk."""
@@ -689,6 +712,7 @@ def _codegen_loop(
     api_key: str | None,
     temperature: float,
     max_retries: int,
+    system_prompt: str = _SIFT_CODEGEN_SYSTEM,
 ) -> _CodegenResult:
     """Run the code-generation + execution retry loop.
 
@@ -718,7 +742,7 @@ def _codegen_loop(
 
         codegen_resp = call_llm(
             model=model,
-            system_prompt=_SIFT_CODEGEN_SYSTEM,
+            system_prompt=system_prompt,
             user_message=effective_msg,
             api_key=api_key,
             temperature=temperature,
@@ -939,6 +963,160 @@ def _run_sift(
     )
 
 
+def _run_sift_multistep(
+    question: Question,
+    data: Any,
+    *,
+    runtime: Any,
+    artifact_id: str,
+    root_paths: list[str],
+    schema_text: str,
+    model: str,
+    api_key: str | None,
+    temperature: float,
+    max_retries: int,
+) -> dict[str, Any]:
+    """Run a single Sift multistep (scout→refine) question."""
+    gold = question.gold_answer_fn(data)
+
+    # --- Scout phase: extract relevant subset ---
+    root_selection_block = ""
+    if len(root_paths) > 1:
+        roots_list = "\n".join(f"  - {rp}" for rp in root_paths)
+        root_selection_block = (
+            f"\nAvailable root_paths (data at the chosen root "
+            f"will be extracted and passed as `data`):\n"
+            f"{roots_list}\n\n"
+            f"On the FIRST line of your response, specify which "
+            f"root_path to use as a Python comment:\n"
+            f"# root_path: <chosen_path>\n"
+        )
+    scout_msg = (
+        f"Dataset schema:\n{schema_text}\n\n"
+        f"Question: {question.question_text}\n\n"
+        f"{root_selection_block}"
+        f"Write ONLY the Python function `def run(data, schema, "
+        f"params):` that extracts the relevant subset of data "
+        f"needed to answer this question. Do NOT compute the final "
+        f"answer — just filter, group, or reshape the data into a "
+        f"compact intermediate result."
+    )
+
+    scout_cg = _codegen_loop(
+        codegen_msg=scout_msg,
+        root_paths=root_paths,
+        runtime=runtime,
+        artifact_id=artifact_id,
+        model=model,
+        api_key=api_key,
+        temperature=temperature,
+        max_retries=max_retries,
+        system_prompt=_SIFT_SCOUT_SYSTEM,
+    )
+
+    if scout_cg.code_result is None:
+        return _make_result(
+            question,
+            condition="sift_multistep",
+            gold=gold,
+            error=f"scout code execution failed: {scout_cg.last_error}",
+            input_tokens=scout_cg.input_tokens,
+            output_tokens=scout_cg.output_tokens,
+            latency_ms=scout_cg.latency_ms,
+            retries=scout_cg.attempts,
+            attempted=False,
+        )
+
+    # Extract scout's derived artifact_id.
+    scout_artifact_id = scout_cg.code_result.get("artifact_id")
+    scout_output = _serialize_code_result(scout_cg.code_result)
+
+    # --- Refine phase: compute final answer ---
+    refine_artifact = scout_artifact_id or artifact_id
+    refine_root_paths = ["$"] if scout_artifact_id else root_paths
+
+    refine_msg = (
+        f"Question: {question.question_text}\n\n"
+        f"Intermediate data from scout step:\n{scout_output}\n\n"
+        f"Write ONLY the Python function `def run(data, schema, "
+        f"params):` that computes the final answer from this "
+        f"intermediate data. Return the answer value directly "
+        f"(not a string description)."
+    )
+
+    refine_cg = _codegen_loop(
+        codegen_msg=refine_msg,
+        root_paths=refine_root_paths,
+        runtime=runtime,
+        artifact_id=refine_artifact,
+        model=model,
+        api_key=api_key,
+        temperature=temperature,
+        max_retries=max_retries,
+        system_prompt=_SIFT_REFINE_SYSTEM,
+    )
+
+    total_input = scout_cg.input_tokens + refine_cg.input_tokens
+    total_output = scout_cg.output_tokens + refine_cg.output_tokens
+    total_latency = scout_cg.latency_ms + refine_cg.latency_ms
+    total_retries = scout_cg.attempts + refine_cg.attempts
+
+    if refine_cg.code_result is None:
+        return _make_result(
+            question,
+            condition="sift_multistep",
+            gold=gold,
+            error=(f"refine code execution failed: {refine_cg.last_error}"),
+            input_tokens=total_input,
+            output_tokens=total_output,
+            latency_ms=total_latency,
+            retries=total_retries,
+            attempted=False,
+        )
+
+    # Extract final answer from refine result.
+    code_output = _serialize_code_result(refine_cg.code_result)
+    ans = _extract_answer(
+        question_text=question.question_text,
+        code_output=code_output,
+        model=model,
+        api_key=api_key,
+        temperature=temperature,
+    )
+
+    if ans.error:
+        return _make_result(
+            question,
+            condition="sift_multistep",
+            gold=gold,
+            error=ans.error,
+            input_tokens=total_input,
+            output_tokens=total_output,
+            latency_ms=total_latency,
+            retries=total_retries,
+            attempted=False,
+        )
+
+    correct = evaluate_answer(
+        ans.text,
+        gold,
+        answer_type=question.answer_type,
+        tolerance=question.tolerance,
+    )
+
+    return _make_result(
+        question,
+        condition="sift_multistep",
+        gold=gold,
+        llm_answer=ans.text,
+        correct=correct,
+        input_tokens=total_input + ans.input_tokens,
+        output_tokens=total_output + ans.output_tokens,
+        latency_ms=total_latency + ans.latency_ms,
+        retries=total_retries,
+    )
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
@@ -1017,6 +1195,11 @@ def _build_parser() -> argparse.ArgumentParser:
         "--skip-sift",
         action="store_true",
         help="Skip Sift condition",
+    )
+    parser.add_argument(
+        "--skip-sift-multistep",
+        action="store_true",
+        help="Skip Sift multistep (scout+refine) condition",
     )
     parser.add_argument(
         "--max-retries",
@@ -1102,8 +1285,37 @@ def _run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
                 args=args,
             )
         else:
-            with tempfile.TemporaryDirectory(prefix="sift-bench-tier1-") as tmp:
+            with tempfile.TemporaryDirectory(
+                prefix="sift-bench-tier1-",
+            ) as tmp:
                 _run_sift_condition(
+                    dataset_names=dataset_names,
+                    loaded=loaded,
+                    results=results,
+                    sift_data_dir=tmp,
+                    question_filter=question_filter,
+                    args=args,
+                )
+
+    # Run Sift multistep condition
+    if not args.skip_sift_multistep:
+        print("\n--- Sift Multistep (scout + refine) ---\n")
+
+        sift_data_dir = args.sift_data_dir
+        if sift_data_dir is not None:
+            _run_sift_multistep_condition(
+                dataset_names=dataset_names,
+                loaded=loaded,
+                results=results,
+                sift_data_dir=sift_data_dir,
+                question_filter=question_filter,
+                args=args,
+            )
+        else:
+            with tempfile.TemporaryDirectory(
+                prefix="sift-bench-tier1-ms-",
+            ) as tmp:
+                _run_sift_multistep_condition(
                     dataset_names=dataset_names,
                     loaded=loaded,
                     results=results,
@@ -1184,6 +1396,87 @@ def _run_sift_condition(
                     result = _make_result(
                         q,
                         condition="sift",
+                        gold=gold,
+                        error=f"LLM API error: {exc}",
+                        attempted=False,
+                    )
+                status = "CORRECT" if result["correct"] else "WRONG"
+                error_suffix = ""
+                if result.get("error"):
+                    error_suffix = f" [ERROR: {result['error'][:50]}]"
+                print(
+                    f"    -> {status} "
+                    f"(gold={result['gold_answer']}, "
+                    f"llm={result['llm_answer'][:40]})"
+                    f"{error_suffix}"
+                )
+                results.append(result)
+
+
+def _run_sift_multistep_condition(
+    *,
+    dataset_names: list[str],
+    loaded: dict[str, Any],
+    results: list[dict[str, Any]],
+    sift_data_dir: str,
+    question_filter: set[str] | None,
+    args: argparse.Namespace,
+) -> None:
+    """Execute Sift multistep condition across datasets."""
+    continue_on_error = args.continue_on_error
+    with create_runtime(data_dir=sift_data_dir) as runtime:
+        for name in dataset_names:
+            data = loaded[name]
+            questions = get_questions_for_dataset(name)
+
+            if question_filter and not any(
+                q.question_id in question_filter for q in questions
+            ):
+                continue
+
+            print(f"  Capturing {name} ...")
+            capture_result = capture_payload(
+                runtime,
+                payload=data,
+                dataset_name=name,
+                question_id="all",
+            )
+            artifact_id = capture_result["artifact_id"]
+            print(f"    artifact_id: {artifact_id}")
+
+            print(f"  Describing {name} ...")
+            describe_result = describe_artifact(
+                runtime,
+                artifact_id=artifact_id,
+            )
+            root_paths = extract_root_paths(describe_result)
+            schema_text = _format_schema_for_prompt(describe_result)
+            print(f"    root_paths: {root_paths}")
+
+            for q in questions:
+                if question_filter and q.question_id not in question_filter:
+                    continue
+                print(f"  [{name}] {q.question_id}: {q.question_text[:50]}...")
+                try:
+                    result = _run_sift_multistep(
+                        q,
+                        data,
+                        runtime=runtime,
+                        artifact_id=artifact_id,
+                        root_paths=root_paths,
+                        schema_text=schema_text,
+                        model=args.model,
+                        api_key=args.api_key,
+                        temperature=args.temperature,
+                        max_retries=args.max_retries,
+                    )
+                except LLMAPIError as exc:
+                    if not continue_on_error:
+                        raise
+                    gold = q.gold_answer_fn(data)
+                    result = _make_result(
+                        q,
+                        condition="sift_multistep",
                         gold=gold,
                         error=f"LLM API error: {exc}",
                         attempted=False,

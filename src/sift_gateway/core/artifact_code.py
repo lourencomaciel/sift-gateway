@@ -28,6 +28,7 @@ from sift_gateway.core.artifact_code_internal import (
     _append_overlapping_dataset_warning,
     _append_sampled_warning,
     _CodeCollectionState,
+    _CodeStep,
     _collect_code_inputs,
     _helper_enrich_entrypoint_hint,
     _helper_enrich_install_hint,
@@ -520,7 +521,9 @@ def _prepare_code_request_state(
     *,
     runtime: ArtifactCodeRuntime,
     arguments: dict[str, Any],
-) -> tuple[_CodeRequest | None, _CodeCollectionState | None, dict[str, Any] | None]:
+) -> tuple[
+    _CodeRequest | None, _CodeCollectionState | None, dict[str, Any] | None
+]:
     """Parse inputs and collect query state required for code execution."""
     parsed_args, args_err = _parse_code_args(arguments)
     if args_err is not None:
@@ -556,11 +559,305 @@ def _normalize_runtime_items(runtime_result: Any) -> list[Any]:
     return [runtime_result]
 
 
+@dataclass(frozen=True)
+class _StepResult:
+    """Outcome of a single pipeline step."""
+
+    step_index: int
+    derived_artifact_id: str
+    normalized_items: list[Any]
+    used_bytes: int
+    code_hash: str
+    params_hash: str
+
+
+def _execute_single_step(
+    runtime: ArtifactCodeRuntime,
+    arguments: dict[str, Any],
+) -> tuple[
+    str | None,
+    list[Any] | None,
+    Any | None,
+    _CodeRequest | None,
+    _CodeCollectionState | None,
+    int | None,
+    dict[str, Any] | None,
+]:
+    """Execute a single code step and return its derived artifact.
+
+    Returns:
+        Tuple of (derived_artifact_id, normalized_items, runtime_result,
+        request, state, used_bytes, error).
+    """
+    request, state, prepare_err = _prepare_code_request_state(
+        runtime=runtime,
+        arguments=arguments,
+    )
+    if prepare_err is not None:
+        return None, None, None, None, None, None, prepare_err
+    request = cast(_CodeRequest, request)
+    state = cast(_CodeCollectionState, state)
+
+    _append_overlapping_dataset_warning(state=state, request=request)
+    _append_sampled_warning(state)
+    max_input_records = runtime.code_query_max_input_records
+    max_input_bytes = runtime.code_query_max_input_bytes
+    input_limit_err = _code_input_limit_error(
+        runtime=runtime,
+        state=state,
+        max_input_records=max_input_records,
+        max_input_bytes=max_input_bytes,
+    )
+    if input_limit_err is not None:
+        return None, None, None, None, None, None, input_limit_err
+
+    runtime_cfg = CodeRuntimeConfig(
+        timeout_seconds=runtime.code_query_timeout_seconds,
+        max_memory_mb=runtime.code_query_max_memory_mb,
+    )
+    runtime_import_roots = sorted(
+        allowed_import_roots(
+            configured_roots=runtime.code_query_allowed_import_roots,
+        )
+    )
+
+    runtime.increment_metric("codegen_executions")
+    runtime.increment_metric("codegen_input_records", state.input_count)
+    _logger.info(
+        LogEvents.CODEGEN_STARTED,
+        artifact_id=request.anchor_artifact_id,
+        root_path=request.root_path_log,
+        input_records=state.input_count,
+        input_bytes=state.input_bytes,
+    )
+
+    runtime_result, runtime_err = _execute_code_runtime(
+        runtime=runtime,
+        request=request,
+        state=state,
+        runtime_cfg=runtime_cfg,
+        runtime_import_roots=runtime_import_roots,
+    )
+    if runtime_err is not None:
+        return None, None, None, None, None, None, runtime_err
+
+    normalized_items = _normalize_runtime_items(runtime_result)
+    total_matched = len(normalized_items)
+    runtime.increment_metric("codegen_output_records", total_matched)
+    used_bytes, output_err = _validate_code_output_size(
+        runtime=runtime,
+        normalized_items=normalized_items,
+    )
+    if output_err is not None:
+        return None, None, None, None, None, None, output_err
+    runtime.increment_metric("codegen_success")
+
+    derived_artifact_id, persist_err = runtime.persist_code_derived(
+        parent_artifact_ids=request.requested_artifact_ids,
+        requested_root_paths=request.requested_root_paths,
+        root_path=request.root_path,
+        code_hash=request.code_hash,
+        params_hash=request.params_hash,
+        result_items=normalized_items,
+    )
+    if persist_err is not None:
+        return None, None, None, None, None, None, persist_err
+    if not isinstance(derived_artifact_id, str) or not derived_artifact_id:
+        return (
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            gateway_error(
+                "DERIVED_PERSISTENCE_FAILED",
+                "derived artifact persistence returned invalid artifact_id",
+                details={
+                    "stage": "persist_code_derived",
+                    "artifact_id": derived_artifact_id,
+                },
+            ),
+        )
+
+    _logger.info(
+        LogEvents.CODEGEN_COMPLETED,
+        artifact_id=request.anchor_artifact_id,
+        root_path=request.root_path_log,
+        input_records=state.input_count,
+        output_records=total_matched,
+        truncated=False,
+    )
+    return (
+        derived_artifact_id,
+        normalized_items,
+        runtime_result,
+        request,
+        state,
+        cast(int, used_bytes),
+        None,
+    )
+
+
+def _build_step_arguments(
+    *,
+    original_arguments: dict[str, Any],
+    step: _CodeStep,
+    step_index: int,
+    prev_artifact_id: str | None,
+) -> dict[str, Any]:
+    """Build arguments dict for a single pipeline step."""
+    if step_index == 0:
+        # Step 0 reuses the original artifact/root_path/scope.
+        args: dict[str, Any] = {
+            k: v
+            for k, v in original_arguments.items()
+            if k not in {"code", "params", "steps"}
+        }
+        args["code"] = step.code
+        args["params"] = step.params
+        return args
+    # Step 1+: target previous step's derived artifact.
+    return {
+        "_gateway_context": original_arguments["_gateway_context"],
+        "artifact_id": prev_artifact_id,
+        "root_path": "$",
+        "scope": "single",
+        "code": step.code,
+        "params": step.params,
+    }
+
+
+def _execute_pipeline(
+    runtime: ArtifactCodeRuntime,
+    arguments: dict[str, Any],
+    steps: list[_CodeStep],
+) -> dict[str, Any]:
+    """Execute a multi-step code pipeline."""
+    max_steps = runtime.code_query_max_steps
+    if len(steps) > max_steps:
+        return gateway_error(
+            "INVALID_ARGUMENT",
+            f"pipeline has {len(steps)} steps, maximum allowed is {max_steps}",
+            details={
+                "code": "PIPELINE_TOO_MANY_STEPS",
+                "step_count": len(steps),
+                "max_steps": max_steps,
+            },
+        )
+
+    step_results: list[_StepResult] = []
+    prev_artifact_id: str | None = None
+    last_request: _CodeRequest | None = None
+    last_state: _CodeCollectionState | None = None
+    last_runtime_result: Any = None
+    last_normalized_items: list[Any] = []
+    last_used_bytes = 0
+
+    for step_index, step in enumerate(steps):
+        step_args = _build_step_arguments(
+            original_arguments=arguments,
+            step=step,
+            step_index=step_index,
+            prev_artifact_id=prev_artifact_id,
+        )
+
+        (
+            derived_id,
+            normalized_items,
+            runtime_result,
+            request,
+            state,
+            used_bytes,
+            step_err,
+        ) = _execute_single_step(runtime, step_args)
+
+        if step_err is not None:
+            # Enrich error with pipeline context.
+            if isinstance(step_err, dict):
+                details = step_err.get("details", {})
+                if isinstance(details, dict):
+                    details["step_index"] = step_index
+                    details["total_steps"] = len(steps)
+                    if step_results:
+                        details["last_successful_artifact_id"] = step_results[
+                            -1
+                        ].derived_artifact_id
+                    step_err["details"] = details
+            return step_err
+
+        derived_id = cast(str, derived_id)
+        normalized_items = cast(list[Any], normalized_items)
+        request = cast(_CodeRequest, request)
+        state = cast(_CodeCollectionState, state)
+        used_bytes = cast(int, used_bytes)
+
+        step_results.append(
+            _StepResult(
+                step_index=step_index,
+                derived_artifact_id=derived_id,
+                normalized_items=normalized_items,
+                used_bytes=used_bytes,
+                code_hash=request.code_hash,
+                params_hash=request.params_hash,
+            )
+        )
+        prev_artifact_id = derived_id
+        last_request = request
+        last_state = state
+        last_runtime_result = runtime_result
+        last_normalized_items = normalized_items
+        last_used_bytes = used_bytes
+
+    # Build response from final step.
+    last_request = cast(_CodeRequest, last_request)
+    last_state = cast(_CodeCollectionState, last_state)
+    response = _build_code_response(
+        runtime,
+        request=last_request,
+        state=last_state,
+        runtime_result=last_runtime_result,
+        normalized_items=last_normalized_items,
+        derived_artifact_id=step_results[-1].derived_artifact_id,
+        used_bytes=last_used_bytes,
+    )
+
+    # Add pipeline metadata.
+    metadata = response.get("metadata", {})
+    metadata["pipeline"] = {
+        "version": "pipeline_v1",
+        "step_count": len(steps),
+        "step_hashes": [
+            {
+                "code_hash": sr.code_hash,
+                "params_hash": sr.params_hash,
+            }
+            for sr in step_results
+        ],
+        "intermediate_artifact_ids": [
+            sr.derived_artifact_id for sr in step_results[:-1]
+        ],
+    }
+    response["metadata"] = metadata
+    return response
+
+
 def execute_artifact_code(
     runtime: ArtifactCodeRuntime,
     arguments: dict[str, Any],
 ) -> dict[str, Any]:
     """Execute deterministic generated Python over mapped root datasets."""
+    # Check for pipeline steps before full parsing.
+    raw_steps = arguments.get("steps")
+    if raw_steps is not None:
+        from sift_gateway.core.artifact_code_parse import _parse_steps
+
+        steps, steps_err = _parse_steps(raw_steps)
+        if steps_err is not None:
+            return steps_err
+        if steps is not None:
+            return _execute_pipeline(runtime, arguments, steps)
+
     request, state, prepare_err = _prepare_code_request_state(
         runtime=runtime,
         arguments=arguments,

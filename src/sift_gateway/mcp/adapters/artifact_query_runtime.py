@@ -104,6 +104,11 @@ class GatewayArtifactQueryRuntime:
         """Return configured import allowlist roots for code-query runtime."""
         return self.gateway.config.code_query_allowed_import_roots
 
+    @property
+    def code_query_max_steps(self) -> int:
+        """Return maximum allowed steps in a code pipeline."""
+        return self.gateway.config.code_query_max_steps
+
     def bounded_limit(self, limit_value: Any) -> int:
         """Bound caller-provided limit using gateway defaults."""
         return self.gateway._bounded_limit(limit_value)

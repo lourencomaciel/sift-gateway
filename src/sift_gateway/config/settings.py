@@ -614,6 +614,7 @@ class GatewayConfig(BaseSettings):
     code_query_max_memory_mb: int = Field(512, ge=32)
     code_query_max_input_records: int = Field(100_000, ge=1)
     code_query_max_input_bytes: int = Field(50_000_000, ge=1)
+    code_query_max_steps: int = Field(5, ge=1, le=10)
 
     # --------------- JSONPath caps (§12.3) ---------------
     max_jsonpath_length: int = Field(4096, ge=1)

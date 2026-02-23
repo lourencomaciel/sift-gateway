@@ -253,11 +253,32 @@ _BUILTIN_TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
                 ),
                 "additionalProperties": True,
             },
+            "steps": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "code": {"type": "string"},
+                        "params": {
+                            "type": "object",
+                            "additionalProperties": True,
+                        },
+                    },
+                    "required": ["code"],
+                },
+                "description": (
+                    "[query_kind=code] Optional pipeline of code "
+                    "steps. Each step's output becomes the next "
+                    "step's input. When present, top-level 'code' "
+                    "is ignored."
+                ),
+            },
         },
         "required": ["action"],
         "additionalProperties": True,
     },
 }
+
 
 @dataclass
 class GatewayServer:

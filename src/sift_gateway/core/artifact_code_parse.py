@@ -106,8 +106,8 @@ def _normalize_code_root_paths(
                     "missing_keys": sorted(missing_keys),
                     "extra_keys": sorted(extra_keys),
                     "hint": (
-                        "Provide one non-empty root path for each artifact_id, "
-                        "or use shared root_path."
+                        "Provide one non-empty root path for each "
+                        "artifact_id, or use shared root_path."
                     ),
                 },
             )
@@ -120,13 +120,22 @@ def _normalize_code_root_paths(
             details={
                 "code": "ROOT_PATH_REQUIRED",
                 "hint": (
-                    "Provide root_path for single/shared queries, or root_paths "
-                    "keyed by artifact_id for multi-artifact queries."
+                    "Provide root_path for single/shared queries, "
+                    "or root_paths keyed by artifact_id for "
+                    "multi-artifact queries."
                 ),
             },
         )
     root_path = raw_root_path.strip()
     return dict.fromkeys(artifact_ids, root_path), None
+
+
+@dataclass(frozen=True)
+class _CodeStep:
+    """A single step in a multi-step code pipeline."""
+
+    code: str
+    params: dict[str, Any]
 
 
 @dataclass(frozen=True)
@@ -139,6 +148,49 @@ class _ParsedCodeArgs:
     root_paths: dict[str, str]
     code: str
     params: dict[str, Any]
+    steps: list[_CodeStep] | None = None
+
+
+def _parse_steps(
+    raw_steps: Any,
+) -> tuple[list[_CodeStep] | None, dict[str, Any] | None]:
+    """Validate and normalize ``steps`` pipeline entries."""
+    if raw_steps is None:
+        return None, None
+    if not isinstance(raw_steps, list):
+        return None, gateway_error(
+            "INVALID_ARGUMENT",
+            "steps must be an array",
+        )
+    if not raw_steps:
+        return None, gateway_error(
+            "INVALID_ARGUMENT",
+            "steps cannot be empty",
+        )
+    parsed: list[_CodeStep] = []
+    for idx, entry in enumerate(raw_steps):
+        if not isinstance(entry, Mapping):
+            return None, gateway_error(
+                "INVALID_ARGUMENT",
+                f"steps[{idx}] must be an object",
+            )
+        step_code = entry.get("code")
+        if not isinstance(step_code, str) or not step_code.strip():
+            return None, gateway_error(
+                "INVALID_ARGUMENT",
+                f"steps[{idx}] missing code",
+            )
+        step_params = entry.get("params")
+        if step_params is not None and not isinstance(step_params, Mapping):
+            return None, gateway_error(
+                "INVALID_ARGUMENT",
+                f"steps[{idx}] params must be an object",
+            )
+        normalized_params: dict[str, Any] = (
+            dict(step_params) if isinstance(step_params, Mapping) else {}
+        )
+        parsed.append(_CodeStep(code=step_code, params=normalized_params))
+    return parsed, None
 
 
 def _parse_code_args(
@@ -154,7 +206,9 @@ def _parse_code_args(
     if scope_err is not None:
         return None, scope_err
 
-    artifact_ids, artifact_ids_err = _normalize_code_artifact_ids(arguments)
+    artifact_ids, artifact_ids_err = _normalize_code_artifact_ids(
+        arguments,
+    )
     if artifact_ids_err is not None:
         return None, artifact_ids_err
     root_paths, root_paths_err = _normalize_code_root_paths(
@@ -164,8 +218,20 @@ def _parse_code_args(
     if root_paths_err is not None:
         return None, root_paths_err
 
+    steps, steps_err = _parse_steps(arguments.get("steps"))
+    if steps_err is not None:
+        return None, steps_err
+
     code = arguments.get("code")
-    if not isinstance(code, str) or not code.strip():
+    has_code = isinstance(code, str) and bool(code.strip())
+
+    if steps is not None:
+        # When steps are present, top-level code is optional.
+        # Use first step's code as fallback for backward compat.
+        effective_code: str = str(code) if has_code else steps[0].code
+    elif isinstance(code, str) and code.strip():
+        effective_code = code
+    else:
         return None, gateway_error("INVALID_ARGUMENT", "missing code")
 
     params = arguments.get("params")
@@ -182,9 +248,9 @@ def _parse_code_args(
             scope=scope,
             artifact_ids=artifact_ids,
             root_paths=root_paths,
-            code=code,
+            code=effective_code,
             params=normalized_params,
+            steps=steps,
         ),
         None,
     )
-

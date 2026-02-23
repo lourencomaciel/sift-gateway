@@ -91,6 +91,36 @@ Compatibility fields may be present:
 
 Code query responses do not expose a query-cursor loop.
 
+## Pipeline mode (`steps`)
+
+When `steps` is provided, the gateway executes a multi-step code pipeline
+in a single tool call. Each step's output becomes the next step's input.
+
+### Arguments
+
+- `steps`: array of `{code, params?}` objects (1 to `code_query_max_steps`,
+  default limit 5)
+- When `steps` is present, top-level `code` is ignored
+- Step 0 executes against the original artifact/root_path/scope
+- Step 1+ executes against the previous step's derived artifact
+  (`root_path="$"`, `scope="single"`)
+
+### Error handling
+
+If any step fails, the response includes `step_index` and `total_steps`
+in the error details, plus `last_successful_artifact_id` when a prior
+step succeeded.
+
+### Response shape
+
+Same as single-step code query, plus `metadata.pipeline`:
+
+- `pipeline.version`: `"pipeline_v1"`
+- `pipeline.step_count`: number of steps executed
+- `pipeline.step_hashes`: array of `{code_hash, params_hash}` per step
+- `pipeline.intermediate_artifact_ids`: artifact IDs from all steps
+  except the final one
+
 ## `artifact(action="next_page")`
 
 ### Required arguments

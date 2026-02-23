@@ -18,12 +18,14 @@ from sift_gateway.core.artifact_code_hints import (
     module_to_dist as _helper_module_to_dist,
 )
 from sift_gateway.core.artifact_code_parse import (
+    _CodeStep,
     _parse_code_args,
     _ParsedCodeArgs,
 )
 
 __all__ = [
     "_CodeCollectionState",
+    "_CodeStep",
     "_ParsedCodeArgs",
     "_append_overlapping_dataset_warning",
     "_append_sampled_warning",
@@ -33,4 +35,3 @@ __all__ = [
     "_helper_module_to_dist",
     "_parse_code_args",
 ]
-

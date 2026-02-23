@@ -250,6 +250,10 @@ class ArtifactCodeRuntime(ArtifactGetRuntime, Protocol):
     def code_query_allowed_import_roots(self) -> list[str] | None:
         """Configured runtime import allowlist roots."""
 
+    @property
+    def code_query_max_steps(self) -> int:
+        """Maximum allowed steps in a code pipeline."""
+
     def safe_touch_for_retrieval_many(
         self,
         connection: Any,

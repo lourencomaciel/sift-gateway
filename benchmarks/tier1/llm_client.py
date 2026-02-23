@@ -215,7 +215,7 @@ def call_llm(
     user_message: str,
     api_key: str | None = None,
     temperature: float = 0.0,
-    max_tokens: int = 4096,
+    max_tokens: int = 20_000,
 ) -> LLMResponse:
     """Send a prompt to an LLM and return the response."""
     provider = _detect_provider(model)
