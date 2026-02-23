@@ -68,3 +68,11 @@ class TestValidateCodeForExecution:
         )
         assert result.valid is False
         assert result.error_code == "CODE_IMPORT_NOT_ALLOWED"
+
+    def test_async_def_run_rejected_by_ast_guard(self) -> None:
+        # ast_guard.validate_code_ast only accepts sync FunctionDef,
+        # so async def run is rejected before _detect_signature runs.
+        code = "async def run(data, schema, params):\n    return data"
+        result = validate_code_for_execution(code)
+        assert result.valid is False
+        assert result.error_code == "CODE_ENTRYPOINT_MISSING"

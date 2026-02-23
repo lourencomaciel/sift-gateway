@@ -607,9 +607,12 @@ def execute_artifact_code(
     )
 
     # Pre-validate code AST before launching subprocess.
+    # NOTE: The subprocess also validates via validate_code_ast; this
+    # intentionally duplicates that check so invalid code is rejected
+    # without the overhead of spawning a child process.
     validation = validate_code_for_execution(
         request.code,
-        allowed_import_roots_override=(runtime.code_query_allowed_import_roots),
+        allowed_import_roots_override=runtime.code_query_allowed_import_roots,
     )
     if not validation.valid:
         runtime.increment_metric("codegen_failure")

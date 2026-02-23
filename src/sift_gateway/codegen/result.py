@@ -31,8 +31,7 @@ def unwrap_code_result(response: dict[str, Any]) -> Any:
             return items[0]
         return items
 
-    payload = response.get("payload")
-    if payload is not None:
-        return payload
+    if "payload" in response:
+        return response["payload"]
 
     return response

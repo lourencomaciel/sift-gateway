@@ -40,7 +40,10 @@ def _detect_signature(module: ast.Module) -> str | None:
     ``"multi"`` for ``run(artifacts, schemas, params)``.
     """
     for node in module.body:
-        if isinstance(node, ast.FunctionDef) and node.name == "run":
+        if (
+            isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and node.name == "run"
+        ):
             args = [a.arg for a in node.args.args]
             if args == ["data", "schema", "params"]:
                 return "legacy"

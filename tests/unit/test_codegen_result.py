@@ -32,3 +32,10 @@ class TestUnwrapCodeResult:
     def test_unknown_shape_passthrough(self) -> None:
         resp = {"something": "else"}
         assert unwrap_code_result(resp) == resp
+
+    def test_payload_none_returned(self) -> None:
+        assert unwrap_code_result({"payload": None}) is None
+
+    def test_error_with_items_returns_error(self) -> None:
+        resp = {"error": "CODE_TIMEOUT", "items": [1, 2]}
+        assert unwrap_code_result(resp) is resp
