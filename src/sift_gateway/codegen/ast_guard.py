@@ -66,6 +66,15 @@ ALLOWED_IMPORT_ROOTS = frozenset(
     {*ALLOWED_STDLIB_IMPORTS, *ALLOWED_THIRD_PARTY_IMPORTS}
 )
 
+RUN_SIGNATURE_LEGACY = ["data", "schema", "params"]
+"""Legacy single-artifact ``run`` signature."""
+
+RUN_SIGNATURE_MULTI = ["artifacts", "schemas", "params"]
+"""Multi-artifact ``run`` signature."""
+
+RUN_SIGNATURES = [RUN_SIGNATURE_LEGACY, RUN_SIGNATURE_MULTI]
+"""All accepted ``run`` function signatures."""
+
 _BLOCKED_BUILTINS = frozenset(
     {
         "eval",
@@ -208,12 +217,8 @@ def _validate_run_signature(
     node: ast.FunctionDef | ast.AsyncFunctionDef,
 ) -> None:
     """Validate supported `run` signatures exactly."""
-    allowed = [
-        ["data", "schema", "params"],
-        ["artifacts", "schemas", "params"],
-    ]
     actual = [arg.arg for arg in node.args.args]
-    if actual not in allowed:
+    if actual not in RUN_SIGNATURES:
         raise CodeValidationError(
             code="CODE_ENTRYPOINT_MISSING",
             message=(

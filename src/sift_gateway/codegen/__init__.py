@@ -15,10 +15,7 @@ from sift_gateway.codegen.runtime import (
     encode_json_bytes,
     execute_code_in_subprocess,
 )
-from sift_gateway.codegen.validate import (
-    CodeValidationResult,
-    validate_code_for_execution,
-)
+from sift_gateway.codegen.validate import validate_code_for_execution
 
 __all__ = [
     "ALLOWED_IMPORT_ROOTS",
@@ -28,7 +25,6 @@ __all__ = [
     "CodeRuntimeMemoryLimitError",
     "CodeRuntimeTimeoutError",
     "CodeValidationError",
-    "CodeValidationResult",
     "allowed_import_roots",
     "encode_json_bytes",
     "execute_code_in_subprocess",

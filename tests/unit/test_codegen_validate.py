@@ -10,7 +10,6 @@ class TestValidateCodeForExecution:
         code = "def run(data, schema, params):\n    return len(data)"
         result = validate_code_for_execution(code)
         assert result.valid is True
-        assert result.signature == "legacy"
         assert result.error_code is None
         assert result.error_message is None
 
@@ -18,7 +17,6 @@ class TestValidateCodeForExecution:
         code = "def run(artifacts, schemas, params):\n    return len(artifacts)"
         result = validate_code_for_execution(code)
         assert result.valid is True
-        assert result.signature == "multi"
 
     def test_blocked_import(self) -> None:
         code = (
@@ -69,8 +67,7 @@ class TestValidateCodeForExecution:
         assert result.valid is False
         assert result.error_code == "CODE_IMPORT_NOT_ALLOWED"
 
-    def test_async_def_run_detected(self) -> None:
+    def test_async_def_run_accepted(self) -> None:
         code = "async def run(data, schema, params):\n    return data"
         result = validate_code_for_execution(code)
         assert result.valid is True
-        assert result.signature == "legacy"

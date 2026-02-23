@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import ast
 from collections.abc import Sequence
 from dataclasses import dataclass
 
@@ -21,35 +20,11 @@ class CodeValidationResult:
         valid: Whether the code passed all checks.
         error_code: Machine-readable error code when invalid.
         error_message: Human-readable message when invalid.
-        signature: Detected entrypoint style — ``"legacy"`` for
-            ``run(data, schema, params)`` or ``"multi"`` for
-            ``run(artifacts, schemas, params)``.  ``None`` when
-            the entrypoint could not be determined.
     """
 
     valid: bool
     error_code: str | None
     error_message: str | None
-    signature: str | None
-
-
-def _detect_signature(module: ast.Module) -> str | None:
-    """Detect the ``run`` function signature style.
-
-    Returns ``"legacy"`` for ``run(data, schema, params)`` and
-    ``"multi"`` for ``run(artifacts, schemas, params)``.
-    """
-    for node in module.body:
-        if (
-            isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-            and node.name == "run"
-        ):
-            args = [a.arg for a in node.args.args]
-            if args == ["data", "schema", "params"]:
-                return "legacy"
-            if args == ["artifacts", "schemas", "params"]:
-                return "multi"
-    return None
 
 
 def validate_code_for_execution(
@@ -78,7 +53,7 @@ def validate_code_for_execution(
         )
 
     try:
-        module = validate_code_ast(
+        validate_code_ast(
             code,
             allowed_import_roots_set=import_roots,
         )
@@ -87,13 +62,10 @@ def validate_code_for_execution(
             valid=False,
             error_code=exc.code,
             error_message=exc.message,
-            signature=None,
         )
 
-    signature = _detect_signature(module)
     return CodeValidationResult(
         valid=True,
         error_code=None,
         error_message=None,
-        signature=signature,
     )

@@ -11,6 +11,8 @@ from typing import Any
 
 from sift_gateway.codegen.ast_guard import (
     ALLOWED_IMPORT_ROOTS,
+    RUN_SIGNATURE_LEGACY,
+    RUN_SIGNATURE_MULTI,
     CodeValidationError,
     validate_code_ast,
 )
@@ -100,9 +102,9 @@ def _validate_run_callable(
         )
     sig = inspect.signature(run_fn)
     names = list(sig.parameters.keys())
-    if names == ["artifacts", "schemas", "params"]:
+    if names == RUN_SIGNATURE_MULTI:
         return "multi", None
-    if names == ["data", "schema", "params"]:
+    if names == RUN_SIGNATURE_LEGACY:
         return "legacy", None
     return "invalid", CodeValidationError(
         code="CODE_ENTRYPOINT_MISSING",
@@ -112,7 +114,6 @@ def _validate_run_callable(
             "or run(data, schema, params)"
         ),
     )
-    return "invalid", None
 
 
 def _strip_locators(records: list[Any]) -> None:
