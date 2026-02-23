@@ -98,8 +98,10 @@ in a single tool call. Each step's output becomes the next step's input.
 
 ### Arguments
 
-- `steps`: array of `{code, params?}` objects (1 to `code_query_max_steps`,
+- `steps`: array of `{code, params?, name?}` objects (1 to `code_query_max_steps`,
   default limit 5)
+- `name`: optional human-readable step label (non-empty string); included in
+  pipeline metadata and error details for easier debugging
 - When `steps` is present, top-level `code` is ignored
 - Step 0 executes against the original artifact/root_path/scope
 - Step 1+ executes against the previous step's derived artifact
@@ -109,7 +111,8 @@ in a single tool call. Each step's output becomes the next step's input.
 
 If any step fails, the response includes `step_index` and `total_steps`
 in the error details, plus `last_successful_artifact_id` when a prior
-step succeeded.
+step succeeded. When the failing step has a `name`, the error details
+include `step_name`.
 
 ### Response shape
 
@@ -117,7 +120,12 @@ Same as single-step code query, plus `metadata.pipeline`:
 
 - `pipeline.version`: `"pipeline_v1"`
 - `pipeline.step_count`: number of steps executed
-- `pipeline.step_hashes`: array of `{code_hash, params_hash}` per step
+- `pipeline.steps`: array of per-step objects:
+  - `code_hash`: deterministic hash of step code
+  - `params_hash`: deterministic hash of step params
+  - `name`: step name (or `null` if not provided)
+  - `item_count`: number of output items from this step
+  - `used_bytes`: serialized output size in bytes
 - `pipeline.intermediate_artifact_ids`: artifact IDs from all steps
   except the final one
 

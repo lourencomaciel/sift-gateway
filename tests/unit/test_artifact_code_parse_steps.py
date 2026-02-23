@@ -123,3 +123,57 @@ def test_parse_steps_non_object_entry() -> None:
     assert steps is None
     assert err is not None
     assert "steps[0] must be an object" in err["message"]
+
+
+def test_parse_steps_with_valid_name() -> None:
+    raw = [
+        {
+            "code": "def run(data, schema, params): return data",
+            "name": "scout",
+        },
+        {
+            "code": "def run(data, schema, params): return len(data)",
+            "name": "refine",
+        },
+    ]
+    steps, err = _parse_steps(raw)
+    assert err is None
+    assert steps is not None
+    assert steps[0].name == "scout"
+    assert steps[1].name == "refine"
+
+
+def test_parse_steps_name_is_optional() -> None:
+    raw = [
+        {"code": "def run(data, schema, params): return data"},
+    ]
+    steps, err = _parse_steps(raw)
+    assert err is None
+    assert steps is not None
+    assert steps[0].name is None
+
+
+def test_parse_steps_invalid_name_type() -> None:
+    raw = [
+        {
+            "code": "def run(data, schema, params): return data",
+            "name": 42,
+        },
+    ]
+    steps, err = _parse_steps(raw)
+    assert steps is None
+    assert err is not None
+    assert "steps[0] name must be a non-empty string" in err["message"]
+
+
+def test_parse_steps_empty_name_rejected() -> None:
+    raw = [
+        {
+            "code": "def run(data, schema, params): return data",
+            "name": "  ",
+        },
+    ]
+    steps, err = _parse_steps(raw)
+    assert steps is None
+    assert err is not None
+    assert "steps[0] name must be a non-empty string" in err["message"]

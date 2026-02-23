@@ -83,27 +83,21 @@ _SIFT_ANSWER_SYSTEM = (
     "answer value — no explanation, no units, no surrounding text."
 )
 
-_SIFT_SCOUT_SYSTEM = (
+_SIFT_PIPELINE_SYSTEM = (
     "You are a data analyst. Given the schema of a dataset, write a "
-    "Python function `def run(data, schema, params):` that extracts "
-    "the relevant subset of the data needed to answer the question. "
-    "Do NOT compute the final answer — just filter, group, or "
-    "reshape the data into a compact intermediate result that "
-    "contains everything needed for the final computation. "
-    "`data` is the extracted value at the chosen root_path — it may "
-    "be a list of dicts, a list of scalars, or a dict (e.g. columnar "
-    "data). `schema` describes the fields and `params` is an empty "
-    "dict. Return ONLY the Python function — no explanation."
-)
-
-_SIFT_REFINE_SYSTEM = (
-    "You are a data analyst. Given the intermediate result of a "
-    "previous data extraction step, write a Python function "
-    "`def run(data, schema, params):` that computes the final "
-    "answer from this intermediate data. `data` is a list containing "
-    "the intermediate result. Return the answer value directly "
-    "(not a string description). Return ONLY the Python function — "
-    "no explanation."
+    "TWO-STEP Python pipeline to answer the question.\n\n"
+    "Step 1 (SCOUT): Write `def run(data, schema, params):` that "
+    "extracts the relevant subset of data needed to answer the "
+    "question. Do NOT compute the final answer — filter, group, or "
+    "reshape the data into a compact intermediate result.\n\n"
+    "Step 2 (REFINE): Write `def run(data, schema, params):` that "
+    "computes the final answer from the intermediate data produced "
+    "by Step 1. `data` will be a list containing the Step 1 output. "
+    "Return the answer value directly (not a string description).\n\n"
+    "Format your response as exactly two labeled Python code blocks:\n"
+    "```python SCOUT\n<code>\n```\n"
+    "```python REFINE\n<code>\n```\n\n"
+    "Return ONLY the two code blocks — no explanation."
 )
 
 
@@ -798,6 +792,156 @@ def _codegen_loop(
     )
 
 
+def _extract_pipeline_codes(text: str) -> tuple[str, str] | None:
+    """Extract scout and refine code blocks from LLM response.
+
+    Looks for labeled ``python SCOUT`` / ``python REFINE`` fences
+    first, then falls back to the first two ``python`` blocks
+    containing ``def run``.  Returns ``None`` if parsing fails.
+    """
+    import re
+
+    # Try labeled fences first.
+    scout_match = re.search(
+        r"```python\s+SCOUT\s*\n(.*?)```",
+        text,
+        re.DOTALL | re.IGNORECASE,
+    )
+    refine_match = re.search(
+        r"```python\s+REFINE\s*\n(.*?)```",
+        text,
+        re.DOTALL | re.IGNORECASE,
+    )
+    if scout_match and refine_match:
+        scout = scout_match.group(1).strip()
+        refine = refine_match.group(1).strip()
+        if "def run" in scout and "def run" in refine:
+            return scout, refine
+
+    # Fallback: first two python blocks with def run.
+    blocks = re.findall(r"```python\b[^\n]*\n(.*?)```", text, re.DOTALL)
+    run_blocks = [b.strip() for b in blocks if "def run" in b]
+    if len(run_blocks) >= 2:
+        return run_blocks[0], run_blocks[1]
+
+    return None
+
+
+def _pipeline_codegen_loop(
+    *,
+    codegen_msg: str,
+    root_paths: list[str],
+    runtime: Any,
+    artifact_id: str,
+    model: str,
+    api_key: str | None,
+    temperature: float,
+    max_retries: int,
+) -> _CodegenResult:
+    """Generate a two-step pipeline and execute via gateway steps.
+
+    Uses ``_SIFT_PIPELINE_SYSTEM`` to produce both code blocks in a
+    single LLM call, then delegates to ``execute_code(..., steps=...)``
+    so the gateway pipeline handles chaining and artifact threading.
+    """
+    multi_root = len(root_paths) > 1
+    attempts = 0
+    input_tokens = 0
+    output_tokens = 0
+    latency_ms = 0.0
+    last_error = ""
+    last_codes: tuple[str, str] | None = None
+
+    while attempts <= max_retries:
+        if attempts > 0 and last_codes is not None:
+            effective_msg = (
+                f"{codegen_msg}\n\n"
+                f"Previous SCOUT code:\n"
+                f"```python\n{last_codes[0]}\n```\n\n"
+                f"Previous REFINE code:\n"
+                f"```python\n{last_codes[1]}\n```\n\n"
+                f"Error:\n{last_error}\n"
+                f"Please fix the code."
+            )
+        elif attempts > 0:
+            effective_msg = (
+                f"{codegen_msg}\n\n"
+                f"Error:\n{last_error}\n"
+                f"Please return exactly two labeled code blocks: "
+                f"```python SCOUT and ```python REFINE."
+            )
+        else:
+            effective_msg = codegen_msg
+
+        resp = call_llm(
+            model=model,
+            system_prompt=_SIFT_PIPELINE_SYSTEM,
+            user_message=effective_msg,
+            api_key=api_key,
+            temperature=temperature,
+        )
+
+        input_tokens += resp.input_tokens
+        output_tokens += resp.output_tokens
+        latency_ms += resp.latency_ms
+
+        codes = _extract_pipeline_codes(resp.text)
+        if codes is None:
+            last_error = (
+                "Could not parse two code blocks from response. "
+                "Expected ```python SCOUT and ```python REFINE blocks."
+            )
+            last_codes = None
+            attempts += 1
+            continue
+
+        scout_code, refine_code = codes
+
+        # Resolve root_path selection from the raw response.
+        if multi_root:
+            selected = _extract_root_path_from_response(resp.text, root_paths)
+            root_path = selected if selected else root_paths[0]
+        else:
+            root_path = root_paths[0]
+
+        steps = [
+            {"code": scout_code, "name": "scout"},
+            {"code": refine_code, "name": "refine"},
+        ]
+
+        try:
+            exec_start = time.monotonic()
+            code_result = execute_code(
+                runtime,
+                artifact_id=artifact_id,
+                root_path=root_path,
+                steps=steps,
+            )
+            latency_ms += (time.monotonic() - exec_start) * 1000.0
+            return _CodegenResult(
+                code_result=code_result,
+                attempts=attempts,
+                last_error="",
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                latency_ms=latency_ms,
+            )
+        except CodeExecutionError as exc:
+            latency_ms += (time.monotonic() - exec_start) * 1000.0
+            last_codes = (scout_code, refine_code)
+            last_error = str(exc)
+            attempts += 1
+
+    return _CodegenResult(
+        code_result=None,
+        attempts=attempts - 1,
+        last_error=last_error,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        latency_ms=latency_ms,
+    )
+
+
 def _serialize_code_result(code_result: dict[str, Any]) -> str:
     """Extract items/payload from a code result and return JSON."""
     items = code_result.get("items")
@@ -976,10 +1120,10 @@ def _run_sift_multistep(
     temperature: float,
     max_retries: int,
 ) -> dict[str, Any]:
-    """Run a single Sift multistep (scout→refine) question."""
+    """Run a single Sift multistep (pipeline) question."""
     gold = question.gold_answer_fn(data)
 
-    # --- Scout phase: extract relevant subset ---
+    # Build the codegen prompt.
     root_selection_block = ""
     if len(root_paths) > 1:
         roots_list = "\n".join(f"  - {rp}" for rp in root_paths)
@@ -991,19 +1135,17 @@ def _run_sift_multistep(
             f"root_path to use as a Python comment:\n"
             f"# root_path: <chosen_path>\n"
         )
-    scout_msg = (
+    codegen_msg = (
         f"Dataset schema:\n{schema_text}\n\n"
         f"Question: {question.question_text}\n\n"
         f"{root_selection_block}"
-        f"Write ONLY the Python function `def run(data, schema, "
-        f"params):` that extracts the relevant subset of data "
-        f"needed to answer this question. Do NOT compute the final "
-        f"answer — just filter, group, or reshape the data into a "
-        f"compact intermediate result."
+        f"Write a TWO-STEP pipeline (SCOUT + REFINE) as described "
+        f"in the system prompt."
     )
 
-    scout_cg = _codegen_loop(
-        codegen_msg=scout_msg,
+    # Single pipeline call — gateway handles step chaining.
+    cg = _pipeline_codegen_loop(
+        codegen_msg=codegen_msg,
         root_paths=root_paths,
         runtime=runtime,
         artifact_id=artifact_id,
@@ -1011,71 +1153,23 @@ def _run_sift_multistep(
         api_key=api_key,
         temperature=temperature,
         max_retries=max_retries,
-        system_prompt=_SIFT_SCOUT_SYSTEM,
     )
 
-    if scout_cg.code_result is None:
+    if cg.code_result is None:
         return _make_result(
             question,
             condition="sift_multistep",
             gold=gold,
-            error=f"scout code execution failed: {scout_cg.last_error}",
-            input_tokens=scout_cg.input_tokens,
-            output_tokens=scout_cg.output_tokens,
-            latency_ms=scout_cg.latency_ms,
-            retries=scout_cg.attempts,
+            error=f"pipeline execution failed: {cg.last_error}",
+            input_tokens=cg.input_tokens,
+            output_tokens=cg.output_tokens,
+            latency_ms=cg.latency_ms,
+            retries=cg.attempts,
             attempted=False,
         )
 
-    # Extract scout's derived artifact_id.
-    scout_artifact_id = scout_cg.code_result.get("artifact_id")
-    scout_output = _serialize_code_result(scout_cg.code_result)
-
-    # --- Refine phase: compute final answer ---
-    refine_artifact = scout_artifact_id or artifact_id
-    refine_root_paths = ["$"] if scout_artifact_id else root_paths
-
-    refine_msg = (
-        f"Question: {question.question_text}\n\n"
-        f"Intermediate data from scout step:\n{scout_output}\n\n"
-        f"Write ONLY the Python function `def run(data, schema, "
-        f"params):` that computes the final answer from this "
-        f"intermediate data. Return the answer value directly "
-        f"(not a string description)."
-    )
-
-    refine_cg = _codegen_loop(
-        codegen_msg=refine_msg,
-        root_paths=refine_root_paths,
-        runtime=runtime,
-        artifact_id=refine_artifact,
-        model=model,
-        api_key=api_key,
-        temperature=temperature,
-        max_retries=max_retries,
-        system_prompt=_SIFT_REFINE_SYSTEM,
-    )
-
-    total_input = scout_cg.input_tokens + refine_cg.input_tokens
-    total_output = scout_cg.output_tokens + refine_cg.output_tokens
-    total_latency = scout_cg.latency_ms + refine_cg.latency_ms
-    total_retries = scout_cg.attempts + refine_cg.attempts
-
-    if refine_cg.code_result is None:
-        return _make_result(
-            question,
-            condition="sift_multistep",
-            gold=gold,
-            error=(f"refine code execution failed: {refine_cg.last_error}"),
-            input_tokens=total_input,
-            output_tokens=total_output,
-            latency_ms=total_latency,
-            retries=total_retries,
-            attempted=False,
-        )
-
-    # Extract final answer from refine result.
-    code_output = _serialize_code_result(refine_cg.code_result)
+    # Extract final answer.
+    code_output = _serialize_code_result(cg.code_result)
     ans = _extract_answer(
         question_text=question.question_text,
         code_output=code_output,
@@ -1090,10 +1184,10 @@ def _run_sift_multistep(
             condition="sift_multistep",
             gold=gold,
             error=ans.error,
-            input_tokens=total_input,
-            output_tokens=total_output,
-            latency_ms=total_latency,
-            retries=total_retries,
+            input_tokens=cg.input_tokens,
+            output_tokens=cg.output_tokens,
+            latency_ms=cg.latency_ms,
+            retries=cg.attempts,
             attempted=False,
         )
 
@@ -1110,10 +1204,10 @@ def _run_sift_multistep(
         gold=gold,
         llm_answer=ans.text,
         correct=correct,
-        input_tokens=total_input + ans.input_tokens,
-        output_tokens=total_output + ans.output_tokens,
-        latency_ms=total_latency + ans.latency_ms,
-        retries=total_retries,
+        input_tokens=cg.input_tokens + ans.input_tokens,
+        output_tokens=cg.output_tokens + ans.output_tokens,
+        latency_ms=cg.latency_ms + ans.latency_ms,
+        retries=cg.attempts,
     )
 
 
@@ -1299,7 +1393,7 @@ def _run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
 
     # Run Sift multistep condition
     if not args.skip_sift_multistep:
-        print("\n--- Sift Multistep (scout + refine) ---\n")
+        print("\n--- Sift Multistep (pipeline: scout + refine) ---\n")
 
         sift_data_dir = args.sift_data_dir
         if sift_data_dir is not None:

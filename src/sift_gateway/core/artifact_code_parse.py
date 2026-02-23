@@ -136,6 +136,7 @@ class _CodeStep:
 
     code: str
     params: dict[str, Any]
+    name: str | None = None
 
 
 @dataclass(frozen=True)
@@ -189,7 +190,21 @@ def _parse_steps(
         normalized_params: dict[str, Any] = (
             dict(step_params) if isinstance(step_params, Mapping) else {}
         )
-        parsed.append(_CodeStep(code=step_code, params=normalized_params))
+        step_name = entry.get("name")
+        if step_name is not None:
+            if not isinstance(step_name, str) or not step_name.strip():
+                return None, gateway_error(
+                    "INVALID_ARGUMENT",
+                    f"steps[{idx}] name must be a non-empty string",
+                )
+            step_name = step_name.strip()
+        parsed.append(
+            _CodeStep(
+                code=step_code,
+                params=normalized_params,
+                name=step_name,
+            )
+        )
     return parsed, None
 
 

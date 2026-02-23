@@ -436,7 +436,7 @@ def test_pipeline_two_steps_chains_artifacts(
     pipeline = result["metadata"]["pipeline"]
     assert pipeline["version"] == "pipeline_v1"
     assert pipeline["step_count"] == 2
-    assert len(pipeline["step_hashes"]) == 2
+    assert len(pipeline["steps"]) == 2
     assert pipeline["intermediate_artifact_ids"] == ["art_derived_1"]
 
 
@@ -579,7 +579,7 @@ def test_pipeline_intermediate_artifacts_persisted(
     assert len(runtime.persisted_calls) == 2
 
 
-def test_pipeline_metadata_has_step_hashes(
+def test_pipeline_metadata_has_per_step_stats(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     global _DERIVED_COUNTER
@@ -602,24 +602,34 @@ def test_pipeline_metadata_has_step_hashes(
             "artifact_id": "art_1",
             "root_path": "$.items",
             "steps": [
-                {"code": ("def run(data, schema, params): return data")},
+                {
+                    "code": ("def run(data, schema, params): return data"),
+                    "name": "scout",
+                },
                 {
                     "code": ("def run(data, schema, params): return data[0:1]"),
                     "params": {"n": 1},
+                    "name": "refine",
                 },
             ],
         },
     )
 
     pipeline = result["metadata"]["pipeline"]
-    assert len(pipeline["step_hashes"]) == 2
-    for sh in pipeline["step_hashes"]:
-        assert "code_hash" in sh
-        assert "params_hash" in sh
+    assert len(pipeline["steps"]) == 2
+    for step_info in pipeline["steps"]:
+        assert "code_hash" in step_info
+        assert "params_hash" in step_info
+        assert "name" in step_info
+        assert "item_count" in step_info
+        assert "used_bytes" in step_info
+    assert pipeline["steps"][0]["name"] == "scout"
+    assert pipeline["steps"][1]["name"] == "refine"
+    assert pipeline["steps"][0]["item_count"] == 2
+    assert pipeline["steps"][1]["item_count"] == 1
     # Different code → different hashes.
     assert (
-        pipeline["step_hashes"][0]["code_hash"]
-        != pipeline["step_hashes"][1]["code_hash"]
+        pipeline["steps"][0]["code_hash"] != pipeline["steps"][1]["code_hash"]
     )
 
 
@@ -687,3 +697,58 @@ def test_pipeline_steps_overrides_code(
     assert "return data" in exec_codes[0]
     assert "ignored" not in exec_codes[0]
     assert "pipeline" in result.get("metadata", {})
+
+
+def test_pipeline_step_failure_includes_step_name(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    global _DERIVED_COUNTER
+    _DERIVED_COUNTER = 600
+
+    from sift_gateway.codegen.runtime import CodeRuntimeError
+
+    call_count = 0
+
+    def _fail_on_second(**kwargs: Any) -> Any:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 2:
+            raise CodeRuntimeError(
+                code="CODE_RUNTIME_EXCEPTION",
+                message="bad code",
+            )
+        return kwargs["data"]
+
+    step0_cursors = _step0_cursors()
+    step1_cursors = _step_n_cursors("art_derived_601", [{"id": 1}, {"id": 2}])
+    conn = _SeqConnection(step0_cursors + step1_cursors)
+    runtime = _Runtime(db_pool=_SeqPool(conn))
+
+    monkeypatch.setattr(
+        "sift_gateway.core.artifact_code.execute_code_in_subprocess",
+        _fail_on_second,
+    )
+
+    result = execute_artifact_code(
+        runtime,
+        arguments={
+            "_gateway_context": {"session_id": "sess_1"},
+            "artifact_id": "art_1",
+            "root_path": "$.items",
+            "steps": [
+                {
+                    "code": ("def run(data, schema, params): return data"),
+                    "name": "scout",
+                },
+                {
+                    "code": ("def run(data, schema, params): return bad"),
+                    "name": "refine",
+                },
+            ],
+        },
+    )
+
+    assert result["code"] == "INVALID_ARGUMENT"
+    details = result.get("details", {})
+    assert details.get("step_index") == 1
+    assert details.get("step_name") == "refine"

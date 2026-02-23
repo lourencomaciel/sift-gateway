@@ -192,25 +192,36 @@ def execute_code(
     *,
     artifact_id: str,
     root_path: str,
-    code: str,
+    code: str = "",
     params: dict[str, Any] | None = None,
+    steps: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Execute code against an artifact."""
-    result = execute_artifact_code(
-        runtime,
-        {
-            "_gateway_context": _GATEWAY_CONTEXT,
-            "artifact_id": artifact_id,
-            "root_path": root_path,
-            "scope": "single",
-            "code": code,
-            "params": params or {},
-        },
-    )
+    args: dict[str, Any] = {
+        "_gateway_context": _GATEWAY_CONTEXT,
+        "artifact_id": artifact_id,
+        "root_path": root_path,
+        "scope": "single",
+    }
+    if steps is not None:
+        args["steps"] = steps
+    else:
+        args["code"] = code
+        args["params"] = params or {}
+    result = execute_artifact_code(runtime, args)
     if _is_error_response(result):
+        details = result.get("details", {})
+        step_parts: list[str] = []
+        if isinstance(details, dict):
+            if "step_index" in details:
+                step_parts.append(f"step {details['step_index']}")
+            if "step_name" in details:
+                step_parts.append(f"({details['step_name']})")
+        step_ctx = " ".join(step_parts)
+        prefix = f"[{step_ctx}] " if step_ctx else ""
         msg = (
-            f"code execution failed: {result.get('code')}: "
-            f"{result.get('message')}"
+            f"code execution failed: {prefix}"
+            f"{result.get('code')}: {result.get('message')}"
         )
         raise CodeExecutionError(msg)
     return result

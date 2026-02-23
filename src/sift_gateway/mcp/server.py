@@ -263,6 +263,7 @@ _BUILTIN_TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
                             "type": "object",
                             "additionalProperties": True,
                         },
+                        "name": {"type": "string"},
                     },
                     "required": ["code"],
                 },

@@ -569,6 +569,8 @@ class _StepResult:
     used_bytes: int
     code_hash: str
     params_hash: str
+    name: str | None = None
+    item_count: int = 0
 
 
 def _execute_single_step(
@@ -779,6 +781,8 @@ def _execute_pipeline(
                 if isinstance(details, dict):
                     details["step_index"] = step_index
                     details["total_steps"] = len(steps)
+                    if steps[step_index].name is not None:
+                        details["step_name"] = steps[step_index].name
                     if step_results:
                         details["last_successful_artifact_id"] = step_results[
                             -1
@@ -800,6 +804,8 @@ def _execute_pipeline(
                 used_bytes=used_bytes,
                 code_hash=request.code_hash,
                 params_hash=request.params_hash,
+                name=step.name,
+                item_count=len(normalized_items),
             )
         )
         prev_artifact_id = derived_id
@@ -827,10 +833,13 @@ def _execute_pipeline(
     metadata["pipeline"] = {
         "version": "pipeline_v1",
         "step_count": len(steps),
-        "step_hashes": [
+        "steps": [
             {
                 "code_hash": sr.code_hash,
                 "params_hash": sr.params_hash,
+                "name": sr.name,
+                "item_count": sr.item_count,
+                "used_bytes": sr.used_bytes,
             }
             for sr in step_results
         ],
