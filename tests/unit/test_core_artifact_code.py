@@ -464,3 +464,87 @@ def test_execute_artifact_code_rejects_input_records_exceeded(
     assert result["code"] == "INVALID_ARGUMENT"
     assert result["details"]["code"] == "CODE_INPUT_TOO_LARGE"
     assert called is False
+
+
+def test_execute_artifact_code_pre_validates_syntax(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    conn = _SeqConnection(
+        [
+            _FakeCursor(one=_meta_row()),
+            _FakeCursor(one=_root_row()),
+            _FakeCursor(one=_schema_root_row()),
+            _FakeCursor(all_rows=[_schema_field_row()]),
+            _FakeCursor(one=_artifact_row([{"id": 1}])),
+        ]
+    )
+    runtime = _Runtime(db_pool=_SeqPool(conn))
+    called = False
+
+    def _fake_exec(**kwargs: Any) -> list[dict[str, Any]]:
+        nonlocal called
+        called = True
+        del kwargs
+        return []
+
+    monkeypatch.setattr(
+        "sift_gateway.core.artifact_code.execute_code_in_subprocess",
+        _fake_exec,
+    )
+
+    result = execute_artifact_code(
+        runtime,
+        arguments={
+            "_gateway_context": {"session_id": "sess_1"},
+            "artifact_id": "art_1",
+            "root_path": "$.items",
+            "code": "def run(data, schema, params):\n    return +",
+        },
+    )
+
+    assert result["code"] == "INVALID_ARGUMENT"
+    assert result["details"]["code"] == "CODE_AST_REJECTED"
+    assert called is False
+
+
+def test_execute_artifact_code_pre_validates_blocked_import(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    conn = _SeqConnection(
+        [
+            _FakeCursor(one=_meta_row()),
+            _FakeCursor(one=_root_row()),
+            _FakeCursor(one=_schema_root_row()),
+            _FakeCursor(all_rows=[_schema_field_row()]),
+            _FakeCursor(one=_artifact_row([{"id": 1}])),
+        ]
+    )
+    runtime = _Runtime(db_pool=_SeqPool(conn))
+    called = False
+
+    def _fake_exec(**kwargs: Any) -> list[dict[str, Any]]:
+        nonlocal called
+        called = True
+        del kwargs
+        return []
+
+    monkeypatch.setattr(
+        "sift_gateway.core.artifact_code.execute_code_in_subprocess",
+        _fake_exec,
+    )
+
+    result = execute_artifact_code(
+        runtime,
+        arguments={
+            "_gateway_context": {"session_id": "sess_1"},
+            "artifact_id": "art_1",
+            "root_path": "$.items",
+            "code": "import subprocess\n"
+            "def run(data, schema, params):\n"
+            "    return data",
+        },
+    )
+
+    assert result["code"] == "INVALID_ARGUMENT"
+    assert result["details"]["code"] == "CODE_IMPORT_NOT_ALLOWED"
+    assert called is False

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import builtins as _builtins
 import inspect
 import sys
@@ -10,6 +11,8 @@ from typing import Any
 
 from sift_gateway.codegen.ast_guard import (
     ALLOWED_IMPORT_ROOTS,
+    RUN_SIGNATURE_LEGACY,
+    RUN_SIGNATURE_MULTI,
     CodeValidationError,
     validate_code_ast,
 )
@@ -99,9 +102,9 @@ def _validate_run_callable(
         )
     sig = inspect.signature(run_fn)
     names = list(sig.parameters.keys())
-    if names == ["artifacts", "schemas", "params"]:
+    if names == RUN_SIGNATURE_MULTI:
         return "multi", None
-    if names == ["data", "schema", "params"]:
+    if names == RUN_SIGNATURE_LEGACY:
         return "legacy", None
     return "invalid", CodeValidationError(
         code="CODE_ENTRYPOINT_MISSING",
@@ -111,7 +114,6 @@ def _validate_run_callable(
             "or run(data, schema, params)"
         ),
     )
-    return "invalid", None
 
 
 def _strip_locators(records: list[Any]) -> None:
@@ -261,6 +263,10 @@ def _execute(payload: dict[str, Any]) -> dict[str, Any]:
             result = run_fn(data_arg, schema_arg, params_val)
         else:
             result = run_fn(artifacts_val, schemas_val, params_val)
+        if inspect.iscoroutine(result):
+            # Creates a fresh event loop; nested asyncio.run()
+            # inside user code will raise RuntimeError.
+            result = asyncio.run(result)
     except MemoryError:
         return _worker_error(
             "CODE_RUNTIME_MEMORY_LIMIT",
