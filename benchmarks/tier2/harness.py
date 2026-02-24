@@ -33,7 +33,11 @@ from benchmarks.tier1.questions import (
     question_set_hash,
 )
 from benchmarks.tier1.sift_runtime import create_runtime
-from benchmarks.tier2.agent_loop import _DEFAULT_MAX_TURNS, run_agent_loop
+from benchmarks.tier2.agent_loop import (
+    _DEFAULT_MAX_TURNS,
+    AgentResult,
+    run_agent_loop,
+)
 from benchmarks.tier2.metrics import (
     build_question_metrics,
     build_report,
@@ -173,7 +177,7 @@ def _run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
 
     sift_data_dir = args.sift_data_dir
     if sift_data_dir is not None:
-        _run_agent_condition(
+        _run_agent_across_datasets(
             dataset_names=dataset_names,
             loaded=loaded,
             results=results,
@@ -184,7 +188,7 @@ def _run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
         )
     else:
         with tempfile.TemporaryDirectory(prefix="sift-bench-tier2-") as tmp:
-            _run_agent_condition(
+            _run_agent_across_datasets(
                 dataset_names=dataset_names,
                 loaded=loaded,
                 results=results,
@@ -201,7 +205,7 @@ def _run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
     )
 
 
-def _run_agent_condition(
+def _run_agent_across_datasets(
     *,
     dataset_names: list[str],
     loaded: dict[str, Any],
@@ -265,31 +269,25 @@ def _run_agent_condition(
                         f"    -> ERROR: {exc}",
                         file=sys.stderr,
                     )
-                    results.append(
-                        {
-                            "question_id": q.question_id,
-                            "dataset": name,
-                            "question_text": q.question_text,
-                            "question_type": q.question_type,
-                            "difficulty": q.difficulty,
-                            "gold_answer": gold,
-                            "llm_answer": "",
-                            "correct": False,
-                            "turns": 0,
-                            "max_turns_reached": False,
-                            "token_budget_reached": False,
-                            "tool_calls": {},
-                            "total_tool_calls": 0,
-                            "code_query_attempts": 0,
-                            "code_query_errors": 0,
-                            "pages_fetched": 0,
-                            "input_tokens": 0,
-                            "output_tokens": 0,
-                            "latency_ms": 0.0,
-                            "per_turn": [],
-                            "error": str(exc),
-                        }
+                    empty_result = AgentResult(
+                        answer="",
+                        turns=0,
+                        max_turns_reached=False,
+                        token_budget_reached=False,
                     )
+                    error_metrics = build_question_metrics(
+                        agent_result=empty_result,
+                        question_id=q.question_id,
+                        dataset_name=name,
+                        question_text=q.question_text,
+                        question_type=q.question_type,
+                        difficulty=q.difficulty,
+                        gold_answer=gold,
+                        llm_answer="",
+                        correct=False,
+                    )
+                    error_metrics["error"] = str(exc)
+                    results.append(error_metrics)
                     continue
 
                 llm_answer = agent_result.answer
@@ -350,7 +348,8 @@ def main() -> int:
             indent=2,
             sort_keys=True,
             default=str,
-        )
+        ),
+        encoding="utf-8",
     )
     print(f"\nReport saved: {report_path}")
 

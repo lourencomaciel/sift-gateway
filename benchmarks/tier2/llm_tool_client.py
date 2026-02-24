@@ -23,6 +23,10 @@ from benchmarks.tier1.llm_client import (
 _MAX_RETRIES = 5
 _INITIAL_BACKOFF_S = 2.0
 
+# Pinned API version — this is the stable Messages API release that
+# supports tool_use.  Bump when a newer version adds features we need.
+_ANTHROPIC_API_VERSION = "2023-06-01"
+
 
 @dataclass(frozen=True)
 class ToolDefinition:
@@ -129,6 +133,8 @@ def call_llm_with_tools(
 
     Returns:
         Parsed response with content blocks and metadata.
+        ``latency_ms`` measures wall-clock time including any retry
+        backoff, so it reflects end-to-end wait for a single call.
 
     Raises:
         LLMAPIError: On network, auth, or rate-limit failures.
@@ -154,7 +160,7 @@ def call_llm_with_tools(
     data = json.dumps(payload).encode("utf-8")
     headers = {
         "x-api-key": resolved_key,
-        "anthropic-version": "2023-06-01",
+        "anthropic-version": _ANTHROPIC_API_VERSION,
         "Content-Type": "application/json",
     }
 

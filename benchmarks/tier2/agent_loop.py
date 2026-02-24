@@ -240,6 +240,10 @@ def run_agent_loop(
             try:
                 tool_output = runtime.call_tool(tool_use.name, augmented_args)
             except Exception as exc:
+                print(
+                    f"  [tool-error] {type(exc).__name__}: {exc}",
+                    file=sys.stderr,
+                )
                 tool_output = {
                     "type": "gateway_error",
                     "code": "TOOL_ERROR",

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import math
 import statistics
 from typing import Any
 
@@ -72,16 +71,25 @@ def build_question_metrics(
 def _latency_percentiles(
     latencies: list[float],
 ) -> dict[str, float | int]:
-    """Compute p50, p90, and mean from a list of latencies."""
+    """Compute p50, p90, and mean from a list of latencies.
+
+    Uses ``statistics.quantiles`` for standard percentile calculation.
+    """
     if not latencies:
         return {}
-    s = sorted(latencies)
-    n = len(s)
-    p90_idx = math.ceil(n * 0.9) - 1
+    n = len(latencies)
+    p50 = statistics.median(latencies)
+    if n < 2:
+        # quantiles requires at least 2 data points.
+        p90 = latencies[0]
+    else:
+        # method="inclusive" matches the nearest-rank definition.
+        deciles = statistics.quantiles(latencies, n=10, method="inclusive")
+        p90 = deciles[8]  # 9th decile = 90th percentile
     return {
-        "p50_ms": round(statistics.median(s), 1),
-        "p90_ms": round(s[p90_idx], 1),
-        "mean_ms": round(sum(s) / n, 1),
+        "p50_ms": round(p50, 1),
+        "p90_ms": round(p90, 1),
+        "mean_ms": round(sum(latencies) / n, 1),
         "count": n,
     }
 
