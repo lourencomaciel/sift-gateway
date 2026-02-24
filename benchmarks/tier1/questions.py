@@ -2581,11 +2581,489 @@ QUESTIONS: list[Question] = [
 ]
 
 
+# -- cross-dataset gold functions --
+# These accept dict[str, Any] mapping dataset names to their data.
+
+
+def _cross_laureates_in_landlocked(datasets: Any) -> str:
+    """Count laureates born in landlocked countries."""
+    countries_data = datasets["countries"]
+    laureates_data = datasets["laureates"]
+
+    landlocked_names: set[str] = set()
+    for c in countries_data:
+        if (
+            isinstance(c, dict)
+            and c.get("landlocked") is True
+            and isinstance(c.get("name"), dict)
+            and isinstance(c["name"].get("common"), str)
+        ):
+            landlocked_names.add(c["name"]["common"])
+
+    count = 0
+    for la in laureates_data:
+        if not isinstance(la, dict):
+            continue
+        born = la.get("birth", {})
+        if not isinstance(born, dict):
+            continue
+        place = born.get("place")
+        if not isinstance(place, dict):
+            continue
+        country = place.get("country")
+        if isinstance(country, dict):
+            en = country.get("en")
+            if isinstance(en, str) and en in landlocked_names:
+                count += 1
+    return str(count)
+
+
+def _cross_region_most_laureates(datasets: Any) -> str:
+    """Find the region with the most Nobel laureates by birth country."""
+    countries_data = datasets["countries"]
+    laureates_data = datasets["laureates"]
+
+    country_to_region: dict[str, str] = {}
+    for c in countries_data:
+        if (
+            isinstance(c, dict)
+            and isinstance(c.get("name"), dict)
+            and isinstance(c["name"].get("common"), str)
+            and isinstance(c.get("region"), str)
+        ):
+            country_to_region[c["name"]["common"]] = c["region"]
+
+    region_counts: Counter[str] = Counter()
+    for la in laureates_data:
+        if not isinstance(la, dict):
+            continue
+        born = la.get("birth", {})
+        if not isinstance(born, dict):
+            continue
+        place = born.get("place")
+        if not isinstance(place, dict):
+            continue
+        country = place.get("country")
+        if isinstance(country, dict):
+            en = country.get("en")
+            if isinstance(en, str) and en in country_to_region:
+                region_counts[country_to_region[en]] += 1
+
+    if not region_counts:
+        return ""
+    return region_counts.most_common(1)[0][0]
+
+
+def _cross_pct_countries_with_laureates(datasets: Any) -> str:
+    """Percentage of countries that have produced a Nobel laureate."""
+    countries_data = datasets["countries"]
+    laureates_data = datasets["laureates"]
+
+    all_country_names: set[str] = {
+        c["name"]["common"]
+        for c in countries_data
+        if isinstance(c, dict)
+        and isinstance(c.get("name"), dict)
+        and isinstance(c["name"].get("common"), str)
+    }
+
+    birth_countries: set[str] = set()
+    for la in laureates_data:
+        if not isinstance(la, dict):
+            continue
+        born = la.get("birth", {})
+        if not isinstance(born, dict):
+            continue
+        place = born.get("place")
+        if not isinstance(place, dict):
+            continue
+        country = place.get("country")
+        if isinstance(country, dict):
+            en = country.get("en")
+            if isinstance(en, str):
+                birth_countries.add(en)
+
+    matching = len(all_country_names & birth_countries)
+    total = len(all_country_names)
+    if total == 0:
+        return "0"
+    return f"{matching / total * 100:.1f}"
+
+
+def _cross_comments_matching_user_email(datasets: Any) -> str:
+    """Count comments whose email also appears in users."""
+    users_data = datasets["users"]
+    comments_data = datasets["comments"]
+
+    user_emails: set[str] = {
+        u["email"].lower()
+        for u in users_data
+        if isinstance(u, dict) and isinstance(u.get("email"), str)
+    }
+
+    count = sum(
+        1
+        for c in comments_data
+        if isinstance(c, dict)
+        and isinstance(c.get("email"), str)
+        and c["email"].lower() in user_emails
+    )
+    return str(count)
+
+
+def _cross_more_categories_or_cities(datasets: Any) -> str:
+    """Compare distinct product categories vs distinct user cities."""
+    products_data = datasets["products"]
+    users_data = datasets["users"]
+
+    categories: set[str] = {
+        p["category"]
+        for p in products_data
+        if isinstance(p, dict) and isinstance(p.get("category"), str)
+    }
+
+    cities: set[str] = set()
+    for u in users_data:
+        if not isinstance(u, dict):
+            continue
+        addr = u.get("address")
+        if isinstance(addr, dict) and isinstance(addr.get("city"), str):
+            cities.add(addr["city"])
+
+    if len(categories) > len(cities):
+        return "categories"
+    if len(cities) > len(categories):
+        return "cities"
+    return "equal"
+
+
+def _cross_expensive_products_vs_strong_pokemon(
+    datasets: Any,
+) -> str:
+    """Compare products >$100 vs Pokemon with base stat total >500."""
+    products_data = datasets["products"]
+    pokemon_data = datasets["pokemon"]
+
+    expensive = sum(
+        1
+        for p in products_data
+        if isinstance(p, dict) and _safe_float(p.get("price")) > 100
+    )
+
+    strong = 0
+    for poke in pokemon_data:
+        if not isinstance(poke, dict):
+            continue
+        base = poke.get("base")
+        if not isinstance(base, dict):
+            continue
+        total = sum(_safe_float(v) for v in base.values())
+        if total > 500:
+            strong += 1
+
+    if expensive > strong:
+        return "products"
+    if strong > expensive:
+        return "Pokemon"
+    return "equal"
+
+
+def _cross_female_laureates_vs_popular_repos(
+    datasets: Any,
+) -> str:
+    """Compare female laureate count vs repos with >100k stars."""
+    laureates_data = datasets["laureates"]
+    repos_data = datasets["github_repos"]
+
+    female = sum(
+        1
+        for la in laureates_data
+        if isinstance(la, dict) and la.get("gender") == "female"
+    )
+
+    popular = sum(
+        1
+        for r in repos_data
+        if isinstance(r, dict)
+        and _safe_float(r.get("stargazers_count")) > 100_000
+    )
+
+    if female > popular:
+        return "laureates"
+    if popular > female:
+        return "repos"
+    return "equal"
+
+
+def _cross_earthquakes_vs_precip_hours(datasets: Any) -> str:
+    """Compare earthquake count vs hours with precipitation."""
+    earthquakes_data = datasets["earthquakes"]
+    weather_data = datasets["weather"]
+
+    eq_count = sum(1 for f in earthquakes_data if isinstance(f, dict))
+
+    hourly = (
+        weather_data.get("hourly") if isinstance(weather_data, dict) else None
+    )
+    precip_hours = 0
+    if isinstance(hourly, dict):
+        precip = hourly.get("precipitation")
+        if isinstance(precip, list):
+            precip_hours = sum(
+                1 for p in precip if isinstance(p, (int, float)) and p > 0
+            )
+
+    if eq_count > precip_hours:
+        return "earthquakes"
+    if precip_hours > eq_count:
+        return "precipitation hours"
+    return "equal"
+
+
+def _cross_pop_countries_gt10_laureates(datasets: Any) -> str:
+    """Total population of countries with >10 Nobel laureates."""
+    countries_data = datasets["countries"]
+    laureates_data = datasets["laureates"]
+
+    birth_counts: Counter[str] = Counter()
+    for la in laureates_data:
+        if not isinstance(la, dict):
+            continue
+        born = la.get("birth", {})
+        if not isinstance(born, dict):
+            continue
+        place = born.get("place")
+        if not isinstance(place, dict):
+            continue
+        country = place.get("country")
+        if isinstance(country, dict):
+            en = country.get("en")
+            if isinstance(en, str):
+                birth_counts[en] += 1
+
+    prolific = {name for name, cnt in birth_counts.items() if cnt > 10}
+
+    total_pop = sum(
+        int(c["population"])
+        for c in countries_data
+        if isinstance(c, dict)
+        and isinstance(c.get("name"), dict)
+        and isinstance(c["name"].get("common"), str)
+        and c["name"]["common"] in prolific
+        and isinstance(c.get("population"), (int, float))
+    )
+    return str(total_pop)
+
+
+def _cross_products_vs_populous_countries(
+    datasets: Any,
+) -> str:
+    """Compare product count vs countries with population >10M."""
+    products_data = datasets["products"]
+    countries_data = datasets["countries"]
+
+    product_count = sum(1 for p in products_data if isinstance(p, dict))
+
+    populous = sum(
+        1
+        for c in countries_data
+        if isinstance(c, dict)
+        and isinstance(c.get("population"), (int, float))
+        and c["population"] > 10_000_000
+    )
+
+    if product_count > populous:
+        return "products"
+    if populous > product_count:
+        return "countries"
+    return "equal"
+
+
+# Maps cross-dataset question IDs to their constituent datasets.
+CROSS_DATASET_SOURCES: dict[str, tuple[str, ...]] = {
+    "cross_laureates_in_landlocked": ("countries", "laureates"),
+    "cross_region_most_laureates": ("countries", "laureates"),
+    "cross_pct_countries_with_laureates": (
+        "countries",
+        "laureates",
+    ),
+    "cross_comments_matching_user_email": ("comments", "users"),
+    "cross_more_categories_or_cities": ("products", "users"),
+    "cross_expensive_vs_strong_pokemon": ("products", "pokemon"),
+    "cross_female_laureates_vs_popular_repos": (
+        "laureates",
+        "github_repos",
+    ),
+    "cross_earthquakes_vs_precip_hours": (
+        "earthquakes",
+        "weather",
+    ),
+    "cross_pop_countries_gt10_laureates": (
+        "countries",
+        "laureates",
+    ),
+    "cross_products_vs_populous_countries": (
+        "products",
+        "countries",
+    ),
+}
+
+CROSS_DATASET_QUESTIONS: list[Question] = [
+    Question(
+        dataset_name="cross_dataset",
+        question_id="cross_laureates_in_landlocked",
+        question_text=(
+            "Using the laureates and countries datasets: "
+            "how many Nobel laureates were born in "
+            "landlocked countries?"
+        ),
+        question_type="cross_dataset",
+        gold_answer_fn=_cross_laureates_in_landlocked,
+        answer_type="number",
+        difficulty=3,
+    ),
+    Question(
+        dataset_name="cross_dataset",
+        question_id="cross_region_most_laureates",
+        question_text=(
+            "Using the laureates and countries datasets: "
+            "which world region has produced the most "
+            "Nobel laureates by birth country?"
+        ),
+        question_type="cross_dataset",
+        gold_answer_fn=_cross_region_most_laureates,
+        answer_type="string",
+        difficulty=3,
+    ),
+    Question(
+        dataset_name="cross_dataset",
+        question_id="cross_pct_countries_with_laureates",
+        question_text=(
+            "Using the laureates and countries datasets: "
+            "what percentage of countries have produced "
+            "at least one Nobel laureate? "
+            "Give one decimal place."
+        ),
+        question_type="cross_dataset",
+        gold_answer_fn=_cross_pct_countries_with_laureates,
+        answer_type="number",
+        tolerance=0.1,
+        difficulty=3,
+    ),
+    Question(
+        dataset_name="cross_dataset",
+        question_id="cross_comments_matching_user_email",
+        question_text=(
+            "How many comments in the comments dataset "
+            "have an email address that also appears "
+            "in the users dataset?"
+        ),
+        question_type="cross_dataset",
+        gold_answer_fn=_cross_comments_matching_user_email,
+        answer_type="number",
+        difficulty=3,
+    ),
+    Question(
+        dataset_name="cross_dataset",
+        question_id="cross_more_categories_or_cities",
+        question_text=(
+            "Are there more distinct product categories "
+            "in the products dataset or distinct user "
+            "cities in the users dataset? Answer "
+            "'categories', 'cities', or 'equal'."
+        ),
+        question_type="cross_dataset",
+        gold_answer_fn=_cross_more_categories_or_cities,
+        answer_type="string",
+        difficulty=2,
+    ),
+    Question(
+        dataset_name="cross_dataset",
+        question_id="cross_expensive_vs_strong_pokemon",
+        question_text=(
+            "Which count is greater: products priced "
+            "above $100 (from the products dataset) or "
+            "Pokemon with a base stat total above 500 "
+            "(from the pokemon dataset)? Answer "
+            "'products', 'Pokemon', or 'equal'."
+        ),
+        question_type="cross_dataset",
+        gold_answer_fn=_cross_expensive_products_vs_strong_pokemon,
+        answer_type="string",
+        difficulty=2,
+    ),
+    Question(
+        dataset_name="cross_dataset",
+        question_id="cross_female_laureates_vs_popular_repos",
+        question_text=(
+            "Are there more female Nobel laureates "
+            "(from the laureates dataset) or GitHub "
+            "repos with over 100,000 stars (from the "
+            "github_repos dataset)? Answer 'laureates', "
+            "'repos', or 'equal'."
+        ),
+        question_type="cross_dataset",
+        gold_answer_fn=_cross_female_laureates_vs_popular_repos,
+        answer_type="string",
+        difficulty=2,
+    ),
+    Question(
+        dataset_name="cross_dataset",
+        question_id="cross_earthquakes_vs_precip_hours",
+        question_text=(
+            "Are there more earthquake events in the "
+            "earthquakes dataset or hours with "
+            "precipitation in the weather dataset? "
+            "Answer 'earthquakes', "
+            "'precipitation hours', or 'equal'."
+        ),
+        question_type="cross_dataset",
+        gold_answer_fn=_cross_earthquakes_vs_precip_hours,
+        answer_type="string",
+        difficulty=2,
+    ),
+    Question(
+        dataset_name="cross_dataset",
+        question_id="cross_pop_countries_gt10_laureates",
+        question_text=(
+            "Using the laureates and countries datasets: "
+            "what is the total population of all "
+            "countries that have produced more than "
+            "10 Nobel laureates?"
+        ),
+        question_type="cross_dataset",
+        gold_answer_fn=_cross_pop_countries_gt10_laureates,
+        answer_type="number",
+        difficulty=3,
+    ),
+    Question(
+        dataset_name="cross_dataset",
+        question_id="cross_products_vs_populous_countries",
+        question_text=(
+            "Which is greater: the total number of "
+            "products in the products dataset or the "
+            "number of countries with a population "
+            "over 10 million? Answer 'products', "
+            "'countries', or 'equal'."
+        ),
+        question_type="cross_dataset",
+        gold_answer_fn=_cross_products_vs_populous_countries,
+        answer_type="string",
+        difficulty=2,
+    ),
+]
+
+
 def get_questions_for_dataset(
     dataset_name: str,
 ) -> list[Question]:
     """Return questions for a specific dataset."""
     return [q for q in QUESTIONS if q.dataset_name == dataset_name]
+
+
+def get_cross_dataset_questions() -> list[Question]:
+    """Return all cross-dataset questions."""
+    return list(CROSS_DATASET_QUESTIONS)
 
 
 def question_set_hash() -> str:
@@ -2595,11 +3073,12 @@ def question_set_hash() -> str:
     and gold function names so that changes to the question set produce
     a different hash for cross-run comparison validation.
     """
+    all_questions = list(QUESTIONS) + CROSS_DATASET_QUESTIONS
     parts = [
         f"{q.dataset_name}:{q.question_id}:{q.question_text}"
         f":{q.question_type}:{q.answer_type}:{q.tolerance}"
         f":{q.difficulty}:{q.gold_answer_fn.__name__}"
-        for q in QUESTIONS
+        for q in all_questions
     ]
     digest = hashlib.sha256("\n".join(parts).encode()).hexdigest()
     return digest[:12]
