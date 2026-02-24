@@ -145,5 +145,5 @@ class TestClassifyToolCall:
     def test_artifact_unknown_action(self) -> None:
         assert classify_tool_call("artifact", {"action": "unknown"}) == "other"
 
-    def test_unknown_tool(self) -> None:
-        assert classify_tool_call("sometool", {}) == "other"
+    def test_non_native_tool_is_mirrored(self) -> None:
+        assert classify_tool_call("sometool", {}) == "mirrored"

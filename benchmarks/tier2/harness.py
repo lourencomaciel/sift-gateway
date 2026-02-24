@@ -33,7 +33,7 @@ from benchmarks.tier1.questions import (
     question_set_hash,
 )
 from benchmarks.tier1.sift_runtime import create_runtime
-from benchmarks.tier2.agent_loop import run_agent_loop
+from benchmarks.tier2.agent_loop import _DEFAULT_MAX_TURNS, run_agent_loop
 from benchmarks.tier2.metrics import (
     build_question_metrics,
     build_report,
@@ -42,7 +42,6 @@ from benchmarks.tier2.metrics import (
 from benchmarks.tier2.system_prompt import get_system_prompt
 from benchmarks.tier2.tool_bridge import mcp_tools_to_definitions
 
-_DEFAULT_MAX_TURNS = 15
 _SESSION_ID = "benchmark_tier2"
 
 
@@ -270,6 +269,7 @@ def _run_agent_condition(
                         {
                             "question_id": q.question_id,
                             "dataset": name,
+                            "question_text": q.question_text,
                             "question_type": q.question_type,
                             "difficulty": q.difficulty,
                             "gold_answer": gold,
@@ -278,6 +278,15 @@ def _run_agent_condition(
                             "turns": 0,
                             "max_turns_reached": False,
                             "token_budget_reached": False,
+                            "tool_calls": {},
+                            "total_tool_calls": 0,
+                            "code_query_attempts": 0,
+                            "code_query_errors": 0,
+                            "pages_fetched": 0,
+                            "input_tokens": 0,
+                            "output_tokens": 0,
+                            "latency_ms": 0.0,
+                            "per_turn": [],
                             "error": str(exc),
                         }
                     )
@@ -295,6 +304,7 @@ def _run_agent_condition(
                     agent_result=agent_result,
                     question_id=q.question_id,
                     dataset_name=name,
+                    question_text=q.question_text,
                     question_type=q.question_type,
                     difficulty=q.difficulty,
                     gold_answer=gold,

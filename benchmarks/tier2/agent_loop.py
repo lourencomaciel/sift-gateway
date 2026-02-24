@@ -13,7 +13,7 @@ import json
 import sys
 from typing import Any
 
-from benchmarks.tier1.sift_runtime import _MCPRuntime
+from benchmarks.tier1.sift_runtime import _is_error_response, _MCPRuntime
 from benchmarks.tier2.llm_tool_client import (
     TextBlock,
     ToolDefinition,
@@ -70,22 +70,18 @@ def _extract_text_answer(
 
 def _tool_result_to_content(
     result: dict[str, Any],
-    *,
-    is_error: bool,
 ) -> str:
     """Serialize a tool result for the LLM conversation."""
     return json.dumps(result, default=str)
 
 
 def _is_error_result(result: dict[str, Any]) -> bool:
-    """Detect whether a gateway tool result is an error."""
-    if result.get("type") == "gateway_error":
-        return True
-    return (
-        isinstance(result.get("code"), str)
-        and isinstance(result.get("message"), str)
-        and "artifact_id" not in result
-    )
+    """Detect whether a gateway tool result is an error.
+
+    Delegates to ``_is_error_response`` from the tier1 runtime
+    to avoid duplicating the detection heuristic.
+    """
+    return _is_error_response(result)
 
 
 def run_agent_loop(
@@ -144,6 +140,7 @@ def run_agent_loop(
         # Token budget check.
         if result.total_input_tokens >= max_input_tokens:
             result.token_budget_reached = True
+            result.conversation = list(messages)
             print(
                 f"  [budget] input tokens "
                 f"({result.total_input_tokens:,}) "
@@ -253,9 +250,7 @@ def run_agent_loop(
             if is_error and category == "code_query":
                 result.code_query_errors += 1
 
-            tool_result_content = _tool_result_to_content(
-                tool_output, is_error=is_error
-            )
+            tool_result_content = _tool_result_to_content(tool_output)
             tool_results.append(
                 {
                     "type": "tool_result",

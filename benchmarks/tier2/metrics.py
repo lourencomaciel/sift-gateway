@@ -14,6 +14,7 @@ def build_question_metrics(
     agent_result: AgentResult,
     question_id: str,
     dataset_name: str,
+    question_text: str = "",
     question_type: str,
     difficulty: int,
     gold_answer: str,
@@ -26,6 +27,7 @@ def build_question_metrics(
         agent_result: The ``AgentResult`` from the agent loop.
         question_id: Unique question identifier.
         dataset_name: Dataset the question targets.
+        question_text: The original question text.
         question_type: Question category (count, filter, etc.).
         difficulty: Difficulty level (1=easy, 2=medium, 3=hard).
         gold_answer: Expected answer.
@@ -38,6 +40,7 @@ def build_question_metrics(
     return {
         "question_id": question_id,
         "dataset": dataset_name,
+        "question_text": question_text,
         "question_type": question_type,
         "difficulty": difficulty,
         "gold_answer": gold_answer,

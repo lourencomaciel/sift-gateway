@@ -427,3 +427,44 @@ class TestRunAgentLoop:
 
         assert result.answer == "error handled"
         assert result.turns == 2
+
+    def test_token_budget_saves_conversation(self) -> None:
+        """Conversation is saved when token budget is reached."""
+        call_count = 0
+
+        def mock_llm(**_kwargs: object) -> ToolUseResponse:
+            nonlocal call_count
+            call_count += 1
+            return _tool_use_response(
+                [
+                    ToolUseBlock(
+                        id=f"tu_{call_count}",
+                        name="bench_get_earthquakes",
+                        input={},
+                    ),
+                ],
+            )
+
+        mock_runtime = MagicMock()
+        mock_runtime.call_tool.return_value = {
+            "artifact_id": "art_1",
+            "schemas": [],
+        }
+
+        with patch(
+            "benchmarks.tier2.agent_loop.call_llm_with_tools",
+            side_effect=mock_llm,
+        ):
+            result = run_agent_loop(
+                question="test",
+                runtime=mock_runtime,
+                tools=_make_tools(),
+                model="claude-test",
+                system_prompt="test",
+                session_id="s1",
+                api_key="key",
+                max_input_tokens=50,
+            )
+
+        assert result.token_budget_reached
+        assert len(result.conversation) > 0

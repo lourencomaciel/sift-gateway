@@ -13,6 +13,9 @@ from benchmarks.tier2.llm_tool_client import ToolDefinition
 
 _GATEWAY_CONTEXT_KEY = "_gateway_context"
 
+#: Tools built into the gateway (not mirrored from upstreams).
+_GATEWAY_NATIVE_TOOLS = frozenset({"artifact", "gateway_status"})
+
 
 def mcp_tools_to_definitions(
     mcp_tools: list[dict[str, Any]],
@@ -78,12 +81,6 @@ def inject_gateway_context(
     return result
 
 
-#: Known tool call categories for metrics.
-TOOL_CATEGORIES = frozenset(
-    {"mirrored", "code_query", "next_page", "describe", "status"}
-)
-
-
 def classify_tool_call(
     tool_name: str,
     arguments: dict[str, Any],
@@ -91,7 +88,7 @@ def classify_tool_call(
     """Classify a tool call for metric tracking.
 
     Categories:
-    - ``mirrored``: upstream dataset tool (prefixed, e.g. ``bench_get_*``)
+    - ``mirrored``: upstream dataset tool (any non-gateway-native tool)
     - ``code_query``: ``artifact`` with ``query_kind=code``
     - ``next_page``: ``artifact`` with ``action=next_page``
     - ``describe``: ``artifact`` with ``action=describe``
@@ -119,8 +116,8 @@ def classify_tool_call(
             return "code_query"
         return "other"
 
-    # Any prefixed tool (e.g. bench_get_earthquakes) is mirrored.
-    if "_" in tool_name and tool_name != "artifact":
+    # Anything not gateway-native is a mirrored upstream tool.
+    if tool_name not in _GATEWAY_NATIVE_TOOLS:
         return "mirrored"
 
     return "other"
