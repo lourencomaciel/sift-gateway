@@ -137,6 +137,11 @@ def _is_error_response(payload: dict[str, Any]) -> bool:
     1. **Typed errors** — ``{"type": "gateway_error", ...}``.
     2. **Untyped errors** — ``{"code": ..., "message": ...}``
        without an ``artifact_id``.
+
+    The untyped heuristic is intentionally conservative: a response
+    that has ``code`` + ``message`` *and* an ``artifact_id`` is
+    treated as success.  This works for the benchmark because
+    gateway tool results always include ``artifact_id`` on success.
     """
     if payload.get("type") == "gateway_error":
         return True
@@ -287,7 +292,10 @@ def mcp_response_to_describe_format(
         )
         raise RuntimeError(msg)
 
-    # Build roots from schema entries.
+    # Build roots from schema entries.  Default root_path to "$"
+    # when missing — safe for the benchmark since the gateway always
+    # populates root_path, but avoids a KeyError if the schema
+    # structure changes.
     roots: list[dict[str, Any]] = []
     for schema in schemas:
         root_entry: dict[str, Any] = {
