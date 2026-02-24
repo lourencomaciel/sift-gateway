@@ -231,7 +231,11 @@ uv run python benchmarks/tier2/harness.py \
 | `--max-turns` | `15` | Max agent turns per question |
 | `--max-pages` | `10` | Max pagination calls per question |
 | `--max-input-tokens` | `200000` | Token budget safety valve |
+| `--max-baseline-payload-bytes` | `400000` | Byte cap for baseline payloads |
+| `--max-baseline-tokens` | `180000` | Token cap for baseline payloads |
 | `--temperature` | `0.0` | Sampling temperature |
+| `--skip-baseline` | — | Run Sift condition only |
+| `--skip-sift` | — | Run baseline condition only |
 | `--continue-on-error` | — | Don't abort on API errors |
 | `--save-conversations` | — | Include full conversations in results |
 | `--json` | — | Emit full JSON report to stdout |
@@ -282,3 +286,42 @@ directory. Each report includes:
 - Code retry rate and pagination usage
 - Token totals and latency percentiles
 - Per-question detailed metrics including tool call sequences
+
+#### Sonnet 4.6 — Sift condition (2025-02-24)
+
+| Metric | Value |
+|--------|-------|
+| Accuracy | **102/103 (99.0%)** |
+| Errors | 1 (countries — aggregation, medium) |
+| Input tokens | 2,886,381 |
+| Output tokens | 35,260 |
+| Avg turns | 3.16 |
+| Avg tool calls | 2.16 |
+| Code retry rate | 14.2% |
+| Latency p50 | 6,288 ms |
+| Latency p90 | 9,815 ms |
+
+Per-dataset breakdown:
+
+| Dataset | Accuracy |
+|---------|----------|
+| airports | 6/6 |
+| comments | 5/5 |
+| countries | 12/13 |
+| earthquakes | 13/13 |
+| github_repos | 6/6 |
+| laureates | 11/11 |
+| openlibrary | 6/6 |
+| photos | 5/5 |
+| pokemon | 6/6 |
+| products | 15/15 |
+| users | 7/7 |
+| weather | 10/10 |
+
+By difficulty:
+
+| Difficulty | Accuracy |
+|-----------|----------|
+| Easy | 38/38 |
+| Medium | 39/40 |
+| Hard | 25/25 |

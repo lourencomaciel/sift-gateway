@@ -63,3 +63,37 @@ class TestBuildParser:
     def test_default_api_key_none(self) -> None:
         args = _build_parser().parse_args([])
         assert args.api_key is None
+
+    def test_skip_baseline_flag(self) -> None:
+        args = _build_parser().parse_args(["--skip-baseline"])
+        assert args.skip_baseline is True
+
+    def test_skip_baseline_default_false(self) -> None:
+        args = _build_parser().parse_args([])
+        assert args.skip_baseline is False
+
+    def test_skip_sift_flag(self) -> None:
+        args = _build_parser().parse_args(["--skip-sift"])
+        assert args.skip_sift is True
+
+    def test_skip_sift_default_false(self) -> None:
+        args = _build_parser().parse_args([])
+        assert args.skip_sift is False
+
+    def test_max_baseline_payload_bytes_default(self) -> None:
+        args = _build_parser().parse_args([])
+        assert args.max_baseline_payload_bytes == 400_000
+
+    def test_max_baseline_payload_bytes_custom(self) -> None:
+        args = _build_parser().parse_args(
+            ["--max-baseline-payload-bytes", "200000"]
+        )
+        assert args.max_baseline_payload_bytes == 200_000
+
+    def test_max_baseline_tokens_default(self) -> None:
+        args = _build_parser().parse_args([])
+        assert args.max_baseline_tokens == 180_000
+
+    def test_max_baseline_tokens_custom(self) -> None:
+        args = _build_parser().parse_args(["--max-baseline-tokens", "100000"])
+        assert args.max_baseline_tokens == 100_000

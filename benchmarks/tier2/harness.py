@@ -27,7 +27,13 @@ if _SRC_DIR not in sys.path:
 
 from benchmarks.tier1.datasets import ALL_DATASET_NAMES, DATASETS
 from benchmarks.tier1.evaluate import evaluate_answer
-from benchmarks.tier1.llm_client import LLMAPIError
+from benchmarks.tier1.harness import (
+    _BASELINE_SYSTEM,
+    _MAX_BASELINE_BYTES_DEFAULT,
+    _MAX_BASELINE_TOKENS_DEFAULT,
+    _truncate_for_baseline,
+)
+from benchmarks.tier1.llm_client import LLMAPIError, call_llm
 from benchmarks.tier1.questions import (
     get_questions_for_dataset,
     question_set_hash,
@@ -41,6 +47,7 @@ from benchmarks.tier2.agent_loop import (
     run_agent_loop,
 )
 from benchmarks.tier2.metrics import (
+    build_baseline_metrics,
     build_question_metrics,
     build_report,
     print_summary_table,
@@ -120,6 +127,28 @@ def _build_parser() -> argparse.ArgumentParser:
         help="LLM sampling temperature",
     )
     parser.add_argument(
+        "--skip-baseline",
+        action="store_true",
+        help="Skip baseline (context-stuffed) condition",
+    )
+    parser.add_argument(
+        "--skip-sift",
+        action="store_true",
+        help="Skip Sift (agent loop) condition",
+    )
+    parser.add_argument(
+        "--max-baseline-payload-bytes",
+        type=int,
+        default=_MAX_BASELINE_BYTES_DEFAULT,
+        help="Max baseline payload size in bytes",
+    )
+    parser.add_argument(
+        "--max-baseline-tokens",
+        type=int,
+        default=_MAX_BASELINE_TOKENS_DEFAULT,
+        help="Max estimated baseline tokens (conservative)",
+    )
+    parser.add_argument(
         "--json",
         action="store_true",
         help="Emit JSON report to stdout",
@@ -150,6 +179,114 @@ def _load_dataset(data_dir: Path, dataset_name: str) -> Any:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def _run_baseline_across_datasets(
+    *,
+    dataset_names: list[str],
+    loaded: dict[str, Any],
+    results: list[dict[str, Any]],
+    question_filter: set[str] | None,
+    args: argparse.Namespace,
+) -> None:
+    """Run the baseline (context-stuffed) condition across datasets."""
+    print("\n--- Baseline (context-stuffed) ---\n")
+
+    max_bytes = args.max_baseline_payload_bytes
+    max_tokens = args.max_baseline_tokens
+
+    for name in dataset_names:
+        data = loaded[name]
+        questions = get_questions_for_dataset(name)
+
+        if question_filter and not any(
+            q.question_id in question_filter for q in questions
+        ):
+            continue
+
+        data_json, truncated = _truncate_for_baseline(
+            data,
+            max_bytes=max_bytes,
+            max_tokens=max_tokens,
+        )
+
+        for q in questions:
+            if question_filter and q.question_id not in question_filter:
+                continue
+
+            gold = q.gold_answer_fn(data)
+            print(f"  [{name}] {q.question_id}: {q.question_text[:50]}...")
+
+            user_msg = (
+                f"Here is the JSON data:\n\n{data_json}\n\n"
+                f"Question: {q.question_text}"
+            )
+
+            try:
+                resp = call_llm(
+                    model=args.model,
+                    system_prompt=_BASELINE_SYSTEM,
+                    user_message=user_msg,
+                    api_key=args.api_key,
+                    temperature=args.temperature,
+                )
+            except LLMAPIError as exc:
+                if not args.continue_on_error:
+                    raise
+                print(
+                    f"    -> ERROR: {exc}",
+                    file=sys.stderr,
+                )
+                error_metrics = build_baseline_metrics(
+                    question_id=q.question_id,
+                    dataset_name=name,
+                    question_text=q.question_text,
+                    question_type=q.question_type,
+                    difficulty=q.difficulty,
+                    gold_answer=gold,
+                    llm_answer="",
+                    correct=False,
+                    input_tokens=0,
+                    output_tokens=0,
+                    latency_ms=0.0,
+                    truncated=truncated,
+                )
+                error_metrics["error"] = str(exc)
+                results.append(error_metrics)
+                continue
+
+            llm_answer = resp.text
+            correct = evaluate_answer(
+                llm_answer,
+                gold,
+                answer_type=q.answer_type,
+                tolerance=q.tolerance,
+            )
+
+            metrics = build_baseline_metrics(
+                question_id=q.question_id,
+                dataset_name=name,
+                question_text=q.question_text,
+                question_type=q.question_type,
+                difficulty=q.difficulty,
+                gold_answer=gold,
+                llm_answer=llm_answer,
+                correct=correct,
+                input_tokens=resp.input_tokens,
+                output_tokens=resp.output_tokens,
+                latency_ms=resp.latency_ms,
+                truncated=truncated,
+            )
+
+            status = "CORRECT" if correct else "WRONG"
+            trunc_tag = " [TRUNCATED]" if truncated else ""
+            print(
+                f"    -> {status} "
+                f"(gold={gold}, "
+                f"llm={llm_answer[:40]})"
+                f"{trunc_tag}"
+            )
+            results.append(metrics)
+
+
 def _run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
     """Execute the full Tier 2 benchmark run."""
     data_dir = Path(args.data_dir)
@@ -175,30 +312,45 @@ def _run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
         loaded[name] = _load_dataset(data_dir, name)
 
     results: list[dict[str, Any]] = []
-    system_prompt = get_system_prompt()
 
-    sift_data_dir = args.sift_data_dir
-    if sift_data_dir is not None:
-        _run_agent_across_datasets(
+    # Baseline condition (no gateway, context-stuffed).
+    if not args.skip_baseline:
+        _run_baseline_across_datasets(
             dataset_names=dataset_names,
             loaded=loaded,
             results=results,
-            sift_data_dir=sift_data_dir,
             question_filter=question_filter,
-            system_prompt=system_prompt,
             args=args,
         )
-    else:
-        with tempfile.TemporaryDirectory(prefix="sift-bench-tier2-") as tmp:
+
+    # Sift condition (agent loop with gateway tools).
+    if not args.skip_sift:
+        system_prompt = get_system_prompt()
+
+        sift_data_dir = args.sift_data_dir
+        if sift_data_dir is not None:
             _run_agent_across_datasets(
                 dataset_names=dataset_names,
                 loaded=loaded,
                 results=results,
-                sift_data_dir=tmp,
+                sift_data_dir=sift_data_dir,
                 question_filter=question_filter,
                 system_prompt=system_prompt,
                 args=args,
             )
+        else:
+            with tempfile.TemporaryDirectory(
+                prefix="sift-bench-tier2-",
+            ) as tmp:
+                _run_agent_across_datasets(
+                    dataset_names=dataset_names,
+                    loaded=loaded,
+                    results=results,
+                    sift_data_dir=tmp,
+                    question_filter=question_filter,
+                    system_prompt=system_prompt,
+                    args=args,
+                )
 
     return build_report(
         results,

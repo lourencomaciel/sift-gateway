@@ -5,6 +5,7 @@ from __future__ import annotations
 from benchmarks.tier2.agent_loop import AgentResult, TurnMetrics
 from benchmarks.tier2.metrics import (
     _latency_percentiles,
+    build_baseline_metrics,
     build_question_metrics,
     build_report,
 )
@@ -198,3 +199,110 @@ class TestBuildReport:
         ]
         report = build_report(results, model="test")
         assert report["latency"]["count"] == 2
+
+    def test_report_no_per_condition_single(self) -> None:
+        results = [self._make_result()]
+        report = build_report(results, model="test")
+        assert "per_condition" not in report
+
+    def test_report_per_condition_dual(self) -> None:
+        sift = self._make_result(correct=True, input_tokens=1000)
+        sift["condition"] = "sift"
+        baseline = self._make_result(correct=False, input_tokens=2000)
+        baseline["condition"] = "baseline"
+        report = build_report([sift, baseline], model="test")
+        assert "per_condition" in report
+        pc = report["per_condition"]
+        assert "sift" in pc
+        assert "baseline" in pc
+        assert pc["sift"]["accuracy"] == "1/1"
+        assert pc["baseline"]["accuracy"] == "0/1"
+        assert pc["sift"]["input_tokens"] == 1000
+        assert pc["baseline"]["input_tokens"] == 2000
+
+
+class TestBuildBaselineMetrics:
+    def test_keys_present(self) -> None:
+        m = build_baseline_metrics(
+            question_id="eq_count",
+            dataset_name="earthquakes",
+            question_text="How many earthquakes?",
+            question_type="count",
+            difficulty=1,
+            gold_answer="100",
+            llm_answer="100",
+            correct=True,
+            input_tokens=5000,
+            output_tokens=50,
+            latency_ms=3000.0,
+            truncated=False,
+        )
+        assert m["condition"] == "baseline"
+        assert m["question_id"] == "eq_count"
+        assert m["correct"] is True
+        assert m["turns"] == 1
+        assert m["total_tool_calls"] == 0
+        assert m["code_query_attempts"] == 0
+        assert m["truncated"] is False
+        assert m["input_tokens"] == 5000
+        assert m["latency_ms"] == 3000.0
+        assert m["per_turn"] == []
+
+    def test_truncated_flag(self) -> None:
+        m = build_baseline_metrics(
+            question_id="air_count",
+            dataset_name="airports",
+            question_text="How many airports?",
+            question_type="count",
+            difficulty=1,
+            gold_answer="500",
+            llm_answer="250",
+            correct=False,
+            input_tokens=10000,
+            output_tokens=20,
+            latency_ms=4000.0,
+            truncated=True,
+        )
+        assert m["truncated"] is True
+        assert m["correct"] is False
+
+
+class TestConditionFieldInQuestionMetrics:
+    def test_default_condition_is_sift(self) -> None:
+        agent_result = AgentResult(
+            answer="42",
+            turns=1,
+            max_turns_reached=False,
+            token_budget_reached=False,
+        )
+        m = build_question_metrics(
+            agent_result=agent_result,
+            question_id="q1",
+            dataset_name="earthquakes",
+            question_type="count",
+            difficulty=1,
+            gold_answer="42",
+            llm_answer="42",
+            correct=True,
+        )
+        assert m["condition"] == "sift"
+
+    def test_explicit_condition(self) -> None:
+        agent_result = AgentResult(
+            answer="42",
+            turns=1,
+            max_turns_reached=False,
+            token_budget_reached=False,
+        )
+        m = build_question_metrics(
+            agent_result=agent_result,
+            question_id="q1",
+            dataset_name="earthquakes",
+            question_type="count",
+            difficulty=1,
+            gold_answer="42",
+            llm_answer="42",
+            correct=True,
+            condition="custom",
+        )
+        assert m["condition"] == "custom"
