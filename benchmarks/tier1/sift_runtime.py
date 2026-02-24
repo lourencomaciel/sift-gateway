@@ -107,6 +107,26 @@ class _MCPRuntime:
         future.result(timeout=60)
         self._client = client
 
+    def list_tools(self) -> list[dict[str, Any]]:
+        """List available MCP tools with name, description, schema."""
+        if self._client is None:
+            msg = "client not connected"
+            raise RuntimeError(msg)
+        future = asyncio.run_coroutine_threadsafe(
+            self._client.list_tools(),
+            self._loop,
+        )
+        result = future.result(timeout=30)
+        tools: list[dict[str, Any]] = []
+        for tool in result:
+            entry: dict[str, Any] = {"name": tool.name}
+            if tool.description:
+                entry["description"] = tool.description
+            if tool.inputSchema:
+                entry["input_schema"] = dict(tool.inputSchema)
+            tools.append(entry)
+        return tools
+
     def call_tool(
         self,
         name: str,
