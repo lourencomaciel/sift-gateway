@@ -236,16 +236,16 @@ Full reference: [docs/config.md](docs/config.md)
 
 ## Benchmarks
 
-The Tier 1 benchmark compares Sift's schema_ref + codegen approach against naive full-JSON context stuffing across 8 real-world datasets and 43 factual questions.
+The Tier 1 benchmark compares Sift's schema_ref + codegen approach against naive full-JSON context stuffing across 12 real-world datasets and 103 factual questions.
 
 | Model | Condition | Accuracy | Input Tokens | Token Reduction |
 |---|---|---|---|---|
-| claude-sonnet-4-6 | Baseline | 17/43 (39.5%) | 4,294,346 | — |
-| claude-sonnet-4-6 | **Sift** | **43/43 (100%)** | **213,718** | **95.0%** |
-| claude-opus-4-6 | Baseline | 19/43 (44.2%) | 4,294,346 | — |
-| claude-opus-4-6 | **Sift** | **43/43 (100%)** | **218,941** | **94.9%** |
+| claude-sonnet-4-6 | Baseline | 31/103 (30.1%) | 10,757,230 | — |
+| claude-sonnet-4-6 | **Sift** | **99/103 (96.1%)** | **501,639** | **95.3%** |
+| claude-opus-4-6 | Baseline | 34/103 (33.0%) | 10,757,230 | — |
+| claude-opus-4-6 | **Sift** | **98/103 (95.1%)** | **508,496** | **95.3%** |
 
-Sift achieves perfect accuracy on both models while using ~95% fewer input tokens. The baseline struggles on large and deeply nested datasets (earthquakes, laureates, products) where payloads crowd the context window, while Sift handles them through artifact queries.
+Sift achieves ~96% accuracy on both models while using ~95% fewer input tokens. The baseline struggles on large and deeply nested datasets (earthquakes, laureates, products) where payloads crowd the context window, while Sift handles them through artifact queries.
 
 ```bash
 python benchmarks/tier1/fetch_data.py
