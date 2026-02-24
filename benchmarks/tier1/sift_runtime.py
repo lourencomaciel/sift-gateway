@@ -108,6 +108,11 @@ class _MCPRuntime:
                 texts.append(text)
         return {"text": "\n".join(texts)}
 
+    def _cancel_pending(self) -> None:
+        """Cancel remaining tasks on the background loop."""
+        for task in asyncio.all_tasks(self._loop):
+            task.cancel()
+
     def close(self) -> None:
         """Shut down the client, event loop, and background thread."""
         if self._client is not None:
@@ -117,6 +122,7 @@ class _MCPRuntime:
             )
             with contextlib.suppress(Exception):
                 future.result(timeout=10)
+        self._loop.call_soon_threadsafe(self._cancel_pending)
         self._loop.call_soon_threadsafe(self._loop.stop)
         self._thread.join(timeout=10)
         self._loop.close()
@@ -202,11 +208,15 @@ def create_runtime(
 
         # Bootstrap the server (connects to mock upstream,
         # discovers tools, builds mirrored tool registry).
-        loop = asyncio.new_event_loop()
-        server = loop.run_until_complete(
+        # Uses a temporary event loop because bootstrap_server is
+        # async but its connections are scoped and fully cleaned up
+        # before it returns.  The persistent client loop lives in
+        # _MCPRuntime below.
+        setup_loop = asyncio.new_event_loop()
+        server = setup_loop.run_until_complete(
             bootstrap_server(config, db_pool=backend)
         )
-        loop.close()
+        setup_loop.close()
 
         # Build the FastMCP app and connect an in-process client.
         app = server.build_fastmcp_app()
@@ -269,11 +279,13 @@ def mcp_response_to_describe_format(
     """
     schemas = mcp_result.get("schemas", [])
 
-    # When representative_sample replaces schemas, try to use
-    # the schemas from the sample structure.
     if not schemas:
-        # Fall back to extracting root info from other fields.
-        schemas = []
+        msg = (
+            "mirrored tool response has no schemas "
+            "(representative_sample responses are not "
+            "supported by the benchmark)"
+        )
+        raise RuntimeError(msg)
 
     # Build roots from schema entries.
     roots: list[dict[str, Any]] = []
