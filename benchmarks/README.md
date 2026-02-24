@@ -133,3 +133,39 @@ directory. Each report includes:
 - Per-dataset and per-question-type breakdowns
 - Detailed per-question results with gold answers, LLM answers, and
   correctness flags
+
+#### Sonnet 4.6 — Sift condition (2025-02-24)
+
+| Metric | Value |
+|--------|-------|
+| Accuracy | **99/103 (96.1%)** |
+| Errors | 3 (weather dataset — columnar cross-root datetime queries) |
+| Input tokens | 482,599 |
+| Output tokens | 12,895 |
+| Latency p50 | 5,661 ms |
+| Latency p90 | 11,456 ms |
+
+Per-dataset breakdown:
+
+| Dataset | Accuracy |
+|---------|----------|
+| airports | 6/6 |
+| comments | 5/5 |
+| countries | 13/13 |
+| earthquakes | 13/13 |
+| github_repos | 6/6 |
+| laureates | 10/11 |
+| openlibrary | 6/6 |
+| photos | 5/5 |
+| pokemon | 6/6 |
+| products | 15/15 |
+| users | 7/7 |
+| weather | 7/10 |
+
+By difficulty:
+
+| Difficulty | Accuracy | Retries |
+|-----------|----------|---------|
+| Easy | 38/38 | 0 |
+| Medium | 39/40 | 0 |
+| Hard | 22/25 | 8 |
