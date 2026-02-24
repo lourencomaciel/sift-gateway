@@ -27,9 +27,14 @@ from fastmcp import Client
 import sift_gateway
 from sift_gateway.config import load_gateway_config
 from sift_gateway.config.settings import UpstreamConfig
+from sift_gateway.constants import WORKSPACE_ID
+from sift_gateway.core.rows import rows_to_dicts
+from sift_gateway.core.schema_payload import build_schema_payload
 from sift_gateway.db.backend import SqliteBackend
 from sift_gateway.db.migrate import apply_migrations
 from sift_gateway.mcp.server import bootstrap_server
+from sift_gateway.tools.artifact_describe import FETCH_SCHEMA_ROOTS_SQL
+from sift_gateway.tools.artifact_schema import FETCH_SCHEMA_FIELDS_SQL
 
 _MIGRATIONS_DIR = (
     Path(sift_gateway.__file__).resolve().parent / "db" / "migrations_sqlite"
@@ -40,6 +45,30 @@ _GATEWAY_CONTEXT: dict[str, str] = {"session_id": _SESSION_ID}
 _MOCK_UPSTREAM_SCRIPT = str(
     Path(__file__).resolve().parent / "mock_upstream.py"
 )
+
+_SCHEMA_ROOT_COLUMNS = [
+    "root_key",
+    "root_path",
+    "schema_version",
+    "schema_hash",
+    "mode",
+    "completeness",
+    "observed_records",
+    "dataset_hash",
+    "traversal_contract_version",
+    "map_budget_fingerprint",
+]
+
+_SCHEMA_FIELD_COLUMNS = [
+    "field_path",
+    "types",
+    "nullable",
+    "required",
+    "observed_count",
+    "example_value",
+    "distinct_values",
+    "cardinality",
+]
 
 
 class CodeExecutionError(RuntimeError):
@@ -107,6 +136,41 @@ class _MCPRuntime:
             if isinstance(text, str):
                 texts.append(text)
         return {"text": "\n".join(texts)}
+
+    def fetch_schemas(self, artifact_id: str) -> list[dict[str, Any]]:
+        """Fetch persisted schemas from the DB for an artifact.
+
+        Used as a fallback when the MCP mirrored-tool response
+        returns a representative sample instead of inline schemas.
+        """
+        with self._backend.connection() as conn:
+            schema_roots = rows_to_dicts(
+                conn.execute(
+                    FETCH_SCHEMA_ROOTS_SQL,
+                    (WORKSPACE_ID, artifact_id),
+                ).fetchall(),
+                _SCHEMA_ROOT_COLUMNS,
+            )
+            schemas: list[dict[str, Any]] = []
+            for schema_root in schema_roots:
+                root_key = schema_root.get("root_key")
+                if not isinstance(root_key, str):
+                    continue
+                field_rows = rows_to_dicts(
+                    conn.execute(
+                        FETCH_SCHEMA_FIELDS_SQL,
+                        (WORKSPACE_ID, artifact_id, root_key),
+                    ).fetchall(),
+                    _SCHEMA_FIELD_COLUMNS,
+                )
+                schemas.append(
+                    build_schema_payload(
+                        schema_root=schema_root,
+                        field_rows=field_rows,
+                        include_null_example_value=True,
+                    )
+                )
+        return schemas
 
     def _cancel_pending(self) -> None:
         """Cancel remaining tasks on the background loop."""
@@ -269,6 +333,7 @@ def call_mirrored_tool(
 
 def mcp_response_to_describe_format(
     mcp_result: dict[str, Any],
+    runtime: _MCPRuntime,
 ) -> dict[str, Any]:
     """Convert an MCP mirrored-tool response to describe format.
 
@@ -276,8 +341,13 @@ def mcp_response_to_describe_format(
     dict shape that ``format_schema_for_prompt()`` expects:
     ``{"roots": [...], "schemas": [...]}``.
 
+    When the response uses ``representative_sample`` mode (no
+    inline schemas), falls back to loading persisted schemas
+    directly from the gateway's SQLite database.
+
     Args:
         mcp_result: The dict returned by ``call_mirrored_tool``.
+        runtime: The MCP runtime (used for DB fallback).
 
     Returns:
         A dict compatible with ``format_schema_for_prompt()``.
@@ -285,12 +355,15 @@ def mcp_response_to_describe_format(
     schemas = mcp_result.get("schemas", [])
 
     if not schemas:
-        msg = (
-            "mirrored tool response has no schemas "
-            "(representative_sample responses are not "
-            "supported by the benchmark)"
-        )
-        raise RuntimeError(msg)
+        # Representative-sample response — fetch schemas from DB.
+        artifact_id = mcp_result.get("artifact_id", "")
+        schemas = runtime.fetch_schemas(artifact_id)
+        if not schemas:
+            msg = (
+                f"no schemas found for artifact {artifact_id} "
+                f"(neither inline nor in DB)"
+            )
+            raise RuntimeError(msg)
 
     # Build roots from schema entries.  Default root_path to "$"
     # when missing — safe for the benchmark since the gateway always
@@ -301,12 +374,18 @@ def mcp_response_to_describe_format(
         root_entry: dict[str, Any] = {
             "root_path": schema.get("root_path", "$"),
         }
-        # Carry over count/shape info if present in schema.
-        determinism = schema.get("determinism", {})
-        if isinstance(determinism, dict):
-            observed = determinism.get("observed_records")
-            if observed is not None:
-                root_entry["count_estimate"] = observed
+        # Carry over count info.  Inline MCP responses nest it
+        # under "determinism"; DB-fetched schemas use "coverage".
+        observed = None
+        for section_key in ("determinism", "coverage"):
+            section = schema.get(section_key, {})
+            if isinstance(section, dict):
+                val = section.get("observed_records")
+                if val is not None:
+                    observed = val
+                    break
+        if observed is not None:
+            root_entry["count_estimate"] = observed
         root_shape = schema.get("root_shape")
         if root_shape is not None:
             root_entry["root_shape"] = root_shape

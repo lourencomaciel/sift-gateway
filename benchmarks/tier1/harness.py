@@ -818,6 +818,7 @@ def _run_sift_condition(
 
             describe_compat = mcp_response_to_describe_format(
                 mcp_result,
+                runtime,
             )
             root_paths = extract_root_paths(describe_compat)
             schema_text = format_schema_for_prompt(describe_compat)
