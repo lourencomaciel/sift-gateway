@@ -134,41 +134,44 @@ directory. Each report includes:
 - Detailed per-question results with gold answers, LLM answers, and
   correctness flags
 
-#### Sonnet 4.6 — Sift condition (2025-02-24)
+#### Sonnet 4.6 (2025-02-24)
 
-| Metric | Value |
-|--------|-------|
-| Accuracy | **99/103 (96.1%)** |
-| Errors | 3 (weather dataset — columnar cross-root datetime queries) |
-| Input tokens | 482,599 |
-| Output tokens | 12,895 |
-| Latency p50 | 5,661 ms |
-| Latency p90 | 11,456 ms |
+| Metric | Baseline | Sift |
+|--------|----------|------|
+| Accuracy | 31/103 (30.1%) | **99/103 (96.1%)** |
+| Input tokens | 10,757,230 | 501,639 |
+| Output tokens | 50,096 | 11,013 |
+| Latency p50 | 5,211 ms | 2,846 ms |
+| Latency p90 | 22,118 ms | 4,687 ms |
+
+The baseline context-stuffs the raw JSON into the prompt (truncated to
+400 KB / 180K tokens). Large datasets lose most of their data, and the
+LLM often emits reasoning text instead of a bare answer.
 
 Per-dataset breakdown:
 
-| Dataset | Accuracy |
-|---------|----------|
-| airports | 6/6 |
-| comments | 5/5 |
-| countries | 13/13 |
-| earthquakes | 13/13 |
-| github_repos | 6/6 |
-| laureates | 10/11 |
-| openlibrary | 6/6 |
-| photos | 5/5 |
-| pokemon | 6/6 |
-| products | 15/15 |
-| users | 7/7 |
-| weather | 7/10 |
+| Dataset | Baseline | Sift |
+|---------|----------|------|
+| airports | 1/6 | 6/6 |
+| comments | 4/5 | 5/5 |
+| countries | 6/13 | 13/13 |
+| earthquakes | 4/13 | 13/13 |
+| github_repos | 3/6 | 6/6 |
+| laureates | 1/11 | 10/11 |
+| openlibrary | 2/6 | 6/6 |
+| photos | 2/5 | 5/5 |
+| pokemon | 3/6 | 6/6 |
+| products | 2/15 | 15/15 |
+| users | 1/7 | 7/7 |
+| weather | 2/10 | 7/10 |
 
 By difficulty:
 
-| Difficulty | Accuracy | Retries |
-|-----------|----------|---------|
-| Easy | 38/38 | 0 |
-| Medium | 39/40 | 0 |
-| Hard | 22/25 | 8 |
+| Difficulty | Baseline | Sift | Retries |
+|-----------|----------|------|---------|
+| Easy | 15/38 | 38/38 | 0 |
+| Medium | 11/40 | 39/40 | 0 |
+| Hard | 5/25 | 22/25 | 8 |
 
 ## Tier 2 — LLM-Driven Autonomous Agent Loop
 
