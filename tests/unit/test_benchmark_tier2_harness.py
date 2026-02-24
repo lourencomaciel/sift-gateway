@@ -2,7 +2,16 @@
 
 from __future__ import annotations
 
-from benchmarks.tier2.harness import _build_parser
+import argparse
+from unittest.mock import patch
+
+from benchmarks.tier1.llm_client import LLMAPIError, LLMResponse
+from benchmarks.tier2.harness import (
+    _build_parser,
+    _run_baseline_across_datasets,
+    _run_benchmark,
+)
+import pytest
 
 
 class TestBuildParser:
@@ -97,3 +106,233 @@ class TestBuildParser:
     def test_max_baseline_tokens_custom(self) -> None:
         args = _build_parser().parse_args(["--max-baseline-tokens", "100000"])
         assert args.max_baseline_tokens == 100_000
+
+
+class TestSkipBothGuard:
+    def test_skip_both_exits(self) -> None:
+        args = _build_parser().parse_args(["--skip-baseline", "--skip-sift"])
+        with pytest.raises(SystemExit, match="1"):
+            _run_benchmark(args)
+
+
+class TestRunBaselineAcrossDatasets:
+    """Tests for _run_baseline_across_datasets with mocked LLM."""
+
+    @staticmethod
+    def _make_args(
+        *,
+        model: str = "test-model",
+        api_key: str = "k",
+        temperature: float = 0.0,
+        max_baseline_payload_bytes: int = 400_000,
+        max_baseline_tokens: int = 180_000,
+        continue_on_error: bool = False,
+    ) -> argparse.Namespace:
+        return argparse.Namespace(
+            model=model,
+            api_key=api_key,
+            temperature=temperature,
+            max_baseline_payload_bytes=max_baseline_payload_bytes,
+            max_baseline_tokens=max_baseline_tokens,
+            continue_on_error=continue_on_error,
+        )
+
+    @patch("benchmarks.tier2.harness.call_llm")
+    @patch("benchmarks.tier2.harness.get_questions_for_dataset")
+    def test_correct_answer_recorded(
+        self,
+        mock_get_q,
+        mock_llm,
+    ) -> None:
+        from benchmarks.tier1.questions import Question
+
+        mock_get_q.return_value = [
+            Question(
+                dataset_name="earthquakes",
+                question_id="eq_count",
+                question_text="How many earthquakes?",
+                question_type="count",
+                gold_answer_fn=lambda d: str(len(d)),
+                answer_type="number",
+                difficulty=1,
+            ),
+        ]
+        mock_llm.return_value = LLMResponse(
+            text="3",
+            input_tokens=500,
+            output_tokens=10,
+            model="test-model",
+            latency_ms=100.0,
+        )
+
+        results: list[dict] = []
+        _run_baseline_across_datasets(
+            dataset_names=["earthquakes"],
+            loaded={"earthquakes": [1, 2, 3]},
+            results=results,
+            question_filter=None,
+            args=self._make_args(),
+        )
+
+        assert len(results) == 1
+        assert results[0]["condition"] == "baseline"
+        assert results[0]["correct"] is True
+        assert results[0]["input_tokens"] == 500
+        assert results[0]["truncated"] is False
+
+    @patch("benchmarks.tier2.harness.call_llm")
+    @patch("benchmarks.tier2.harness.get_questions_for_dataset")
+    def test_wrong_answer_recorded(
+        self,
+        mock_get_q,
+        mock_llm,
+    ) -> None:
+        from benchmarks.tier1.questions import Question
+
+        mock_get_q.return_value = [
+            Question(
+                dataset_name="earthquakes",
+                question_id="eq_count",
+                question_text="How many earthquakes?",
+                question_type="count",
+                gold_answer_fn=lambda d: str(len(d)),
+                answer_type="number",
+                difficulty=1,
+            ),
+        ]
+        mock_llm.return_value = LLMResponse(
+            text="999",
+            input_tokens=500,
+            output_tokens=10,
+            model="test-model",
+            latency_ms=100.0,
+        )
+
+        results: list[dict] = []
+        _run_baseline_across_datasets(
+            dataset_names=["earthquakes"],
+            loaded={"earthquakes": [1, 2, 3]},
+            results=results,
+            question_filter=None,
+            args=self._make_args(),
+        )
+
+        assert len(results) == 1
+        assert results[0]["correct"] is False
+
+    @patch("benchmarks.tier2.harness.call_llm")
+    @patch("benchmarks.tier2.harness.get_questions_for_dataset")
+    def test_llm_error_continue_on_error(
+        self,
+        mock_get_q,
+        mock_llm,
+    ) -> None:
+        from benchmarks.tier1.questions import Question
+
+        mock_get_q.return_value = [
+            Question(
+                dataset_name="earthquakes",
+                question_id="eq_count",
+                question_text="How many earthquakes?",
+                question_type="count",
+                gold_answer_fn=lambda d: str(len(d)),
+                answer_type="number",
+                difficulty=1,
+            ),
+        ]
+        mock_llm.side_effect = LLMAPIError("rate limit")
+
+        results: list[dict] = []
+        _run_baseline_across_datasets(
+            dataset_names=["earthquakes"],
+            loaded={"earthquakes": [1, 2, 3]},
+            results=results,
+            question_filter=None,
+            args=self._make_args(continue_on_error=True),
+        )
+
+        assert len(results) == 1
+        assert results[0]["correct"] is False
+        assert "error" in results[0]
+        assert results[0]["input_tokens"] == 0
+
+    @patch("benchmarks.tier2.harness.call_llm")
+    @patch("benchmarks.tier2.harness.get_questions_for_dataset")
+    def test_llm_error_raises_without_continue(
+        self,
+        mock_get_q,
+        mock_llm,
+    ) -> None:
+        from benchmarks.tier1.questions import Question
+
+        mock_get_q.return_value = [
+            Question(
+                dataset_name="earthquakes",
+                question_id="eq_count",
+                question_text="How many earthquakes?",
+                question_type="count",
+                gold_answer_fn=lambda d: str(len(d)),
+                answer_type="number",
+                difficulty=1,
+            ),
+        ]
+        mock_llm.side_effect = LLMAPIError("rate limit")
+
+        results: list[dict] = []
+        with pytest.raises(LLMAPIError, match="rate limit"):
+            _run_baseline_across_datasets(
+                dataset_names=["earthquakes"],
+                loaded={"earthquakes": [1, 2, 3]},
+                results=results,
+                question_filter=None,
+                args=self._make_args(continue_on_error=False),
+            )
+
+    @patch("benchmarks.tier2.harness.call_llm")
+    @patch("benchmarks.tier2.harness.get_questions_for_dataset")
+    def test_question_filter_respected(
+        self,
+        mock_get_q,
+        mock_llm,
+    ) -> None:
+        from benchmarks.tier1.questions import Question
+
+        mock_get_q.return_value = [
+            Question(
+                dataset_name="earthquakes",
+                question_id="eq_count",
+                question_text="How many earthquakes?",
+                question_type="count",
+                gold_answer_fn=lambda d: "3",
+                answer_type="number",
+                difficulty=1,
+            ),
+            Question(
+                dataset_name="earthquakes",
+                question_id="eq_max",
+                question_text="Max magnitude?",
+                question_type="aggregation",
+                gold_answer_fn=lambda d: "5.0",
+                answer_type="number",
+                difficulty=2,
+            ),
+        ]
+        mock_llm.return_value = LLMResponse(
+            text="5.0",
+            input_tokens=500,
+            output_tokens=10,
+            model="test-model",
+            latency_ms=100.0,
+        )
+
+        results: list[dict] = []
+        _run_baseline_across_datasets(
+            dataset_names=["earthquakes"],
+            loaded={"earthquakes": [1, 2, 3]},
+            results=results,
+            question_filter={"eq_max"},
+            args=self._make_args(),
+        )
+
+        assert len(results) == 1
+        assert results[0]["question_id"] == "eq_max"

@@ -405,15 +405,15 @@ def print_summary_table(report: dict[str, Any]) -> None:
     per_cond = report.get("per_condition", {})
     if per_cond:
         print(
-            f"\n  {'Condition':<12} {'Accuracy':>12} "
+            f"\n  {'Condition':<12} {'Accuracy':>18} "
             f"{'Input Tok':>12} {'Output Tok':>12}"
         )
-        print("  " + "-" * 52)
+        print("  " + "-" * 58)
         for cond in sorted(per_cond):
             cd = per_cond[cond]
             acc = f"{cd['accuracy']} ({cd['accuracy_pct']}%)"
             print(
-                f"  {cond:<12} {acc:>12} "
+                f"  {cond:<12} {acc:>18} "
                 f"{cd['input_tokens']:>12,} "
                 f"{cd['output_tokens']:>12,}"
             )

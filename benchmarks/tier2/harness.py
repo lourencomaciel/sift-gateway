@@ -289,6 +289,14 @@ def _run_baseline_across_datasets(
 
 def _run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
     """Execute the full Tier 2 benchmark run."""
+    if args.skip_baseline and args.skip_sift:
+        print(
+            "Cannot skip both conditions. "
+            "Remove --skip-baseline or --skip-sift.",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
+
     data_dir = Path(args.data_dir)
     dataset_names = args.datasets or list(ALL_DATASET_NAMES)
 
