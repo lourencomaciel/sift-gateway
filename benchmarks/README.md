@@ -287,41 +287,44 @@ directory. Each report includes:
 - Token totals and latency percentiles
 - Per-question detailed metrics including tool call sequences
 
-#### Sonnet 4.6 — Sift condition (2025-02-24)
+#### Sonnet 4.6 (2025-02-24)
 
-| Metric | Value |
-|--------|-------|
-| Accuracy | **102/103 (99.0%)** |
-| Errors | 1 (countries — aggregation, medium) |
-| Input tokens | 2,886,381 |
-| Output tokens | 35,260 |
-| Avg turns | 3.16 |
-| Avg tool calls | 2.16 |
-| Code retry rate | 14.2% |
-| Latency p50 | 6,288 ms |
-| Latency p90 | 9,815 ms |
+| Metric | Baseline | Sift |
+|--------|----------|------|
+| Accuracy | 34/103 (33.0%) | **102/103 (99.0%)** |
+| Input tokens | 10,757,230 | 2,886,381 |
+| Output tokens | 47,371 | 35,260 |
+| Avg turns | 1 | 3.16 |
+| Avg tool calls | 0 | 2.16 |
+| Code retry rate | — | 14.2% |
+| Latency p50 | 4,814 ms | 6,288 ms |
+| Latency p90 | 21,506 ms | 9,815 ms |
+
+The baseline context-stuffs the raw JSON into the prompt (truncated to
+400 KB / 180K tokens). Large datasets lose most of their data, and the
+LLM often emits reasoning text instead of a bare answer.
 
 Per-dataset breakdown:
 
-| Dataset | Accuracy |
-|---------|----------|
-| airports | 6/6 |
-| comments | 5/5 |
-| countries | 12/13 |
-| earthquakes | 13/13 |
-| github_repos | 6/6 |
-| laureates | 11/11 |
-| openlibrary | 6/6 |
-| photos | 5/5 |
-| pokemon | 6/6 |
-| products | 15/15 |
-| users | 7/7 |
-| weather | 10/10 |
+| Dataset | Baseline | Sift |
+|---------|----------|------|
+| airports | 1/6 | 6/6 |
+| comments | 4/5 | 5/5 |
+| countries | 6/13 | 12/13 |
+| earthquakes | 4/13 | 13/13 |
+| github_repos | 3/6 | 6/6 |
+| laureates | 2/11 | 11/11 |
+| openlibrary | 2/6 | 6/6 |
+| photos | 3/5 | 5/5 |
+| pokemon | 3/6 | 6/6 |
+| products | 2/15 | 15/15 |
+| users | 1/7 | 7/7 |
+| weather | 3/10 | 10/10 |
 
 By difficulty:
 
-| Difficulty | Accuracy |
-|-----------|----------|
-| Easy | 38/38 |
-| Medium | 39/40 |
-| Hard | 25/25 |
+| Difficulty | Baseline | Sift |
+|-----------|----------|------|
+| Easy | 15/38 | 38/38 |
+| Medium | 13/40 | 39/40 |
+| Hard | 6/25 | 25/25 |
