@@ -26,6 +26,11 @@ if _REPO_ROOT not in sys.path:
 if _SRC_DIR not in sys.path:
     sys.path.insert(0, _SRC_DIR)
 
+from benchmarks.tier1.code_extract import (
+    extract_code,
+    extract_root_path_comment,
+)
+from benchmarks.tier1.code_result import unwrap_code_result
 from benchmarks.tier1.datasets import ALL_DATASET_NAMES, DATASETS
 from benchmarks.tier1.evaluate import (
     build_report,
@@ -38,17 +43,15 @@ from benchmarks.tier1.questions import (
     get_questions_for_dataset,
     question_set_hash,
 )
+from benchmarks.tier1.schema_prompt import format_schema_for_prompt
 from benchmarks.tier1.sift_runtime import (
     CodeExecutionError,
-    capture_payload,
+    call_mirrored_tool,
     create_runtime,
-    describe_artifact,
     execute_code,
     extract_root_paths,
+    mcp_response_to_describe_format,
 )
-from benchmarks.tier1.code_extract import extract_code, extract_root_path_comment
-from benchmarks.tier1.code_result import unwrap_code_result
-from benchmarks.tier1.schema_prompt import format_schema_for_prompt
 
 _MAX_BASELINE_BYTES_DEFAULT = 400_000
 
@@ -791,7 +794,10 @@ def _run_sift_condition(
 ) -> None:
     """Execute Sift condition across datasets."""
     continue_on_error = args.continue_on_error
-    with create_runtime(data_dir=sift_data_dir) as runtime:
+    with create_runtime(
+        data_dir=sift_data_dir,
+        bench_data_dir=args.data_dir,
+    ) as runtime:
         for name in dataset_names:
             data = loaded[name]
             questions = get_questions_for_dataset(name)
@@ -802,23 +808,19 @@ def _run_sift_condition(
             ):
                 continue
 
-            print(f"  Capturing {name} ...")
-            capture_result = capture_payload(
+            print(f"  Calling mirrored tool for {name} ...")
+            mcp_result = call_mirrored_tool(
                 runtime,
-                payload=data,
                 dataset_name=name,
-                question_id="all",
             )
-            artifact_id = capture_result["artifact_id"]
+            artifact_id = mcp_result["artifact_id"]
             print(f"    artifact_id: {artifact_id}")
 
-            print(f"  Describing {name} ...")
-            describe_result = describe_artifact(
-                runtime,
-                artifact_id=artifact_id,
+            describe_compat = mcp_response_to_describe_format(
+                mcp_result,
             )
-            root_paths = extract_root_paths(describe_result)
-            schema_text = format_schema_for_prompt(describe_result)
+            root_paths = extract_root_paths(describe_compat)
+            schema_text = format_schema_for_prompt(describe_compat)
             print(f"    root_paths: {root_paths}")
 
             for q in questions:

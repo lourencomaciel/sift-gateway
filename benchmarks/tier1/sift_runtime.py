@@ -1,12 +1,45 @@
-"""Sift Gateway runtime wrapper for benchmark artifact operations."""
+"""Sift Gateway MCP runtime wrapper for benchmark operations.
+
+Connects to the gateway through its FastMCP app (in-process) with
+a mock upstream MCP server (subprocess via stdio) that serves the
+12 benchmark datasets.  All benchmark operations flow through the
+real MCP stack:
+
+- Mirrored tool calls: gateway discovers mock upstream tools and
+  proxies calls, persisting artifacts and computing schemas.
+- Code queries: the ``artifact`` tool executes user-generated
+  Python against persisted artifacts.
+"""
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Generator
+import contextlib
 from contextlib import contextmanager
 from pathlib import Path
-import time
+import sys
+import threading
 from typing import Any
+
+from fastmcp import Client
+
+import sift_gateway
+from sift_gateway.config import load_gateway_config
+from sift_gateway.config.settings import UpstreamConfig
+from sift_gateway.db.backend import SqliteBackend
+from sift_gateway.db.migrate import apply_migrations
+from sift_gateway.mcp.server import bootstrap_server
+
+_MIGRATIONS_DIR = (
+    Path(sift_gateway.__file__).resolve().parent / "db" / "migrations_sqlite"
+)
+_SESSION_ID = "benchmark_tier1"
+_GATEWAY_CONTEXT: dict[str, str] = {"session_id": _SESSION_ID}
+
+_MOCK_UPSTREAM_SCRIPT = str(
+    Path(__file__).resolve().parent / "mock_upstream.py"
+)
 
 
 class CodeExecutionError(RuntimeError):
@@ -17,24 +50,77 @@ class CodeExecutionError(RuntimeError):
     """
 
 
-import sift_gateway  # bare import for __file__ path resolution
-from sift_gateway.config import load_gateway_config
-from sift_gateway.constants import CAPTURE_KIND_CLI_COMMAND
-from sift_gateway.core.artifact_capture import execute_artifact_capture
-from sift_gateway.core.artifact_code import execute_artifact_code
-from sift_gateway.core.artifact_describe import execute_artifact_describe
-from sift_gateway.db.backend import SqliteBackend
-from sift_gateway.db.migrate import apply_migrations
-from sift_gateway.mcp.adapters.artifact_query_runtime import (
-    GatewayArtifactQueryRuntime,
-)
-from sift_gateway.mcp.server import GatewayServer
+class _MCPRuntime:
+    """Wrapper around async FastMCP Client for sync benchmark code.
 
-_MIGRATIONS_DIR = (
-    Path(sift_gateway.__file__).resolve().parent / "db" / "migrations_sqlite"
-)
-_SESSION_ID = "benchmark_tier1"
-_GATEWAY_CONTEXT: dict[str, str] = {"session_id": _SESSION_ID}
+    Manages a dedicated event loop running on a background thread.
+    The Client is connected on this loop so all async objects (the
+    transport, internal tasks, etc.) live on the same loop.
+    """
+
+    def __init__(self, backend: SqliteBackend) -> None:
+        self._backend = backend
+        self._client: Client | None = None
+        self._loop = asyncio.new_event_loop()
+        self._thread = threading.Thread(
+            target=self._loop.run_forever,
+            daemon=True,
+        )
+        self._thread.start()
+
+    def connect(self, app: Any) -> None:
+        """Connect an in-process FastMCP Client on the background loop."""
+        client = Client(app)
+        future = asyncio.run_coroutine_threadsafe(
+            client.__aenter__(),
+            self._loop,
+        )
+        future.result(timeout=60)
+        self._client = client
+
+    def call_tool(
+        self,
+        name: str,
+        arguments: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Call an MCP tool synchronously via the background loop."""
+        if self._client is None:
+            msg = "client not connected"
+            raise RuntimeError(msg)
+        future = asyncio.run_coroutine_threadsafe(
+            self._client.call_tool(
+                name,
+                arguments,
+                raise_on_error=False,
+            ),
+            self._loop,
+        )
+        result = future.result(timeout=120)
+        # RuntimeTool returns ToolResult(structured_content=dict)
+        # FastMCP Client exposes this as result.structured_content
+        if result.structured_content is not None:
+            return dict(result.structured_content)
+        # Fallback: extract text from content blocks
+        texts = []
+        for block in result.content or []:
+            text = getattr(block, "text", None)
+            if isinstance(text, str):
+                texts.append(text)
+        return {"text": "\n".join(texts)}
+
+    def close(self) -> None:
+        """Shut down the client, event loop, and background thread."""
+        if self._client is not None:
+            future = asyncio.run_coroutine_threadsafe(
+                self._client.__aexit__(None, None, None),
+                self._loop,
+            )
+            with contextlib.suppress(Exception):
+                future.result(timeout=10)
+        self._loop.call_soon_threadsafe(self._loop.stop)
+        self._thread.join(timeout=10)
+        self._loop.close()
+        self._backend.close()
 
 
 def _is_error_response(payload: dict[str, Any]) -> bool:
@@ -42,13 +128,9 @@ def _is_error_response(payload: dict[str, Any]) -> bool:
 
     Two error formats exist:
 
-    1. **Typed errors** — ``artifact_describe`` and ``artifact_code``
-       return ``{"type": "gateway_error", "code": ..., "message": ...}``.
-    2. **Untyped capture errors** — ``artifact_capture`` returns
-       ``{"code": ..., "message": ...}`` *without* a ``type`` field.
-       Success payloads also contain ``code`` and ``message`` but
-       additionally include an ``artifact_id``; its absence is the
-       distinguishing heuristic.
+    1. **Typed errors** — ``{"type": "gateway_error", ...}``.
+    2. **Untyped errors** — ``{"code": ..., "message": ...}``
+       without an ``artifact_id``.
     """
     if payload.get("type") == "gateway_error":
         return True
@@ -63,98 +145,154 @@ def _is_error_response(payload: dict[str, Any]) -> bool:
 def create_runtime(
     *,
     data_dir: str | None = None,
-) -> Generator[GatewayArtifactQueryRuntime, None, None]:
-    """Create a temporary Sift runtime for benchmark operations."""
+    bench_data_dir: str | None = None,
+) -> Generator[_MCPRuntime, None, None]:
+    """Create an MCP-based Sift runtime for benchmark operations.
+
+    Boots the gateway with a mock upstream MCP server that serves
+    the benchmark datasets via stdio transport.
+
+    Args:
+        data_dir: Sift data directory for config/DB/state.
+        bench_data_dir: Directory containing the benchmark
+            dataset JSON files (passed to mock upstream via env).
+    """
     config = load_gateway_config(data_dir_override=data_dir)
-    # Default max_root_discovery_k (3) drops array roots for datasets
-    # with more than 3 parallel arrays (e.g. weather has 4 hourly
-    # arrays).  Raise the limit so all roots are discoverable.
-    # GatewayConfig (BaseSettings) is not frozen — mutation is safe.
+
+    # Raise root discovery limit so all roots are found in
+    # datasets with many parallel arrays (e.g. weather).
     config.max_root_discovery_k = 20
+
+    # Force schema_ref mode for all responses so the benchmark
+    # always exercises the schema -> code query path.
+    config.passthrough_max_bytes = 0
+
+    # Resolve bench data dir for the mock upstream.
+    if bench_data_dir is None:
+        bench_data_dir = str(Path(__file__).resolve().parent / "data")
+
+    # Configure the mock upstream.
+    upstream = UpstreamConfig(
+        prefix="bench",
+        transport="stdio",
+        command=sys.executable,
+        args=[_MOCK_UPSTREAM_SCRIPT],
+        env={"BENCHMARK_DATA_DIR": bench_data_dir},
+        inherit_parent_env=True,
+        passthrough_allowed=False,
+    )
+    config.upstreams = [upstream]
+
+    # Ensure directories exist.
     config.state_dir.mkdir(parents=True, exist_ok=True)
     config.resources_dir.mkdir(parents=True, exist_ok=True)
     config.blobs_bin_dir.mkdir(parents=True, exist_ok=True)
     config.blobs_payload_dir.mkdir(parents=True, exist_ok=True)
     config.tmp_dir.mkdir(parents=True, exist_ok=True)
     config.logs_dir.mkdir(parents=True, exist_ok=True)
+
     backend = SqliteBackend(
         db_path=config.sqlite_path,
         busy_timeout_ms=config.sqlite_busy_timeout_ms,
     )
+    runtime: _MCPRuntime | None = None
     try:
         with backend.connection() as connection:
             apply_migrations(connection, _MIGRATIONS_DIR)
-        server = GatewayServer(
-            config=config,
-            db_pool=backend,
-            blob_store=None,
-            upstreams=[],
-            fs_ok=True,
-            db_ok=True,
+
+        # Bootstrap the server (connects to mock upstream,
+        # discovers tools, builds mirrored tool registry).
+        loop = asyncio.new_event_loop()
+        server = loop.run_until_complete(
+            bootstrap_server(config, db_pool=backend)
         )
-        yield GatewayArtifactQueryRuntime(gateway=server)
+        loop.close()
+
+        # Build the FastMCP app and connect an in-process client.
+        app = server.build_fastmcp_app()
+
+        runtime = _MCPRuntime(backend=backend)
+        runtime.connect(app)
+        yield runtime
     finally:
-        backend.close()
+        if runtime is not None:
+            runtime.close()
+        else:
+            backend.close()
 
 
-def capture_payload(
-    runtime: GatewayArtifactQueryRuntime,
+def call_mirrored_tool(
+    runtime: _MCPRuntime,
     *,
-    payload: Any,
     dataset_name: str,
-    question_id: str,
 ) -> dict[str, Any]:
-    """Capture a JSON payload as a Sift artifact.
+    """Call a mirrored dataset tool through the gateway.
 
-    Returns the capture result dict with artifact_id.
+    The gateway captures the upstream response as an artifact,
+    computes its schema, and returns a ``schema_ref`` response
+    with ``artifact_id`` and ``schemas``.
+
+    Returns:
+        Dict with ``artifact_id``, ``schemas`` (or representative
+        sample), ``response_mode``, and metadata.
     """
-    request_key = f"bench:tier1:{dataset_name}:{question_id}:{time.time_ns()}"
-    result = execute_artifact_capture(
-        runtime,
-        arguments={
-            "_gateway_context": _GATEWAY_CONTEXT,
-            "capture_kind": CAPTURE_KIND_CLI_COMMAND,
-            "capture_origin": {
-                "command_argv": ["benchmark-tier1"],
-                "cwd": str(Path.cwd()),
-                "dataset": dataset_name,
-            },
-            "capture_key": request_key,
-            "prefix": "bench",
-            "tool_name": dataset_name,
-            "upstream_instance_id": "bench_tier1",
-            "request_key": request_key,
-            "request_args_hash": request_key,
-            "request_args_prefix": "bench",
-            "payload": payload,
-            "status": "ok",
-            "no_cache": True,
-        },
+    tool_name = f"bench_get_{dataset_name}"
+    result = runtime.call_tool(
+        tool_name,
+        {"_gateway_context": _GATEWAY_CONTEXT},
     )
     if _is_error_response(result):
-        msg = f"capture failed: {result.get('code')}: {result.get('message')}"
+        code = result.get("code", "UNKNOWN")
+        message = result.get("message", "unknown error")
+        msg = f"mirrored tool call failed: {code}: {message}"
+        raise RuntimeError(msg)
+    if "artifact_id" not in result:
+        msg = f"mirrored tool response missing artifact_id: {result}"
         raise RuntimeError(msg)
     return result
 
 
-def describe_artifact(
-    runtime: GatewayArtifactQueryRuntime,
-    *,
-    artifact_id: str,
+def mcp_response_to_describe_format(
+    mcp_result: dict[str, Any],
 ) -> dict[str, Any]:
-    """Describe an artifact to get schema information."""
-    result = execute_artifact_describe(
-        runtime,
-        arguments={
-            "_gateway_context": _GATEWAY_CONTEXT,
-            "artifact_id": artifact_id,
-            "scope": "single",
-        },
-    )
-    if _is_error_response(result):
-        msg = f"describe failed: {result.get('code')}: {result.get('message')}"
-        raise RuntimeError(msg)
-    return result
+    """Convert an MCP mirrored-tool response to describe format.
+
+    Transforms the gateway's ``schema_ref`` response into the
+    dict shape that ``format_schema_for_prompt()`` expects:
+    ``{"roots": [...], "schemas": [...]}``.
+
+    Args:
+        mcp_result: The dict returned by ``call_mirrored_tool``.
+
+    Returns:
+        A dict compatible with ``format_schema_for_prompt()``.
+    """
+    schemas = mcp_result.get("schemas", [])
+
+    # When representative_sample replaces schemas, try to use
+    # the schemas from the sample structure.
+    if not schemas:
+        # Fall back to extracting root info from other fields.
+        schemas = []
+
+    # Build roots from schema entries.
+    roots: list[dict[str, Any]] = []
+    for schema in schemas:
+        root_entry: dict[str, Any] = {
+            "root_path": schema.get("root_path", "$"),
+        }
+        # Carry over count/shape info if present in schema.
+        determinism = schema.get("determinism", {})
+        if isinstance(determinism, dict):
+            observed = determinism.get("observed_records")
+            if observed is not None:
+                root_entry["count_estimate"] = observed
+        root_shape = schema.get("root_shape")
+        if root_shape is not None:
+            root_entry["root_shape"] = root_shape
+        roots.append(root_entry)
+
+    return {"roots": roots, "schemas": schemas}
 
 
 def extract_root_paths(describe_result: dict[str, Any]) -> list[str]:
@@ -188,18 +326,20 @@ def extract_root_paths(describe_result: dict[str, Any]) -> list[str]:
 
 
 def execute_code(
-    runtime: GatewayArtifactQueryRuntime,
+    runtime: _MCPRuntime,
     *,
     artifact_id: str,
     root_path: str,
     code: str,
     params: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Execute code against an artifact."""
-    result = execute_artifact_code(
-        runtime,
+    """Execute code against an artifact via the MCP artifact tool."""
+    result = runtime.call_tool(
+        "artifact",
         {
             "_gateway_context": _GATEWAY_CONTEXT,
+            "action": "query",
+            "query_kind": "code",
             "artifact_id": artifact_id,
             "root_path": root_path,
             "scope": "single",
@@ -208,9 +348,8 @@ def execute_code(
         },
     )
     if _is_error_response(result):
-        msg = (
-            f"code execution failed: {result.get('code')}: "
-            f"{result.get('message')}"
-        )
+        code_val = result.get("code", "UNKNOWN")
+        message = result.get("message", "unknown error")
+        msg = f"code execution failed: {code_val}: {message}"
         raise CodeExecutionError(msg)
     return result
