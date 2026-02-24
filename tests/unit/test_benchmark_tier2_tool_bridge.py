@@ -111,6 +111,13 @@ class TestInjectGatewayContext:
         result = inject_gateway_context(args, session_id="new")
         assert result["_gateway_context"]["session_id"] == "new"
 
+    def test_deep_copies_nested_values(self) -> None:
+        inner = {"key": "original"}
+        args = {"nested": inner}
+        result = inject_gateway_context(args, session_id="s1")
+        result["nested"]["key"] = "mutated"
+        assert inner["key"] == "original"
+
 
 class TestClassifyToolCall:
     def test_mirrored_tool(self) -> None:
@@ -144,6 +151,15 @@ class TestClassifyToolCall:
 
     def test_artifact_unknown_action(self) -> None:
         assert classify_tool_call("artifact", {"action": "unknown"}) == "other"
+
+    def test_artifact_query_non_code(self) -> None:
+        assert (
+            classify_tool_call(
+                "artifact",
+                {"action": "query", "query_kind": "jsonpath"},
+            )
+            == "query_other"
+        )
 
     def test_non_native_tool_is_mirrored(self) -> None:
         assert classify_tool_call("sometool", {}) == "mirrored"

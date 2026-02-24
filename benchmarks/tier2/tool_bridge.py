@@ -76,7 +76,7 @@ def inject_gateway_context(
     Returns:
         Copy of arguments with ``_gateway_context`` added.
     """
-    result = dict(arguments)
+    result = copy.deepcopy(arguments)
     result[_GATEWAY_CONTEXT_KEY] = {"session_id": session_id}
     return result
 
@@ -93,6 +93,8 @@ def classify_tool_call(
     - ``next_page``: ``artifact`` with ``action=next_page``
     - ``describe``: ``artifact`` with ``action=describe``
     - ``status``: ``gateway_status`` tool
+    - ``query_other``: ``artifact`` with ``action=query`` but
+      non-code ``query_kind`` (e.g. ``jsonpath``)
     - ``other``: anything else
 
     Args:
@@ -114,6 +116,8 @@ def classify_tool_call(
         query_kind = arguments.get("query_kind", "")
         if query_kind == "code":
             return "code_query"
+        if action == "query":
+            return "query_other"
         return "other"
 
     # Anything not gateway-native is a mirrored upstream tool.

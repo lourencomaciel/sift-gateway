@@ -68,20 +68,16 @@ def _extract_text_answer(
     return "\n".join(texts).strip()
 
 
-def _tool_result_to_content(
+def _serialize_tool_result(
     result: dict[str, Any],
 ) -> str:
     """Serialize a tool result for the LLM conversation."""
     return json.dumps(result, default=str)
 
 
-def _is_error_result(result: dict[str, Any]) -> bool:
-    """Detect whether a gateway tool result is an error.
-
-    Delegates to ``_is_error_response`` from the tier1 runtime
-    to avoid duplicating the detection heuristic.
-    """
-    return _is_error_response(result)
+#: Detect whether a gateway tool result is an error.
+#: Alias for ``_is_error_response`` from the tier1 runtime.
+_is_error_result = _is_error_response
 
 
 def run_agent_loop(
@@ -207,6 +203,9 @@ def run_agent_loop(
             if category == "code_query":
                 result.code_query_attempts += 1
             if category == "next_page":
+                # Increment before the limit check so pages_fetched
+                # counts *attempted* pages (including the rejected
+                # one), not just successful ones.
                 pages_used += 1
                 result.pages_fetched += 1
 
@@ -254,7 +253,7 @@ def run_agent_loop(
             if is_error and category == "code_query":
                 result.code_query_errors += 1
 
-            tool_result_content = _tool_result_to_content(tool_output)
+            tool_result_content = _serialize_tool_result(tool_output)
             tool_results.append(
                 {
                     "type": "tool_result",

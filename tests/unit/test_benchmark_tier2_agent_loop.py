@@ -5,8 +5,10 @@ from __future__ import annotations
 from unittest.mock import MagicMock, patch
 
 from benchmarks.tier2.agent_loop import (
+    _assistant_message,
     _extract_text_answer,
     _is_error_result,
+    _serialize_tool_result,
     run_agent_loop,
 )
 from benchmarks.tier2.llm_tool_client import (
@@ -106,6 +108,60 @@ class TestIsErrorResult:
 
     def test_normal_response(self) -> None:
         assert not _is_error_result({"artifact_id": "art_1", "schemas": []})
+
+
+class TestSerializeToolResult:
+    def test_serializes_dict(self) -> None:
+        result = _serialize_tool_result({"key": "value", "count": 42})
+        assert '"key"' in result
+        assert '"count": 42' in result
+
+    def test_handles_non_serializable_with_default_str(self) -> None:
+        from datetime import datetime
+
+        result = _serialize_tool_result({"ts": datetime(2024, 1, 15, 12, 0)})
+        assert "2024-01-15" in result
+
+
+class TestAssistantMessage:
+    def test_tool_use_block(self) -> None:
+        content: list[ToolUseBlock | TextBlock] = [
+            ToolUseBlock(id="tu_1", name="get_data", input={"x": 1}),
+        ]
+        msg = _assistant_message(content)
+        assert msg["role"] == "assistant"
+        assert len(msg["content"]) == 1
+        assert msg["content"][0] == {
+            "type": "tool_use",
+            "id": "tu_1",
+            "name": "get_data",
+            "input": {"x": 1},
+        }
+
+    def test_text_block(self) -> None:
+        content: list[ToolUseBlock | TextBlock] = [
+            TextBlock(text="The answer is 42"),
+        ]
+        msg = _assistant_message(content)
+        assert msg["role"] == "assistant"
+        assert msg["content"][0] == {
+            "type": "text",
+            "text": "The answer is 42",
+        }
+
+    def test_mixed_blocks(self) -> None:
+        content: list[ToolUseBlock | TextBlock] = [
+            TextBlock(text="Let me check"),
+            ToolUseBlock(id="tu_1", name="tool", input={}),
+        ]
+        msg = _assistant_message(content)
+        assert len(msg["content"]) == 2
+        assert msg["content"][0]["type"] == "text"
+        assert msg["content"][1]["type"] == "tool_use"
+
+    def test_empty_content(self) -> None:
+        msg = _assistant_message([])
+        assert msg == {"role": "assistant", "content": []}
 
 
 class TestRunAgentLoop:

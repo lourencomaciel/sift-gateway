@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from unittest.mock import MagicMock, patch
+import urllib.error
 
 from benchmarks.tier1.llm_client import LLMAPIError
 from benchmarks.tier2.llm_tool_client import (
@@ -189,3 +190,94 @@ class TestCallLlmWithTools:
         assert len(result.content) == 1
         assert isinstance(result.content[0], TextBlock)
         assert result.content[0].text == "42"
+
+    def test_retries_on_429_then_succeeds(self) -> None:
+        response_body = {
+            "content": [{"type": "text", "text": "ok"}],
+            "stop_reason": "end_turn",
+            "usage": {"input_tokens": 10, "output_tokens": 5},
+            "model": "claude-sonnet-4-6",
+        }
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = json.dumps(response_body).encode("utf-8")
+        mock_resp.__enter__ = MagicMock(return_value=mock_resp)
+        mock_resp.__exit__ = MagicMock(return_value=False)
+
+        # First call raises 429, second succeeds.
+        http_err = urllib.error.HTTPError(
+            url="https://api.anthropic.com/v1/messages",
+            code=429,
+            msg="Too Many Requests",
+            hdrs={},  # type: ignore[arg-type]
+            fp=None,
+        )
+
+        with (
+            patch(
+                "benchmarks.tier2.llm_tool_client.urllib.request.urlopen",
+                side_effect=[http_err, mock_resp],
+            ),
+            patch(
+                "benchmarks.tier2.llm_tool_client.time.sleep",
+            ) as mock_sleep,
+        ):
+            result = call_llm_with_tools(
+                model="claude-sonnet-4-6",
+                system_prompt="test",
+                messages=[{"role": "user", "content": "q"}],
+                tools=[],
+                api_key="test-key",
+            )
+
+        assert isinstance(result, ToolUseResponse)
+        assert result.content[0].text == "ok"  # type: ignore[union-attr]
+        mock_sleep.assert_called_once()
+
+    def test_raises_after_exhausted_retries(self) -> None:
+        http_err = urllib.error.HTTPError(
+            url="https://api.anthropic.com/v1/messages",
+            code=429,
+            msg="Too Many Requests",
+            hdrs={},  # type: ignore[arg-type]
+            fp=None,
+        )
+
+        with (
+            patch(
+                "benchmarks.tier2.llm_tool_client.urllib.request.urlopen",
+                side_effect=http_err,
+            ),
+            patch("benchmarks.tier2.llm_tool_client.time.sleep"),
+            pytest.raises(LLMAPIError, match="429"),
+        ):
+            call_llm_with_tools(
+                model="claude-sonnet-4-6",
+                system_prompt="test",
+                messages=[{"role": "user", "content": "q"}],
+                tools=[],
+                api_key="test-key",
+            )
+
+    def test_non_retryable_error_raises_immediately(self) -> None:
+        http_err = urllib.error.HTTPError(
+            url="https://api.anthropic.com/v1/messages",
+            code=401,
+            msg="Unauthorized",
+            hdrs={},  # type: ignore[arg-type]
+            fp=MagicMock(read=MagicMock(return_value=b"invalid api key")),
+        )
+
+        with (
+            patch(
+                "benchmarks.tier2.llm_tool_client.urllib.request.urlopen",
+                side_effect=http_err,
+            ),
+            pytest.raises(LLMAPIError, match="401"),
+        ):
+            call_llm_with_tools(
+                model="claude-sonnet-4-6",
+                system_prompt="test",
+                messages=[{"role": "user", "content": "q"}],
+                tools=[],
+                api_key="test-key",
+            )

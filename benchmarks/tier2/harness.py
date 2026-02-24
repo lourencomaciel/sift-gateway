@@ -34,6 +34,8 @@ from benchmarks.tier1.questions import (
 )
 from benchmarks.tier1.sift_runtime import create_runtime
 from benchmarks.tier2.agent_loop import (
+    _DEFAULT_MAX_INPUT_TOKENS,
+    _DEFAULT_MAX_PAGES,
     _DEFAULT_MAX_TURNS,
     AgentResult,
     run_agent_loop,
@@ -102,13 +104,13 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--max-pages",
         type=int,
-        default=10,
+        default=_DEFAULT_MAX_PAGES,
         help="Max pagination calls per question",
     )
     parser.add_argument(
         "--max-input-tokens",
         type=int,
-        default=200_000,
+        default=_DEFAULT_MAX_INPUT_TOKENS,
         help="Token budget safety valve per question",
     )
     parser.add_argument(
