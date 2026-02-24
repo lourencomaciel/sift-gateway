@@ -169,3 +169,162 @@ By difficulty:
 | Easy | 38/38 | 0 |
 | Medium | 39/40 | 0 |
 | Hard | 22/25 | 8 |
+
+## Tier 2 — LLM-Driven Autonomous Agent Loop
+
+Tier 1 uses scripted orchestration — the harness decides when to call tools,
+when to generate code, when to retry. Tier 2 makes the LLM the autonomous
+decision maker: it receives a question + tool list and decides which tools to
+call, when to paginate, when to write code, and how to recover from errors.
+
+This tests whether the gateway's response format (`schema_ref`, pagination
+metadata, error messages) is genuinely useful to LLMs — what users actually
+experience.
+
+### Architecture
+
+```
+Agent Loop (sync)
+  └─ LLM (tool-use API)
+       ↕ tool_use / tool_result messages
+  └─ FastMCP Client (in-process)
+       └─ Gateway FastMCP App (in-process)
+            ├─ "bench_get_earthquakes" → mock upstream (subprocess via stdio)
+            ├─ "bench_get_products"    → mock upstream (subprocess via stdio)
+            ├─ ... (12 mirrored dataset tools)
+            └─ "artifact" (action=query/next_page/describe)
+```
+
+**Key difference from Tier 1:** The LLM sees the raw tool schemas and
+responses, and autonomously decides the workflow:
+- Which dataset tool to call
+- How to interpret the schema in the response
+- What Python code to write for `artifact(action=query, query_kind=code)`
+- Whether to paginate (`next_page`) when results are partial
+- How to recover from code execution errors
+
+### Quick start
+
+```bash
+# 1. Download datasets (one-time, shared with Tier 1)
+uv run python benchmarks/tier1/fetch_data.py
+
+# 2. Run the benchmark (requires ANTHROPIC_API_KEY)
+uv run python benchmarks/tier2/harness.py
+
+# 3. Run a single question
+uv run python benchmarks/tier2/harness.py \
+  --datasets earthquakes --questions eq_count_total
+```
+
+### CLI options
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--model` | `claude-sonnet-4-6` | Model to evaluate |
+| `--api-key` | env var | Anthropic API key |
+| `--datasets` | all | Restrict to specific datasets |
+| `--questions` | all | Restrict to specific question IDs |
+| `--data-dir` | `benchmarks/tier1/data` | Path to dataset JSON files |
+| `--results-dir` | `benchmarks/tier2/results` | Path for JSON reports |
+| `--sift-data-dir` | temp dir | Sift state directory (DB, blobs) |
+| `--max-turns` | `15` | Max agent turns per question |
+| `--max-pages` | `10` | Max pagination calls per question |
+| `--max-input-tokens` | `200000` | Token budget safety valve |
+| `--max-baseline-payload-bytes` | `400000` | Byte cap for baseline payloads |
+| `--max-baseline-tokens` | `180000` | Token cap for baseline payloads |
+| `--temperature` | `0.0` | Sampling temperature |
+| `--skip-baseline` | — | Run Sift condition only |
+| `--skip-sift` | — | Run baseline condition only |
+| `--continue-on-error` | — | Don't abort on API errors |
+| `--save-conversations` | — | Include full conversations in results |
+| `--json` | — | Emit full JSON report to stdout |
+
+### File layout
+
+```
+benchmarks/tier2/
+├── harness.py          # CLI entrypoint + orchestration
+├── agent_loop.py       # Core loop: LLM ↔ tool execution cycle
+├── tool_bridge.py      # MCP tools → LLM tool format, _gateway_context injection
+├── llm_tool_client.py  # Tool-use LLM client (urllib only, Anthropic)
+├── system_prompt.py    # System prompt text
+├── metrics.py          # Per-question + aggregate metric tracking & reporting
+└── results/            # Timestamped JSON reports (gitignored)
+```
+
+### Reused from Tier 1
+
+| Module | What |
+|--------|------|
+| `sift_runtime.py` | `create_runtime`, `_MCPRuntime` (+ new `list_tools()`) |
+| `mock_upstream.py` | Entire module (unchanged) |
+| `datasets.py` | `DATASETS`, `ALL_DATASET_NAMES` |
+| `questions.py` | `Question`, `get_questions_for_dataset`, `question_set_hash` |
+| `evaluate.py` | `evaluate_answer` |
+| `llm_client.py` | `_detect_provider`, `_resolve_api_key`, `LLMAPIError` |
+
+### How it works
+
+1. Boot gateway via `create_runtime()` (same as Tier 1)
+2. Discover tools via `runtime.list_tools()`
+3. Convert to LLM tool definitions (stripping `_gateway_context`)
+4. For each question:
+   - Send question to LLM with tool definitions
+   - LLM autonomously calls tools, writes code, paginates, retries
+   - Loop until LLM produces a text-only response (final answer)
+   - Evaluate against gold answer
+5. Build aggregate report with metrics
+
+### Results
+
+Reports are saved as `tier2_<model>_<timestamp>.json` in the results
+directory. Each report includes:
+
+- Overall accuracy and per-dataset/type/difficulty breakdowns
+- Average turns and tool calls per question
+- Code retry rate and pagination usage
+- Token totals and latency percentiles
+- Per-question detailed metrics including tool call sequences
+
+#### Sonnet 4.6 (2025-02-24)
+
+| Metric | Baseline | Sift |
+|--------|----------|------|
+| Accuracy | 34/103 (33.0%) | **102/103 (99.0%)** |
+| Input tokens | 10,757,230 | 2,886,381 |
+| Output tokens | 47,371 | 35,260 |
+| Avg turns | 1 | 3.16 |
+| Avg tool calls | 0 | 2.16 |
+| Code retry rate | — | 14.2% |
+| Latency p50 | 4,814 ms | 6,288 ms |
+| Latency p90 | 21,506 ms | 9,815 ms |
+
+The baseline context-stuffs the raw JSON into the prompt (truncated to
+400 KB / 180K tokens). Large datasets lose most of their data, and the
+LLM often emits reasoning text instead of a bare answer.
+
+Per-dataset breakdown:
+
+| Dataset | Baseline | Sift |
+|---------|----------|------|
+| airports | 1/6 | 6/6 |
+| comments | 4/5 | 5/5 |
+| countries | 6/13 | 12/13 |
+| earthquakes | 4/13 | 13/13 |
+| github_repos | 3/6 | 6/6 |
+| laureates | 2/11 | 11/11 |
+| openlibrary | 2/6 | 6/6 |
+| photos | 3/5 | 5/5 |
+| pokemon | 3/6 | 6/6 |
+| products | 2/15 | 15/15 |
+| users | 1/7 | 7/7 |
+| weather | 3/10 | 10/10 |
+
+By difficulty:
+
+| Difficulty | Baseline | Sift |
+|-----------|----------|------|
+| Easy | 15/38 | 38/38 |
+| Medium | 13/40 | 39/40 |
+| Hard | 6/25 | 25/25 |
