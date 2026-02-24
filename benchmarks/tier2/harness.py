@@ -36,11 +36,12 @@ from benchmarks.tier1.harness import (
 from benchmarks.tier1.llm_client import LLMAPIError, call_llm
 from benchmarks.tier1.questions import (
     CROSS_DATASET_SOURCES,
+    Question,
     get_cross_dataset_questions,
     get_questions_for_dataset,
     question_set_hash,
 )
-from benchmarks.tier1.sift_runtime import create_runtime
+from benchmarks.tier1.sift_runtime import _MCPRuntime, create_runtime
 from benchmarks.tier2.agent_loop import (
     _DEFAULT_MAX_INPUT_TOKENS,
     _DEFAULT_MAX_PAGES,
@@ -48,6 +49,7 @@ from benchmarks.tier2.agent_loop import (
     AgentResult,
     run_agent_loop,
 )
+from benchmarks.tier2.llm_tool_client import ToolDefinition
 from benchmarks.tier2.metrics import (
     build_baseline_metrics,
     build_question_metrics,
@@ -181,6 +183,85 @@ def _load_dataset(data_dir: Path, dataset_name: str) -> Any:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def _run_single_baseline_question(
+    *,
+    q: Question,
+    gold: str,
+    dataset_label: str,
+    data_json: str,
+    truncated: bool,
+    results: list[dict[str, Any]],
+    args: argparse.Namespace,
+) -> None:
+    """Run a single baseline (context-stuffed) question."""
+    print(f"  [{dataset_label}] {q.question_id}: {q.question_text[:50]}...")
+
+    user_msg = (
+        f"Here is the JSON data:\n\n{data_json}\n\nQuestion: {q.question_text}"
+    )
+
+    try:
+        resp = call_llm(
+            model=args.model,
+            system_prompt=_BASELINE_SYSTEM,
+            user_message=user_msg,
+            api_key=args.api_key,
+            temperature=args.temperature,
+        )
+    except LLMAPIError as exc:
+        if not args.continue_on_error:
+            raise
+        print(
+            f"    -> ERROR: {exc}",
+            file=sys.stderr,
+        )
+        error_metrics = build_baseline_metrics(
+            question_id=q.question_id,
+            dataset_name=dataset_label,
+            question_text=q.question_text,
+            question_type=q.question_type,
+            difficulty=q.difficulty,
+            gold_answer=gold,
+            llm_answer="",
+            correct=False,
+            input_tokens=0,
+            output_tokens=0,
+            latency_ms=0.0,
+            truncated=truncated,
+        )
+        error_metrics["error"] = str(exc)
+        results.append(error_metrics)
+        return
+
+    llm_answer = resp.text
+    correct = evaluate_answer(
+        llm_answer,
+        gold,
+        answer_type=q.answer_type,
+        tolerance=q.tolerance,
+    )
+
+    metrics = build_baseline_metrics(
+        question_id=q.question_id,
+        dataset_name=dataset_label,
+        question_text=q.question_text,
+        question_type=q.question_type,
+        difficulty=q.difficulty,
+        gold_answer=gold,
+        llm_answer=llm_answer,
+        correct=correct,
+        input_tokens=resp.input_tokens,
+        output_tokens=resp.output_tokens,
+        latency_ms=resp.latency_ms,
+        truncated=truncated,
+    )
+
+    status = "CORRECT" if correct else "WRONG"
+    trunc_tag = " [TRUNCATED]" if truncated else ""
+    print(f"    -> {status} (gold={gold}, llm={llm_answer[:40]}){trunc_tag}")
+    results.append(metrics)
+
+
 def _run_baseline_across_datasets(
     *,
     dataset_names: list[str],
@@ -215,78 +296,15 @@ def _run_baseline_across_datasets(
                 continue
 
             gold = q.gold_answer_fn(data)
-            print(f"  [{name}] {q.question_id}: {q.question_text[:50]}...")
-
-            user_msg = (
-                f"Here is the JSON data:\n\n{data_json}\n\n"
-                f"Question: {q.question_text}"
-            )
-
-            try:
-                resp = call_llm(
-                    model=args.model,
-                    system_prompt=_BASELINE_SYSTEM,
-                    user_message=user_msg,
-                    api_key=args.api_key,
-                    temperature=args.temperature,
-                )
-            except LLMAPIError as exc:
-                if not args.continue_on_error:
-                    raise
-                print(
-                    f"    -> ERROR: {exc}",
-                    file=sys.stderr,
-                )
-                error_metrics = build_baseline_metrics(
-                    question_id=q.question_id,
-                    dataset_name=name,
-                    question_text=q.question_text,
-                    question_type=q.question_type,
-                    difficulty=q.difficulty,
-                    gold_answer=gold,
-                    llm_answer="",
-                    correct=False,
-                    input_tokens=0,
-                    output_tokens=0,
-                    latency_ms=0.0,
-                    truncated=truncated,
-                )
-                error_metrics["error"] = str(exc)
-                results.append(error_metrics)
-                continue
-
-            llm_answer = resp.text
-            correct = evaluate_answer(
-                llm_answer,
-                gold,
-                answer_type=q.answer_type,
-                tolerance=q.tolerance,
-            )
-
-            metrics = build_baseline_metrics(
-                question_id=q.question_id,
-                dataset_name=name,
-                question_text=q.question_text,
-                question_type=q.question_type,
-                difficulty=q.difficulty,
-                gold_answer=gold,
-                llm_answer=llm_answer,
-                correct=correct,
-                input_tokens=resp.input_tokens,
-                output_tokens=resp.output_tokens,
-                latency_ms=resp.latency_ms,
+            _run_single_baseline_question(
+                q=q,
+                gold=gold,
+                dataset_label=name,
+                data_json=data_json,
                 truncated=truncated,
+                results=results,
+                args=args,
             )
-
-            status = "CORRECT" if correct else "WRONG"
-            trunc_tag = " [TRUNCATED]" if truncated else ""
-            print(
-                f"    -> {status} "
-                f"(gold={gold}, "
-                f"llm={llm_answer[:40]})"
-                f"{trunc_tag}"
-            )
-            results.append(metrics)
 
     # Cross-dataset baseline: concatenate constituent datasets.
     loaded_names = set(loaded.keys())
@@ -321,76 +339,15 @@ def _run_baseline_across_datasets(
 
         data_json = "\n\n".join(combined_json_parts)
 
-        print(f"  [cross] {q.question_id}: {q.question_text[:50]}...")
-
-        user_msg = (
-            f"Here is the JSON data from multiple "
-            f"datasets:\n\n{data_json}\n\n"
-            f"Question: {q.question_text}"
-        )
-
-        try:
-            resp = call_llm(
-                model=args.model,
-                system_prompt=_BASELINE_SYSTEM,
-                user_message=user_msg,
-                api_key=args.api_key,
-                temperature=args.temperature,
-            )
-        except LLMAPIError as exc:
-            if not args.continue_on_error:
-                raise
-            print(
-                f"    -> ERROR: {exc}",
-                file=sys.stderr,
-            )
-            error_metrics = build_baseline_metrics(
-                question_id=q.question_id,
-                dataset_name="cross_dataset",
-                question_text=q.question_text,
-                question_type=q.question_type,
-                difficulty=q.difficulty,
-                gold_answer=gold,
-                llm_answer="",
-                correct=False,
-                input_tokens=0,
-                output_tokens=0,
-                latency_ms=0.0,
-                truncated=truncated,
-            )
-            error_metrics["error"] = str(exc)
-            results.append(error_metrics)
-            continue
-
-        llm_answer = resp.text
-        correct = evaluate_answer(
-            llm_answer,
-            gold,
-            answer_type=q.answer_type,
-            tolerance=q.tolerance,
-        )
-
-        metrics = build_baseline_metrics(
-            question_id=q.question_id,
-            dataset_name="cross_dataset",
-            question_text=q.question_text,
-            question_type=q.question_type,
-            difficulty=q.difficulty,
-            gold_answer=gold,
-            llm_answer=llm_answer,
-            correct=correct,
-            input_tokens=resp.input_tokens,
-            output_tokens=resp.output_tokens,
-            latency_ms=resp.latency_ms,
+        _run_single_baseline_question(
+            q=q,
+            gold=gold,
+            dataset_label="cross_dataset",
+            data_json=data_json,
             truncated=truncated,
+            results=results,
+            args=args,
         )
-
-        status = "CORRECT" if correct else "WRONG"
-        trunc_tag = " [TRUNCATED]" if truncated else ""
-        print(
-            f"    -> {status} (gold={gold}, llm={llm_answer[:40]}){trunc_tag}"
-        )
-        results.append(metrics)
 
 
 def _run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
@@ -475,11 +432,11 @@ def _run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
 
 def _run_single_agent_question(
     *,
-    q: Any,
+    q: Question,
     gold: str,
     dataset_label: str,
-    runtime: Any,
-    tools: Any,
+    runtime: _MCPRuntime,
+    tools: list[ToolDefinition],
     results: list[dict[str, Any]],
     args: argparse.Namespace,
     system_prompt: str,

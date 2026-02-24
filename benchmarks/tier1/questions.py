@@ -2585,6 +2585,22 @@ QUESTIONS: list[Question] = [
 # These accept dict[str, Any] mapping dataset names to their data.
 
 
+def _laureate_birth_country(la: dict[str, Any]) -> str | None:
+    """Extract the English birth-country name from a laureate record."""
+    born = la.get("birth", {})
+    if not isinstance(born, dict):
+        return None
+    place = born.get("place")
+    if not isinstance(place, dict):
+        return None
+    country = place.get("country")
+    if isinstance(country, dict):
+        en = country.get("en")
+        if isinstance(en, str):
+            return en
+    return None
+
+
 def _cross_laureates_in_landlocked(datasets: Any) -> str:
     """Count laureates born in landlocked countries."""
     countries_data = datasets["countries"]
@@ -2604,17 +2620,9 @@ def _cross_laureates_in_landlocked(datasets: Any) -> str:
     for la in laureates_data:
         if not isinstance(la, dict):
             continue
-        born = la.get("birth", {})
-        if not isinstance(born, dict):
-            continue
-        place = born.get("place")
-        if not isinstance(place, dict):
-            continue
-        country = place.get("country")
-        if isinstance(country, dict):
-            en = country.get("en")
-            if isinstance(en, str) and en in landlocked_names:
-                count += 1
+        bc = _laureate_birth_country(la)
+        if bc is not None and bc in landlocked_names:
+            count += 1
     return str(count)
 
 
@@ -2637,21 +2645,17 @@ def _cross_region_most_laureates(datasets: Any) -> str:
     for la in laureates_data:
         if not isinstance(la, dict):
             continue
-        born = la.get("birth", {})
-        if not isinstance(born, dict):
-            continue
-        place = born.get("place")
-        if not isinstance(place, dict):
-            continue
-        country = place.get("country")
-        if isinstance(country, dict):
-            en = country.get("en")
-            if isinstance(en, str) and en in country_to_region:
-                region_counts[country_to_region[en]] += 1
+        bc = _laureate_birth_country(la)
+        if bc is not None and bc in country_to_region:
+            region_counts[country_to_region[bc]] += 1
 
     if not region_counts:
         return ""
-    return region_counts.most_common(1)[0][0]
+    # Secondary sort on name for deterministic tie-breaking.
+    return max(
+        region_counts,
+        key=lambda r: (region_counts[r], r),
+    )
 
 
 def _cross_pct_countries_with_laureates(datasets: Any) -> str:
@@ -2671,17 +2675,9 @@ def _cross_pct_countries_with_laureates(datasets: Any) -> str:
     for la in laureates_data:
         if not isinstance(la, dict):
             continue
-        born = la.get("birth", {})
-        if not isinstance(born, dict):
-            continue
-        place = born.get("place")
-        if not isinstance(place, dict):
-            continue
-        country = place.get("country")
-        if isinstance(country, dict):
-            en = country.get("en")
-            if isinstance(en, str):
-                birth_countries.add(en)
+        bc = _laureate_birth_country(la)
+        if bc is not None:
+            birth_countries.add(bc)
 
     matching = len(all_country_names & birth_countries)
     total = len(all_country_names)
@@ -2690,6 +2686,10 @@ def _cross_pct_countries_with_laureates(datasets: Any) -> str:
     return f"{matching / total * 100:.1f}"
 
 
+# Gold answer is 0: the comments dataset (JSONPlaceholder) and the
+# users dataset (dummyjson) use completely different email domains,
+# so there is no overlap.  This is intentional — the agent must do
+# the work and correctly report zero matches.
 def _cross_comments_matching_user_email(datasets: Any) -> str:
     """Count comments whose email also appears in users."""
     users_data = datasets["users"]
@@ -2829,17 +2829,9 @@ def _cross_pop_countries_gt10_laureates(datasets: Any) -> str:
     for la in laureates_data:
         if not isinstance(la, dict):
             continue
-        born = la.get("birth", {})
-        if not isinstance(born, dict):
-            continue
-        place = born.get("place")
-        if not isinstance(place, dict):
-            continue
-        country = place.get("country")
-        if isinstance(country, dict):
-            en = country.get("en")
-            if isinstance(en, str):
-                birth_counts[en] += 1
+        bc = _laureate_birth_country(la)
+        if bc is not None:
+            birth_counts[bc] += 1
 
     prolific = {name for name, cnt in birth_counts.items() if cnt > 10}
 
