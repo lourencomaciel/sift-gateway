@@ -331,3 +331,35 @@ By difficulty:
 | Easy | 15/38 | 38/38 |
 | Medium | 13/40 | 39/40 |
 | Hard | 6/25 | 25/25 |
+
+#### Cross-Dataset Questions — Sonnet 4.6 (2025-02-25)
+
+10 additional questions that require the agent to access 2+ datasets in a
+single question, testing tool selection and multi-step planning. Two
+question types:
+
+| Type | Count | What it tests |
+|------|-------|---------------|
+| **Comparison** | 5 | Compute one aggregate per dataset, compare (e.g. "more Nobel categories or airport cities?") |
+| **Join** | 5 | Link records across datasets by a shared key (e.g. country name) |
+
+| Metric | Baseline | Sift |
+|--------|----------|------|
+| Accuracy | 6/10 (60.0%) | **8/10 (80.0%)** |
+| Input tokens | 1,142,736 | 916,794 |
+| Output tokens | 6,361 | 14,647 |
+
+By question type:
+
+| Type | Baseline | Sift |
+|------|----------|------|
+| Comparison | 5/5 | 5/5 |
+| Join | 1/5 | 3/5 |
+
+The two join questions that both conditions fail on
+(`cross_pct_countries_with_laureates`, `cross_pop_countries_gt10_laureates`)
+require matching country names between the Nobel Prize API and REST
+Countries. These datasets use inconsistent naming (e.g. "USA" vs "United
+States", "Scotland" vs "United Kingdom"), which defeats naive string
+matching. This is a data-quality challenge rather than a model limitation —
+Opus 4.6 with a 500K-token budget also fails both.
