@@ -7,7 +7,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 import urllib.error
 
-from benchmarks.tier1.datasets import DATASETS, Dataset
+from benchmarks.common.datasets import DATASETS, Dataset
 from benchmarks.tier1.fetch_data import fetch_all, fetch_dataset
 
 

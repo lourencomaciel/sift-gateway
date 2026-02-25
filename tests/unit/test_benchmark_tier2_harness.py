@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 from unittest.mock import patch
 
-from benchmarks.tier1.llm_client import LLMAPIError, LLMResponse
+from benchmarks.common.llm_client import LLMAPIError, LLMResponse
 from benchmarks.tier2.harness import (
     _build_parser,
     _run_baseline_across_datasets,
@@ -144,7 +144,7 @@ class TestRunBaselineAcrossDatasets:
         mock_get_q,
         mock_llm,
     ) -> None:
-        from benchmarks.tier1.questions import Question
+        from benchmarks.common.questions import Question
 
         mock_get_q.return_value = [
             Question(
@@ -187,7 +187,7 @@ class TestRunBaselineAcrossDatasets:
         mock_get_q,
         mock_llm,
     ) -> None:
-        from benchmarks.tier1.questions import Question
+        from benchmarks.common.questions import Question
 
         mock_get_q.return_value = [
             Question(
@@ -227,7 +227,7 @@ class TestRunBaselineAcrossDatasets:
         mock_get_q,
         mock_llm,
     ) -> None:
-        from benchmarks.tier1.questions import Question
+        from benchmarks.common.questions import Question
 
         mock_get_q.return_value = [
             Question(
@@ -263,7 +263,7 @@ class TestRunBaselineAcrossDatasets:
         mock_get_q,
         mock_llm,
     ) -> None:
-        from benchmarks.tier1.questions import Question
+        from benchmarks.common.questions import Question
 
         mock_get_q.return_value = [
             Question(
@@ -295,7 +295,7 @@ class TestRunBaselineAcrossDatasets:
         mock_get_q,
         mock_llm,
     ) -> None:
-        from benchmarks.tier1.questions import Question
+        from benchmarks.common.questions import Question
 
         mock_get_q.return_value = [
             Question(

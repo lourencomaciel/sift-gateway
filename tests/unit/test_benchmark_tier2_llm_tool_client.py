@@ -6,7 +6,7 @@ import json
 from unittest.mock import MagicMock, patch
 import urllib.error
 
-from benchmarks.tier1.llm_client import LLMAPIError
+from benchmarks.common.llm_client import LLMAPIError
 from benchmarks.tier2.llm_tool_client import (
     TextBlock,
     ToolDefinition,

@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+from benchmarks.common.evaluate import latency_percentiles
 from benchmarks.tier2.agent_loop import AgentResult, TurnMetrics
 from benchmarks.tier2.metrics import (
-    _latency_percentiles,
     build_baseline_metrics,
     build_question_metrics,
     build_report,
@@ -13,17 +13,17 @@ from benchmarks.tier2.metrics import (
 
 class TestLatencyPercentiles:
     def test_empty_list(self) -> None:
-        assert _latency_percentiles([]) == {}
+        assert latency_percentiles([]) == {}
 
     def test_single_value(self) -> None:
-        result = _latency_percentiles([100.0])
+        result = latency_percentiles([100.0])
         assert result["p50_ms"] == 100.0
         assert result["p90_ms"] == 100.0
         assert result["mean_ms"] == 100.0
         assert result["count"] == 1
 
     def test_multiple_values(self) -> None:
-        result = _latency_percentiles([100.0, 200.0, 300.0, 400.0, 500.0])
+        result = latency_percentiles([100.0, 200.0, 300.0, 400.0, 500.0])
         assert result["p50_ms"] == 300.0
         assert result["count"] == 5
 
