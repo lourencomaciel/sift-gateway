@@ -42,8 +42,9 @@ _MIGRATIONS_DIR = (
 _SESSION_ID = "benchmark_tier1"
 _GATEWAY_CONTEXT: dict[str, str] = {"session_id": _SESSION_ID}
 
+# Resolve relative to tier1/ since mock_upstream.py lives there.
 _MOCK_UPSTREAM_SCRIPT = str(
-    Path(__file__).resolve().parent / "mock_upstream.py"
+    Path(__file__).resolve().parents[1] / "tier1" / "mock_upstream.py"
 )
 
 _SCHEMA_ROOT_COLUMNS = [
@@ -79,7 +80,7 @@ class CodeExecutionError(RuntimeError):
     """
 
 
-class _MCPRuntime:
+class MCPRuntime:
     """Wrapper around async FastMCP Client for sync benchmark code.
 
     Manages a dedicated event loop running on a background thread.
@@ -213,13 +214,13 @@ class _MCPRuntime:
         self._backend.close()
 
 
-def _is_error_response(payload: dict[str, Any]) -> bool:
+def is_error_response(payload: dict[str, Any]) -> bool:
     """Detect whether a gateway response dict represents an error.
 
     Two error formats exist:
 
-    1. **Typed errors** — ``{"type": "gateway_error", ...}``.
-    2. **Untyped errors** — ``{"code": ..., "message": ...}``
+    1. **Typed errors** -- ``{"type": "gateway_error", ...}``.
+    2. **Untyped errors** -- ``{"code": ..., "message": ...}``
        without an ``artifact_id``.
 
     The untyped heuristic is intentionally conservative: a response
@@ -241,7 +242,7 @@ def create_runtime(
     *,
     data_dir: str | None = None,
     bench_data_dir: str | None = None,
-) -> Generator[_MCPRuntime, None, None]:
+) -> Generator[MCPRuntime, None, None]:
     """Create an MCP-based Sift runtime for benchmark operations.
 
     Boots the gateway with a mock upstream MCP server that serves
@@ -264,7 +265,9 @@ def create_runtime(
 
     # Resolve bench data dir for the mock upstream.
     if bench_data_dir is None:
-        bench_data_dir = str(Path(__file__).resolve().parent / "data")
+        bench_data_dir = str(
+            Path(__file__).resolve().parents[1] / "tier1" / "data"
+        )
 
     # Configure the mock upstream.
     upstream = UpstreamConfig(
@@ -290,7 +293,7 @@ def create_runtime(
         db_path=config.sqlite_path,
         busy_timeout_ms=config.sqlite_busy_timeout_ms,
     )
-    runtime: _MCPRuntime | None = None
+    runtime: MCPRuntime | None = None
     try:
         with backend.connection() as connection:
             apply_migrations(connection, _MIGRATIONS_DIR)
@@ -300,7 +303,7 @@ def create_runtime(
         # Uses a temporary event loop because bootstrap_server is
         # async but its connections are scoped and fully cleaned up
         # before it returns.  The persistent client loop lives in
-        # _MCPRuntime below.
+        # MCPRuntime below.
         setup_loop = asyncio.new_event_loop()
         server = setup_loop.run_until_complete(
             bootstrap_server(config, db_pool=backend)
@@ -310,7 +313,7 @@ def create_runtime(
         # Build the FastMCP app and connect an in-process client.
         app = server.build_fastmcp_app()
 
-        runtime = _MCPRuntime(backend=backend)
+        runtime = MCPRuntime(backend=backend)
         runtime.connect(app)
         yield runtime
     finally:
@@ -321,7 +324,7 @@ def create_runtime(
 
 
 def call_mirrored_tool(
-    runtime: _MCPRuntime,
+    runtime: MCPRuntime,
     *,
     dataset_name: str,
 ) -> dict[str, Any]:
@@ -340,7 +343,7 @@ def call_mirrored_tool(
         tool_name,
         {"_gateway_context": _GATEWAY_CONTEXT},
     )
-    if _is_error_response(result):
+    if is_error_response(result):
         code = result.get("code", "UNKNOWN")
         message = result.get("message", "unknown error")
         msg = f"mirrored tool call failed: {code}: {message}"
@@ -353,7 +356,7 @@ def call_mirrored_tool(
 
 def mcp_response_to_describe_format(
     mcp_result: dict[str, Any],
-    runtime: _MCPRuntime,
+    runtime: MCPRuntime,
 ) -> dict[str, Any]:
     """Convert an MCP mirrored-tool response to describe format.
 
@@ -375,7 +378,7 @@ def mcp_response_to_describe_format(
     schemas = mcp_result.get("schemas", [])
 
     if not schemas:
-        # Representative-sample response — fetch schemas from DB.
+        # Representative-sample response -- fetch schemas from DB.
         artifact_id = mcp_result.get("artifact_id", "")
         schemas = runtime.fetch_schemas(artifact_id)
         if not schemas:
@@ -386,9 +389,9 @@ def mcp_response_to_describe_format(
             raise RuntimeError(msg)
 
     # Build roots from schema entries.  Default root_path to "$"
-    # when missing — safe for the benchmark since the gateway always
-    # populates root_path, but avoids a KeyError if the schema
-    # structure changes.
+    # when missing -- safe for the benchmark since the gateway
+    # always populates root_path, but avoids a KeyError if the
+    # schema structure changes.
     roots: list[dict[str, Any]] = []
     for schema in schemas:
         root_entry: dict[str, Any] = {
@@ -445,7 +448,7 @@ def extract_root_paths(describe_result: dict[str, Any]) -> list[str]:
 
 
 def execute_code(
-    runtime: _MCPRuntime,
+    runtime: MCPRuntime,
     *,
     artifact_id: str,
     root_path: str,
@@ -466,7 +469,7 @@ def execute_code(
             "params": params or {},
         },
     )
-    if _is_error_response(result):
+    if is_error_response(result):
         code_val = result.get("code", "UNKNOWN")
         message = result.get("message", "unknown error")
         msg = f"code execution failed: {code_val}: {message}"
