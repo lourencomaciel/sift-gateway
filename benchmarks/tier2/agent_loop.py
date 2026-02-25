@@ -13,7 +13,7 @@ import json
 import sys
 from typing import Any
 
-from benchmarks.tier1.sift_runtime import _is_error_response, _MCPRuntime
+from benchmarks.common.sift_runtime import MCPRuntime, is_error_response
 from benchmarks.tier2.llm_tool_client import (
     TextBlock,
     ToolDefinition,
@@ -76,14 +76,14 @@ def _serialize_tool_result(
 
 
 #: Detect whether a gateway tool result is an error.
-#: Alias for ``_is_error_response`` from the tier1 runtime.
-_is_error_result = _is_error_response
+#: Alias for ``is_error_response`` from the tier1 runtime.
+_is_error_result = is_error_response
 
 
 def run_agent_loop(
     *,
     question: str,
-    runtime: _MCPRuntime,
+    runtime: MCPRuntime,
     tools: list[ToolDefinition],
     model: str,
     system_prompt: str,

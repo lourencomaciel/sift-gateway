@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-from benchmarks.tier1.evaluate import (
-    build_report,
+from benchmarks.common.evaluate import (
     evaluate_answer,
     latency_percentiles,
     match_boolean,
@@ -11,7 +10,8 @@ from benchmarks.tier1.evaluate import (
     match_number,
     match_string,
 )
-from benchmarks.tier1.questions import question_set_hash
+from benchmarks.common.questions import question_set_hash
+from benchmarks.tier1.evaluate import build_report
 import pytest
 
 # -- match_number --

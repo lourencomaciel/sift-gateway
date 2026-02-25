@@ -11,8 +11,8 @@ from typing import Any
 import urllib.error
 import urllib.request
 
-_MAX_RETRIES = 5
-_INITIAL_BACKOFF_S = 2.0
+MAX_RETRIES = 5
+INITIAL_BACKOFF_S = 2.0
 
 
 class LLMAPIError(RuntimeError):
@@ -35,26 +35,29 @@ class LLMResponse:
     latency_ms: float
 
 
-def _log_retry(status: int, attempt: int, backoff: float) -> None:
+def log_retry(status: int, attempt: int, backoff: float) -> None:
+    """Log a rate-limit retry to stderr."""
     print(
         f"  [rate-limit] HTTP {status}, "
-        f"retry {attempt + 1}/{_MAX_RETRIES} "
+        f"retry {attempt + 1}/{MAX_RETRIES} "
         f"in {backoff:.0f}s",
         file=sys.stderr,
     )
 
 
-def _detect_provider(model: str) -> str:
+def detect_provider(model: str) -> str:
+    """Return ``'anthropic'`` or ``'openai'`` based on model name."""
     if model.startswith("claude"):
         return "anthropic"
     return "openai"
 
 
-def _resolve_api_key(
+def resolve_api_key(
     *,
     provider: str,
     api_key: str | None,
 ) -> str:
+    """Resolve an API key from explicit value or environment."""
     if api_key:
         return api_key
     if provider == "anthropic":
@@ -94,9 +97,9 @@ def _call_anthropic(
         "Content-Type": "application/json",
     }
 
-    backoff = _INITIAL_BACKOFF_S
+    backoff = INITIAL_BACKOFF_S
     start = time.monotonic()  # total wall-clock including retries
-    for attempt in range(_MAX_RETRIES + 1):
+    for attempt in range(MAX_RETRIES + 1):
         request = urllib.request.Request(
             "https://api.anthropic.com/v1/messages",
             method="POST",
@@ -108,8 +111,8 @@ def _call_anthropic(
                 body = json.loads(resp.read().decode("utf-8", errors="replace"))
             break
         except urllib.error.HTTPError as exc:
-            if exc.code in (429, 500, 529) and attempt < _MAX_RETRIES:
-                _log_retry(exc.code, attempt, backoff)
+            if exc.code in (429, 500, 529) and attempt < MAX_RETRIES:
+                log_retry(exc.code, attempt, backoff)
                 time.sleep(backoff)
                 backoff *= 2
                 continue
@@ -163,9 +166,9 @@ def _call_openai(
         "Content-Type": "application/json",
     }
 
-    backoff = _INITIAL_BACKOFF_S
+    backoff = INITIAL_BACKOFF_S
     start = time.monotonic()  # total wall-clock including retries
-    for attempt in range(_MAX_RETRIES + 1):
+    for attempt in range(MAX_RETRIES + 1):
         request = urllib.request.Request(
             "https://api.openai.com/v1/chat/completions",
             method="POST",
@@ -177,8 +180,8 @@ def _call_openai(
                 body = json.loads(resp.read().decode("utf-8", errors="replace"))
             break
         except urllib.error.HTTPError as exc:
-            if exc.code in (429, 500, 503) and attempt < _MAX_RETRIES:
-                _log_retry(exc.code, attempt, backoff)
+            if exc.code in (429, 500, 503) and attempt < MAX_RETRIES:
+                log_retry(exc.code, attempt, backoff)
                 time.sleep(backoff)
                 backoff *= 2
                 continue
@@ -218,8 +221,8 @@ def call_llm(
     max_tokens: int = 4096,
 ) -> LLMResponse:
     """Send a prompt to an LLM and return the response."""
-    provider = _detect_provider(model)
-    resolved_key = _resolve_api_key(
+    provider = detect_provider(model)
+    resolved_key = resolve_api_key(
         provider=provider,
         api_key=api_key,
     )

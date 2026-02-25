@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from benchmarks.tier1.sift_runtime import (
-    _is_error_response,
+from benchmarks.common.sift_runtime import (
     extract_root_paths,
+    is_error_response,
 )
 
 
@@ -15,11 +15,11 @@ class TestIsErrorResponse:
             "code": "NOT_FOUND",
             "message": "not found",
         }
-        assert _is_error_response(payload) is True
+        assert is_error_response(payload) is True
 
     def test_capture_error_without_artifact_id(self) -> None:
         payload = {"code": "INVALID", "message": "bad request"}
-        assert _is_error_response(payload) is True
+        assert is_error_response(payload) is True
 
     def test_success_with_artifact_id(self) -> None:
         payload = {
@@ -27,7 +27,7 @@ class TestIsErrorResponse:
             "message": "captured",
             "artifact_id": "art_123",
         }
-        assert _is_error_response(payload) is False
+        assert is_error_response(payload) is False
 
     def test_normal_describe_result(self) -> None:
         payload = {
@@ -35,14 +35,14 @@ class TestIsErrorResponse:
             "roots": [],
             "schemas": [],
         }
-        assert _is_error_response(payload) is False
+        assert is_error_response(payload) is False
 
     def test_empty_payload(self) -> None:
-        assert _is_error_response({}) is False
+        assert is_error_response({}) is False
 
     def test_code_not_string(self) -> None:
         payload = {"code": 200, "message": "ok"}
-        assert _is_error_response(payload) is False
+        assert is_error_response(payload) is False
 
 
 class TestExtractRootPaths:

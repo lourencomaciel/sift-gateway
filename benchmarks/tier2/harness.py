@@ -25,23 +25,23 @@ if _REPO_ROOT not in sys.path:
 if _SRC_DIR not in sys.path:
     sys.path.insert(0, _SRC_DIR)
 
-from benchmarks.tier1.datasets import ALL_DATASET_NAMES, DATASETS
-from benchmarks.tier1.evaluate import evaluate_answer
-from benchmarks.tier1.harness import (
-    _BASELINE_SYSTEM,
-    _MAX_BASELINE_BYTES_DEFAULT,
-    _MAX_BASELINE_TOKENS_DEFAULT,
-    _truncate_for_baseline,
+from benchmarks.common.baseline import (
+    BASELINE_SYSTEM,
+    MAX_BASELINE_BYTES_DEFAULT,
+    MAX_BASELINE_TOKENS_DEFAULT,
+    truncate_for_baseline,
 )
-from benchmarks.tier1.llm_client import LLMAPIError, call_llm
-from benchmarks.tier1.questions import (
+from benchmarks.common.datasets import ALL_DATASET_NAMES, DATASETS, load_dataset
+from benchmarks.common.evaluate import evaluate_answer
+from benchmarks.common.llm_client import LLMAPIError, call_llm
+from benchmarks.common.questions import (
     CROSS_DATASET_SOURCES,
     Question,
     get_cross_dataset_questions,
     get_questions_for_dataset,
     question_set_hash,
 )
-from benchmarks.tier1.sift_runtime import _MCPRuntime, create_runtime
+from benchmarks.common.sift_runtime import MCPRuntime, create_runtime
 from benchmarks.tier2.agent_loop import (
     _DEFAULT_MAX_INPUT_TOKENS,
     _DEFAULT_MAX_PAGES,
@@ -143,13 +143,13 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--max-baseline-payload-bytes",
         type=int,
-        default=_MAX_BASELINE_BYTES_DEFAULT,
+        default=MAX_BASELINE_BYTES_DEFAULT,
         help="Max baseline payload size in bytes",
     )
     parser.add_argument(
         "--max-baseline-tokens",
         type=int,
-        default=_MAX_BASELINE_TOKENS_DEFAULT,
+        default=MAX_BASELINE_TOKENS_DEFAULT,
         help="Max estimated baseline tokens (conservative)",
     )
     parser.add_argument(
@@ -168,19 +168,6 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Include full conversations in JSON results",
     )
     return parser
-
-
-def _load_dataset(data_dir: Path, dataset_name: str) -> Any:
-    """Load a benchmark dataset from disk."""
-    ds = DATASETS[dataset_name]
-    path = data_dir / ds.local_filename
-    if not path.exists():
-        msg = (
-            f"Dataset file not found: {path}. "
-            f"Run: uv run python benchmarks/tier1/fetch_data.py"
-        )
-        raise FileNotFoundError(msg)
-    return json.loads(path.read_text(encoding="utf-8"))
 
 
 def _run_single_baseline_question(
@@ -203,7 +190,7 @@ def _run_single_baseline_question(
     try:
         resp = call_llm(
             model=args.model,
-            system_prompt=_BASELINE_SYSTEM,
+            system_prompt=BASELINE_SYSTEM,
             user_message=user_msg,
             api_key=args.api_key,
             temperature=args.temperature,
@@ -285,7 +272,7 @@ def _run_baseline_across_datasets(
         ):
             continue
 
-        data_json, truncated = _truncate_for_baseline(
+        data_json, truncated = truncate_for_baseline(
             data,
             max_bytes=max_bytes,
             max_tokens=max_tokens,
@@ -329,7 +316,7 @@ def _run_baseline_across_datasets(
         combined_json_parts: list[str] = []
         truncated = False
         for ds_name in sources:
-            part_json, part_trunc = _truncate_for_baseline(
+            part_json, part_trunc = truncate_for_baseline(
                 loaded[ds_name],
                 max_bytes=max_bytes // len(sources),
                 max_tokens=max_tokens // len(sources),
@@ -380,7 +367,7 @@ def _run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
     loaded: dict[str, Any] = {}
     for name in dataset_names:
         print(f"Loading dataset: {name}")
-        loaded[name] = _load_dataset(data_dir, name)
+        loaded[name] = load_dataset(data_dir, name)
 
     results: list[dict[str, Any]] = []
 
@@ -435,7 +422,7 @@ def _run_single_agent_question(
     q: Question,
     gold: str,
     dataset_label: str,
-    runtime: _MCPRuntime,
+    runtime: MCPRuntime,
     tools: list[ToolDefinition],
     results: list[dict[str, Any]],
     args: argparse.Namespace,

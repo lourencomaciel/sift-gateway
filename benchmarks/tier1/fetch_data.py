@@ -17,7 +17,7 @@ _REPO_ROOT = str(Path(__file__).resolve().parents[2])
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
-from benchmarks.tier1.datasets import DATASETS, Dataset
+from benchmarks.common.datasets import DATASETS, Dataset
 
 
 def fetch_dataset(

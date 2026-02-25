@@ -8,20 +8,19 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
-import sys
 import time
 from typing import Any
 import urllib.error
 import urllib.request
 
-from benchmarks.tier1.llm_client import (
+from benchmarks.common.llm_client import (
+    INITIAL_BACKOFF_S,
+    MAX_RETRIES,
     LLMAPIError,
-    _detect_provider,
-    _resolve_api_key,
+    detect_provider,
+    log_retry,
+    resolve_api_key,
 )
-
-_MAX_RETRIES = 5
-_INITIAL_BACKOFF_S = 2.0
 
 # Pinned API version — this is the stable Messages API release that
 # supports tool_use.  Bump when a newer version adds features we need.
@@ -63,15 +62,6 @@ class ToolUseResponse:
     output_tokens: int
     model: str
     latency_ms: float
-
-
-def _log_retry(status: int, attempt: int, backoff: float) -> None:
-    print(
-        f"  [rate-limit] HTTP {status}, "
-        f"retry {attempt + 1}/{_MAX_RETRIES} "
-        f"in {backoff:.0f}s",
-        file=sys.stderr,
-    )
 
 
 def _tools_to_api_format(
@@ -139,12 +129,12 @@ def call_llm_with_tools(
     Raises:
         LLMAPIError: On network, auth, or rate-limit failures.
     """
-    provider = _detect_provider(model)
+    provider = detect_provider(model)
     if provider != "anthropic":
         msg = f"Tool-use client only supports Anthropic models, got: {model}"
         raise LLMAPIError(msg)
 
-    resolved_key = _resolve_api_key(
+    resolved_key = resolve_api_key(
         provider=provider,
         api_key=api_key,
     )
@@ -164,9 +154,9 @@ def call_llm_with_tools(
         "Content-Type": "application/json",
     }
 
-    backoff = _INITIAL_BACKOFF_S
+    backoff = INITIAL_BACKOFF_S
     start = time.monotonic()
-    for attempt in range(_MAX_RETRIES + 1):
+    for attempt in range(MAX_RETRIES + 1):
         request = urllib.request.Request(
             "https://api.anthropic.com/v1/messages",
             method="POST",
@@ -178,8 +168,8 @@ def call_llm_with_tools(
                 body = json.loads(resp.read().decode("utf-8", errors="replace"))
             break
         except urllib.error.HTTPError as exc:
-            if exc.code in (429, 500, 529) and attempt < _MAX_RETRIES:
-                _log_retry(exc.code, attempt, backoff)
+            if exc.code in (429, 500, 529) and attempt < MAX_RETRIES:
+                log_retry(exc.code, attempt, backoff)
                 time.sleep(backoff)
                 backoff *= 2
                 continue

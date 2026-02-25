@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-import statistics
 from typing import Any
 
+from benchmarks.common.evaluate import latency_percentiles
 from benchmarks.tier2.agent_loop import AgentResult
 
 
@@ -134,32 +134,6 @@ def build_baseline_metrics(
     }
 
 
-def _latency_percentiles(
-    latencies: list[float],
-) -> dict[str, float | int]:
-    """Compute p50, p90, and mean from a list of latencies.
-
-    Uses ``statistics.quantiles`` for standard percentile calculation.
-    """
-    if not latencies:
-        return {}
-    n = len(latencies)
-    p50 = statistics.median(latencies)
-    if n < 2:
-        # quantiles requires at least 2 data points.
-        p90 = latencies[0]
-    else:
-        # method="inclusive" matches the nearest-rank definition.
-        deciles = statistics.quantiles(latencies, n=10, method="inclusive")
-        p90 = deciles[8]  # 9th decile = 90th percentile
-    return {
-        "p50_ms": round(p50, 1),
-        "p90_ms": round(p90, 1),
-        "mean_ms": round(sum(latencies) / n, 1),
-        "count": n,
-    }
-
-
 def build_report(
     results: list[dict[str, Any]],
     *,
@@ -266,7 +240,7 @@ def build_report(
             "correct": entry["correct"],
             "total": entry["total"],
             "code_errors": entry["code_errors"],
-            "latency": _latency_percentiles(entry["latencies"]),
+            "latency": latency_percentiles(entry["latencies"]),
         }
 
     report: dict[str, Any] = {
@@ -287,7 +261,7 @@ def build_report(
             "code_retry_rate": code_retry_rate,
             "pagination_questions": pagination_count,
         },
-        "latency": _latency_percentiles(latencies),
+        "latency": latency_percentiles(latencies),
         "per_dataset": per_dataset,
         "per_question_type": per_qtype,
         "per_difficulty": per_difficulty,
@@ -318,7 +292,7 @@ def build_report(
                 ),
                 "input_tokens": c_input,
                 "output_tokens": c_output,
-                "latency": _latency_percentiles(c_latencies),
+                "latency": latency_percentiles(c_latencies),
             }
         report["per_condition"] = per_condition
 

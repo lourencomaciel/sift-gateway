@@ -1,8 +1,11 @@
-"""Dataset definitions for Tier 1 benchmark."""
+"""Dataset definitions for benchmarks."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
+from pathlib import Path
+from typing import Any
 
 
 @dataclass(frozen=True)
@@ -121,3 +124,27 @@ DATASETS: dict[str, Dataset] = {
 }
 
 ALL_DATASET_NAMES = list(DATASETS.keys())
+
+
+def load_dataset(data_dir: Path, dataset_name: str) -> Any:
+    """Load a benchmark dataset from disk.
+
+    Args:
+        data_dir: Directory containing the JSON data files.
+        dataset_name: Key into ``DATASETS``.
+
+    Returns:
+        Parsed JSON content.
+
+    Raises:
+        FileNotFoundError: If the dataset file does not exist.
+    """
+    ds = DATASETS[dataset_name]
+    path = data_dir / ds.local_filename
+    if not path.exists():
+        msg = (
+            f"Dataset file not found: {path}\n"
+            f"Run: uv run python benchmarks/tier1/fetch_data.py"
+        )
+        raise FileNotFoundError(msg)
+    return json.loads(path.read_text(encoding="utf-8"))

@@ -5,19 +5,21 @@ from __future__ import annotations
 import json
 from unittest.mock import patch
 
-from benchmarks.tier1.harness import (
+from benchmarks.common.baseline import (
     _effective_max_bytes,
     _fits,
+    _truncate_dict,
+    _truncate_list,
+    truncate_for_baseline,
+)
+from benchmarks.common.llm_client import LLMAPIError, LLMResponse
+from benchmarks.common.questions import Question
+from benchmarks.common.sift_runtime import CodeExecutionError
+from benchmarks.tier1.harness import (
     _make_result,
     _run_baseline,
     _run_sift,
-    _truncate_dict,
-    _truncate_for_baseline,
-    _truncate_list,
 )
-from benchmarks.tier1.llm_client import LLMAPIError, LLMResponse
-from benchmarks.tier1.questions import Question
-from benchmarks.tier1.sift_runtime import CodeExecutionError
 import pytest
 
 
@@ -153,13 +155,13 @@ class TestTruncateDict:
         assert len(parsed["group_b"]["vals"]) < 500
 
 
-# -- _truncate_for_baseline --
+# -- truncate_for_baseline --
 
 
 class TestTruncateForBaseline:
     def test_no_truncation_when_small(self) -> None:
         data = [1, 2, 3]
-        text, truncated = _truncate_for_baseline(
+        text, truncated = truncate_for_baseline(
             data, max_bytes=1_000_000, max_tokens=500_000
         )
         assert not truncated
@@ -167,7 +169,7 @@ class TestTruncateForBaseline:
 
     def test_truncates_large_list(self) -> None:
         data = list(range(100_000))
-        text, truncated = _truncate_for_baseline(
+        text, truncated = truncate_for_baseline(
             data, max_bytes=1_000, max_tokens=500_000
         )
         assert truncated
@@ -178,7 +180,7 @@ class TestTruncateForBaseline:
     def test_token_limit_caps_before_byte_limit(self) -> None:
         # With max_tokens=100 and 2 bytes/token, effective limit = 200
         data = list(range(10_000))
-        text, truncated = _truncate_for_baseline(
+        text, truncated = truncate_for_baseline(
             data, max_bytes=1_000_000, max_tokens=100
         )
         assert truncated
@@ -186,7 +188,7 @@ class TestTruncateForBaseline:
 
     def test_truncates_dict_with_arrays(self) -> None:
         data = {"vals": list(range(10_000))}
-        text, truncated = _truncate_for_baseline(
+        text, truncated = truncate_for_baseline(
             data, max_bytes=500, max_tokens=500_000
         )
         assert truncated
@@ -197,7 +199,7 @@ class TestTruncateForBaseline:
 
     def test_fallback_note_for_dict_without_arrays(self) -> None:
         data = {"a": "x" * 10_000}
-        text, truncated = _truncate_for_baseline(
+        text, truncated = truncate_for_baseline(
             data, max_bytes=100, max_tokens=500_000
         )
         assert truncated
