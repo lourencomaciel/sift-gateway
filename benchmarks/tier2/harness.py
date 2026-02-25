@@ -35,10 +35,13 @@ from benchmarks.tier1.harness import (
 )
 from benchmarks.tier1.llm_client import LLMAPIError, call_llm
 from benchmarks.tier1.questions import (
+    CROSS_DATASET_SOURCES,
+    Question,
+    get_cross_dataset_questions,
     get_questions_for_dataset,
     question_set_hash,
 )
-from benchmarks.tier1.sift_runtime import create_runtime
+from benchmarks.tier1.sift_runtime import _MCPRuntime, create_runtime
 from benchmarks.tier2.agent_loop import (
     _DEFAULT_MAX_INPUT_TOKENS,
     _DEFAULT_MAX_PAGES,
@@ -46,6 +49,7 @@ from benchmarks.tier2.agent_loop import (
     AgentResult,
     run_agent_loop,
 )
+from benchmarks.tier2.llm_tool_client import ToolDefinition
 from benchmarks.tier2.metrics import (
     build_baseline_metrics,
     build_question_metrics,
@@ -179,6 +183,85 @@ def _load_dataset(data_dir: Path, dataset_name: str) -> Any:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def _run_single_baseline_question(
+    *,
+    q: Question,
+    gold: str,
+    dataset_label: str,
+    data_json: str,
+    truncated: bool,
+    results: list[dict[str, Any]],
+    args: argparse.Namespace,
+) -> None:
+    """Run a single baseline (context-stuffed) question."""
+    print(f"  [{dataset_label}] {q.question_id}: {q.question_text[:50]}...")
+
+    user_msg = (
+        f"Here is the JSON data:\n\n{data_json}\n\nQuestion: {q.question_text}"
+    )
+
+    try:
+        resp = call_llm(
+            model=args.model,
+            system_prompt=_BASELINE_SYSTEM,
+            user_message=user_msg,
+            api_key=args.api_key,
+            temperature=args.temperature,
+        )
+    except LLMAPIError as exc:
+        if not args.continue_on_error:
+            raise
+        print(
+            f"    -> ERROR: {exc}",
+            file=sys.stderr,
+        )
+        error_metrics = build_baseline_metrics(
+            question_id=q.question_id,
+            dataset_name=dataset_label,
+            question_text=q.question_text,
+            question_type=q.question_type,
+            difficulty=q.difficulty,
+            gold_answer=gold,
+            llm_answer="",
+            correct=False,
+            input_tokens=0,
+            output_tokens=0,
+            latency_ms=0.0,
+            truncated=truncated,
+        )
+        error_metrics["error"] = str(exc)
+        results.append(error_metrics)
+        return
+
+    llm_answer = resp.text
+    correct = evaluate_answer(
+        llm_answer,
+        gold,
+        answer_type=q.answer_type,
+        tolerance=q.tolerance,
+    )
+
+    metrics = build_baseline_metrics(
+        question_id=q.question_id,
+        dataset_name=dataset_label,
+        question_text=q.question_text,
+        question_type=q.question_type,
+        difficulty=q.difficulty,
+        gold_answer=gold,
+        llm_answer=llm_answer,
+        correct=correct,
+        input_tokens=resp.input_tokens,
+        output_tokens=resp.output_tokens,
+        latency_ms=resp.latency_ms,
+        truncated=truncated,
+    )
+
+    status = "CORRECT" if correct else "WRONG"
+    trunc_tag = " [TRUNCATED]" if truncated else ""
+    print(f"    -> {status} (gold={gold}, llm={llm_answer[:40]}){trunc_tag}")
+    results.append(metrics)
+
+
 def _run_baseline_across_datasets(
     *,
     dataset_names: list[str],
@@ -213,78 +296,58 @@ def _run_baseline_across_datasets(
                 continue
 
             gold = q.gold_answer_fn(data)
-            print(f"  [{name}] {q.question_id}: {q.question_text[:50]}...")
-
-            user_msg = (
-                f"Here is the JSON data:\n\n{data_json}\n\n"
-                f"Question: {q.question_text}"
-            )
-
-            try:
-                resp = call_llm(
-                    model=args.model,
-                    system_prompt=_BASELINE_SYSTEM,
-                    user_message=user_msg,
-                    api_key=args.api_key,
-                    temperature=args.temperature,
-                )
-            except LLMAPIError as exc:
-                if not args.continue_on_error:
-                    raise
-                print(
-                    f"    -> ERROR: {exc}",
-                    file=sys.stderr,
-                )
-                error_metrics = build_baseline_metrics(
-                    question_id=q.question_id,
-                    dataset_name=name,
-                    question_text=q.question_text,
-                    question_type=q.question_type,
-                    difficulty=q.difficulty,
-                    gold_answer=gold,
-                    llm_answer="",
-                    correct=False,
-                    input_tokens=0,
-                    output_tokens=0,
-                    latency_ms=0.0,
-                    truncated=truncated,
-                )
-                error_metrics["error"] = str(exc)
-                results.append(error_metrics)
-                continue
-
-            llm_answer = resp.text
-            correct = evaluate_answer(
-                llm_answer,
-                gold,
-                answer_type=q.answer_type,
-                tolerance=q.tolerance,
-            )
-
-            metrics = build_baseline_metrics(
-                question_id=q.question_id,
-                dataset_name=name,
-                question_text=q.question_text,
-                question_type=q.question_type,
-                difficulty=q.difficulty,
-                gold_answer=gold,
-                llm_answer=llm_answer,
-                correct=correct,
-                input_tokens=resp.input_tokens,
-                output_tokens=resp.output_tokens,
-                latency_ms=resp.latency_ms,
+            _run_single_baseline_question(
+                q=q,
+                gold=gold,
+                dataset_label=name,
+                data_json=data_json,
                 truncated=truncated,
+                results=results,
+                args=args,
             )
 
-            status = "CORRECT" if correct else "WRONG"
-            trunc_tag = " [TRUNCATED]" if truncated else ""
-            print(
-                f"    -> {status} "
-                f"(gold={gold}, "
-                f"llm={llm_answer[:40]})"
-                f"{trunc_tag}"
+    # Cross-dataset baseline: concatenate constituent datasets.
+    loaded_names = set(loaded.keys())
+    cross_questions = get_cross_dataset_questions()
+
+    runnable = [
+        cq
+        for cq in cross_questions
+        if set(CROSS_DATASET_SOURCES.get(cq.question_id, ())) <= loaded_names
+    ]
+    if question_filter:
+        runnable = [cq for cq in runnable if cq.question_id in question_filter]
+
+    if runnable:
+        print("\n--- Baseline Cross-Dataset ---\n")
+
+    for q in runnable:
+        sources = CROSS_DATASET_SOURCES[q.question_id]
+        gold = q.gold_answer_fn(loaded)
+
+        # Concatenate the constituent datasets for context.
+        combined_json_parts: list[str] = []
+        truncated = False
+        for ds_name in sources:
+            part_json, part_trunc = _truncate_for_baseline(
+                loaded[ds_name],
+                max_bytes=max_bytes // len(sources),
+                max_tokens=max_tokens // len(sources),
             )
-            results.append(metrics)
+            combined_json_parts.append(f"--- {ds_name} ---\n{part_json}")
+            truncated = truncated or part_trunc
+
+        data_json = "\n\n".join(combined_json_parts)
+
+        _run_single_baseline_question(
+            q=q,
+            gold=gold,
+            dataset_label="cross_dataset",
+            data_json=data_json,
+            truncated=truncated,
+            results=results,
+            args=args,
+        )
 
 
 def _run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
@@ -367,6 +430,102 @@ def _run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
     )
 
 
+def _run_single_agent_question(
+    *,
+    q: Question,
+    gold: str,
+    dataset_label: str,
+    runtime: _MCPRuntime,
+    tools: list[ToolDefinition],
+    results: list[dict[str, Any]],
+    args: argparse.Namespace,
+    system_prompt: str,
+) -> None:
+    """Run a single question through the agent loop."""
+    print(f"  [{dataset_label}] {q.question_id}: {q.question_text[:50]}...")
+
+    try:
+        agent_result = run_agent_loop(
+            question=q.question_text,
+            runtime=runtime,
+            tools=tools,
+            model=args.model,
+            system_prompt=system_prompt,
+            session_id=_SESSION_ID,
+            api_key=args.api_key,
+            temperature=args.temperature,
+            max_turns=args.max_turns,
+            max_pages=args.max_pages,
+            max_input_tokens=args.max_input_tokens,
+        )
+    except LLMAPIError as exc:
+        if not args.continue_on_error:
+            raise
+        print(
+            f"    -> ERROR: {exc}",
+            file=sys.stderr,
+        )
+        empty_result = AgentResult(
+            answer="",
+            turns=0,
+            max_turns_reached=False,
+            token_budget_reached=False,
+        )
+        error_metrics = build_question_metrics(
+            agent_result=empty_result,
+            question_id=q.question_id,
+            dataset_name=dataset_label,
+            question_text=q.question_text,
+            question_type=q.question_type,
+            difficulty=q.difficulty,
+            gold_answer=gold,
+            llm_answer="",
+            correct=False,
+        )
+        error_metrics["error"] = str(exc)
+        results.append(error_metrics)
+        return
+
+    llm_answer = agent_result.answer
+    correct = evaluate_answer(
+        llm_answer,
+        gold,
+        answer_type=q.answer_type,
+        tolerance=q.tolerance,
+    )
+
+    metrics = build_question_metrics(
+        agent_result=agent_result,
+        question_id=q.question_id,
+        dataset_name=dataset_label,
+        question_text=q.question_text,
+        question_type=q.question_type,
+        difficulty=q.difficulty,
+        gold_answer=gold,
+        llm_answer=llm_answer,
+        correct=correct,
+    )
+
+    if args.save_conversations:
+        metrics["conversation"] = agent_result.conversation
+
+    status = "CORRECT" if correct else "WRONG"
+    extra = ""
+    if agent_result.max_turns_reached:
+        extra = " [MAX_TURNS]"
+    if agent_result.token_budget_reached:
+        extra = " [BUDGET]"
+    print(
+        f"    -> {status} "
+        f"(gold={gold}, "
+        f"llm={llm_answer[:40]}) "
+        f"turns={agent_result.turns} "
+        f"tools={sum(agent_result.tool_call_counts.values())}"
+        f"{extra}"
+    )
+    results.append(metrics)
+
+
 def _run_agent_across_datasets(
     *,
     dataset_names: list[str],
@@ -408,88 +567,48 @@ def _run_agent_across_datasets(
                     continue
 
                 gold = q.gold_answer_fn(data)
-                print(f"  [{name}] {q.question_id}: {q.question_text[:50]}...")
-
-                try:
-                    agent_result = run_agent_loop(
-                        question=q.question_text,
-                        runtime=runtime,
-                        tools=tools,
-                        model=args.model,
-                        system_prompt=system_prompt,
-                        session_id=_SESSION_ID,
-                        api_key=args.api_key,
-                        temperature=args.temperature,
-                        max_turns=args.max_turns,
-                        max_pages=args.max_pages,
-                        max_input_tokens=args.max_input_tokens,
-                    )
-                except LLMAPIError as exc:
-                    if not args.continue_on_error:
-                        raise
-                    print(
-                        f"    -> ERROR: {exc}",
-                        file=sys.stderr,
-                    )
-                    empty_result = AgentResult(
-                        answer="",
-                        turns=0,
-                        max_turns_reached=False,
-                        token_budget_reached=False,
-                    )
-                    error_metrics = build_question_metrics(
-                        agent_result=empty_result,
-                        question_id=q.question_id,
-                        dataset_name=name,
-                        question_text=q.question_text,
-                        question_type=q.question_type,
-                        difficulty=q.difficulty,
-                        gold_answer=gold,
-                        llm_answer="",
-                        correct=False,
-                    )
-                    error_metrics["error"] = str(exc)
-                    results.append(error_metrics)
-                    continue
-
-                llm_answer = agent_result.answer
-                correct = evaluate_answer(
-                    llm_answer,
-                    gold,
-                    answer_type=q.answer_type,
-                    tolerance=q.tolerance,
+                _run_single_agent_question(
+                    q=q,
+                    gold=gold,
+                    dataset_label=name,
+                    runtime=runtime,
+                    tools=tools,
+                    results=results,
+                    args=args,
+                    system_prompt=system_prompt,
                 )
 
-                metrics = build_question_metrics(
-                    agent_result=agent_result,
-                    question_id=q.question_id,
-                    dataset_name=name,
-                    question_text=q.question_text,
-                    question_type=q.question_type,
-                    difficulty=q.difficulty,
-                    gold_answer=gold,
-                    llm_answer=llm_answer,
-                    correct=correct,
-                )
+        # Cross-dataset questions.
+        loaded_names = set(loaded.keys())
+        cross_questions = get_cross_dataset_questions()
 
-                if args.save_conversations:
-                    metrics["conversation"] = agent_result.conversation
+        runnable = [
+            cq
+            for cq in cross_questions
+            if set(CROSS_DATASET_SOURCES.get(cq.question_id, ()))
+            <= loaded_names
+        ]
 
-                status = "CORRECT" if correct else "WRONG"
-                extra = ""
-                if agent_result.max_turns_reached:
-                    extra = " [MAX_TURNS]"
-                if agent_result.token_budget_reached:
-                    extra = " [BUDGET]"
-                print(
-                    f"    -> {status} "
-                    f"(gold={gold}, "
-                    f"llm={llm_answer[:40]}) "
-                    f"turns={agent_result.turns} "
-                    f"tools={sum(agent_result.tool_call_counts.values())}"
-                    f"{extra}"
-                )
-                results.append(metrics)
+        if question_filter:
+            runnable = [
+                cq for cq in runnable if cq.question_id in question_filter
+            ]
+
+        if runnable:
+            print("\n--- Cross-Dataset Questions ---\n")
+
+        for q in runnable:
+            gold = q.gold_answer_fn(loaded)
+            _run_single_agent_question(
+                q=q,
+                gold=gold,
+                dataset_label="cross_dataset",
+                runtime=runtime,
+                tools=tools,
+                results=results,
+                args=args,
+                system_prompt=system_prompt,
+            )
 
 
 def main() -> int:
