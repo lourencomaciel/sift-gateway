@@ -437,16 +437,17 @@ def _gateway_optional_int_field(
     """Read optional integer from ``_gateway`` with range validation."""
     if field not in gateway_ext:
         return None
-    raw = gateway_ext[field]
-    if raw is None:
+    raw_value = gateway_ext[field]
+    if raw_value is None:
         return None
-    if isinstance(raw, bool) or not isinstance(raw, int):
+    if isinstance(raw_value, bool) or not isinstance(raw_value, int):
         msg = f"server '{prefix}' _gateway.{field} must be an integer"
         raise ValueError(msg)
-    if raw < minimum:
+    value = int(raw_value)
+    if value < minimum:
         msg = f"server '{prefix}' _gateway.{field} must be >= {minimum}"
         raise ValueError(msg)
-    return raw
+    return value
 
 
 def _gateway_optional_float_field(
@@ -591,10 +592,14 @@ def _entry_to_registry_payload(
             f"server '{prefix}' _gateway.secret_ref must be a non-empty string"
         )
         raise ValueError(msg)
-    explicit_secret_ref = isinstance(secret_ref_raw, str)
+    secret_ref_text = (
+        secret_ref_raw if isinstance(secret_ref_raw, str) else None
+    )
+    explicit_secret_ref = isinstance(secret_ref_text, str)
     secret_ref: str | None
     if explicit_secret_ref:
-        secret_ref = secret_ref_raw.removesuffix(".json")
+        assert secret_ref_text is not None
+        secret_ref = secret_ref_text.removesuffix(".json")
         if not secret_ref:
             msg = (
                 f"server '{prefix}' _gateway.secret_ref must be a "
@@ -1032,7 +1037,8 @@ def remove_registry_upstream(
             (WORKSPACE_ID, prefix),
         )
         conn.commit()
-    return cursor.rowcount > 0
+    rowcount = getattr(cursor, "rowcount", 0)
+    return bool(rowcount) if not isinstance(rowcount, int) else rowcount > 0
 
 
 def set_registry_upstream_enabled(
@@ -1055,7 +1061,8 @@ def set_registry_upstream_enabled(
             (int(enabled), WORKSPACE_ID, prefix),
         )
         conn.commit()
-    return cursor.rowcount > 0
+    rowcount = getattr(cursor, "rowcount", 0)
+    return bool(rowcount) if not isinstance(rowcount, int) else rowcount > 0
 
 
 def set_registry_upstream_secret_ref(
@@ -1079,4 +1086,5 @@ def set_registry_upstream_secret_ref(
             (secret_ref, WORKSPACE_ID, prefix),
         )
         conn.commit()
-    return cursor.rowcount > 0
+    rowcount = getattr(cursor, "rowcount", 0)
+    return bool(rowcount) if not isinstance(rowcount, int) else rowcount > 0
