@@ -36,7 +36,7 @@ from sift_gateway.config.upstream_registry_repo import (
     upsert_payload,
 )
 from sift_gateway.config.upstream_secrets import (
-    validate_prefix,
+    secret_file_path,
     write_secret,
 )
 from sift_gateway.constants import WORKSPACE_ID
@@ -66,13 +66,6 @@ __all__ = [
 # ── Secret snapshot / rollback ─────────────────────────────────────
 
 
-def _secret_file_path(data_dir: Path, secret_ref: str) -> Path:
-    """Return the filesystem path for a secret reference."""
-    prefix = secret_ref.removesuffix(".json")
-    validate_prefix(prefix)
-    return data_dir / "state" / "upstream_secrets" / f"{prefix}.json"
-
-
 def _snapshot_secret_files(
     *,
     data_dir: Path,
@@ -90,7 +83,7 @@ def _snapshot_secret_files(
     for secret_ref, _transport, _env, _headers in pending_secret_writes:
         if secret_ref in snapshots:
             continue
-        path = _secret_file_path(data_dir, secret_ref)
+        path = secret_file_path(data_dir, secret_ref)
         if path.is_file():
             snapshots[secret_ref] = path.read_bytes()
         else:
@@ -105,7 +98,7 @@ def _restore_secret_snapshots(
 ) -> None:
     """Restore secret files to their pre-write state."""
     for secret_ref, prior_bytes in snapshots.items():
-        path = _secret_file_path(data_dir, secret_ref)
+        path = secret_file_path(data_dir, secret_ref)
         if prior_bytes is None:
             with contextlib.suppress(FileNotFoundError):
                 path.unlink()

@@ -34,8 +34,12 @@ from sift_gateway.config.upstream_registry import (
     set_registry_upstream_secret_ref,
     upsert_registry_from_mcp_servers,
 )
+from sift_gateway.config.upstream_registry_convert import (
+    _extract_gateway_fields,
+)
 from sift_gateway.config.upstream_secrets import (
     read_secret,
+    secret_file_path,
     validate_prefix,
     write_secret,
 )
@@ -76,12 +80,6 @@ def resolve_upstream_data_dir(
         return data_dir
     env_dir = os.environ.get("SIFT_GATEWAY_DATA_DIR")
     return Path(env_dir if env_dir else DEFAULT_DATA_DIR).resolve()
-
-
-def _sync_registry_from_config(data_dir: Path) -> None:
-    """Ensure registry is initialized and includes config-defined additions."""
-    bootstrap_registry_from_config(data_dir)
-    merge_missing_registry_from_config(data_dir)
 
 
 def _load_config_server_entry(
@@ -172,7 +170,8 @@ def _resolve_mutation_record(
         if record is not None:
             return record
         return _record_from_config_server(data_dir=data_dir, server=server)
-    _sync_registry_from_config(data_dir)
+    bootstrap_registry_from_config(data_dir)
+    merge_missing_registry_from_config(data_dir)
     return get_registry_upstream_record(
         data_dir=data_dir,
         prefix=server,
@@ -185,9 +184,7 @@ def _read_secret_from_file(
     ref: str,
 ) -> dict[str, Any] | None:
     """Read an existing secret file without creating directories."""
-    prefix = ref.removesuffix(".json")
-    validate_prefix(prefix)
-    path = data_dir / "state" / "upstream_secrets" / f"{prefix}.json"
+    path = secret_file_path(data_dir, ref)
     if not path.is_file():
         return None
     try:
@@ -205,9 +202,7 @@ def _delete_secret_file(
     """Delete an upstream secret file for ``ref`` when present."""
     if not isinstance(ref, str) or not ref:
         return
-    prefix = ref.removesuffix(".json")
-    validate_prefix(prefix)
-    path = data_dir / "state" / "upstream_secrets" / f"{prefix}.json"
+    path = secret_file_path(data_dir, ref)
     with contextlib.suppress(FileNotFoundError):
         path.unlink()
 
@@ -245,7 +240,8 @@ def list_upstreams(
     """
     resolved_data_dir = resolve_upstream_data_dir(data_dir)
     if sync:
-        _sync_registry_from_config(resolved_data_dir)
+        bootstrap_registry_from_config(resolved_data_dir)
+        merge_missing_registry_from_config(resolved_data_dir)
     records = load_registry_upstream_records(
         resolved_data_dir,
         include_disabled=True,
@@ -287,7 +283,8 @@ def inspect_upstream(
     """
     resolved_data_dir = resolve_upstream_data_dir(data_dir)
     if sync:
-        _sync_registry_from_config(resolved_data_dir)
+        bootstrap_registry_from_config(resolved_data_dir)
+        merge_missing_registry_from_config(resolved_data_dir)
     record = get_registry_upstream_record(
         data_dir=resolved_data_dir,
         prefix=server,
@@ -297,38 +294,8 @@ def inspect_upstream(
         raise ValueError(msg)
 
     transport = str(record["transport"])
-    gateway_ext: dict[str, Any] = {}
-    if record["pagination"] is not None:
-        gateway_ext["pagination"] = record["pagination"]
-    if record.get("auto_paginate_max_pages") is not None:
-        gateway_ext["auto_paginate_max_pages"] = record[
-            "auto_paginate_max_pages"
-        ]
-    if record.get("auto_paginate_max_records") is not None:
-        gateway_ext["auto_paginate_max_records"] = record[
-            "auto_paginate_max_records"
-        ]
-    if record.get("auto_paginate_timeout_seconds") is not None:
-        gateway_ext["auto_paginate_timeout_seconds"] = record[
-            "auto_paginate_timeout_seconds"
-        ]
-    if not bool(record["passthrough_allowed"]):
-        gateway_ext["passthrough_allowed"] = False
-    if record["semantic_salt_env_keys"]:
-        gateway_ext["semantic_salt_env_keys"] = list(
-            record["semantic_salt_env_keys"]
-        )
-    if record["semantic_salt_headers"]:
-        gateway_ext["semantic_salt_headers"] = list(
-            record["semantic_salt_headers"]
-        )
-    if bool(record["inherit_parent_env"]):
-        gateway_ext["inherit_parent_env"] = True
-    if isinstance(record["external_user_id"], str):
-        gateway_ext["external_user_id"] = record["external_user_id"]
-    if isinstance(record["secret_ref"], str):
-        gateway_ext["secret_ref"] = record["secret_ref"]
-    if not bool(record["enabled"]):
+    gateway_ext = _extract_gateway_fields(record)
+    if not record["enabled"]:
         gateway_ext["enabled"] = False
 
     secret_ref = record["secret_ref"]
@@ -556,15 +523,33 @@ def set_upstream_auth(
     }
 
 
-def _normalize_input_servers(
+def normalize_input_servers(
     raw_servers: dict[str, Any],
+    *,
+    strict: bool = True,
 ) -> dict[str, dict[str, Any]]:
-    """Normalize raw snippet input to a bare mcpServers-like map."""
+    """Normalize raw snippet input to a bare mcpServers-like map.
+
+    Args:
+        raw_servers: Raw JSON dict that may be a bare server map or
+            wrapped in ``mcpServers`` / ``mcp.servers``.
+        strict: When True, propagate ``ValueError`` from
+            ``extract_mcp_servers`` and do not filter non-dict
+            entries (suitable for user-facing validation).  When
+            False, swallow ``ValueError`` and silently skip
+            non-dict entries (suitable for best-effort
+            reconciliation).
+
+    Returns:
+        Normalized server map (name -> config dict).
+    """
     mcp_block = raw_servers.get("mcp")
     is_wrapped = "mcpServers" in raw_servers or (
         isinstance(mcp_block, dict) and "servers" in mcp_block
     )
     if is_wrapped:
+        if strict:
+            return extract_mcp_servers(raw_servers)
         try:
             extracted = extract_mcp_servers(raw_servers)
         except ValueError:
@@ -574,6 +559,8 @@ def _normalize_input_servers(
             for name, entry in extracted.items()
             if isinstance(entry, dict)
         }
+    if strict:
+        return raw_servers
     return {
         str(name): entry
         for name, entry in raw_servers.items()
@@ -661,7 +648,7 @@ def reconcile_after_add(
         }
 
     if not added_servers:
-        source_servers = _normalize_input_servers(raw_input)
+        source_servers = normalize_input_servers(raw_input, strict=False)
         added_servers = {
             name: entry
             for name, entry in source_servers.items()

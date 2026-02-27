@@ -11,12 +11,10 @@ automatically externalized to per-upstream secret files.
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from typing import Any
 
 from sift_gateway.config.mcp_servers import (
-    extract_mcp_servers,
     infer_transport,
 )
 from sift_gateway.config.shared import (
@@ -25,11 +23,14 @@ from sift_gateway.config.shared import (
     load_gateway_config_dict,
     write_json,
 )
+from sift_gateway.config.upstream_admin import (
+    normalize_input_servers,
+    resolve_upstream_data_dir,
+)
 from sift_gateway.config.upstream_secrets import (
     validate_prefix,
     write_secret,
 )
-from sift_gateway.constants import DEFAULT_DATA_DIR
 
 
 def _externalize_secrets_for_server(
@@ -147,26 +148,6 @@ def _validate_secret_shapes(name: str, entry: dict[str, Any]) -> None:
         raise ValueError(msg)
 
 
-def _resolve_data_dir(data_dir: Path | None) -> Path:
-    """Resolve effective data directory from argument/env/default."""
-    if data_dir is not None:
-        return data_dir
-    env_dir = os.environ.get("SIFT_GATEWAY_DATA_DIR")
-    return Path(env_dir if env_dir else DEFAULT_DATA_DIR).resolve()
-
-
-def _normalize_servers_input(
-    servers: dict[str, dict[str, Any]],
-) -> dict[str, dict[str, Any]]:
-    """Accept wrapped snippets and normalize to bare server map."""
-    is_wrapped = "mcpServers" in servers or (
-        isinstance(servers.get("mcp"), dict) and "servers" in servers["mcp"]
-    )
-    if is_wrapped:
-        return extract_mcp_servers(servers)
-    return servers
-
-
 def _validate_servers_for_add(servers: dict[str, dict[str, Any]]) -> None:
     """Validate server entries before any write side effects."""
     for name, entry in servers.items():
@@ -225,8 +206,8 @@ def run_upstream_add(
             ``command``/``url``, has both, or has an invalid
             name).
     """
-    data_dir = _resolve_data_dir(data_dir)
-    servers = _normalize_servers_input(servers)
+    data_dir = resolve_upstream_data_dir(data_dir)
+    servers = normalize_input_servers(servers)
 
     if not servers:
         msg = "no servers provided in snippet"
