@@ -210,5 +210,6 @@ Write strategy for mutating commands:
 ## 9. Open Questions
 
 1. Should disabled upstreams remain visible to `gateway.status` by default?
-2. Should `upstream test --all` run in parallel or sequentially by default?
+2. ~~Should `upstream test --all` run in parallel or sequentially by default?~~
+   Resolved: probes run concurrently via `asyncio.gather`.
 3. Do we want automatic rollback to config mirror if registry write fails?

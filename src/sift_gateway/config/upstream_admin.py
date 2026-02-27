@@ -260,8 +260,6 @@ def list_upstreams(
                 "url": record["url"],
                 "args": list(record["args"]),
                 "secret_ref": record["secret_ref"],
-                "has_inline_env": False,
-                "has_inline_headers": False,
             }
         )
     return rows
@@ -328,8 +326,6 @@ def inspect_upstream(
         "url": record["url"],
         "args": list(record["args"]),
         "gateway": gateway_ext,
-        "inline_env_keys": [],
-        "inline_header_keys": [],
         "secret": secret_meta,
         "config_path": str(resolved_data_dir / "state" / "config.json"),
     }
@@ -671,37 +667,41 @@ def reconcile_after_add(
             )
 
 
+async def _probe_one_upstream(
+    upstream: Any,
+    data_dir: Path,
+) -> dict[str, Any]:
+    """Probe a single upstream and return its result dict."""
+    try:
+        tools = await discover_tools(
+            upstream,
+            data_dir=str(data_dir),
+        )
+    except Exception as exc:
+        return {
+            "name": upstream.prefix,
+            "ok": False,
+            "error_code": classify_upstream_exception(exc),
+            "error": str(exc),
+        }
+    return {
+        "name": upstream.prefix,
+        "ok": True,
+        "tool_count": len(tools),
+    }
+
+
 async def _probe_upstream_configs(
     *,
     upstreams: list[Any],
     data_dir: Path,
 ) -> list[dict[str, Any]]:
-    """Probe each upstream via tools discovery."""
-    results: list[dict[str, Any]] = []
-    for upstream in upstreams:
-        try:
-            tools = await discover_tools(
-                upstream,
-                data_dir=str(data_dir),
-            )
-        except Exception as exc:
-            results.append(
-                {
-                    "name": upstream.prefix,
-                    "ok": False,
-                    "error_code": classify_upstream_exception(exc),
-                    "error": str(exc),
-                }
-            )
-            continue
-        results.append(
-            {
-                "name": upstream.prefix,
-                "ok": True,
-                "tool_count": len(tools),
-            }
+    """Probe upstreams concurrently via tools discovery."""
+    return list(
+        await asyncio.gather(
+            *(_probe_one_upstream(upstream, data_dir) for upstream in upstreams)
         )
-    return results
+    )
 
 
 def probe_upstreams(

@@ -126,6 +126,7 @@ def _extract_gateway_fields(
         fields["auto_paginate_timeout_seconds"] = record[
             "auto_paginate_timeout_seconds"
         ]
+    # Only emit when value differs from schema default (DB default: 1).
     if not record["passthrough_allowed"]:
         fields["passthrough_allowed"] = False
     if record["semantic_salt_env_keys"]:
@@ -134,6 +135,7 @@ def _extract_gateway_fields(
         )
     if record["semantic_salt_headers"]:
         fields["semantic_salt_headers"] = list(record["semantic_salt_headers"])
+    # Only emit when value differs from schema default (DB default: 0).
     if record["inherit_parent_env"]:
         fields["inherit_parent_env"] = True
     if isinstance(record["external_user_id"], str):

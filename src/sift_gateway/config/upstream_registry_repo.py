@@ -49,7 +49,12 @@ def _db_path(data_dir: Path) -> Path:
 
 @contextlib.contextmanager
 def connect_migrated(data_dir: Path) -> Iterator[Any]:
-    """Yield migrated SQLite connection for registry operations."""
+    """Yield migrated SQLite connection for registry operations.
+
+    Each call opens a fresh connection and re-checks migrations.
+    This is acceptable for CLI admin commands but would benefit
+    from a shared connection if used in hot paths.
+    """
     db_path = _db_path(data_dir)
     db_path.parent.mkdir(parents=True, exist_ok=True)
     backend = SqliteBackend(db_path=db_path)
