@@ -497,3 +497,26 @@ class TestCaptureIdentityMigration:
         assert "idx_artifacts_capture_kind_created_seq" in self.sql
         assert "idx_artifacts_capture_key_created_seq" in self.sql
         assert "idx_artifacts_capture_kind_last_seen" in self.sql
+
+
+class TestUpstreamRegistryMigration:
+    """008_upstream_registry.sql creates the upstream registry table."""
+
+    @pytest.fixture(autouse=True)
+    def _load_sql(self) -> None:
+        self.sql = _normalize(_read_sql("008_upstream_registry.sql")).lower()
+
+    def test_creates_upstream_registry_table(self) -> None:
+        assert "create table if not exists upstream_registry" in self.sql
+
+    def test_creates_registry_enabled_index(self) -> None:
+        assert "idx_upstream_registry_enabled" in self.sql
+
+    def test_includes_auto_paginate_max_pages(self) -> None:
+        assert "auto_paginate_max_pages" in self.sql
+
+    def test_includes_auto_paginate_max_records(self) -> None:
+        assert "auto_paginate_max_records" in self.sql
+
+    def test_includes_auto_paginate_timeout_seconds(self) -> None:
+        assert "auto_paginate_timeout_seconds" in self.sql

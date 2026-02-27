@@ -2,9 +2,14 @@
 
 from __future__ import annotations
 
+import contextlib
+import json
+import os
 from pathlib import Path
 import shutil
 import sys
+import tempfile
+from typing import Any
 
 from sift_gateway.constants import CONFIG_FILENAME, STATE_SUBDIR
 
@@ -69,3 +74,46 @@ def resolve_sift_command() -> str:
             return _absolute_command_path(Path(found))
 
     return "sift-gateway"
+
+
+def write_json(path: Path, data: dict[str, Any]) -> None:
+    """Atomically write a JSON object with stable formatting.
+
+    Args:
+        path: Destination file path.
+        data: Dict to serialize.
+    """
+    content = json.dumps(data, indent=2, ensure_ascii=False) + "\n"
+    fd, tmp_path_raw = tempfile.mkstemp(
+        dir=str(path.parent),
+        suffix=".tmp",
+    )
+    tmp_path = Path(tmp_path_raw)
+    try:
+        os.write(fd, content.encode("utf-8"))
+        os.close(fd)
+        fd = -1
+        tmp_path.replace(path)
+    except BaseException:
+        if fd >= 0:
+            os.close(fd)
+        with contextlib.suppress(OSError):
+            tmp_path.unlink(missing_ok=True)
+        raise
+
+
+def load_gateway_config_dict(config_path: Path) -> dict[str, Any]:
+    """Load existing gateway config file as a dict.
+
+    Args:
+        config_path: Path to ``config.json``.
+
+    Returns:
+        Parsed config dict, or ``{}`` if file is missing or invalid.
+    """
+    if not config_path.exists():
+        return {}
+    raw = json.loads(config_path.read_text(encoding="utf-8"))
+    if not isinstance(raw, dict):
+        return {}
+    return raw

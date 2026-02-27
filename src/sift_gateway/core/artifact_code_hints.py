@@ -95,4 +95,3 @@ def enrich_entrypoint_hint(
     if hint in msg:
         return msg
     return f"{msg}\n{hint}"
-

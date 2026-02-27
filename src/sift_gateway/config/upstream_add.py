@@ -11,78 +11,26 @@ automatically externalized to per-upstream secret files.
 
 from __future__ import annotations
 
-from collections.abc import Iterator
-import contextlib
-import json
-import os
 from pathlib import Path
-import tempfile
 from typing import Any
 
 from sift_gateway.config.mcp_servers import (
-    _infer_transport,
-    extract_mcp_servers,
+    infer_transport,
 )
 from sift_gateway.config.shared import (
     ensure_gateway_config_path,
     gateway_config_path,
+    load_gateway_config_dict,
+    write_json,
+)
+from sift_gateway.config.upstream_admin import (
+    normalize_input_servers,
+    resolve_upstream_data_dir,
 )
 from sift_gateway.config.upstream_secrets import (
-    _validate_prefix,
+    validate_prefix,
     write_secret,
 )
-from sift_gateway.constants import DEFAULT_DATA_DIR
-
-
-@contextlib.contextmanager
-def _suppress_os_error() -> Iterator[None]:
-    """Suppress OSError during cleanup."""
-    with contextlib.suppress(OSError):
-        yield
-
-
-def _load_gateway_config(config_path: Path) -> dict[str, Any]:
-    """Load existing gateway config or return empty dict.
-
-    Args:
-        config_path: Path to ``config.json``.
-
-    Returns:
-        Parsed config dict, or ``{}`` if file is missing or
-        invalid.
-    """
-    if not config_path.exists():
-        return {}
-    text = config_path.read_text(encoding="utf-8")
-    raw = json.loads(text)
-    if not isinstance(raw, dict):
-        return {}
-    return raw
-
-
-def _write_json(path: Path, data: dict[str, Any]) -> None:
-    """Atomically write JSON with consistent formatting.
-
-    Args:
-        path: Destination file path.
-        data: Dict to serialize.
-    """
-    content = json.dumps(data, indent=2, ensure_ascii=False) + "\n"
-    fd, tmp = tempfile.mkstemp(
-        dir=str(path.parent),
-        suffix=".tmp",
-    )
-    try:
-        os.write(fd, content.encode("utf-8"))
-        os.close(fd)
-        fd = -1
-        os.replace(tmp, str(path))
-    except BaseException:
-        if fd >= 0:
-            os.close(fd)
-        with _suppress_os_error():
-            os.unlink(tmp)
-        raise
 
 
 def _externalize_secrets_for_server(
@@ -200,34 +148,14 @@ def _validate_secret_shapes(name: str, entry: dict[str, Any]) -> None:
         raise ValueError(msg)
 
 
-def _resolve_data_dir(data_dir: Path | None) -> Path:
-    """Resolve effective data directory from argument/env/default."""
-    if data_dir is not None:
-        return data_dir
-    env_dir = os.environ.get("SIFT_GATEWAY_DATA_DIR")
-    return Path(env_dir if env_dir else DEFAULT_DATA_DIR).resolve()
-
-
-def _normalize_servers_input(
-    servers: dict[str, dict[str, Any]],
-) -> dict[str, dict[str, Any]]:
-    """Accept wrapped snippets and normalize to bare server map."""
-    is_wrapped = "mcpServers" in servers or (
-        isinstance(servers.get("mcp"), dict) and "servers" in servers["mcp"]
-    )
-    if is_wrapped:
-        return extract_mcp_servers(servers)
-    return servers
-
-
 def _validate_servers_for_add(servers: dict[str, dict[str, Any]]) -> None:
     """Validate server entries before any write side effects."""
     for name, entry in servers.items():
         if not isinstance(entry, dict):
             msg = f"server '{name}' config must be a JSON object"
             raise ValueError(msg)
-        _validate_prefix(name)
-        _infer_transport(name, entry)
+        validate_prefix(name)
+        infer_transport(name, entry)
         _validate_transport_values(name, entry)
         _validate_gateway_block(name, entry)
         _validate_secret_shapes(name, entry)
@@ -278,8 +206,8 @@ def run_upstream_add(
             ``command``/``url``, has both, or has an invalid
             name).
     """
-    data_dir = _resolve_data_dir(data_dir)
-    servers = _normalize_servers_input(servers)
+    data_dir = resolve_upstream_data_dir(data_dir)
+    servers = normalize_input_servers(servers)
 
     if not servers:
         msg = "no servers provided in snippet"
@@ -289,7 +217,7 @@ def run_upstream_add(
 
     # Compute config path; only create dirs when writing
     config_path = gateway_config_path(data_dir)
-    gw_config = _load_gateway_config(config_path)
+    gw_config = load_gateway_config_dict(config_path)
 
     existing_servers = gw_config.get("mcpServers", {})
     if not isinstance(existing_servers, dict):
@@ -309,7 +237,7 @@ def run_upstream_add(
 
         gw_config["mcpServers"] = existing_servers
         gw_config.pop("upstreams", None)
-        _write_json(config_path, gw_config)
+        write_json(config_path, gw_config)
 
     return {
         "added": sorted(added),

@@ -297,7 +297,9 @@ def _resolve_capture_origin(
     """Resolve and validate capture origin object."""
     capture_origin = _normalize_capture_origin(arguments.get("capture_origin"))
     if capture_origin is None:
-        return None, _error("INVALID_ARGUMENT", "capture_origin must be an object")
+        return None, _error(
+            "INVALID_ARGUMENT", "capture_origin must be an object"
+        )
     return capture_origin, None
 
 
@@ -478,7 +480,9 @@ def execute_artifact_capture(
     capture_origin, origin_error = _resolve_capture_origin(arguments)
     if origin_error is not None:
         return origin_error
-    required_fields, required_error = _resolve_required_capture_fields(arguments)
+    required_fields, required_error = _resolve_required_capture_fields(
+        arguments
+    )
     if required_error is not None:
         return required_error
     assert capture_origin is not None
