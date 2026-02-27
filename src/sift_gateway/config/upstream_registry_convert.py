@@ -203,6 +203,8 @@ def _gateway_pagination_field(
     gateway_ext: dict[str, Any],
 ) -> dict[str, Any] | None:
     """Read optional ``_gateway.pagination`` with shape validation."""
+    from sift_gateway.config.settings import PaginationConfig
+
     if "pagination" not in gateway_ext:
         return None
     raw = gateway_ext["pagination"]
@@ -211,6 +213,11 @@ def _gateway_pagination_field(
     if not isinstance(raw, dict):
         msg = f"server '{prefix}' _gateway.pagination must be a JSON object"
         raise ValueError(msg)
+    try:
+        PaginationConfig(**raw)
+    except Exception as exc:
+        msg = f"server '{prefix}' _gateway.pagination is invalid: {exc}"
+        raise ValueError(msg) from exc
     return raw
 
 
@@ -273,6 +280,24 @@ def _gateway_optional_string_list_field(
         msg = f"server '{prefix}' _gateway.{field} must be a JSON array"
         raise ValueError(msg)
     return [str(item) for item in raw]
+
+
+def _gateway_optional_string_field(
+    *,
+    prefix: str,
+    gateway_ext: dict[str, Any],
+    field: str,
+) -> str | None:
+    """Read optional string field from ``_gateway``."""
+    if field not in gateway_ext:
+        return None
+    raw = gateway_ext[field]
+    if raw is None:
+        return None
+    if not isinstance(raw, str):
+        msg = f"server '{prefix}' _gateway.{field} must be a string"
+        raise ValueError(msg)
+    return raw
 
 
 def entry_to_registry_payload(
@@ -472,10 +497,10 @@ def entry_to_registry_payload(
                 default=False,
             )
         ),
-        "external_user_id": (
-            gateway_ext.get("external_user_id")
-            if isinstance(gateway_ext.get("external_user_id"), str)
-            else None
+        "external_user_id": _gateway_optional_string_field(
+            prefix=prefix,
+            gateway_ext=gateway_ext,
+            field="external_user_id",
         ),
         "secret_ref": secret_ref,
         "enabled": int(
