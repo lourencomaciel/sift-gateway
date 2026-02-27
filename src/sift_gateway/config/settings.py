@@ -1127,6 +1127,171 @@ def _resolve_mcp_servers_format(
     return merged
 
 
+def _resolve_registry_upstreams(
+    merged: dict[str, object],
+    *,
+    data_dir: Path,
+    from_file: dict[str, object],
+    env_overrides: dict[str, object],
+) -> tuple[dict[str, object], bool]:
+    """Resolve upstreams from registry-first source when available.
+
+    Returns:
+        Tuple of ``(merged, used_registry)``.
+    """
+    from sift_gateway.config.upstream_registry import (
+        bootstrap_registry_from_config,
+        load_registry_upstream_dicts,
+        load_registry_upstream_records,
+        merge_missing_registry_from_config,
+    )
+
+    has_source_servers = (
+        "mcpServers" in from_file
+        or (
+            isinstance(from_file.get("mcp"), dict)
+            and "servers" in cast(dict[str, object], from_file.get("mcp", {}))
+        )
+        or isinstance(from_file.get("context_servers"), dict)
+    )
+
+    if has_source_servers:
+        bootstrap_registry_from_config(data_dir)
+        merge_missing_registry_from_config(data_dir)
+
+    # Treat registry presence (including disabled rows) as authoritative.
+    # Falling back when only disabled rows exist can unintentionally
+    # resurrect stale mcpServers entries from config.json.
+    registry_records = load_registry_upstream_records(
+        data_dir,
+        include_disabled=True,
+    )
+    if not registry_records:
+        return merged, False
+
+    # Load all rows (including disabled) so index-based env overrides
+    # remain aligned with canonical registry order.
+    upstream_dicts = load_registry_upstream_dicts(
+        data_dir,
+        enabled_only=False,
+    )
+    merged_upstreams: object = upstream_dicts
+    raw_env_upstreams = env_overrides.get("upstreams")
+    if raw_env_upstreams is not None:
+        merged_upstreams = _deep_merge(
+            merged_upstreams,
+            raw_env_upstreams,
+        )
+    if not isinstance(merged_upstreams, list):
+        merged_upstreams = upstream_dicts
+
+    # Filter out disabled canonical rows after env override application so
+    # indexed env overrides target the intended upstream.
+    enabled_rows = {
+        idx
+        for idx, record in enumerate(registry_records)
+        if bool(record.get("enabled"))
+    }
+    merged["upstreams"] = [
+        upstream
+        for idx, upstream in enumerate(merged_upstreams)
+        if idx >= len(registry_records) or idx in enabled_rows
+    ]
+    merged = _merge_secret_ref_overrides(
+        merged,
+        data_dir=data_dir,
+    )
+
+    merged.pop("mcpServers", None)
+    merged.pop("mcp", None)
+    merged.pop("provider", None)
+    merged.pop("_gateway_sync", None)
+    return merged, True
+
+
+def _merge_secret_ref_overrides(
+    merged: dict[str, object],
+    *,
+    data_dir: Path,
+) -> dict[str, object]:
+    """Inline secret values when env/header overrides target secret_ref rows.
+
+    Registry-backed rows externalize sensitive values to ``secret_ref``.
+    If env/header overrides are applied on top, validate_no_secret_conflict
+    would otherwise reject the merged shape (inline secrets + secret_ref).
+    """
+    from sift_gateway.config.upstream_secrets import (
+        resolve_secret_ref,
+    )
+
+    raw_upstreams = merged.get("upstreams")
+    if not isinstance(raw_upstreams, list):
+        return merged
+
+    def _to_str_dict(value: object) -> dict[str, str]:
+        if not isinstance(value, dict):
+            return {}
+        return {str(key): str(item) for key, item in value.items()}
+
+    for raw_upstream in raw_upstreams:
+        if not isinstance(raw_upstream, dict):
+            continue
+        secret_ref = raw_upstream.get("secret_ref")
+        if not isinstance(secret_ref, str) or not secret_ref:
+            continue
+
+        inline_env = raw_upstream.get("env")
+        inline_headers = raw_upstream.get("headers")
+        has_inline_env = isinstance(inline_env, dict) and bool(inline_env)
+        has_inline_headers = isinstance(inline_headers, dict) and bool(
+            inline_headers
+        )
+        if not has_inline_env and not has_inline_headers:
+            continue
+
+        secret_data: dict[str, object] = {}
+        secret_resolution_failed = False
+        try:
+            loaded_secret = resolve_secret_ref(data_dir, secret_ref)
+        except Exception:
+            loaded_secret = None
+            secret_resolution_failed = True
+        if isinstance(loaded_secret, dict):
+            secret_data = loaded_secret
+        elif secret_resolution_failed:
+            # Keep secret_ref so downstream conflict checks surface
+            # missing/corrupt secret material instead of silently dropping it.
+            continue
+
+        secret_env = _to_str_dict(secret_data.get("env"))
+        secret_headers = _to_str_dict(secret_data.get("headers"))
+
+        if has_inline_env:
+            merged_env = dict(secret_env)
+            if isinstance(inline_env, dict):
+                merged_env.update(_to_str_dict(inline_env))
+            raw_upstream["env"] = merged_env
+        elif secret_env:
+            # Preserve secret-backed env material when another inline channel
+            # (for example, headers) overrides and secret_ref is removed.
+            raw_upstream["env"] = dict(secret_env)
+
+        if has_inline_headers:
+            merged_headers = dict(secret_headers)
+            if isinstance(inline_headers, dict):
+                merged_headers.update(_to_str_dict(inline_headers))
+            raw_upstream["headers"] = merged_headers
+        elif secret_headers:
+            # Preserve secret-backed header material when another inline
+            # channel (for example, env) overrides and secret_ref is removed.
+            raw_upstream["headers"] = dict(secret_headers)
+
+        # Inline values now represent the effective runtime secret material.
+        raw_upstream.pop("secret_ref", None)
+
+    return merged
+
+
 def _check_legacy_upstreams(from_file: dict[str, object]) -> None:
     """Reject legacy ``upstreams`` config format from a file.
 
@@ -1201,8 +1366,16 @@ def load_gateway_config(
         raise ValueError(msg)
     merged["data_dir"] = str(data_dir)
 
-    # Convert mcpServers format to legacy upstreams if needed
-    merged = _resolve_mcp_servers_format(merged, env_overrides)
+    # Prefer SQLite upstream registry when available.
+    merged, used_registry = _resolve_registry_upstreams(
+        merged,
+        data_dir=data_dir,
+        from_file=from_file,
+        env_overrides=env_overrides,
+    )
+    if not used_registry:
+        # Convert mcpServers format to legacy upstreams if needed.
+        merged = _resolve_mcp_servers_format(merged, env_overrides)
     # query_kind=code is always enabled; ignore legacy persisted toggle.
     merged.pop("code_query_enabled", None)
 

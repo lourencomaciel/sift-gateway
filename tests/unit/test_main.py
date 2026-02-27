@@ -13,6 +13,12 @@ from sift_gateway.main import (
     _extract_logs_flag,
     _parse_args,
     _run_upstream_add,
+    _run_upstream_auth_set,
+    _run_upstream_inspect,
+    _run_upstream_list,
+    _run_upstream_remove,
+    _run_upstream_set_enabled,
+    _run_upstream_test,
     cli,
     serve,
 )
@@ -409,6 +415,453 @@ def test_serve_dispatches_init_command(
     assert json.loads(source.read_text())["mcpServers"]["gh"]["command"] == "gh"
 
 
+def test_serve_dispatches_upstream_list_command(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "sift_gateway.main._parse_args",
+        lambda: argparse.Namespace(
+            command="upstream",
+            upstream_command="list",
+        ),
+    )
+    monkeypatch.setattr(
+        "sift_gateway.main._run_upstream_list",
+        lambda _args: 17,
+    )
+
+    exit_code = serve()
+    assert exit_code == 17
+
+
+def test_serve_dispatches_upstream_inspect_command(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "sift_gateway.main._parse_args",
+        lambda: argparse.Namespace(
+            command="upstream",
+            upstream_command="inspect",
+        ),
+    )
+    monkeypatch.setattr(
+        "sift_gateway.main._run_upstream_inspect",
+        lambda _args: 18,
+    )
+
+    exit_code = serve()
+    assert exit_code == 18
+
+
+def test_serve_dispatches_upstream_test_command(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "sift_gateway.main._parse_args",
+        lambda: argparse.Namespace(
+            command="upstream",
+            upstream_command="test",
+        ),
+    )
+    monkeypatch.setattr(
+        "sift_gateway.main._run_upstream_test",
+        lambda _args: 22,
+    )
+
+    exit_code = serve()
+    assert exit_code == 22
+
+
+def test_serve_dispatches_upstream_remove_command(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "sift_gateway.main._parse_args",
+        lambda: argparse.Namespace(
+            command="upstream",
+            upstream_command="remove",
+        ),
+    )
+    monkeypatch.setattr(
+        "sift_gateway.main._run_upstream_remove",
+        lambda _args: 24,
+    )
+
+    exit_code = serve()
+    assert exit_code == 24
+
+
+def test_serve_dispatches_upstream_enable_command(monkeypatch) -> None:
+    seen: dict[str, object] = {}
+
+    def _fake_run(args: argparse.Namespace, *, enabled: bool) -> int:
+        seen["enabled"] = enabled
+        return 26
+
+    monkeypatch.setattr(
+        "sift_gateway.main._parse_args",
+        lambda: argparse.Namespace(
+            command="upstream",
+            upstream_command="enable",
+        ),
+    )
+    monkeypatch.setattr(
+        "sift_gateway.main._run_upstream_set_enabled", _fake_run
+    )
+
+    exit_code = serve()
+    assert exit_code == 26
+    assert seen["enabled"] is True
+
+
+def test_serve_dispatches_upstream_disable_command(monkeypatch) -> None:
+    seen: dict[str, object] = {}
+
+    def _fake_run(args: argparse.Namespace, *, enabled: bool) -> int:
+        seen["enabled"] = enabled
+        return 28
+
+    monkeypatch.setattr(
+        "sift_gateway.main._parse_args",
+        lambda: argparse.Namespace(
+            command="upstream",
+            upstream_command="disable",
+        ),
+    )
+    monkeypatch.setattr(
+        "sift_gateway.main._run_upstream_set_enabled", _fake_run
+    )
+
+    exit_code = serve()
+    assert exit_code == 28
+    assert seen["enabled"] is False
+
+
+def test_serve_unknown_upstream_command_prints_usage(
+    monkeypatch, capsys
+) -> None:
+    monkeypatch.setattr(
+        "sift_gateway.main._parse_args",
+        lambda: argparse.Namespace(
+            command="upstream",
+            upstream_command="unknown",
+        ),
+    )
+
+    exit_code = serve()
+    captured = capsys.readouterr()
+
+    assert exit_code == 1
+    assert (
+        "upstream {add,list,inspect,test,remove,enable,disable,auth}"
+        in captured.err
+    )
+
+
+def test_run_upstream_list_resolves_sync_redirect_data_dir(
+    tmp_path: Path, monkeypatch
+) -> None:
+    seed_data_dir = tmp_path / "seed"
+    runtime_data_dir = tmp_path / "runtime"
+    (seed_data_dir / "state").mkdir(parents=True)
+    (runtime_data_dir / "state").mkdir(parents=True)
+    (seed_data_dir / "state" / "config.json").write_text(
+        json.dumps(
+            {"_gateway_sync": {"data_dir": str(runtime_data_dir.resolve())}}
+        ),
+        encoding="utf-8",
+    )
+    (runtime_data_dir / "state" / "config.json").write_text(
+        json.dumps({"mcpServers": {}}),
+        encoding="utf-8",
+    )
+
+    seen: dict[str, object] = {}
+
+    def _fake_list_upstreams(*, data_dir: Path | None = None):
+        seen["data_dir"] = data_dir
+        return []
+
+    monkeypatch.setattr(
+        "sift_gateway.config.upstream_admin.list_upstreams",
+        _fake_list_upstreams,
+    )
+
+    args = argparse.Namespace(data_dir=str(seed_data_dir), json=True)
+    exit_code = _run_upstream_list(args)
+
+    assert exit_code == 0
+    assert seen["data_dir"] == runtime_data_dir.resolve()
+
+
+def test_run_upstream_inspect_prints_json(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    monkeypatch.setattr(
+        "sift_gateway.config.upstream_admin.inspect_upstream",
+        lambda **_kwargs: {
+            "name": "gh",
+            "enabled": True,
+            "transport": "stdio",
+            "command": "gh",
+            "url": None,
+            "args": ["mcp"],
+            "secret": {"ref": "gh"},
+        },
+    )
+    args = argparse.Namespace(
+        server="gh",
+        data_dir=str(tmp_path),
+        json=True,
+    )
+
+    exit_code = _run_upstream_inspect(args)
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    payload = json.loads(captured.out)
+    assert payload["name"] == "gh"
+    assert payload["transport"] == "stdio"
+
+
+def test_run_upstream_inspect_prints_text_secret_metadata(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    monkeypatch.setattr(
+        "sift_gateway.config.upstream_admin.inspect_upstream",
+        lambda **_kwargs: {
+            "name": "gh",
+            "enabled": False,
+            "transport": "stdio",
+            "command": "gh",
+            "url": None,
+            "args": ["mcp"],
+            "secret": {
+                "ref": "gh",
+                "transport": "stdio",
+                "env_keys": ["GITHUB_TOKEN"],
+                "header_keys": [],
+            },
+        },
+    )
+    args = argparse.Namespace(
+        server="gh",
+        data_dir=str(tmp_path),
+        json=False,
+    )
+
+    exit_code = _run_upstream_inspect(args)
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert "name: gh" in captured.out
+    assert "enabled: False" in captured.out
+    assert "secret_ref: gh" in captured.out
+    assert "secret_env_keys: ['GITHUB_TOKEN']" in captured.out
+
+
+def test_run_upstream_test_returns_non_zero_when_probe_fails(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    monkeypatch.setattr(
+        "sift_gateway.config.upstream_admin.probe_upstreams",
+        lambda **_kwargs: {
+            "results": [],
+            "ok": False,
+            "ok_count": 0,
+            "total": 0,
+        },
+    )
+    args = argparse.Namespace(
+        server="gh",
+        all=False,
+        data_dir=str(tmp_path),
+        json=True,
+    )
+
+    exit_code = _run_upstream_test(args)
+    captured = capsys.readouterr()
+
+    assert exit_code == 1
+    assert json.loads(captured.out)["ok"] is False
+
+
+def test_run_upstream_test_prints_text_summary(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    monkeypatch.setattr(
+        "sift_gateway.config.upstream_admin.probe_upstreams",
+        lambda **_kwargs: {
+            "results": [
+                {"name": "gh", "ok": True, "tool_count": 3},
+                {
+                    "name": "api",
+                    "ok": False,
+                    "error_code": "UPSTREAM_FAILED",
+                    "error": "boom",
+                },
+            ],
+            "ok": False,
+            "ok_count": 1,
+            "total": 2,
+        },
+    )
+    args = argparse.Namespace(
+        server=None,
+        all=True,
+        data_dir=str(tmp_path),
+        json=False,
+    )
+
+    exit_code = _run_upstream_test(args)
+    captured = capsys.readouterr()
+
+    assert exit_code == 1
+    assert "ok gh tool_count=3" in captured.out
+    assert "fail api error_code=UPSTREAM_FAILED error=boom" in captured.out
+    assert "summary: 1/2 ok" in captured.out
+
+
+def test_run_upstream_remove_prints_dry_run_message(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    monkeypatch.setattr(
+        "sift_gateway.config.upstream_admin.remove_upstream",
+        lambda **_kwargs: {"removed": "gh"},
+    )
+    args = argparse.Namespace(
+        server="gh",
+        data_dir=str(tmp_path),
+        dry_run=True,
+        json=False,
+    )
+
+    exit_code = _run_upstream_remove(args)
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert "[dry run] would remove upstream: gh" in captured.out
+
+
+def test_run_upstream_remove_prints_json(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    monkeypatch.setattr(
+        "sift_gateway.config.upstream_admin.remove_upstream",
+        lambda **_kwargs: {"removed": "gh", "dry_run": False},
+    )
+    args = argparse.Namespace(
+        server="gh",
+        data_dir=str(tmp_path),
+        dry_run=False,
+        json=True,
+    )
+
+    exit_code = _run_upstream_remove(args)
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert json.loads(captured.out)["removed"] == "gh"
+
+
+def test_run_upstream_set_enabled_prints_dry_run_message(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    monkeypatch.setattr(
+        "sift_gateway.config.upstream_admin.set_upstream_enabled",
+        lambda **_kwargs: {"server": "gh", "enabled": False},
+    )
+    args = argparse.Namespace(
+        server="gh",
+        data_dir=str(tmp_path),
+        dry_run=True,
+        json=False,
+    )
+
+    exit_code = _run_upstream_set_enabled(args, enabled=False)
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert "[dry run] would disable upstream: gh" in captured.out
+
+
+def test_run_upstream_set_enabled_prints_json(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    monkeypatch.setattr(
+        "sift_gateway.config.upstream_admin.set_upstream_enabled",
+        lambda **_kwargs: {"server": "gh", "enabled": True},
+    )
+    args = argparse.Namespace(
+        server="gh",
+        data_dir=str(tmp_path),
+        dry_run=False,
+        json=True,
+    )
+
+    exit_code = _run_upstream_set_enabled(args, enabled=True)
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert json.loads(captured.out)["enabled"] is True
+
+
+def test_run_upstream_auth_set_prints_json(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    monkeypatch.setattr(
+        "sift_gateway.config.upstream_admin.set_upstream_auth",
+        lambda **_kwargs: {
+            "server": "gh",
+            "transport": "stdio",
+            "secret_ref": "gh",
+        },
+    )
+    args = argparse.Namespace(
+        server="gh",
+        env_pairs=["TOKEN=abc"],
+        header_pairs=None,
+        data_dir=str(tmp_path),
+        dry_run=False,
+        json=True,
+    )
+
+    exit_code = _run_upstream_auth_set(args)
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    payload = json.loads(captured.out)
+    assert payload["server"] == "gh"
+    assert payload["secret_ref"] == "gh"
+
+
+def test_serve_dispatches_upstream_auth_set_command(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "sift_gateway.main._parse_args",
+        lambda: argparse.Namespace(
+            command="upstream",
+            upstream_command="auth",
+            auth_command="set",
+        ),
+    )
+    monkeypatch.setattr(
+        "sift_gateway.main._run_upstream_auth_set",
+        lambda _args: 19,
+    )
+
+    exit_code = serve()
+    assert exit_code == 19
+
+
+def test_serve_upstream_auth_requires_subcommand(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(
+        "sift_gateway.main._parse_args",
+        lambda: argparse.Namespace(
+            command="upstream",
+            upstream_command="auth",
+            auth_command=None,
+        ),
+    )
+
+    exit_code = serve()
+    captured = capsys.readouterr()
+
+    assert exit_code == 1
+    assert "upstream auth {set}" in captured.err
+
+
 def test_serve_dispatches_artifact_cli_mode(monkeypatch) -> None:
     seen: dict[str, object] = {}
 
@@ -694,6 +1147,126 @@ def test_parse_args_upstream_add_accepts_from_with_data_dir(
     assert args.data_dir == "/tmp/custom"
 
 
+def test_parse_args_upstream_add_flag_mode(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "sift-gateway",
+            "upstream",
+            "add",
+            "--name",
+            "github",
+            "--transport",
+            "stdio",
+            "--command",
+            "npx",
+            "--arg",
+            "-y",
+            "--arg",
+            "@modelcontextprotocol/server-github",
+            "--env",
+            "GITHUB_TOKEN=abc",
+        ],
+    )
+    args = _parse_args()
+    assert args.command == "upstream"
+    assert args.upstream_command == "add"
+    assert args.snippet is None
+    assert args.name == "github"
+    assert args.transport == "stdio"
+    assert args.stdio_command == "npx"
+    assert args.command_args == [
+        "-y",
+        "@modelcontextprotocol/server-github",
+    ]
+    assert args.env_pairs == ["GITHUB_TOKEN=abc"]
+
+
+def test_parse_args_upstream_add_accepts_long_option_arg_value(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "sift-gateway",
+            "upstream",
+            "add",
+            "--name",
+            "github",
+            "--transport",
+            "stdio",
+            "--command",
+            "npx",
+            "--arg",
+            "--verbose",
+        ],
+    )
+    args = _parse_args()
+    assert args.command == "upstream"
+    assert args.upstream_command == "add"
+    assert args.command_args == ["--verbose"]
+    assert args.dry_run is False
+
+
+@pytest.mark.parametrize(
+    "arg_value",
+    [
+        "--dry-run",
+        "--data-dir",
+        "--from",
+        "--help",
+    ],
+)
+def test_parse_args_upstream_add_accepts_reserved_flag_names_as_arg_values(
+    monkeypatch,
+    arg_value: str,
+) -> None:
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "sift-gateway",
+            "upstream",
+            "add",
+            "--name",
+            "github",
+            "--transport",
+            "stdio",
+            "--command",
+            "npx",
+            "--dry-run",
+            "--arg",
+            arg_value,
+        ],
+    )
+    args = _parse_args()
+    assert args.command == "upstream"
+    assert args.upstream_command == "add"
+    assert args.dry_run is True
+    assert args.command_args == [arg_value]
+
+
+def test_parse_args_upstream_auth_set(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "sift-gateway",
+            "upstream",
+            "auth",
+            "set",
+            "--server",
+            "api",
+            "--header",
+            "Authorization=Bearer tok",
+        ],
+    )
+    args = _parse_args()
+    assert args.command == "upstream"
+    assert args.upstream_command == "auth"
+    assert args.auth_command == "set"
+    assert args.server == "api"
+    assert args.header_pairs == ["Authorization=Bearer tok"]
+
+
 def test_parse_args_global_data_dir_reaches_install(
     monkeypatch,
 ) -> None:
@@ -761,6 +1334,54 @@ def test_parse_args_port_default(monkeypatch) -> None:
     monkeypatch.setattr("sys.argv", ["sift-gateway"])
     args = _parse_args()
     assert args.port == 8080
+
+
+@pytest.mark.parametrize(
+    ("attr", "value", "flag"),
+    [
+        ("transport", "stdio", "--transport"),
+        ("stdio_command", "npx", "--command"),
+        ("url", "https://example.com/mcp", "--url"),
+        ("command_args", ["--dry-run"], "--arg"),
+        ("env_pairs", ["TOKEN=abc"], "--env"),
+        ("header_pairs", ["Authorization=Bearer tok"], "--header"),
+        ("external_user_id", "user-123", "--external-user-id"),
+        ("inherit_parent_env", True, "--inherit-parent-env"),
+    ],
+)
+def test_run_upstream_add_rejects_mixed_snippet_and_flag_mode_inputs(
+    attr: str,
+    value: object,
+    flag: str,
+) -> None:
+    args = argparse.Namespace(
+        snippet='{"github":{"command":"gh"}}',
+        name=None,
+        transport=None,
+        stdio_command=None,
+        url=None,
+        command_args=None,
+        env_pairs=None,
+        header_pairs=None,
+        external_user_id=None,
+        inherit_parent_env=False,
+        source=None,
+        data_dir=None,
+        dry_run=True,
+    )
+    setattr(args, attr, value)
+
+    with pytest.raises(
+        ValueError,
+        match="legacy snippet mode cannot be combined with flag-based options",
+    ) as exc_info:
+        _run_upstream_add(args)
+
+    message = str(exc_info.value)
+    assert "legacy snippet mode cannot be combined with flag-based options" in (
+        message
+    )
+    assert flag in message
 
 
 def test_run_upstream_add_from_source_falls_back_to_gateway_data_dir_arg(
@@ -950,6 +1571,376 @@ def test_run_upstream_add_with_source_respects_explicit_data_dir(
     assert exit_code == 0
     assert seen["data_dir"] == explicit_data_dir.resolve()
     assert seen["dry_run"] is True
+
+
+def test_run_upstream_add_resolves_sync_redirect_data_dir(
+    tmp_path: Path, monkeypatch
+) -> None:
+    seed_data_dir = tmp_path / "seed"
+    runtime_data_dir = tmp_path / "runtime"
+    (seed_data_dir / "state").mkdir(parents=True)
+    (runtime_data_dir / "state").mkdir(parents=True)
+    (seed_data_dir / "state" / "config.json").write_text(
+        json.dumps(
+            {"_gateway_sync": {"data_dir": str(runtime_data_dir.resolve())}}
+        ),
+        encoding="utf-8",
+    )
+    (runtime_data_dir / "state" / "config.json").write_text(
+        json.dumps({"mcpServers": {}}),
+        encoding="utf-8",
+    )
+
+    seen: dict[str, object] = {}
+
+    def _fake_run_upstream_add(
+        raw: dict[str, object],
+        *,
+        data_dir: Path | None = None,
+        dry_run: bool = False,
+    ) -> dict[str, object]:
+        seen["run_data_dir"] = data_dir
+        seen["run_dry_run"] = dry_run
+        seen["raw"] = raw
+        return {"added": [], "skipped": [], "config_path": "ignored"}
+
+    def _fake_bootstrap_registry_from_config(data_dir: Path) -> int:
+        seen["bootstrap_data_dir"] = data_dir
+        return 0
+
+    def _fake_merge_missing_registry_from_config(data_dir: Path) -> int:
+        seen["merge_data_dir"] = data_dir
+        return 0
+
+    monkeypatch.setattr(
+        "sift_gateway.config.upstream_add.run_upstream_add",
+        _fake_run_upstream_add,
+    )
+    monkeypatch.setattr(
+        "sift_gateway.config.upstream_add.print_add_summary",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        "sift_gateway.config.upstream_registry.bootstrap_registry_from_config",
+        _fake_bootstrap_registry_from_config,
+    )
+    monkeypatch.setattr(
+        "sift_gateway.config.upstream_registry.merge_missing_registry_from_config",
+        _fake_merge_missing_registry_from_config,
+    )
+
+    args = argparse.Namespace(
+        snippet='{"github":{"command":"gh"}}',
+        name=None,
+        source=None,
+        data_dir=str(seed_data_dir),
+        dry_run=False,
+    )
+    exit_code = _run_upstream_add(args)
+
+    assert exit_code == 0
+    assert seen["run_data_dir"] == runtime_data_dir.resolve()
+    assert seen["bootstrap_data_dir"] == runtime_data_dir.resolve()
+    assert seen["merge_data_dir"] == runtime_data_dir.resolve()
+
+
+def test_run_upstream_add_flag_mode_builds_servers_dict(
+    tmp_path: Path, monkeypatch
+) -> None:
+    seen: dict[str, object] = {}
+
+    def _fake_run_upstream_add(
+        raw: dict[str, object],
+        *,
+        data_dir: Path | None = None,
+        dry_run: bool = False,
+    ) -> dict[str, object]:
+        seen["raw"] = raw
+        seen["data_dir"] = data_dir
+        seen["dry_run"] = dry_run
+        return {"added": ["github"], "skipped": [], "config_path": "ignored"}
+
+    monkeypatch.setattr(
+        "sift_gateway.config.upstream_add.run_upstream_add",
+        _fake_run_upstream_add,
+    )
+    monkeypatch.setattr(
+        "sift_gateway.config.upstream_add.print_add_summary",
+        lambda *_args, **_kwargs: None,
+    )
+
+    args = argparse.Namespace(
+        snippet=None,
+        name="github",
+        transport="stdio",
+        stdio_command="npx",
+        command_args=["-y", "@modelcontextprotocol/server-github"],
+        env_pairs=["GITHUB_TOKEN=abc"],
+        header_pairs=None,
+        inherit_parent_env=True,
+        external_user_id="auto",
+        source=None,
+        data_dir=str(tmp_path),
+        dry_run=True,
+    )
+    exit_code = _run_upstream_add(args)
+
+    assert exit_code == 0
+    assert seen["dry_run"] is True
+    assert seen["data_dir"] == tmp_path.resolve()
+    assert seen["raw"] == {
+        "github": {
+            "command": "npx",
+            "args": ["-y", "@modelcontextprotocol/server-github"],
+            "env": {"GITHUB_TOKEN": "abc"},
+            "_gateway": {
+                "inherit_parent_env": True,
+                "external_user_id": "auto",
+            },
+        }
+    }
+
+
+def test_run_upstream_add_reconciles_added_server_to_registry(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from sift_gateway.config.settings import load_gateway_config
+    from sift_gateway.config.upstream_registry import (
+        replace_registry_from_mcp_servers,
+    )
+
+    state_dir = tmp_path / "state"
+    state_dir.mkdir(parents=True)
+    (state_dir / "config.json").write_text(
+        json.dumps({"mcpServers": {}}),
+        encoding="utf-8",
+    )
+
+    replace_registry_from_mcp_servers(
+        data_dir=tmp_path,
+        servers={"github": {"command": "old-gh"}},
+        source_kind="manual",
+    )
+
+    monkeypatch.setattr(
+        "sift_gateway.config.upstream_add.print_add_summary",
+        lambda *_args, **_kwargs: None,
+    )
+
+    args = argparse.Namespace(
+        snippet='{"github":{"command":"new-gh"}}',
+        name=None,
+        source=None,
+        data_dir=str(tmp_path),
+        dry_run=False,
+    )
+    exit_code = _run_upstream_add(args)
+
+    assert exit_code == 0
+    config = load_gateway_config(data_dir_override=str(tmp_path))
+    github = next(item for item in config.upstreams if item.prefix == "github")
+    assert github.command == "new-gh"
+
+
+def test_run_upstream_add_invalid_mirror_keeps_successful_write(
+    tmp_path: Path, capsys, monkeypatch
+) -> None:
+    state_dir = tmp_path / "state"
+    state_dir.mkdir(parents=True)
+    (state_dir / "config.json").write_text(
+        json.dumps({"mcpServers": {"bad": "oops"}}),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(
+        "sift_gateway.config.upstream_add.print_add_summary",
+        lambda *_args, **_kwargs: None,
+    )
+
+    args = argparse.Namespace(
+        snippet='{"github":{"command":"gh"}}',
+        name=None,
+        source=None,
+        data_dir=str(tmp_path),
+        dry_run=False,
+    )
+
+    exit_code = _run_upstream_add(args)
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    config = json.loads((state_dir / "config.json").read_text(encoding="utf-8"))
+    assert config["mcpServers"]["github"]["command"] == "gh"
+    assert not (state_dir / "gateway.db").exists()
+    assert "warning: skipped full registry sync" in captured.err
+    assert "warning: skipped registry reconciliation" in captured.err
+
+
+def test_run_upstream_add_registry_sync_error_is_non_fatal(
+    tmp_path: Path, capsys, monkeypatch
+) -> None:
+    state_dir = tmp_path / "state"
+    state_dir.mkdir(parents=True)
+    (state_dir / "config.json").write_text(
+        json.dumps({"mcpServers": {}}),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(
+        "sift_gateway.config.upstream_add.print_add_summary",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        "sift_gateway.config.upstream_registry.bootstrap_registry_from_config",
+        lambda _data_dir: (_ for _ in ()).throw(OSError("db locked")),
+    )
+    monkeypatch.setattr(
+        "sift_gateway.config.upstream_registry.load_registry_upstream_records",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("db locked")),
+    )
+
+    args = argparse.Namespace(
+        snippet='{"github":{"command":"gh"}}',
+        name=None,
+        source=None,
+        data_dir=str(tmp_path),
+        dry_run=False,
+    )
+    exit_code = _run_upstream_add(args)
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    config = json.loads((state_dir / "config.json").read_text(encoding="utf-8"))
+    assert config["mcpServers"]["github"]["command"] == "gh"
+    assert "warning: skipped full registry sync" in captured.err
+    assert "warning: skipped registry reconciliation" in captured.err
+
+
+def test_run_upstream_add_reconcile_falls_back_to_raw_snippet(
+    tmp_path: Path, monkeypatch
+) -> None:
+    seen: dict[str, object] = {}
+
+    def _fake_run_upstream_add(
+        raw: dict[str, object],
+        *,
+        data_dir: Path | None = None,
+        dry_run: bool = False,
+    ) -> dict[str, object]:
+        assert raw == {"github": {"command": "gh"}}
+        assert data_dir == tmp_path.resolve()
+        assert dry_run is False
+        return {"added": ["github"], "skipped": [], "config_path": "ignored"}
+
+    def _fake_upsert_registry_from_mcp_servers(
+        *,
+        data_dir: Path,
+        servers: dict[str, dict[str, object]],
+        merge_missing: bool,
+        source_kind: str,
+        source_ref: str | None = None,
+    ) -> int:
+        seen["data_dir"] = data_dir
+        seen["servers"] = servers
+        seen["merge_missing"] = merge_missing
+        seen["source_kind"] = source_kind
+        seen["source_ref"] = source_ref
+        return len(servers)
+
+    def _always_raise_extract(_raw: dict[str, object]) -> dict[str, object]:
+        raise ValueError("broken mirror")
+
+    monkeypatch.setattr(
+        "sift_gateway.config.upstream_add.run_upstream_add",
+        _fake_run_upstream_add,
+    )
+    monkeypatch.setattr(
+        "sift_gateway.config.upstream_add.print_add_summary",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        "sift_gateway.config.upstream_registry.bootstrap_registry_from_config",
+        lambda _data_dir: 0,
+    )
+    monkeypatch.setattr(
+        "sift_gateway.config.upstream_registry.merge_missing_registry_from_config",
+        lambda _data_dir: 0,
+    )
+    monkeypatch.setattr(
+        "sift_gateway.config.upstream_registry.load_registry_upstream_records",
+        lambda *_args, **_kwargs: [{"prefix": "existing"}],
+    )
+    monkeypatch.setattr(
+        "sift_gateway.config.upstream_registry.upsert_registry_from_mcp_servers",
+        _fake_upsert_registry_from_mcp_servers,
+    )
+    monkeypatch.setattr(
+        "sift_gateway.config.upstream_registry.mirror_registry_to_config",
+        lambda _data_dir: tmp_path / "state" / "config.json",
+    )
+    monkeypatch.setattr(
+        "sift_gateway.config.mcp_servers.extract_mcp_servers",
+        _always_raise_extract,
+    )
+
+    args = argparse.Namespace(
+        snippet='{"github":{"command":"gh"}}',
+        name=None,
+        source=None,
+        data_dir=str(tmp_path),
+        dry_run=False,
+    )
+    exit_code = _run_upstream_add(args)
+
+    assert exit_code == 0
+    assert seen["data_dir"] == tmp_path.resolve()
+    assert seen["servers"] == {"github": {"command": "gh"}}
+    assert seen["merge_missing"] is False
+    assert seen["source_kind"] == "snippet_add"
+    assert seen["source_ref"] is None
+
+
+def test_run_upstream_add_registry_reconcile_error_is_non_fatal(
+    tmp_path: Path, capsys, monkeypatch
+) -> None:
+    state_dir = tmp_path / "state"
+    state_dir.mkdir(parents=True)
+    (state_dir / "config.json").write_text(
+        json.dumps({"mcpServers": {}}),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(
+        "sift_gateway.config.upstream_add.print_add_summary",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        "sift_gateway.config.upstream_registry.bootstrap_registry_from_config",
+        lambda _data_dir: 0,
+    )
+    monkeypatch.setattr(
+        "sift_gateway.config.upstream_registry.merge_missing_registry_from_config",
+        lambda _data_dir: 0,
+    )
+    monkeypatch.setattr(
+        "sift_gateway.config.upstream_registry.upsert_registry_from_mcp_servers",
+        lambda **_kwargs: (_ for _ in ()).throw(OSError("db write failed")),
+    )
+
+    args = argparse.Namespace(
+        snippet='{"github":{"command":"gh"}}',
+        name=None,
+        source=None,
+        data_dir=str(tmp_path),
+        dry_run=False,
+    )
+    exit_code = _run_upstream_add(args)
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    config = json.loads((state_dir / "config.json").read_text(encoding="utf-8"))
+    assert config["mcpServers"]["github"]["command"] == "gh"
+    assert "registry reconciliation failed" in captured.err
 
 
 def test_serve_http_transport_calls_run_with_transport_args(

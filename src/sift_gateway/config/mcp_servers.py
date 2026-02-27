@@ -195,6 +195,23 @@ def _infer_transport(name: str, entry: dict[str, Any]) -> str:
     raise ValueError(msg)
 
 
+def _gateway_entry_enabled(
+    name: str,
+    gateway_ext: dict[str, Any],
+) -> bool:
+    """Return whether a gateway entry is enabled.
+
+    The ``_gateway.enabled`` extension defaults to ``True`` when absent.
+    """
+    if "enabled" not in gateway_ext:
+        return True
+    enabled = gateway_ext["enabled"]
+    if not isinstance(enabled, bool):
+        msg = f"server '{name}' _gateway.enabled must be a boolean"
+        raise ValueError(msg)
+    return enabled
+
+
 def to_upstream_configs(
     servers: dict[str, dict[str, Any]],
 ) -> list[dict[str, Any]]:
@@ -217,6 +234,8 @@ def to_upstream_configs(
         if not isinstance(gateway_ext, dict):
             msg = f"server '{name}' _gateway must be a JSON object"
             raise ValueError(msg)
+        if not _gateway_entry_enabled(name, gateway_ext):
+            continue
 
         # Build UpstreamConfig-compatible dict
         transport = _infer_transport(name, entry)

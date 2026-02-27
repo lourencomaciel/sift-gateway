@@ -49,6 +49,16 @@ _SERVER_FLAGS = {
 _GLOBAL_FLAGS_WITH_VALUE = _SHARED_FLAGS_WITH_VALUE | _SERVER_FLAGS_WITH_VALUE
 _GLOBAL_FLAGS = _SHARED_FLAGS | _SERVER_FLAGS
 _LOGS_FLAG = "--logs"
+_UPSTREAM_ADD_FLAG_MODE_ATTRS = (
+    ("transport", "--transport"),
+    ("stdio_command", "--command"),
+    ("url", "--url"),
+    ("command_args", "--arg"),
+    ("env_pairs", "--env"),
+    ("header_pairs", "--header"),
+    ("external_user_id", "--external-user-id"),
+    ("inherit_parent_env", "--inherit-parent-env"),
+)
 
 
 def _add_init_mode_group(
@@ -112,14 +122,69 @@ def _add_upstream_subcommand(
 
     add_parser = upstream_sub.add_parser(
         "add",
-        help="Add upstream(s) from a JSON mcpServers snippet",
+        help="Add an upstream from flags or JSON mcpServers snippet",
     )
     add_parser.add_argument(
         "snippet",
+        nargs="?",
+        default=None,
         help=(
-            "JSON mcpServers snippet, e.g. "
+            "JSON mcpServers snippet (legacy mode), e.g. "
             '\'{"name": {"command": "npx", "args": [...]}}\''
         ),
+    )
+    add_parser.add_argument(
+        "--name",
+        default=None,
+        help="Upstream prefix for flag-based add mode",
+    )
+    add_parser.add_argument(
+        "--transport",
+        choices=["stdio", "http"],
+        default=None,
+        help="Transport for flag-based add mode",
+    )
+    add_parser.add_argument(
+        "--command",
+        dest="stdio_command",
+        default=None,
+        help="Command for stdio upstream",
+    )
+    add_parser.add_argument(
+        "--url",
+        default=None,
+        help="URL for http upstream",
+    )
+    add_parser.add_argument(
+        "--arg",
+        dest="command_args",
+        action="append",
+        default=None,
+        help="Repeatable stdio argument",
+    )
+    add_parser.add_argument(
+        "--env",
+        dest="env_pairs",
+        action="append",
+        default=None,
+        help="Repeatable KEY=VALUE env entry (stdio only)",
+    )
+    add_parser.add_argument(
+        "--header",
+        dest="header_pairs",
+        action="append",
+        default=None,
+        help="Repeatable KEY=VALUE header entry (http only)",
+    )
+    add_parser.add_argument(
+        "--external-user-id",
+        default=None,
+        help="Set _gateway.external_user_id for the upstream",
+    )
+    add_parser.add_argument(
+        "--inherit-parent-env",
+        action="store_true",
+        help="Set _gateway.inherit_parent_env for stdio upstreams",
     )
     add_parser.add_argument(
         "--from",
@@ -139,6 +204,187 @@ def _add_upstream_subcommand(
         "--dry-run",
         action="store_true",
         help="Show what would happen without changes",
+    )
+
+    list_parser = upstream_sub.add_parser(
+        "list",
+        help="List configured upstream MCP servers",
+    )
+    list_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Print machine-readable JSON output",
+    )
+    list_parser.add_argument(
+        "--data-dir",
+        default=argparse.SUPPRESS,
+        help="Override DATA_DIR directly",
+    )
+
+    inspect_parser = upstream_sub.add_parser(
+        "inspect",
+        help="Inspect one configured upstream",
+    )
+    inspect_parser.add_argument(
+        "--server",
+        required=True,
+        help="Upstream prefix to inspect",
+    )
+    inspect_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Print machine-readable JSON output",
+    )
+    inspect_parser.add_argument(
+        "--data-dir",
+        default=argparse.SUPPRESS,
+        help="Override DATA_DIR directly",
+    )
+
+    test_parser = upstream_sub.add_parser(
+        "test",
+        help="Probe upstream connectivity and tools/list",
+    )
+    test_scope = test_parser.add_mutually_exclusive_group(required=True)
+    test_scope.add_argument(
+        "--server",
+        default=None,
+        help="Upstream prefix to test",
+    )
+    test_scope.add_argument(
+        "--all",
+        action="store_true",
+        help="Test all enabled upstreams",
+    )
+    test_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Print machine-readable JSON output",
+    )
+    test_parser.add_argument(
+        "--data-dir",
+        default=argparse.SUPPRESS,
+        help="Override DATA_DIR directly",
+    )
+
+    remove_parser = upstream_sub.add_parser(
+        "remove",
+        help="Remove one upstream",
+    )
+    remove_parser.add_argument(
+        "--server",
+        required=True,
+        help="Upstream prefix to remove",
+    )
+    remove_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Show what would happen without changes",
+    )
+    remove_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Print machine-readable JSON output",
+    )
+    remove_parser.add_argument(
+        "--data-dir",
+        default=argparse.SUPPRESS,
+        help="Override DATA_DIR directly",
+    )
+
+    enable_parser = upstream_sub.add_parser(
+        "enable",
+        help="Enable one upstream",
+    )
+    enable_parser.add_argument(
+        "--server",
+        required=True,
+        help="Upstream prefix to enable",
+    )
+    enable_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Show what would happen without changes",
+    )
+    enable_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Print machine-readable JSON output",
+    )
+    enable_parser.add_argument(
+        "--data-dir",
+        default=argparse.SUPPRESS,
+        help="Override DATA_DIR directly",
+    )
+
+    disable_parser = upstream_sub.add_parser(
+        "disable",
+        help="Disable one upstream",
+    )
+    disable_parser.add_argument(
+        "--server",
+        required=True,
+        help="Upstream prefix to disable",
+    )
+    disable_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Show what would happen without changes",
+    )
+    disable_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Print machine-readable JSON output",
+    )
+    disable_parser.add_argument(
+        "--data-dir",
+        default=argparse.SUPPRESS,
+        help="Override DATA_DIR directly",
+    )
+
+    auth_parser = upstream_sub.add_parser(
+        "auth",
+        help="Manage upstream auth material",
+    )
+    auth_sub = auth_parser.add_subparsers(dest="auth_command")
+
+    auth_set_parser = auth_sub.add_parser(
+        "set",
+        help="Set auth material and externalize to secret storage",
+    )
+    auth_set_parser.add_argument(
+        "--server",
+        required=True,
+        help="Upstream prefix to update",
+    )
+    auth_set_parser.add_argument(
+        "--env",
+        dest="env_pairs",
+        action="append",
+        default=None,
+        help="Repeatable KEY=VALUE env entry (stdio only)",
+    )
+    auth_set_parser.add_argument(
+        "--header",
+        dest="header_pairs",
+        action="append",
+        default=None,
+        help="Repeatable KEY=VALUE header entry (http only)",
+    )
+    auth_set_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Show what would happen without changes",
+    )
+    auth_set_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Print machine-readable JSON output",
+    )
+    auth_set_parser.add_argument(
+        "--data-dir",
+        default=argparse.SUPPRESS,
+        help="Override DATA_DIR directly",
     )
 
 
@@ -271,7 +517,47 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     _add_init_subcommand(sub)
     _add_upstream_subcommand(sub)
     _add_install_subcommand(sub)
-    return parser.parse_args(argv)
+
+    raw_argv = list(sys.argv[1:] if argv is None else argv)
+    normalized_argv = _normalize_upstream_add_argv(raw_argv)
+    return parser.parse_args(normalized_argv)
+
+
+def _normalize_upstream_add_argv(raw_argv: list[str]) -> list[str]:
+    """Normalize upstream add argv tokens for repeatable ``--arg`` values.
+
+    ``argparse`` treats tokens that start with ``-`` as potential flags, so
+    values such as ``-y`` or ``--dry-run`` may fail when provided as
+    ``--arg <value>``. Rewrite dash-prefixed values to ``--arg=<value>``
+    specifically for the ``upstream add`` command.
+    """
+    if "upstream" not in raw_argv:
+        return raw_argv
+    try:
+        upstream_index = raw_argv.index("upstream")
+    except ValueError:
+        return raw_argv
+    if upstream_index + 1 >= len(raw_argv):
+        return raw_argv
+    if raw_argv[upstream_index + 1] != "add":
+        return raw_argv
+
+    normalized: list[str] = []
+    idx = 0
+    while idx < len(raw_argv):
+        token = raw_argv[idx]
+        if token == "--":
+            normalized.extend(raw_argv[idx:])
+            break
+        if token == "--arg" and idx + 1 < len(raw_argv):
+            value = raw_argv[idx + 1]
+            if value.startswith("-"):
+                normalized.append(f"--arg={value}")
+                idx += 2
+                continue
+        normalized.append(token)
+        idx += 1
+    return normalized
 
 
 def _first_positional_command(raw_argv: list[str]) -> str | None:
@@ -345,8 +631,8 @@ def _run_upstream_add(args: argparse.Namespace) -> int:
     """Handle the ``upstream add`` subcommand.
 
     Args:
-        args: Parsed CLI arguments containing the JSON snippet
-            and optional overrides.
+        args: Parsed CLI arguments for legacy snippet mode
+            or flag-based mode.
 
     Returns:
         Exit code (``0`` on success).
@@ -357,19 +643,119 @@ def _run_upstream_add(args: argparse.Namespace) -> int:
         print_add_summary,
         run_upstream_add,
     )
+    from sift_gateway.config.upstream_admin import (
+        parse_kv_pairs,
+    )
+    from sift_gateway.config.upstream_registry import (
+        bootstrap_registry_from_config,
+        load_registry_upstream_records,
+        merge_missing_registry_from_config,
+        mirror_registry_to_config,
+        upsert_registry_from_mcp_servers,
+    )
 
-    try:
-        raw = json_mod.loads(args.snippet)
-    except json_mod.JSONDecodeError as exc:
-        msg = f"invalid JSON snippet: {exc}"
-        raise ValueError(msg) from exc
+    snippet = getattr(args, "snippet", None)
+    name = getattr(args, "name", None)
 
-    if not isinstance(raw, dict):
-        msg = "snippet must be a JSON object mapping server names to configs"
+    if snippet is not None and name is not None:
+        msg = "provide either legacy snippet JSON or --name, not both"
+        raise ValueError(msg)
+    if snippet is None and name is None:
+        msg = "upstream add requires either snippet JSON or --name"
         raise ValueError(msg)
 
-    data_dir: Path | None
-    data_dir = None
+    if name is not None:
+        transport = getattr(args, "transport", None)
+        if transport is None:
+            msg = "--transport is required when using --name"
+            raise ValueError(msg)
+
+        entry: dict[str, Any] = {}
+        if transport == "stdio":
+            if not getattr(args, "stdio_command", None):
+                msg = "--command is required for stdio transport"
+                raise ValueError(msg)
+            if getattr(args, "url", None) is not None:
+                msg = "--url is only valid for http transport"
+                raise ValueError(msg)
+            entry["command"] = args.stdio_command
+            if getattr(args, "command_args", None):
+                entry["args"] = list(args.command_args)
+            env_pairs = parse_kv_pairs(args.env_pairs, option_name="--env")
+            if env_pairs:
+                entry["env"] = env_pairs
+            if getattr(args, "header_pairs", None):
+                msg = "--header is only valid for http transport"
+                raise ValueError(msg)
+        else:
+            if not getattr(args, "url", None):
+                msg = "--url is required for http transport"
+                raise ValueError(msg)
+            if getattr(args, "stdio_command", None) is not None:
+                msg = "--command is only valid for stdio transport"
+                raise ValueError(msg)
+            if getattr(args, "command_args", None):
+                msg = "--arg is only valid for stdio transport"
+                raise ValueError(msg)
+            if getattr(args, "env_pairs", None):
+                msg = "--env is only valid for stdio transport"
+                raise ValueError(msg)
+            entry["url"] = args.url
+            header_pairs = parse_kv_pairs(
+                args.header_pairs, option_name="--header"
+            )
+            if header_pairs:
+                entry["headers"] = header_pairs
+
+        if transport == "http" and getattr(args, "inherit_parent_env", False):
+            msg = "--inherit-parent-env is only valid for stdio transport"
+            raise ValueError(msg)
+
+        gateway_ext: dict[str, Any] = {}
+        if getattr(args, "inherit_parent_env", False):
+            gateway_ext["inherit_parent_env"] = True
+        if getattr(args, "external_user_id", None) is not None:
+            gateway_ext["external_user_id"] = args.external_user_id
+        if gateway_ext:
+            entry["_gateway"] = gateway_ext
+
+        raw = {name: entry}
+    else:
+        assert snippet is not None
+        invalid_snippet_flags = [
+            flag
+            for attr, flag in _UPSTREAM_ADD_FLAG_MODE_ATTRS
+            if (
+                (
+                    isinstance(getattr(args, attr, None), bool)
+                    and getattr(args, attr, None)
+                )
+                or (
+                    not isinstance(getattr(args, attr, None), bool)
+                    and getattr(args, attr, None) is not None
+                )
+            )
+        ]
+        if invalid_snippet_flags:
+            flags = ", ".join(sorted(invalid_snippet_flags))
+            msg = (
+                "legacy snippet mode cannot be combined with flag-based "
+                f"options: {flags}"
+            )
+            raise ValueError(msg)
+        try:
+            raw = json_mod.loads(snippet)
+        except json_mod.JSONDecodeError as exc:
+            msg = f"invalid JSON snippet: {exc}"
+            raise ValueError(msg) from exc
+
+        if not isinstance(raw, dict):
+            msg = (
+                "snippet must be a JSON object mapping server names to configs"
+            )
+            raise ValueError(msg)
+
+    data_dir: Path
     source_arg = getattr(args, "source", None)
     raw_data_dir = getattr(args, "data_dir", None)
 
@@ -392,13 +778,348 @@ def _run_upstream_add(args: argparse.Namespace) -> int:
         effective_data_dir = _resolve_effective_data_dir_arg(raw_data_dir)
         data_dir = Path(effective_data_dir).expanduser().resolve()
 
+    runtime_data_dir = _resolve_data_dir_from_sync_metadata(data_dir)
+    data_dir = Path(runtime_data_dir).expanduser().resolve()
+
     summary = run_upstream_add(
         raw,
         data_dir=data_dir,
         dry_run=args.dry_run,
     )
+    if not args.dry_run:
+
+        def _normalize_input_servers(
+            raw_servers: dict[str, Any],
+        ) -> dict[str, dict[str, Any]]:
+            """Normalize raw snippet input to a bare mcpServers-like map."""
+            mcp_block = raw_servers.get("mcp")
+            is_wrapped = "mcpServers" in raw_servers or (
+                isinstance(mcp_block, dict) and "servers" in mcp_block
+            )
+            if is_wrapped:
+                from sift_gateway.config.mcp_servers import extract_mcp_servers
+
+                try:
+                    extracted = extract_mcp_servers(raw_servers)
+                except ValueError:
+                    return {}
+                return {
+                    name: entry
+                    for name, entry in extracted.items()
+                    if isinstance(entry, dict)
+                }
+            return {
+                str(name): entry
+                for name, entry in raw_servers.items()
+                if isinstance(name, str) and isinstance(entry, dict)
+            }
+
+        registry_sync_failed = False
+        try:
+            bootstrap_registry_from_config(data_dir)
+            merge_missing_registry_from_config(data_dir)
+        except Exception as exc:
+            registry_sync_failed = True
+            if isinstance(exc, ValueError):
+                print(
+                    "warning: skipped full registry sync due invalid "
+                    f"mcpServers mirror: {exc}",
+                    file=sys.stderr,
+                )
+            else:
+                print(
+                    "warning: skipped full registry sync due runtime error: "
+                    f"{exc}",
+                    file=sys.stderr,
+                )
+
+        # Reconcile newly added entries against canonical registry rows.
+        # This closes stale-config cases where a prefix exists in the registry
+        # but is absent from the compatibility mirror.
+        added_names = {
+            str(name)
+            for name in summary.get("added", [])
+            if isinstance(name, str)
+        }
+        if added_names:
+            can_reconcile = True
+            if registry_sync_failed:
+                snapshot_load_error: Exception | None = None
+                try:
+                    can_reconcile = bool(
+                        load_registry_upstream_records(
+                            data_dir,
+                            include_disabled=True,
+                        )
+                    )
+                except Exception as exc:
+                    snapshot_load_error = exc
+                    can_reconcile = False
+
+                if not can_reconcile:
+                    if snapshot_load_error is not None:
+                        print(
+                            "warning: skipped registry reconciliation for "
+                            "newly-added upstream(s) because registry "
+                            "snapshot could not be loaded: "
+                            f"{snapshot_load_error}",
+                            file=sys.stderr,
+                        )
+                    else:
+                        print(
+                            "warning: skipped registry reconciliation for "
+                            "newly-added upstream(s) because registry "
+                            "bootstrap did not establish a canonical "
+                            "snapshot.",
+                            file=sys.stderr,
+                        )
+
+            if can_reconcile:
+                config_path = data_dir / "state" / "config.json"
+                raw_config: dict[str, Any] = {}
+                if config_path.exists():
+                    try:
+                        loaded = json_mod.loads(
+                            config_path.read_text(encoding="utf-8")
+                        )
+                    except (OSError, json_mod.JSONDecodeError):
+                        loaded = {}
+                    if isinstance(loaded, dict):
+                        raw_config = loaded
+
+                from sift_gateway.config.mcp_servers import extract_mcp_servers
+
+                added_servers: dict[str, dict[str, Any]] = {}
+                try:
+                    config_servers = extract_mcp_servers(raw_config)
+                except ValueError:
+                    config_servers = {}
+                else:
+                    added_servers = {
+                        name: entry
+                        for name, entry in config_servers.items()
+                        if name in added_names and isinstance(entry, dict)
+                    }
+
+                if not added_servers:
+                    source_servers = _normalize_input_servers(raw)
+                    added_servers = {
+                        name: entry
+                        for name, entry in source_servers.items()
+                        if name in added_names
+                    }
+
+                if added_servers:
+                    try:
+                        upsert_registry_from_mcp_servers(
+                            data_dir=data_dir,
+                            servers=added_servers,
+                            merge_missing=False,
+                            source_kind="snippet_add",
+                        )
+                        mirror_registry_to_config(data_dir)
+                    except Exception as exc:
+                        print(
+                            "warning: upstream add wrote config.json but "
+                            "registry reconciliation failed: "
+                            f"{exc}",
+                            file=sys.stderr,
+                        )
 
     print_add_summary(summary, dry_run=args.dry_run)
+    return 0
+
+
+def _resolve_upstream_data_dir_arg(raw_data_dir: str | None) -> Path:
+    """Resolve upstream command data directory from CLI/env/default."""
+    effective_data_dir = _resolve_effective_data_dir_arg(raw_data_dir)
+    runtime_data_dir = _resolve_data_dir_from_sync_metadata(effective_data_dir)
+    return Path(runtime_data_dir).expanduser().resolve()
+
+
+def _print_json_output(payload: Any) -> None:
+    """Print machine-readable JSON output."""
+    print(json.dumps(payload, indent=2, ensure_ascii=False))
+
+
+def _run_upstream_list(args: argparse.Namespace) -> int:
+    """Handle the ``upstream list`` subcommand."""
+    from sift_gateway.config.upstream_admin import list_upstreams
+
+    data_dir = _resolve_upstream_data_dir_arg(getattr(args, "data_dir", None))
+    rows = list_upstreams(data_dir=data_dir)
+
+    if getattr(args, "json", False):
+        _print_json_output(rows)
+        return 0
+
+    if not rows:
+        print("No upstreams configured.")
+        return 0
+
+    for row in rows:
+        status = "enabled" if row.get("enabled") else "disabled"
+        name = str(row.get("name", ""))
+        transport = str(row.get("transport", "unknown"))
+        target = row.get("command") if transport == "stdio" else row.get("url")
+        print(f"{name}: {status} ({transport})")
+        if isinstance(target, str) and target:
+            print(f"  target: {target}")
+        secret_ref = row.get("secret_ref")
+        if isinstance(secret_ref, str) and secret_ref:
+            print(f"  secret_ref: {secret_ref}")
+    return 0
+
+
+def _run_upstream_inspect(args: argparse.Namespace) -> int:
+    """Handle the ``upstream inspect`` subcommand."""
+    from sift_gateway.config.upstream_admin import inspect_upstream
+
+    data_dir = _resolve_upstream_data_dir_arg(getattr(args, "data_dir", None))
+    item = inspect_upstream(
+        server=args.server,
+        data_dir=data_dir,
+    )
+
+    if getattr(args, "json", False):
+        _print_json_output(item)
+        return 0
+
+    print(f"name: {item['name']}")
+    print(f"enabled: {item['enabled']}")
+    print(f"transport: {item['transport']}")
+    if item.get("command"):
+        print(f"command: {item['command']}")
+    if item.get("url"):
+        print(f"url: {item['url']}")
+    if item.get("args"):
+        print(f"args: {item['args']}")
+
+    secret = item.get("secret")
+    if isinstance(secret, dict):
+        if "error" in secret:
+            print(f"secret: error ({secret['error']})")
+        else:
+            print(f"secret_ref: {secret.get('ref')}")
+            print(f"secret_transport: {secret.get('transport')}")
+            print(f"secret_env_keys: {secret.get('env_keys', [])}")
+            print(f"secret_header_keys: {secret.get('header_keys', [])}")
+    return 0
+
+
+def _run_upstream_test(args: argparse.Namespace) -> int:
+    """Handle the ``upstream test`` subcommand."""
+    from sift_gateway.config.upstream_admin import probe_upstreams
+
+    data_dir = _resolve_upstream_data_dir_arg(getattr(args, "data_dir", None))
+    report = probe_upstreams(
+        server=getattr(args, "server", None),
+        all_servers=bool(getattr(args, "all", False)),
+        data_dir=data_dir,
+    )
+
+    if getattr(args, "json", False):
+        _print_json_output(report)
+        return 0 if report.get("ok") else 1
+
+    for row in report.get("results", []):
+        name = row.get("name")
+        if row.get("ok"):
+            print(f"ok {name} tool_count={row.get('tool_count', 0)}")
+            continue
+        print(
+            "fail "
+            f"{name} "
+            f"error_code={row.get('error_code', 'UNKNOWN')} "
+            f"error={row.get('error', '')}"
+        )
+    print(f"summary: {report.get('ok_count', 0)}/{report.get('total', 0)} ok")
+    return 0 if report.get("ok") else 1
+
+
+def _run_upstream_remove(args: argparse.Namespace) -> int:
+    """Handle the ``upstream remove`` subcommand."""
+    from sift_gateway.config.upstream_admin import remove_upstream
+
+    data_dir = _resolve_upstream_data_dir_arg(getattr(args, "data_dir", None))
+    result = remove_upstream(
+        server=args.server,
+        data_dir=data_dir,
+        dry_run=args.dry_run,
+    )
+
+    if getattr(args, "json", False):
+        _print_json_output(result)
+    elif args.dry_run:
+        print(f"[dry run] would remove upstream: {args.server}")
+    else:
+        print(f"Removed upstream: {args.server}")
+    return 0
+
+
+def _run_upstream_set_enabled(
+    args: argparse.Namespace,
+    *,
+    enabled: bool,
+) -> int:
+    """Handle the ``upstream enable`` and ``upstream disable`` commands."""
+    from sift_gateway.config.upstream_admin import set_upstream_enabled
+
+    data_dir = _resolve_upstream_data_dir_arg(getattr(args, "data_dir", None))
+    result = set_upstream_enabled(
+        server=args.server,
+        enabled=enabled,
+        data_dir=data_dir,
+        dry_run=args.dry_run,
+    )
+
+    if getattr(args, "json", False):
+        _print_json_output(result)
+        return 0
+
+    if args.dry_run:
+        action = "enable" if enabled else "disable"
+        print(f"[dry run] would {action} upstream: {args.server}")
+    else:
+        status = "enabled" if enabled else "disabled"
+        print(f"Upstream {args.server} {status}.")
+    return 0
+
+
+def _run_upstream_auth_set(args: argparse.Namespace) -> int:
+    """Handle the ``upstream auth set`` subcommand."""
+    from sift_gateway.config.upstream_admin import (
+        parse_kv_pairs,
+        set_upstream_auth,
+    )
+
+    data_dir = _resolve_upstream_data_dir_arg(getattr(args, "data_dir", None))
+    env_updates = parse_kv_pairs(
+        getattr(args, "env_pairs", None),
+        option_name="--env",
+    )
+    header_updates = parse_kv_pairs(
+        getattr(args, "header_pairs", None),
+        option_name="--header",
+    )
+    result = set_upstream_auth(
+        server=args.server,
+        env_updates=env_updates,
+        header_updates=header_updates,
+        data_dir=data_dir,
+        dry_run=args.dry_run,
+    )
+
+    if getattr(args, "json", False):
+        _print_json_output(result)
+        return 0
+
+    if args.dry_run:
+        print(
+            f"[dry run] would update auth material for upstream: {args.server}"
+        )
+    else:
+        print(f"Updated auth material for upstream: {args.server}")
     return 0
 
 
@@ -710,11 +1431,35 @@ def serve(argv: list[str] | None = None) -> int:
         return _run_init(args)
 
     if args.command == "upstream":
-        if getattr(args, "upstream_command", None) == "add":
+        upstream_command = getattr(args, "upstream_command", None)
+        if upstream_command == "add":
             return _run_upstream_add(args)
-        # No subcommand given — print help
+        if upstream_command == "list":
+            return _run_upstream_list(args)
+        if upstream_command == "inspect":
+            return _run_upstream_inspect(args)
+        if upstream_command == "test":
+            return _run_upstream_test(args)
+        if upstream_command == "remove":
+            return _run_upstream_remove(args)
+        if upstream_command == "enable":
+            return _run_upstream_set_enabled(args, enabled=True)
+        if upstream_command == "disable":
+            return _run_upstream_set_enabled(args, enabled=False)
+        if upstream_command == "auth":
+            if getattr(args, "auth_command", None) == "set":
+                return _run_upstream_auth_set(args)
+            print(
+                "usage: sift-gateway upstream auth {set} ...",
+                file=sys.stderr,
+            )
+            return 1
+
         print(
-            "usage: sift-gateway upstream {add} ...",
+            (
+                "usage: sift-gateway upstream "
+                "{add,list,inspect,test,remove,enable,disable,auth} ..."
+            ),
             file=sys.stderr,
         )
         return 1
