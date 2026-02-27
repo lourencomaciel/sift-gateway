@@ -112,7 +112,9 @@ def _build_upstream_next(
         next_payload = _build_command_next(artifact_id)
     else:
         next_payload = _build_params_only_next(artifact_id)
-    next_payload["params"] = dict(next_params) if isinstance(next_params, dict) else {}
+    next_payload["params"] = (
+        dict(next_params) if isinstance(next_params, dict) else {}
+    )
     return next_payload
 
 

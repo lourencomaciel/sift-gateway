@@ -792,7 +792,9 @@ def _dispatch_command(
     raise ValueError(msg)
 
 
-def _sanitize_cli_payload(runtime: Any, payload: dict[str, Any]) -> dict[str, Any]:
+def _sanitize_cli_payload(
+    runtime: Any, payload: dict[str, Any]
+) -> dict[str, Any]:
     """Apply outbound redaction when runtime exposes the gateway sanitizer."""
     gateway = getattr(runtime, "gateway", None)
     sanitize = getattr(gateway, "_sanitize_tool_result", None)

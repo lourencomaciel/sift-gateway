@@ -500,7 +500,7 @@ class TestCaptureIdentityMigration:
 
 
 class TestUpstreamRegistryMigration:
-    """008_upstream_registry.sql creates upstream registry tables."""
+    """008_upstream_registry.sql creates the upstream registry table."""
 
     @pytest.fixture(autouse=True)
     def _load_sql(self) -> None:
@@ -509,33 +509,14 @@ class TestUpstreamRegistryMigration:
     def test_creates_upstream_registry_table(self) -> None:
         assert "create table if not exists upstream_registry" in self.sql
 
-    def test_creates_runtime_state_table(self) -> None:
-        assert "create table if not exists upstream_runtime_state" in self.sql
-
-    def test_creates_admin_events_table(self) -> None:
-        assert "create table if not exists upstream_admin_events" in self.sql
-
     def test_creates_registry_enabled_index(self) -> None:
         assert "idx_upstream_registry_enabled" in self.sql
 
-    def test_creates_admin_events_created_index(self) -> None:
-        assert "idx_upstream_admin_events_created" in self.sql
+    def test_includes_auto_paginate_max_pages(self) -> None:
+        assert "auto_paginate_max_pages" in self.sql
 
+    def test_includes_auto_paginate_max_records(self) -> None:
+        assert "auto_paginate_max_records" in self.sql
 
-class TestUpstreamRegistryAutoPaginationMigration:
-    """009_upstream_registry_auto_pagination.sql adds registry columns."""
-
-    @pytest.fixture(autouse=True)
-    def _load_sql(self) -> None:
-        self.sql = _normalize(
-            _read_sql("009_upstream_registry_auto_pagination.sql")
-        ).lower()
-
-    def test_adds_auto_paginate_max_pages_column(self) -> None:
-        assert "add column auto_paginate_max_pages" in self.sql
-
-    def test_adds_auto_paginate_max_records_column(self) -> None:
-        assert "add column auto_paginate_max_records" in self.sql
-
-    def test_adds_auto_paginate_timeout_seconds_column(self) -> None:
-        assert "add column auto_paginate_timeout_seconds" in self.sql
+    def test_includes_auto_paginate_timeout_seconds(self) -> None:
+        assert "auto_paginate_timeout_seconds" in self.sql

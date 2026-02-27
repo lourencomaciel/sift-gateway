@@ -56,6 +56,7 @@ ROOT_COLUMNS = [
     "sample_indices",
 ]
 
+
 @dataclass(frozen=True)
 class _GetQueryState:
     """Normalized request state for get-mode queries."""

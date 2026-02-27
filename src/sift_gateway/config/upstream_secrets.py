@@ -40,7 +40,7 @@ def secrets_dir(data_dir: str | Path) -> Path:
     return path
 
 
-def _validate_prefix(prefix: str) -> None:
+def validate_prefix(prefix: str) -> None:
     r"""Reject prefixes containing path separators or traversal.
 
     Args:
@@ -87,7 +87,7 @@ def write_secret(
             ``..``, or if *transport* is not a recognised
             value.
     """
-    _validate_prefix(prefix)
+    validate_prefix(prefix)
     if transport not in _VALID_TRANSPORTS:
         msg = (
             f"Invalid transport {transport!r}: "
@@ -141,7 +141,7 @@ def read_secret(data_dir: str | Path, prefix: str) -> dict[str, Any]:
         ValueError: If the file contains invalid JSON or
             is missing required keys.
     """
-    _validate_prefix(prefix)
+    validate_prefix(prefix)
     sdir = secrets_dir(data_dir)
     file_path = sdir / f"{prefix}.json"
     if not file_path.exists():

@@ -144,7 +144,9 @@ def test_remove_upstream_dry_run_has_no_side_effects(tmp_path: Path) -> None:
     assert not (tmp_path / "state" / "upstream_secrets" / "gh.json").exists()
 
 
-def test_remove_upstream_dry_run_rejects_invalid_command(tmp_path: Path) -> None:
+def test_remove_upstream_dry_run_rejects_invalid_command(
+    tmp_path: Path,
+) -> None:
     _write_gateway_config(
         tmp_path,
         {"mcpServers": {"gh": {"command": ""}}},

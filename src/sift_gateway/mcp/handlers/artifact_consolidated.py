@@ -120,4 +120,3 @@ async def handle_artifact(
     if action == "next_page":
         return await _handle_next_page(ctx, arguments)
     return await _handle_query(ctx, arguments)
-

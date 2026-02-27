@@ -1,4 +1,4 @@
--- 008_upstream_registry.sql: canonical upstream registry and admin state.
+-- 008_upstream_registry.sql: canonical upstream registry.
 
 CREATE TABLE IF NOT EXISTS upstream_registry (
     workspace_id TEXT NOT NULL,
@@ -8,6 +8,16 @@ CREATE TABLE IF NOT EXISTS upstream_registry (
     args_json TEXT NOT NULL DEFAULT '[]',
     url TEXT NULL,
     pagination_json TEXT NULL,
+    auto_paginate_max_pages INTEGER NULL CHECK (
+        auto_paginate_max_pages IS NULL OR auto_paginate_max_pages >= 0
+    ),
+    auto_paginate_max_records INTEGER NULL CHECK (
+        auto_paginate_max_records IS NULL OR auto_paginate_max_records >= 0
+    ),
+    auto_paginate_timeout_seconds REAL NULL CHECK (
+        auto_paginate_timeout_seconds IS NULL
+        OR auto_paginate_timeout_seconds > 0
+    ),
     passthrough_allowed INTEGER NOT NULL DEFAULT 1 CHECK (
         passthrough_allowed IN (0, 1)
     ),
@@ -41,36 +51,3 @@ CREATE TABLE IF NOT EXISTS upstream_registry (
 
 CREATE INDEX IF NOT EXISTS idx_upstream_registry_enabled
     ON upstream_registry (workspace_id, enabled, prefix);
-
-CREATE TABLE IF NOT EXISTS upstream_runtime_state (
-    workspace_id TEXT NOT NULL,
-    prefix TEXT NOT NULL,
-    last_probe_at TEXT NULL,
-    last_probe_ok INTEGER NULL CHECK (last_probe_ok IN (0, 1)),
-    last_probe_error_code TEXT NULL,
-    last_probe_error_message TEXT NULL,
-    last_probe_tool_count INTEGER NULL CHECK (
-        last_probe_tool_count IS NULL OR last_probe_tool_count >= 0
-    ),
-    last_success_at TEXT NULL,
-    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-    PRIMARY KEY (workspace_id, prefix),
-    FOREIGN KEY (workspace_id, prefix)
-        REFERENCES upstream_registry (workspace_id, prefix)
-        ON DELETE CASCADE
-);
-
-CREATE TABLE IF NOT EXISTS upstream_admin_events (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    workspace_id TEXT NOT NULL,
-    prefix TEXT NULL,
-    action TEXT NOT NULL,
-    details_json TEXT NULL,
-    success INTEGER NOT NULL CHECK (success IN (0, 1)),
-    error_code TEXT NULL,
-    error_message TEXT NULL,
-    created_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
-
-CREATE INDEX IF NOT EXISTS idx_upstream_admin_events_created
-    ON upstream_admin_events (workspace_id, created_at DESC, id DESC);

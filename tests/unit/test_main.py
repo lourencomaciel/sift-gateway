@@ -1602,7 +1602,7 @@ def test_run_upstream_add_resolves_sync_redirect_data_dir(
         seen["run_data_dir"] = data_dir
         seen["run_dry_run"] = dry_run
         seen["raw"] = raw
-        return {"added": [], "skipped": [], "config_path": "ignored"}
+        return {"added": ["github"], "skipped": [], "config_path": "ignored"}
 
     def _fake_bootstrap_registry_from_config(data_dir: Path) -> int:
         seen["bootstrap_data_dir"] = data_dir
@@ -1621,12 +1621,20 @@ def test_run_upstream_add_resolves_sync_redirect_data_dir(
         lambda *_args, **_kwargs: None,
     )
     monkeypatch.setattr(
-        "sift_gateway.config.upstream_registry.bootstrap_registry_from_config",
+        "sift_gateway.config.upstream_admin.bootstrap_registry_from_config",
         _fake_bootstrap_registry_from_config,
     )
     monkeypatch.setattr(
-        "sift_gateway.config.upstream_registry.merge_missing_registry_from_config",
+        "sift_gateway.config.upstream_admin.merge_missing_registry_from_config",
         _fake_merge_missing_registry_from_config,
+    )
+    monkeypatch.setattr(
+        "sift_gateway.config.upstream_admin.upsert_registry_from_mcp_servers",
+        lambda **_kw: 0,
+    )
+    monkeypatch.setattr(
+        "sift_gateway.config.upstream_admin.mirror_registry_to_config",
+        lambda _dd: None,
     )
 
     args = argparse.Namespace(
@@ -1791,11 +1799,11 @@ def test_run_upstream_add_registry_sync_error_is_non_fatal(
         lambda *_args, **_kwargs: None,
     )
     monkeypatch.setattr(
-        "sift_gateway.config.upstream_registry.bootstrap_registry_from_config",
+        "sift_gateway.config.upstream_admin.bootstrap_registry_from_config",
         lambda _data_dir: (_ for _ in ()).throw(OSError("db locked")),
     )
     monkeypatch.setattr(
-        "sift_gateway.config.upstream_registry.load_registry_upstream_records",
+        "sift_gateway.config.upstream_admin.load_registry_upstream_records",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("db locked")),
     )
 
@@ -1859,27 +1867,27 @@ def test_run_upstream_add_reconcile_falls_back_to_raw_snippet(
         lambda *_args, **_kwargs: None,
     )
     monkeypatch.setattr(
-        "sift_gateway.config.upstream_registry.bootstrap_registry_from_config",
+        "sift_gateway.config.upstream_admin.bootstrap_registry_from_config",
         lambda _data_dir: 0,
     )
     monkeypatch.setattr(
-        "sift_gateway.config.upstream_registry.merge_missing_registry_from_config",
+        "sift_gateway.config.upstream_admin.merge_missing_registry_from_config",
         lambda _data_dir: 0,
     )
     monkeypatch.setattr(
-        "sift_gateway.config.upstream_registry.load_registry_upstream_records",
+        "sift_gateway.config.upstream_admin.load_registry_upstream_records",
         lambda *_args, **_kwargs: [{"prefix": "existing"}],
     )
     monkeypatch.setattr(
-        "sift_gateway.config.upstream_registry.upsert_registry_from_mcp_servers",
+        "sift_gateway.config.upstream_admin.upsert_registry_from_mcp_servers",
         _fake_upsert_registry_from_mcp_servers,
     )
     monkeypatch.setattr(
-        "sift_gateway.config.upstream_registry.mirror_registry_to_config",
+        "sift_gateway.config.upstream_admin.mirror_registry_to_config",
         lambda _data_dir: tmp_path / "state" / "config.json",
     )
     monkeypatch.setattr(
-        "sift_gateway.config.mcp_servers.extract_mcp_servers",
+        "sift_gateway.config.upstream_admin.extract_mcp_servers",
         _always_raise_extract,
     )
 
@@ -1915,15 +1923,15 @@ def test_run_upstream_add_registry_reconcile_error_is_non_fatal(
         lambda *_args, **_kwargs: None,
     )
     monkeypatch.setattr(
-        "sift_gateway.config.upstream_registry.bootstrap_registry_from_config",
+        "sift_gateway.config.upstream_admin.bootstrap_registry_from_config",
         lambda _data_dir: 0,
     )
     monkeypatch.setattr(
-        "sift_gateway.config.upstream_registry.merge_missing_registry_from_config",
+        "sift_gateway.config.upstream_admin.merge_missing_registry_from_config",
         lambda _data_dir: 0,
     )
     monkeypatch.setattr(
-        "sift_gateway.config.upstream_registry.upsert_registry_from_mcp_servers",
+        "sift_gateway.config.upstream_admin.upsert_registry_from_mcp_servers",
         lambda **_kwargs: (_ for _ in ()).throw(OSError("db write failed")),
     )
 

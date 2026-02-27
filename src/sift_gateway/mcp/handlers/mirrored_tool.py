@@ -966,7 +966,9 @@ def _sanitize_envelope_payload(
     try:
         return normalize_envelope(
             upstream_instance_id=str(
-                payload.get("upstream_instance_id", envelope.upstream_instance_id)
+                payload.get(
+                    "upstream_instance_id", envelope.upstream_instance_id
+                )
             ),
             upstream_prefix=str(
                 payload.get("upstream_prefix", envelope.upstream_prefix)

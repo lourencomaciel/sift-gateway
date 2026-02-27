@@ -17,10 +17,13 @@ from typing import Any
 from sift_gateway.config.mcp_servers import (
     extract_mcp_servers,
 )
-from sift_gateway.config.shared import gateway_config_path
+from sift_gateway.config.shared import (
+    gateway_config_path,
+    load_gateway_config_dict,
+)
 from sift_gateway.config.upstream_registry import (
-    _entry_to_registry_payload,
     bootstrap_registry_from_config,
+    entry_to_registry_payload,
     get_registry_upstream_record,
     load_registry_upstream_records,
     merge_missing_registry_from_config,
@@ -28,10 +31,11 @@ from sift_gateway.config.upstream_registry import (
     remove_registry_upstream,
     set_registry_upstream_enabled,
     set_registry_upstream_secret_ref,
+    upsert_registry_from_mcp_servers,
 )
 from sift_gateway.config.upstream_secrets import (
-    _validate_prefix,
     read_secret,
+    validate_prefix,
     write_secret,
 )
 from sift_gateway.constants import DEFAULT_DATA_DIR
@@ -111,7 +115,7 @@ def _record_from_config_server(
         return None
 
     # Reuse the same strict validator as registry sync to avoid dry-run drift.
-    payload = _entry_to_registry_payload(
+    payload = entry_to_registry_payload(
         data_dir=data_dir,
         prefix=server,
         entry=entry,
@@ -125,7 +129,9 @@ def _record_from_config_server(
         raw_args = json.loads(payload["args_json"])
     except (TypeError, json.JSONDecodeError):
         raw_args = []
-    args = [str(item) for item in raw_args] if isinstance(raw_args, list) else []
+    args = (
+        [str(item) for item in raw_args] if isinstance(raw_args, list) else []
+    )
 
     return {
         "prefix": server,
@@ -177,7 +183,7 @@ def _read_secret_from_file(
 ) -> dict[str, Any] | None:
     """Read an existing secret file without creating directories."""
     prefix = ref.removesuffix(".json")
-    _validate_prefix(prefix)
+    validate_prefix(prefix)
     path = data_dir / "state" / "upstream_secrets" / f"{prefix}.json"
     if not path.is_file():
         return None
@@ -197,7 +203,7 @@ def _delete_secret_file(
     if not isinstance(ref, str) or not ref:
         return
     prefix = ref.removesuffix(".json")
-    _validate_prefix(prefix)
+    validate_prefix(prefix)
     path = data_dir / "state" / "upstream_secrets" / f"{prefix}.json"
     with contextlib.suppress(FileNotFoundError):
         path.unlink()
@@ -225,10 +231,18 @@ def _secret_ref_is_still_referenced(
 def list_upstreams(
     *,
     data_dir: Path | None = None,
+    sync: bool = True,
 ) -> list[dict[str, Any]]:
-    """List configured upstream entries from registry."""
+    """List configured upstream entries from registry.
+
+    Args:
+        data_dir: Override data directory.
+        sync: When True, bootstrap/merge registry from config
+            before reading. Set False for read-only access.
+    """
     resolved_data_dir = resolve_upstream_data_dir(data_dir)
-    _sync_registry_from_config(resolved_data_dir)
+    if sync:
+        _sync_registry_from_config(resolved_data_dir)
     records = load_registry_upstream_records(
         resolved_data_dir,
         include_disabled=True,
@@ -258,10 +272,19 @@ def inspect_upstream(
     *,
     server: str,
     data_dir: Path | None = None,
+    sync: bool = True,
 ) -> dict[str, Any]:
-    """Return detailed metadata for one upstream entry from registry."""
+    """Return detailed metadata for one upstream entry from registry.
+
+    Args:
+        server: Upstream prefix to inspect.
+        data_dir: Override data directory.
+        sync: When True, bootstrap/merge registry from config
+            before reading. Set False for read-only access.
+    """
     resolved_data_dir = resolve_upstream_data_dir(data_dir)
-    _sync_registry_from_config(resolved_data_dir)
+    if sync:
+        _sync_registry_from_config(resolved_data_dir)
     record = get_registry_upstream_record(
         data_dir=resolved_data_dir,
         prefix=server,
@@ -461,7 +484,7 @@ def set_upstream_auth(
         target_ref = secret_ref.removesuffix(".json")
     else:
         target_ref = server
-    _validate_prefix(target_ref)
+    validate_prefix(target_ref)
 
     merged_env: dict[str, str] = {}
     merged_headers: dict[str, str] = {}
@@ -520,6 +543,134 @@ def set_upstream_auth(
         "config_path": str(config_path),
         "dry_run": dry_run,
     }
+
+
+def _normalize_input_servers(
+    raw_servers: dict[str, Any],
+) -> dict[str, dict[str, Any]]:
+    """Normalize raw snippet input to a bare mcpServers-like map."""
+    mcp_block = raw_servers.get("mcp")
+    is_wrapped = "mcpServers" in raw_servers or (
+        isinstance(mcp_block, dict) and "servers" in mcp_block
+    )
+    if is_wrapped:
+        try:
+            extracted = extract_mcp_servers(raw_servers)
+        except ValueError:
+            return {}
+        return {
+            name: entry
+            for name, entry in extracted.items()
+            if isinstance(entry, dict)
+        }
+    return {
+        str(name): entry
+        for name, entry in raw_servers.items()
+        if isinstance(name, str) and isinstance(entry, dict)
+    }
+
+
+def reconcile_after_add(
+    *,
+    data_dir: Path,
+    raw_input: dict[str, Any],
+    added_names: set[str],
+    warnings: list[str],
+) -> None:
+    """Reconcile newly-added upstreams with the canonical registry.
+
+    Args:
+        data_dir: Resolved data directory.
+        raw_input: Original raw snippet/flag input dict.
+        added_names: Set of upstream prefixes that were added.
+        warnings: Mutable list that receives warning messages.
+    """
+    if not added_names:
+        return
+
+    registry_sync_failed = False
+    try:
+        bootstrap_registry_from_config(data_dir)
+        merge_missing_registry_from_config(data_dir)
+    except Exception as exc:
+        registry_sync_failed = True
+        if isinstance(exc, ValueError):
+            warnings.append(
+                "skipped full registry sync due to invalid "
+                f"mcpServers mirror: {exc}"
+            )
+        else:
+            warnings.append(
+                f"skipped full registry sync due to runtime error: {exc}"
+            )
+
+    can_reconcile = True
+    if registry_sync_failed:
+        load_warned = False
+        try:
+            can_reconcile = bool(
+                load_registry_upstream_records(
+                    data_dir,
+                    include_disabled=True,
+                )
+            )
+        except Exception as exc:
+            can_reconcile = False
+            load_warned = True
+            warnings.append(
+                "skipped registry reconciliation for "
+                "newly-added upstream(s) because registry "
+                f"snapshot could not be loaded: {exc}"
+            )
+
+        if not can_reconcile and not load_warned:
+            warnings.append(
+                "skipped registry reconciliation for "
+                "newly-added upstream(s) because registry "
+                "bootstrap did not establish a canonical "
+                "snapshot."
+            )
+
+    if not can_reconcile:
+        return
+
+    config_path = gateway_config_path(data_dir)
+    raw_config = load_gateway_config_dict(config_path)
+
+    added_servers: dict[str, dict[str, Any]] = {}
+    try:
+        config_servers = extract_mcp_servers(raw_config)
+    except ValueError:
+        config_servers = {}
+    else:
+        added_servers = {
+            name: entry
+            for name, entry in config_servers.items()
+            if name in added_names and isinstance(entry, dict)
+        }
+
+    if not added_servers:
+        source_servers = _normalize_input_servers(raw_input)
+        added_servers = {
+            name: entry
+            for name, entry in source_servers.items()
+            if name in added_names
+        }
+
+    if added_servers:
+        try:
+            upsert_registry_from_mcp_servers(
+                data_dir=data_dir,
+                servers=added_servers,
+                merge_missing=False,
+                source_kind="snippet_add",
+            )
+            mirror_registry_to_config(data_dir)
+        except Exception as exc:
+            warnings.append(
+                "upstream add wrote config.json but "
+                f"registry reconciliation failed: {exc}"
+            )
 
 
 async def _probe_upstream_configs(

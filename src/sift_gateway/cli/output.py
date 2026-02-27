@@ -51,7 +51,9 @@ def emit_human_code(payload: dict[str, Any]) -> None:
             bytes_out = stats.get("bytes_out")
             if isinstance(bytes_out, int):
                 write_line(f"bytes:    {bytes_out}")
-    write_line(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
+    write_line(
+        json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True)
+    )
 
 
 def run_payload_metadata(payload: dict[str, Any]) -> dict[str, Any]:
@@ -209,4 +211,3 @@ def strip_run_model_noise_fields(payload: dict[str, Any]) -> dict[str, Any]:
     for key in keys_to_drop:
         sanitized.pop(key, None)
     return sanitized
-
