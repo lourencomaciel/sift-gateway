@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 from typing import Any
 
 from sift_gateway.config.mcp_servers import infer_transport
 from sift_gateway.config.upstream_secrets import (
     validate_prefix,
-    write_secret,
 )
 from sift_gateway.constants import WORKSPACE_ID
 
@@ -260,7 +260,7 @@ def _gateway_optional_float_field(
         msg = f"server '{prefix}' _gateway.{field} must be a number"
         raise ValueError(msg)
     value = float(raw)
-    if value <= 0:
+    if not (value > 0) or math.isnan(value):
         msg = f"server '{prefix}' _gateway.{field} must be > 0"
         raise ValueError(msg)
     return value
@@ -314,8 +314,7 @@ def entry_to_registry_payload(
             dict[str, str] | None,
             dict[str, str] | None,
         ]
-    ]
-    | None = None,
+    ],
 ) -> dict[str, Any]:
     """Convert one mcpServers entry to registry row payload."""
     validate_prefix(prefix)
@@ -432,7 +431,7 @@ def entry_to_registry_payload(
         validate_prefix(secret_ref)
         secret_env = env if transport == "stdio" and env else None
         secret_headers = headers if transport == "http" and headers else None
-        if (secret_env or secret_headers) and pending_secret_writes is not None:
+        if secret_env or secret_headers:
             pending_secret_writes.append(
                 (
                     secret_ref,
@@ -440,14 +439,6 @@ def entry_to_registry_payload(
                     secret_env,
                     secret_headers,
                 )
-            )
-        elif secret_env or secret_headers:
-            write_secret(
-                data_dir,
-                secret_ref,
-                transport=transport,
-                env=secret_env,
-                headers=secret_headers,
             )
 
     return {

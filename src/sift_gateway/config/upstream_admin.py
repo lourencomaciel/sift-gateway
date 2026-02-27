@@ -477,14 +477,14 @@ def set_upstream_auth(
             )
 
     if isinstance(secret_data, dict):
-        if isinstance(secret_data.get("env"), dict):
+        if transport == "stdio" and isinstance(secret_data.get("env"), dict):
             merged_env.update(
                 {
                     str(k): str(v)
                     for k, v in (secret_data.get("env") or {}).items()
                 }
             )
-        if isinstance(secret_data.get("headers"), dict):
+        if transport == "http" and isinstance(secret_data.get("headers"), dict):
             merged_headers.update(
                 {
                     str(k): str(v)

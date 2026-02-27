@@ -156,10 +156,15 @@ def _write_secrets_and_commit(
     except Exception:
         conn.rollback()
         if snapshots is not None:
-            with contextlib.suppress(Exception):
+            try:
                 _restore_secret_snapshots(
                     data_dir=data_dir,
                     snapshots=snapshots,
+                )
+            except Exception:
+                _logger.warning(
+                    "failed to restore secret file snapshots after rollback",
+                    exc_info=True,
                 )
         raise
 
