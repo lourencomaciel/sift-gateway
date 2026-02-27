@@ -16,6 +16,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from enum import StrEnum
 import json
+import logging
 import os
 from pathlib import Path
 from typing import Literal, cast
@@ -35,6 +36,8 @@ from sift_gateway.constants import (
     DEFAULT_DATA_DIR,
     STATE_SUBDIR,
 )
+
+_logger = logging.getLogger(__name__)
 
 _CGROUP_MEMORY_LIMIT_SENTINEL_BYTES = 1 << 60
 _IN_MEMORY_MAPPING_BUDGET_NUMERATOR = 1
@@ -1253,9 +1256,17 @@ def _merge_secret_ref_overrides(
         secret_resolution_failed = False
         try:
             loaded_secret = resolve_secret_ref(data_dir, secret_ref)
+        except (FileNotFoundError, json.JSONDecodeError):
+            loaded_secret = None
+            secret_resolution_failed = True
         except Exception:
             loaded_secret = None
             secret_resolution_failed = True
+            _logger.warning(
+                "failed to resolve secret_ref %r: unexpected error",
+                secret_ref,
+                exc_info=True,
+            )
         if isinstance(loaded_secret, dict):
             secret_data = loaded_secret
         elif secret_resolution_failed:

@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import logging
 import os
 from pathlib import Path
 from typing import Any
@@ -41,6 +42,8 @@ from sift_gateway.config.upstream_secrets import (
 from sift_gateway.constants import DEFAULT_DATA_DIR
 from sift_gateway.mcp.upstream import discover_tools
 from sift_gateway.mcp.upstream_errors import classify_upstream_exception
+
+_logger = logging.getLogger(__name__)
 
 
 def parse_kv_pairs(
@@ -495,8 +498,16 @@ def set_upstream_auth(
             ref=target_ref,
         )
     else:
-        with contextlib.suppress(Exception):
+        try:
             secret_data = read_secret(resolved_data_dir, target_ref)
+        except (FileNotFoundError, json.JSONDecodeError):
+            pass
+        except Exception:
+            _logger.warning(
+                "failed to read existing secret %r for merge",
+                target_ref,
+                exc_info=True,
+            )
 
     if isinstance(secret_data, dict):
         if isinstance(secret_data.get("env"), dict):

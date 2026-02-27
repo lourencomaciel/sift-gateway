@@ -1,7 +1,7 @@
-# Upstream Registration UX and Registry Design (Draft)
+# Upstream Registration UX and Registry Design
 
-This document proposes a simpler upstream registration
-experience for Sift while preserving Sift's core guarantees
+This document describes the upstream registration experience
+for Sift while preserving Sift's core guarantees
 (artifact persistence, redaction, pagination contract, deterministic lineage).
 
 ## 1. Goals
@@ -18,7 +18,7 @@ experience for Sift while preserving Sift's core guarantees
 2. No change to response-mode logic (`full` vs `schema_ref`).
 3. No requirement to expose OAuth in phase 1.
 
-## 3. Proposed CLI Surface
+## 3. CLI Surface
 
 `sift-gateway upstream` becomes a complete admin tree.
 
@@ -89,7 +89,7 @@ Compatibility behavior:
 
 ## 4. SQLite Schema (Canonical Registry)
 
-Add migration `008_upstream_registry.sql`.
+Migration `008_upstream_registry.sql` creates the single canonical table.
 
 ```sql
 CREATE TABLE IF NOT EXISTS upstream_registry (
@@ -100,60 +100,49 @@ CREATE TABLE IF NOT EXISTS upstream_registry (
     args_json TEXT NOT NULL DEFAULT '[]',
     url TEXT NULL,
     pagination_json TEXT NULL,
-    passthrough_allowed INTEGER NOT NULL DEFAULT 1 CHECK (passthrough_allowed IN (0, 1)),
+    auto_paginate_max_pages INTEGER NULL CHECK (
+        auto_paginate_max_pages IS NULL OR auto_paginate_max_pages >= 0
+    ),
+    auto_paginate_max_records INTEGER NULL CHECK (
+        auto_paginate_max_records IS NULL OR auto_paginate_max_records >= 0
+    ),
+    auto_paginate_timeout_seconds REAL NULL CHECK (
+        auto_paginate_timeout_seconds IS NULL
+        OR auto_paginate_timeout_seconds > 0
+    ),
+    passthrough_allowed INTEGER NOT NULL DEFAULT 1 CHECK (
+        passthrough_allowed IN (0, 1)
+    ),
     semantic_salt_env_keys_json TEXT NOT NULL DEFAULT '[]',
     semantic_salt_headers_json TEXT NOT NULL DEFAULT '[]',
-    inherit_parent_env INTEGER NOT NULL DEFAULT 0 CHECK (inherit_parent_env IN (0, 1)),
+    inherit_parent_env INTEGER NOT NULL DEFAULT 0 CHECK (
+        inherit_parent_env IN (0, 1)
+    ),
     external_user_id TEXT NULL,
     secret_ref TEXT NULL,
     enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
-    source_kind TEXT NOT NULL DEFAULT 'manual' CHECK (source_kind IN ('manual', 'init_sync', 'snippet_add')),
+    source_kind TEXT NOT NULL DEFAULT 'manual' CHECK (
+        source_kind IN ('manual', 'init_sync', 'snippet_add')
+    ),
     source_ref TEXT NULL,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now')),
     PRIMARY KEY (workspace_id, prefix),
     CHECK (
-        (transport = 'stdio' AND command IS NOT NULL AND command <> '' AND url IS NULL)
+        (transport = 'stdio'
+         AND command IS NOT NULL
+         AND command <> ''
+         AND url IS NULL)
         OR
-        (transport = 'http' AND url IS NOT NULL AND url <> '' AND command IS NULL)
+        (transport = 'http'
+         AND url IS NOT NULL
+         AND url <> ''
+         AND command IS NULL)
     )
 );
 
 CREATE INDEX IF NOT EXISTS idx_upstream_registry_enabled
     ON upstream_registry (workspace_id, enabled, prefix);
-
-CREATE TABLE IF NOT EXISTS upstream_runtime_state (
-    workspace_id TEXT NOT NULL,
-    prefix TEXT NOT NULL,
-    last_probe_at TEXT NULL,
-    last_probe_ok INTEGER NULL CHECK (last_probe_ok IN (0, 1)),
-    last_probe_error_code TEXT NULL,
-    last_probe_error_message TEXT NULL,
-    last_probe_tool_count INTEGER NULL CHECK (
-        last_probe_tool_count IS NULL OR last_probe_tool_count >= 0
-    ),
-    last_success_at TEXT NULL,
-    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-    PRIMARY KEY (workspace_id, prefix),
-    FOREIGN KEY (workspace_id, prefix)
-        REFERENCES upstream_registry (workspace_id, prefix)
-        ON DELETE CASCADE
-);
-
-CREATE TABLE IF NOT EXISTS upstream_admin_events (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    workspace_id TEXT NOT NULL,
-    prefix TEXT NULL,
-    action TEXT NOT NULL,
-    details_json TEXT NULL,
-    success INTEGER NOT NULL CHECK (success IN (0, 1)),
-    error_code TEXT NULL,
-    error_message TEXT NULL,
-    created_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
-
-CREATE INDEX IF NOT EXISTS idx_upstream_admin_events_created
-    ON upstream_admin_events (workspace_id, created_at DESC, id DESC);
 ```
 
 Notes:
@@ -161,6 +150,8 @@ Notes:
 1. Secret values stay in `state/upstream_secrets/<prefix>.json`.
 2. Registry stores only `secret_ref`.
 3. `workspace_id` remains `local` for current single-tenant model.
+4. `upstream_runtime_state` and `upstream_admin_events` tables from
+   the original design are deferred to a future phase.
 
 ## 5. Config Compatibility Model
 
@@ -177,7 +168,6 @@ Write strategy for mutating commands:
 2. Upsert registry rows in SQLite transaction.
 3. Externalize secrets and update `secret_ref` file when needed.
 4. Mirror registry snapshot back to `state/config.json`.
-5. Record admin event row.
 
 ## 6. Runtime Integration
 
@@ -189,29 +179,25 @@ Write strategy for mutating commands:
 `gateway.status` should include:
 
 1. Registry source (`registry` or `config_fallback`).
-2. Last probe fields from `upstream_runtime_state`.
-3. Existing runtime probe fields remain unchanged.
+2. Existing runtime probe fields remain unchanged.
 
 ## 7. Rollout Plan
 
-## Phase 1 (UX only, low risk)
+## Phase 1+2 (implemented)
 
-1. Add new CLI commands (`list`, `inspect`, `test`, flag-based `add`, `remove`).
-2. Keep current config-file persistence path.
-3. No SQLite registry writes yet.
+1. CLI commands: `list`, `inspect`, `test`, flag-based `add`, `remove`,
+   `enable`, `disable`, `auth set`.
+2. Migration `008_upstream_registry.sql` with single `upstream_registry`
+   table.
+3. Registry repository, bootstrap import, and config mirror writes.
+4. Runtime upstream resolution is registry-first with config fallback.
 
-## Phase 2 (SQLite registry canonical)
+## Phase 3 (future enhancements)
 
-1. Add migration `008_upstream_registry.sql`.
-2. Add registry repository and bootstrap import.
-3. Switch runtime upstream resolution to registry-first.
-4. Keep config mirror writes for backward compatibility.
-
-## Phase 3 (optional enhancements)
-
-1. OAuth helper commands for HTTP upstreams (`upstream login`).
-2. Alias/script generator (`upstream script --install`).
-3. Interactive add mode (`upstream add --interactive`).
+1. `upstream_runtime_state` and `upstream_admin_events` tables.
+2. OAuth helper commands for HTTP upstreams (`upstream login`).
+3. Alias/script generator (`upstream script --install`).
+4. Interactive add mode (`upstream add --interactive`).
 
 ## 8. Acceptance Criteria
 

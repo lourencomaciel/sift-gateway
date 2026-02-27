@@ -463,13 +463,17 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(normalized_argv)
 
 
+_DASH_VALUE_FLAGS = frozenset({"--arg", "--env", "--header"})
+
+
 def _normalize_upstream_add_argv(raw_argv: list[str]) -> list[str]:
-    """Normalize upstream add argv tokens for repeatable ``--arg`` values.
+    """Normalize upstream add argv to handle dash-prefixed values.
 
     ``argparse`` treats tokens that start with ``-`` as potential flags, so
-    values such as ``-y`` or ``--dry-run`` may fail when provided as
-    ``--arg <value>``. Rewrite dash-prefixed values to ``--arg=<value>``
-    specifically for the ``upstream add`` command.
+    values such as ``-y`` or ``-DTOKEN=value`` may fail when provided as
+    ``--arg <value>``, ``--env <value>``, or ``--header <value>``.  Rewrite
+    dash-prefixed values to ``--flag=<value>`` specifically for the
+    ``upstream add`` command.
     """
     if "upstream" not in raw_argv:
         return raw_argv
@@ -489,10 +493,10 @@ def _normalize_upstream_add_argv(raw_argv: list[str]) -> list[str]:
         if token == "--":
             normalized.extend(raw_argv[idx:])
             break
-        if token == "--arg" and idx + 1 < len(raw_argv):
+        if token in _DASH_VALUE_FLAGS and idx + 1 < len(raw_argv):
             value = raw_argv[idx + 1]
             if value.startswith("-"):
-                normalized.append(f"--arg={value}")
+                normalized.append(f"{token}={value}")
                 idx += 2
                 continue
         normalized.append(token)

@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from sift_gateway.config.mcp_servers import _infer_transport
+from sift_gateway.config.mcp_servers import infer_transport
 from sift_gateway.config.upstream_secrets import (
     validate_prefix,
     write_secret,
@@ -109,6 +109,40 @@ def registry_rows_to_records(
     return records
 
 
+def _extract_gateway_fields(
+    record: dict[str, Any],
+) -> dict[str, Any]:
+    """Extract gateway extension fields from a registry record."""
+    fields: dict[str, Any] = {}
+    if record["pagination"] is not None:
+        fields["pagination"] = record["pagination"]
+    if record["auto_paginate_max_pages"] is not None:
+        fields["auto_paginate_max_pages"] = record["auto_paginate_max_pages"]
+    if record["auto_paginate_max_records"] is not None:
+        fields["auto_paginate_max_records"] = record[
+            "auto_paginate_max_records"
+        ]
+    if record["auto_paginate_timeout_seconds"] is not None:
+        fields["auto_paginate_timeout_seconds"] = record[
+            "auto_paginate_timeout_seconds"
+        ]
+    if not record["passthrough_allowed"]:
+        fields["passthrough_allowed"] = False
+    if record["semantic_salt_env_keys"]:
+        fields["semantic_salt_env_keys"] = list(
+            record["semantic_salt_env_keys"]
+        )
+    if record["semantic_salt_headers"]:
+        fields["semantic_salt_headers"] = list(record["semantic_salt_headers"])
+    if record["inherit_parent_env"]:
+        fields["inherit_parent_env"] = True
+    if isinstance(record["external_user_id"], str):
+        fields["external_user_id"] = record["external_user_id"]
+    if isinstance(record["secret_ref"], str):
+        fields["secret_ref"] = record["secret_ref"]
+    return fields
+
+
 def record_to_upstream_dict(
     record: dict[str, Any],
 ) -> dict[str, Any]:
@@ -123,32 +157,7 @@ def record_to_upstream_dict(
     else:
         config["url"] = record["url"]
 
-    if record["pagination"] is not None:
-        config["pagination"] = record["pagination"]
-    if record["auto_paginate_max_pages"] is not None:
-        config["auto_paginate_max_pages"] = record["auto_paginate_max_pages"]
-    if record["auto_paginate_max_records"] is not None:
-        config["auto_paginate_max_records"] = record[
-            "auto_paginate_max_records"
-        ]
-    if record["auto_paginate_timeout_seconds"] is not None:
-        config["auto_paginate_timeout_seconds"] = record[
-            "auto_paginate_timeout_seconds"
-        ]
-    if not record["passthrough_allowed"]:
-        config["passthrough_allowed"] = False
-    if record["semantic_salt_env_keys"]:
-        config["semantic_salt_env_keys"] = list(
-            record["semantic_salt_env_keys"]
-        )
-    if record["semantic_salt_headers"]:
-        config["semantic_salt_headers"] = list(record["semantic_salt_headers"])
-    if record["inherit_parent_env"]:
-        config["inherit_parent_env"] = True
-    if isinstance(record["external_user_id"], str):
-        config["external_user_id"] = record["external_user_id"]
-    if isinstance(record["secret_ref"], str):
-        config["secret_ref"] = record["secret_ref"]
+    config.update(_extract_gateway_fields(record))
     return config
 
 
@@ -163,37 +172,7 @@ def record_to_mcp_server_entry(
     else:
         entry["url"] = record["url"]
 
-    gateway_ext: dict[str, Any] = {}
-    if record["pagination"] is not None:
-        gateway_ext["pagination"] = record["pagination"]
-    if record["auto_paginate_max_pages"] is not None:
-        gateway_ext["auto_paginate_max_pages"] = record[
-            "auto_paginate_max_pages"
-        ]
-    if record["auto_paginate_max_records"] is not None:
-        gateway_ext["auto_paginate_max_records"] = record[
-            "auto_paginate_max_records"
-        ]
-    if record["auto_paginate_timeout_seconds"] is not None:
-        gateway_ext["auto_paginate_timeout_seconds"] = record[
-            "auto_paginate_timeout_seconds"
-        ]
-    if not record["passthrough_allowed"]:
-        gateway_ext["passthrough_allowed"] = False
-    if record["semantic_salt_env_keys"]:
-        gateway_ext["semantic_salt_env_keys"] = list(
-            record["semantic_salt_env_keys"]
-        )
-    if record["semantic_salt_headers"]:
-        gateway_ext["semantic_salt_headers"] = list(
-            record["semantic_salt_headers"]
-        )
-    if record["inherit_parent_env"]:
-        gateway_ext["inherit_parent_env"] = True
-    if isinstance(record["external_user_id"], str):
-        gateway_ext["external_user_id"] = record["external_user_id"]
-    if isinstance(record["secret_ref"], str):
-        gateway_ext["secret_ref"] = record["secret_ref"]
+    gateway_ext = _extract_gateway_fields(record)
     if not record["enabled"]:
         gateway_ext["enabled"] = False
     if gateway_ext:
@@ -318,7 +297,7 @@ def entry_to_registry_payload(
     if source_kind not in _VALID_SOURCE_KINDS:
         msg = f"invalid source_kind: {source_kind!r}"
         raise ValueError(msg)
-    transport = _infer_transport(prefix, entry)
+    transport = infer_transport(prefix, entry)
     gateway_ext = entry.get("_gateway", {})
     if not isinstance(gateway_ext, dict):
         msg = f"server '{prefix}' _gateway must be a JSON object"

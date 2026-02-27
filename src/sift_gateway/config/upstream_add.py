@@ -16,8 +16,8 @@ from pathlib import Path
 from typing import Any
 
 from sift_gateway.config.mcp_servers import (
-    _infer_transport,
     extract_mcp_servers,
+    infer_transport,
 )
 from sift_gateway.config.shared import (
     ensure_gateway_config_path,
@@ -174,7 +174,7 @@ def _validate_servers_for_add(servers: dict[str, dict[str, Any]]) -> None:
             msg = f"server '{name}' config must be a JSON object"
             raise ValueError(msg)
         validate_prefix(name)
-        _infer_transport(name, entry)
+        infer_transport(name, entry)
         _validate_transport_values(name, entry)
         _validate_gateway_block(name, entry)
         _validate_secret_shapes(name, entry)

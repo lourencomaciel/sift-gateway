@@ -178,7 +178,7 @@ def read_config_file(path: Path) -> dict[str, Any]:
     return raw
 
 
-def _infer_transport(name: str, entry: dict[str, Any]) -> str:
+def infer_transport(name: str, entry: dict[str, Any]) -> str:
     """Infer transport type from server entry fields."""
     has_command = "command" in entry
     has_url = "url" in entry
@@ -238,7 +238,7 @@ def to_upstream_configs(
             continue
 
         # Build UpstreamConfig-compatible dict
-        transport = _infer_transport(name, entry)
+        transport = infer_transport(name, entry)
         config: dict[str, Any] = {
             "prefix": name,
             "transport": transport,
