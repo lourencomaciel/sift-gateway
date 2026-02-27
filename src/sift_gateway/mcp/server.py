@@ -259,6 +259,7 @@ _BUILTIN_TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
     },
 }
 
+
 @dataclass
 class GatewayServer:
     """Hold runtime state and provide executable tool handlers.

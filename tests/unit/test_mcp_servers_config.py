@@ -223,6 +223,25 @@ class TestToUpstreamConfigs:
         with pytest.raises(ValueError, match="_gateway must be a JSON object"):
             to_upstream_configs({"gh": {"command": "gh", "_gateway": "bad"}})
 
+    def test_gateway_enabled_false_skips_server(self) -> None:
+        configs = to_upstream_configs(
+            {
+                "gh": {
+                    "command": "gh",
+                    "_gateway": {"enabled": False},
+                },
+                "api": {"url": "https://example.com/mcp"},
+            }
+        )
+        assert len(configs) == 1
+        assert configs[0]["prefix"] == "api"
+
+    def test_gateway_enabled_invalid_type_raises(self) -> None:
+        with pytest.raises(ValueError, match=r"_gateway\.enabled"):
+            to_upstream_configs(
+                {"gh": {"command": "gh", "_gateway": {"enabled": "false"}}}
+            )
+
     def test_gateway_secret_ref_promoted(self) -> None:
         configs = to_upstream_configs(
             {
@@ -379,11 +398,14 @@ class TestLoadGatewayConfigMcpServers:
         assert gh.transport == "stdio"
         assert gh.command == "/usr/bin/gh"
         assert gh.args == ["mcp"]
-        assert gh.env == {"GITHUB_TOKEN": "secret"}
+        assert gh.env == {}
+        assert gh.secret_ref == "github"
 
         api = next(u for u in config.upstreams if u.prefix == "api")
         assert api.transport == "http"
         assert api.url == "https://api.example.com/mcp"
+        assert api.headers == {}
+        assert api.secret_ref == "api"
 
     def test_mcp_servers_with_gateway_extensions(self, tmp_path: Path) -> None:
         state_dir = tmp_path / "state"
@@ -417,6 +439,138 @@ class TestLoadGatewayConfigMcpServers:
         assert gh.pagination is not None
         assert gh.pagination.strategy == "cursor"
         assert gh.pagination.cursor_param_name == "after"
+
+    def test_registry_secret_ref_rows_accept_env_overrides(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        state_dir = tmp_path / "state"
+        state_dir.mkdir(parents=True)
+        (state_dir / "config.json").write_text(
+            json.dumps(
+                {
+                    "mcpServers": {
+                        "gh": {
+                            "command": "gh",
+                            "env": {"BASE_TOKEN": "from-file"},
+                        }
+                    }
+                }
+            )
+        )
+
+        initial = load_gateway_config(data_dir_override=str(tmp_path))
+        assert len(initial.upstreams) == 1
+        assert initial.upstreams[0].secret_ref == "gh"
+        assert initial.upstreams[0].env == {}
+
+        monkeypatch.setenv(
+            "SIFT_GATEWAY_UPSTREAMS__0__ENV__OVERRIDE_TOKEN",
+            "from-env",
+        )
+        merged = load_gateway_config(data_dir_override=str(tmp_path))
+        gh = merged.upstreams[0]
+        assert gh.env == {
+            "BASE_TOKEN": "from-file",
+            "OVERRIDE_TOKEN": "from-env",
+        }
+        assert gh.secret_ref is None
+
+    def test_registry_http_secret_ref_rows_keep_headers_on_env_override(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        state_dir = tmp_path / "state"
+        state_dir.mkdir(parents=True)
+        (state_dir / "config.json").write_text(
+            json.dumps(
+                {
+                    "mcpServers": {
+                        "api": {
+                            "url": "https://api.example.com/mcp",
+                            "headers": {"Authorization": "Bearer from-file"},
+                        }
+                    }
+                }
+            )
+        )
+
+        initial = load_gateway_config(data_dir_override=str(tmp_path))
+        assert len(initial.upstreams) == 1
+        assert initial.upstreams[0].secret_ref == "api"
+        assert initial.upstreams[0].headers == {}
+
+        monkeypatch.setenv(
+            "SIFT_GATEWAY_UPSTREAMS__0__ENV__OVERRIDE_TOKEN",
+            "from-env",
+        )
+        merged = load_gateway_config(data_dir_override=str(tmp_path))
+        api = merged.upstreams[0]
+        assert api.env == {"OVERRIDE_TOKEN": "from-env"}
+        assert api.headers == {"Authorization": "Bearer from-file"}
+        assert api.secret_ref is None
+
+    def test_registry_stdio_secret_ref_rows_keep_env_on_header_override(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        state_dir = tmp_path / "state"
+        state_dir.mkdir(parents=True)
+        (state_dir / "config.json").write_text(
+            json.dumps(
+                {
+                    "mcpServers": {
+                        "gh": {
+                            "command": "gh",
+                            "env": {"BASE_TOKEN": "from-file"},
+                        }
+                    }
+                }
+            )
+        )
+
+        initial = load_gateway_config(data_dir_override=str(tmp_path))
+        assert len(initial.upstreams) == 1
+        assert initial.upstreams[0].secret_ref == "gh"
+        assert initial.upstreams[0].env == {}
+
+        monkeypatch.setenv(
+            "SIFT_GATEWAY_UPSTREAMS__0__HEADERS__X_TRACE",
+            "1",
+        )
+        merged = load_gateway_config(data_dir_override=str(tmp_path))
+        gh = merged.upstreams[0]
+        assert gh.env == {"BASE_TOKEN": "from-file"}
+        assert gh.headers == {"X_TRACE": "1"}
+        assert gh.secret_ref is None
+
+    def test_registry_secret_ref_override_requires_resolvable_secret(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        from sift_gateway.config.upstream_registry import (
+            replace_registry_from_mcp_servers,
+        )
+
+        state_dir = tmp_path / "state"
+        state_dir.mkdir(parents=True)
+        (state_dir / "config.json").write_text(
+            json.dumps({"mcpServers": {"gh": {"command": "gh"}}})
+        )
+        replace_registry_from_mcp_servers(
+            data_dir=tmp_path,
+            servers={"gh": {"command": "gh", "_gateway": {"secret_ref": "gh"}}},
+            source_kind="manual",
+        )
+
+        monkeypatch.setenv(
+            "SIFT_GATEWAY_UPSTREAMS__0__ENV__OVERRIDE_TOKEN",
+            "from-env",
+        )
+        with pytest.raises(
+            ValueError,
+            match=(
+                "Cannot specify both inline env/headers and "
+                "secret_ref for upstream"
+            ),
+        ):
+            load_gateway_config(data_dir_override=str(tmp_path))
 
     def test_legacy_upstreams_raises_migration_error(
         self, tmp_path: Path
@@ -461,3 +615,209 @@ class TestLoadGatewayConfigMcpServers:
         (state_dir / "config.json").write_text(json.dumps({"mcpServers": {}}))
         config = load_gateway_config(data_dir_override=str(tmp_path))
         assert config.upstreams == []
+
+    def test_disabled_mcp_server_not_loaded(self, tmp_path: Path) -> None:
+        state_dir = tmp_path / "state"
+        state_dir.mkdir(parents=True)
+        (state_dir / "config.json").write_text(
+            json.dumps(
+                {
+                    "mcpServers": {
+                        "gh": {
+                            "command": "gh",
+                            "_gateway": {"enabled": False},
+                        },
+                        "api": {"url": "https://example.com/mcp"},
+                    }
+                }
+            )
+        )
+        config = load_gateway_config(data_dir_override=str(tmp_path))
+        assert len(config.upstreams) == 1
+        assert config.upstreams[0].prefix == "api"
+
+    def test_registry_only_disabled_rows_do_not_fallback_to_mcp_servers(
+        self, tmp_path: Path
+    ) -> None:
+        from sift_gateway.config.upstream_registry import (
+            replace_registry_from_mcp_servers,
+            set_registry_upstream_enabled,
+        )
+
+        state_dir = tmp_path / "state"
+        state_dir.mkdir(parents=True)
+        (state_dir / "config.json").write_text(
+            json.dumps({"mcpServers": {"gh": {"command": "gh"}}})
+        )
+
+        replace_registry_from_mcp_servers(
+            data_dir=tmp_path,
+            servers={"gh": {"command": "gh"}},
+            source_kind="manual",
+        )
+        set_registry_upstream_enabled(
+            data_dir=tmp_path,
+            prefix="gh",
+            enabled=False,
+        )
+
+        # Simulate stale config drift where the compatibility mirror is edited.
+        (state_dir / "config.json").write_text(
+            json.dumps({"mcpServers": {"gh": {"command": "gh"}}})
+        )
+
+        config = load_gateway_config(data_dir_override=str(tmp_path))
+        assert config.upstreams == []
+
+    def test_registry_rows_load_even_when_config_mirror_is_invalid(
+        self, tmp_path: Path
+    ) -> None:
+        from sift_gateway.config.upstream_registry import (
+            replace_registry_from_mcp_servers,
+        )
+
+        state_dir = tmp_path / "state"
+        state_dir.mkdir(parents=True)
+        (state_dir / "config.json").write_text(
+            json.dumps({"mcpServers": {"gh": {"command": "gh"}}})
+        )
+
+        replace_registry_from_mcp_servers(
+            data_dir=tmp_path,
+            servers={"gh": {"command": "gh"}},
+            source_kind="manual",
+        )
+
+        # Simulate compatibility mirror drift while canonical rows remain valid.
+        (state_dir / "config.json").write_text(
+            json.dumps({"mcpServers": {"gh": {"command": "gh"}, "bad": "oops"}})
+        )
+
+        config = load_gateway_config(data_dir_override=str(tmp_path))
+        assert [upstream.prefix for upstream in config.upstreams] == ["gh"]
+
+    def test_registry_rows_load_when_mirror_has_invalid_gateway_values(
+        self, tmp_path: Path
+    ) -> None:
+        from sift_gateway.config.upstream_registry import (
+            replace_registry_from_mcp_servers,
+        )
+
+        state_dir = tmp_path / "state"
+        state_dir.mkdir(parents=True)
+        (state_dir / "config.json").write_text(
+            json.dumps({"mcpServers": {"gh": {"command": "gh"}}})
+        )
+
+        replace_registry_from_mcp_servers(
+            data_dir=tmp_path,
+            servers={"gh": {"command": "gh"}},
+            source_kind="manual",
+        )
+
+        # Simulate compatibility mirror drift with structurally valid entries
+        # that fail per-field gateway validation.
+        (state_dir / "config.json").write_text(
+            json.dumps(
+                {
+                    "mcpServers": {
+                        "gh": {"command": "gh"},
+                        "bad": {
+                            "command": "npx",
+                            "_gateway": {"enabled": "false"},
+                        },
+                    }
+                }
+            )
+        )
+
+        config = load_gateway_config(data_dir_override=str(tmp_path))
+        assert [upstream.prefix for upstream in config.upstreams] == ["gh"]
+
+    def test_registry_preserves_config_order_for_index_overrides(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        state_dir = tmp_path / "state"
+        state_dir.mkdir(parents=True)
+        (state_dir / "config.json").write_text(
+            json.dumps(
+                {
+                    "mcpServers": {
+                        "zeta": {"command": "zcmd"},
+                        "alpha": {"command": "acmd"},
+                    }
+                }
+            )
+        )
+        monkeypatch.setenv("SIFT_GATEWAY_UPSTREAMS__0__COMMAND", "override")
+
+        config = load_gateway_config(data_dir_override=str(tmp_path))
+
+        assert [upstream.prefix for upstream in config.upstreams] == [
+            "zeta",
+            "alpha",
+        ]
+        assert config.upstreams[0].command == "override"
+        assert config.upstreams[1].command == "acmd"
+
+    def test_registry_index_overrides_remain_stable_with_disabled_rows(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        state_dir = tmp_path / "state"
+        state_dir.mkdir(parents=True)
+        (state_dir / "config.json").write_text(
+            json.dumps(
+                {
+                    "mcpServers": {
+                        "alpha": {
+                            "command": "acmd",
+                            "_gateway": {"enabled": False},
+                        },
+                        "beta": {"command": "bcmd"},
+                        "gamma": {"command": "gcmd"},
+                    }
+                }
+            )
+        )
+        # Index 1 targets "beta" in canonical row order, even when index 0
+        # ("alpha") is disabled.
+        monkeypatch.setenv(
+            "SIFT_GATEWAY_UPSTREAMS__1__COMMAND", "override-beta"
+        )
+
+        config = load_gateway_config(data_dir_override=str(tmp_path))
+
+        assert [upstream.prefix for upstream in config.upstreams] == [
+            "beta",
+            "gamma",
+        ]
+        assert config.upstreams[0].command == "override-beta"
+        assert config.upstreams[1].command == "gcmd"
+
+    def test_registry_preserves_auto_pagination_overrides(
+        self, tmp_path: Path
+    ) -> None:
+        state_dir = tmp_path / "state"
+        state_dir.mkdir(parents=True)
+        (state_dir / "config.json").write_text(
+            json.dumps(
+                {
+                    "mcpServers": {
+                        "gh": {
+                            "command": "gh",
+                            "_gateway": {
+                                "auto_paginate_max_pages": 5,
+                                "auto_paginate_max_records": 100,
+                                "auto_paginate_timeout_seconds": 3.5,
+                            },
+                        }
+                    }
+                }
+            )
+        )
+
+        config = load_gateway_config(data_dir_override=str(tmp_path))
+        gh = config.upstreams[0]
+        assert gh.auto_paginate_max_pages == 5
+        assert gh.auto_paginate_max_records == 100
+        assert gh.auto_paginate_timeout_seconds == 3.5

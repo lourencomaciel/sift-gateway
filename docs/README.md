@@ -7,6 +7,7 @@ reliable agent data handling.
 
 - [`quickstart.md`](quickstart.md) - install, init, and first run/code flow
 - [`recipes.md`](recipes.md) - practical usage patterns
+- [`upstream_registration.md`](upstream_registration.md) - proposed upstream admin UX and SQLite registry design
 - [`openclaw/README.md`](openclaw/README.md) - OpenClaw reliability workflow
 
 ## Reference

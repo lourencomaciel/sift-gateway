@@ -178,7 +178,7 @@ def read_config_file(path: Path) -> dict[str, Any]:
     return raw
 
 
-def _infer_transport(name: str, entry: dict[str, Any]) -> str:
+def infer_transport(name: str, entry: dict[str, Any]) -> str:
     """Infer transport type from server entry fields."""
     has_command = "command" in entry
     has_url = "url" in entry
@@ -193,6 +193,23 @@ def _infer_transport(name: str, entry: dict[str, Any]) -> str:
 
     msg = f"server '{name}' has neither 'command' nor 'url'; one is required"
     raise ValueError(msg)
+
+
+def _gateway_entry_enabled(
+    name: str,
+    gateway_ext: dict[str, Any],
+) -> bool:
+    """Return whether a gateway entry is enabled.
+
+    The ``_gateway.enabled`` extension defaults to ``True`` when absent.
+    """
+    if "enabled" not in gateway_ext:
+        return True
+    enabled = gateway_ext["enabled"]
+    if not isinstance(enabled, bool):
+        msg = f"server '{name}' _gateway.enabled must be a boolean"
+        raise ValueError(msg)
+    return enabled
 
 
 def to_upstream_configs(
@@ -217,9 +234,11 @@ def to_upstream_configs(
         if not isinstance(gateway_ext, dict):
             msg = f"server '{name}' _gateway must be a JSON object"
             raise ValueError(msg)
+        if not _gateway_entry_enabled(name, gateway_ext):
+            continue
 
         # Build UpstreamConfig-compatible dict
-        transport = _infer_transport(name, entry)
+        transport = infer_transport(name, entry)
         config: dict[str, Any] = {
             "prefix": name,
             "transport": transport,

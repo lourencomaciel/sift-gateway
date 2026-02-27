@@ -664,6 +664,7 @@ def _discover_has_more_from_headers(
         return True
     return None
 
+
 def _cursor_header_candidates(header_key: str) -> tuple[str, ...]:
     """Return candidate request args for a cursor-related header key."""
     if "page-token" in header_key:
