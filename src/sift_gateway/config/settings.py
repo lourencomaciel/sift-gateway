@@ -1186,7 +1186,12 @@ def _resolve_registry_upstreams(
             raw_env_upstreams,
         )
     if not isinstance(merged_upstreams, list):
-        merged_upstreams = upstream_dicts
+        msg = (
+            "upstream env overrides produced a non-list shape "
+            f"({type(merged_upstreams).__name__}); check "
+            "SIFT_GATEWAY_UPSTREAMS__* variable names"
+        )
+        raise ValueError(msg)
 
     # Filter out disabled canonical rows after env override application so
     # indexed env overrides target the intended upstream.
