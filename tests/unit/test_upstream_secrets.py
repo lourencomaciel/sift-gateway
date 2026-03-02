@@ -8,6 +8,8 @@ import stat
 import pytest
 
 from sift_gateway.config.upstream_secrets import (
+    oauth_cache_dir,
+    oauth_cache_dir_path,
     read_secret,
     resolve_secret_ref,
     secrets_dir,
@@ -21,6 +23,18 @@ class TestSecretsDir:
         result = secrets_dir(tmp_path)
         assert result.is_dir()
         assert result == tmp_path / "state" / "upstream_secrets"
+        mode = stat.S_IMODE(result.stat().st_mode)
+        assert mode == 0o700
+
+
+class TestOauthCacheDir:
+    def test_oauth_cache_dir_path(self, tmp_path: Path) -> None:
+        result = oauth_cache_dir_path(tmp_path, "notion")
+        assert result == tmp_path / "state" / "upstream_oauth" / "notion"
+
+    def test_oauth_cache_dir_creates_directory(self, tmp_path: Path) -> None:
+        result = oauth_cache_dir(tmp_path, "notion")
+        assert result.is_dir()
         mode = stat.S_IMODE(result.stat().st_mode)
         assert mode == 0o700
 
@@ -58,6 +72,29 @@ class TestWriteAndReadRoundtrip:
         assert data["transport"] == "http"
         assert data["env"] is None
         assert data["headers"] == {"Authorization": "Bearer tok_abc"}
+
+    def test_write_and_read_roundtrip_http_with_oauth(
+        self, tmp_path: Path
+    ) -> None:
+        path = write_secret(
+            tmp_path,
+            "myapi",
+            transport="http",
+            headers={"Authorization": "Bearer tok_abc"},
+            oauth={
+                "enabled": True,
+                "provider": "fastmcp",
+                "token_storage": "disk",
+            },
+        )
+        assert path.exists()
+
+        data = read_secret(tmp_path, "myapi")
+        assert data["oauth"] == {
+            "enabled": True,
+            "provider": "fastmcp",
+            "token_storage": "disk",
+        }
 
     def test_write_secret_sets_file_permissions(self, tmp_path: Path) -> None:
         path = write_secret(
@@ -99,6 +136,22 @@ class TestReadErrors:
         with pytest.raises(ValueError, match="Invalid JSON"):
             read_secret(tmp_path, "broken")
 
+    def test_read_non_object_json_raises(self, tmp_path: Path) -> None:
+        sdir = secrets_dir(tmp_path)
+        bad_file = sdir / "broken.json"
+        bad_file.write_text("[]", encoding="utf-8")
+
+        with pytest.raises(ValueError, match="must contain a JSON object"):
+            read_secret(tmp_path, "broken")
+
+    def test_read_missing_required_keys_raises(self, tmp_path: Path) -> None:
+        sdir = secrets_dir(tmp_path)
+        bad_file = sdir / "broken.json"
+        bad_file.write_text('{"version": 1}', encoding="utf-8")
+
+        with pytest.raises(ValueError, match="missing required keys"):
+            read_secret(tmp_path, "broken")
+
 
 class TestPrefixValidation:
     def test_prefix_with_path_separator_rejected(self, tmp_path: Path) -> None:
@@ -136,6 +189,19 @@ class TestResolveSecretRef:
         assert data["transport"] == "stdio"
         assert data["env"] == {"TOKEN": "abc"}
 
+    def test_resolve_secret_ref_strips_json_suffix(
+        self, tmp_path: Path
+    ) -> None:
+        write_secret(
+            tmp_path,
+            "github",
+            transport="stdio",
+            env={"TOKEN": "abc"},
+        )
+        data = resolve_secret_ref(tmp_path, "github.json")
+        assert data["transport"] == "stdio"
+        assert data["env"] == {"TOKEN": "abc"}
+
     def test_resolve_secret_ref_traversal_rejected(
         self, tmp_path: Path
     ) -> None:
@@ -147,6 +213,30 @@ class TestResolveSecretRef:
     ) -> None:
         with pytest.raises(ValueError, match="must not be an absolute path"):
             resolve_secret_ref(tmp_path, "/etc/passwd")
+
+
+def test_write_secret_cleanup_on_write_failure(
+    tmp_path: Path, monkeypatch
+) -> None:
+    sdir = secrets_dir(tmp_path)
+
+    def _fail_write(_fd: int, _content: bytes) -> int:
+        raise OSError("simulated write failure")
+
+    monkeypatch.setattr(
+        "sift_gateway.config.upstream_secrets.os.write",
+        _fail_write,
+    )
+
+    with pytest.raises(OSError, match="simulated write failure"):
+        write_secret(
+            tmp_path,
+            "github",
+            transport="stdio",
+            env={"TOKEN": "abc"},
+        )
+
+    assert list(sdir.glob("*.tmp")) == []
 
 
 class TestValidateNoSecretConflict:
