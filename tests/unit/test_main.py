@@ -16,6 +16,7 @@ from sift_gateway.main import (
     _run_upstream_auth_set,
     _run_upstream_inspect,
     _run_upstream_list,
+    _run_upstream_login,
     _run_upstream_remove,
     _run_upstream_set_enabled,
     _run_upstream_test,
@@ -545,7 +546,7 @@ def test_serve_unknown_upstream_command_prints_usage(
 
     assert exit_code == 1
     assert (
-        "upstream {add,list,inspect,test,remove,enable,disable,auth}"
+        "upstream {add,list,inspect,test,remove,enable,disable,login,auth}"
         in captured.err
     )
 
@@ -827,6 +828,42 @@ def test_run_upstream_auth_set_prints_json(
     assert payload["secret_ref"] == "gh"
 
 
+def test_run_upstream_login_prints_json(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    seen: dict[str, object] = {}
+
+    def _fake_login_upstream(**kwargs: object) -> dict[str, object]:
+        seen.update(kwargs)
+        return {
+            "server": "api",
+            "transport": "http",
+            "secret_ref": "api",
+            "login": "oauth",
+        }
+
+    monkeypatch.setattr(
+        "sift_gateway.config.upstream_admin.login_upstream",
+        _fake_login_upstream,
+    )
+    args = argparse.Namespace(
+        server="api",
+        data_dir=str(tmp_path),
+        dry_run=False,
+        headless=True,
+        json=True,
+    )
+
+    exit_code = _run_upstream_login(args)
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    payload = json.loads(captured.out)
+    assert payload["server"] == "api"
+    assert payload["login"] == "oauth"
+    assert seen["headless"] is True
+
+
 def test_serve_dispatches_upstream_auth_set_command(monkeypatch) -> None:
     monkeypatch.setattr(
         "sift_gateway.main._parse_args",
@@ -843,6 +880,23 @@ def test_serve_dispatches_upstream_auth_set_command(monkeypatch) -> None:
 
     exit_code = serve()
     assert exit_code == 19
+
+
+def test_serve_dispatches_upstream_login_command(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "sift_gateway.main._parse_args",
+        lambda: argparse.Namespace(
+            command="upstream",
+            upstream_command="login",
+        ),
+    )
+    monkeypatch.setattr(
+        "sift_gateway.main._run_upstream_login",
+        lambda _args: 31,
+    )
+
+    exit_code = serve()
+    assert exit_code == 31
 
 
 def test_serve_upstream_auth_requires_subcommand(monkeypatch, capsys) -> None:
@@ -1265,6 +1319,44 @@ def test_parse_args_upstream_auth_set(monkeypatch) -> None:
     assert args.auth_command == "set"
     assert args.server == "api"
     assert args.header_pairs == ["Authorization=Bearer tok"]
+
+
+def test_parse_args_upstream_login(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "sift-gateway",
+            "upstream",
+            "login",
+            "--server",
+            "notion",
+        ],
+    )
+    args = _parse_args()
+    assert args.command == "upstream"
+    assert args.upstream_command == "login"
+    assert args.server == "notion"
+    assert args.dry_run is False
+    assert args.headless is False
+
+
+def test_parse_args_upstream_login_headless(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "sift-gateway",
+            "upstream",
+            "login",
+            "--server",
+            "notion",
+            "--headless",
+        ],
+    )
+    args = _parse_args()
+    assert args.command == "upstream"
+    assert args.upstream_command == "login"
+    assert args.server == "notion"
+    assert args.headless is True
 
 
 def test_parse_args_global_data_dir_reaches_install(

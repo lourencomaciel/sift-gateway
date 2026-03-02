@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -9,8 +10,10 @@ from types import SimpleNamespace
 import pytest
 
 from sift_gateway.config.upstream_admin import (
+    _resolve_oauth_callback_url_headless,
     inspect_upstream,
     list_upstreams,
+    login_upstream,
     parse_kv_pairs,
     probe_upstreams,
     remove_upstream,
@@ -392,6 +395,187 @@ def test_set_upstream_auth_requires_updates(tmp_path: Path) -> None:
             header_updates=None,
             data_dir=tmp_path,
         )
+
+
+def test_resolve_oauth_callback_url_headless_follows_redirect_chain(
+    monkeypatch,
+) -> None:
+    authorization_url = "https://auth.example.test/authorize?client_id=abc"
+    callback_port = 45789
+    callback_url = (
+        f"http://localhost:{callback_port}/callback?code=tok&state=state_123"
+    )
+    responses = {
+        authorization_url: SimpleNamespace(
+            status_code=302,
+            headers={"location": "/step-one"},
+        ),
+        "https://auth.example.test/step-one": SimpleNamespace(
+            status_code=302,
+            headers={"location": "https://idp.example.test/consent"},
+        ),
+        "https://idp.example.test/consent": SimpleNamespace(
+            status_code=302,
+            headers={"location": callback_url},
+        ),
+    }
+
+    class _FakeAsyncClient:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, _exc_type, _exc, _tb) -> bool:
+            return False
+
+        async def get(self, url: str, *, follow_redirects: bool):
+            assert follow_redirects is False
+            key = str(url)
+            if key not in responses:
+                msg = f"unexpected request URL in test: {key}"
+                raise AssertionError(msg)
+            return responses[key]
+
+    monkeypatch.setattr("httpx.AsyncClient", _FakeAsyncClient)
+
+    resolved = asyncio.run(
+        _resolve_oauth_callback_url_headless(
+            authorization_url=authorization_url,
+            callback_port=callback_port,
+        )
+    )
+
+    assert resolved == callback_url
+
+
+def test_resolve_oauth_callback_url_headless_rejects_interactive_login(
+    monkeypatch,
+) -> None:
+    authorization_url = "https://auth.example.test/authorize?client_id=abc"
+    responses = {
+        authorization_url: SimpleNamespace(status_code=200, headers={}),
+    }
+
+    class _FakeAsyncClient:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, _exc_type, _exc, _tb) -> bool:
+            return False
+
+        async def get(self, url: str, *, follow_redirects: bool):
+            assert follow_redirects is False
+            key = str(url)
+            if key not in responses:
+                msg = f"unexpected request URL in test: {key}"
+                raise AssertionError(msg)
+            return responses[key]
+
+    monkeypatch.setattr("httpx.AsyncClient", _FakeAsyncClient)
+
+    with pytest.raises(
+        RuntimeError,
+        match="requires interactive browser login",
+    ):
+        asyncio.run(
+            _resolve_oauth_callback_url_headless(
+                authorization_url=authorization_url,
+                callback_port=45789,
+            )
+        )
+
+
+def test_login_upstream_http_persists_authorization_header(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _write_gateway_config(
+        tmp_path,
+        {"mcpServers": {"api": {"url": "https://example.com/mcp"}}},
+    )
+
+    async def _fake_oauth(*, url: str, headless: bool = False) -> str:
+        assert url == "https://example.com/mcp"
+        assert headless is False
+        return "tok_123"
+
+    monkeypatch.setattr(
+        "sift_gateway.config.upstream_admin._oauth_login_access_token",
+        _fake_oauth,
+    )
+
+    result = login_upstream(server="api", data_dir=tmp_path)
+
+    assert result["server"] == "api"
+    assert result["login"] == "oauth"
+    assert result["updated_header_keys"] == ["Authorization"]
+    secret = read_secret(tmp_path, "api")
+    assert secret["headers"] == {"Authorization": "Bearer tok_123"}
+
+
+def test_login_upstream_rejects_non_http_transport(tmp_path: Path) -> None:
+    _write_gateway_config(
+        tmp_path,
+        {"mcpServers": {"gh": {"command": "gh"}}},
+    )
+
+    with pytest.raises(ValueError, match="only supported for http"):
+        login_upstream(server="gh", data_dir=tmp_path)
+
+
+def test_login_upstream_dry_run_skips_oauth(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _write_gateway_config(
+        tmp_path,
+        {"mcpServers": {"api": {"url": "https://example.com/mcp"}}},
+    )
+
+    async def _fail_oauth(*, url: str, headless: bool = False) -> str:
+        raise AssertionError(
+            f"oauth helper should not run in dry-run: {url} {headless}"
+        )
+
+    monkeypatch.setattr(
+        "sift_gateway.config.upstream_admin._oauth_login_access_token",
+        _fail_oauth,
+    )
+
+    result = login_upstream(server="api", data_dir=tmp_path, dry_run=True)
+    assert result["server"] == "api"
+    assert result["dry_run"] is True
+    assert result["updated_header_keys"] == ["Authorization"]
+    assert result["login"] == "oauth"
+    assert not (tmp_path / "state" / "upstream_secrets").exists()
+
+
+def test_login_upstream_headless_passes_flag(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _write_gateway_config(
+        tmp_path,
+        {"mcpServers": {"api": {"url": "https://example.com/mcp"}}},
+    )
+    seen: dict[str, object] = {}
+
+    async def _fake_oauth(*, url: str, headless: bool = False) -> str:
+        seen["url"] = url
+        seen["headless"] = headless
+        return "tok_456"
+
+    monkeypatch.setattr(
+        "sift_gateway.config.upstream_admin._oauth_login_access_token",
+        _fake_oauth,
+    )
+
+    login_upstream(server="api", data_dir=tmp_path, headless=True)
+
+    assert seen["url"] == "https://example.com/mcp"
+    assert seen["headless"] is True
 
 
 def test_inspect_upstream_not_found_raises(tmp_path: Path) -> None:
