@@ -138,7 +138,7 @@ def test_text_part_json_string_is_parsed_for_mapping(tmp_path: Path) -> None:
     )
     assert result.map_status == "ready"
     assert result.schemas is not None
-    assert any(schema.root_path == "$.users" for schema in result.schemas)
+    assert any(schema.root_path == "$" for schema in result.schemas)
 
 
 def test_small_json_triggers_full_mapping(tmp_path: Path) -> None:
@@ -302,8 +302,8 @@ def test_run_mapping_closes_binary_stream(tmp_path: Path) -> None:
     assert len(closed) == 1
 
 
-def test_full_mapping_object_discovers_roots(tmp_path: Path) -> None:
-    """Full mapping of object discovers multiple roots sorted by score."""
+def test_full_mapping_object_maps_canonical_root(tmp_path: Path) -> None:
+    """Full mapping of object keeps a single canonical root at ``$``."""
     data = {
         "users": [{"id": 1}, {"id": 2}],
         "orders": [{"oid": 1}, {"oid": 2}, {"oid": 3}],
@@ -319,9 +319,9 @@ def test_full_mapping_object_discovers_roots(tmp_path: Path) -> None:
     )
     assert result.map_kind == "full"
     assert result.map_status == "ready"
-    assert len(result.roots) == 2
-    assert result.roots[0].root_key == "orders"
-    assert result.roots[1].root_key == "users"
+    assert len(result.roots) == 1
+    assert result.roots[0].root_key == "$"
+    assert result.roots[0].root_path == "$"
 
 
 def test_full_schema_resolves_json_encoded_strings(tmp_path: Path) -> None:
@@ -346,13 +346,15 @@ def test_full_schema_resolves_json_encoded_strings(tmp_path: Path) -> None:
     assert result.map_status == "ready"
     assert result.schemas is not None
     by_path = {schema.root_path: schema for schema in result.schemas}
-    assert "$.result.data" in by_path
-    data_schema = by_path["$.result.data"]
-    assert data_schema.observed_records == 2
+    assert "$" in by_path
+    data_schema = by_path["$"]
+    assert data_schema.observed_records == 1
     field_paths = {field.path for field in data_schema.fields}
-    assert "$.id" in field_paths
+    assert "$.result.data[*].id" in field_paths
     id_field = next(
-        field for field in data_schema.fields if field.path == "$.id"
+        field
+        for field in data_schema.fields
+        if field.path == "$.result.data[*].id"
     )
     assert id_field.example_value == "1"
 
@@ -377,9 +379,11 @@ def test_schema_field_example_value_truncates_long_values(
     assert result.map_kind == "full"
     assert result.schemas is not None
     by_path = {schema.root_path: schema for schema in result.schemas}
-    item_schema = by_path["$.items"]
+    item_schema = by_path["$"]
     desc_field = next(
-        field for field in item_schema.fields if field.path == "$.description"
+        field
+        for field in item_schema.fields
+        if field.path == "$.items[*].description"
     )
     assert (
         desc_field.example_value
@@ -403,9 +407,11 @@ def test_schema_field_distinct_values_are_capped_with_cardinality(
     assert result.map_kind == "full"
     assert result.schemas is not None
     by_path = {schema.root_path: schema for schema in result.schemas}
-    item_schema = by_path["$.items"]
+    item_schema = by_path["$"]
     action_field = next(
-        field for field in item_schema.fields if field.path == "$.action_type"
+        field
+        for field in item_schema.fields
+        if field.path == "$.items[*].action_type"
     )
     assert action_field.distinct_values is not None
     assert len(action_field.distinct_values) == 1
@@ -491,9 +497,9 @@ def test_schema_distinct_values_handle_float_values(tmp_path: Path) -> None:
     assert result.map_error is None
     assert result.schemas is not None
     by_path = {schema.root_path: schema for schema in result.schemas}
-    item_schema = by_path["$.items"]
+    item_schema = by_path["$"]
     spend_field = next(
-        field for field in item_schema.fields if field.path == "$.spend"
+        field for field in item_schema.fields if field.path == "$.items[*].spend"
     )
     assert spend_field.distinct_values is not None
     assert spend_field.distinct_values == [12.5]
