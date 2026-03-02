@@ -47,7 +47,9 @@ def test_select_response_mode_pagination_forces_schema_ref() -> None:
     assert mode == "schema_ref"
 
 
-def test_select_response_mode_uses_full_when_under_cap_and_not_smaller() -> None:
+def test_select_response_mode_uses_full_when_under_cap_and_not_smaller() -> (
+    None
+):
     full_payload = {"response_mode": "full", "payload": {"x": "1234567890"}}
     schema_ref_payload = {
         "response_mode": "schema_ref",

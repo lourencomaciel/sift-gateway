@@ -1,6 +1,6 @@
 [project]
 name = "sift-gateway"
-version = "0.3.0"
+version = "0.3.2"
 description = "Keep big MCP responses out of your context window. Query them."
 readme = "README.md"
 license = "MIT"
@@ -127,6 +127,10 @@ known-first-party = ["sift_gateway"]
     "D103",
     "D104",
     "D107",
+]
+"benchmarks/**/*.py" = [
+    "E402", "T201", "D100", "D101",
+    "D102", "D103", "D104", "D107",
 ]
 
 [tool.mypy]

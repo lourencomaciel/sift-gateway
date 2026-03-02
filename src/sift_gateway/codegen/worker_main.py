@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import builtins as _builtins
 import inspect
 import sys
@@ -10,6 +11,8 @@ from typing import Any
 
 from sift_gateway.codegen.ast_guard import (
     ALLOWED_IMPORT_ROOTS,
+    RUN_SIGNATURE_LEGACY,
+    RUN_SIGNATURE_MULTI,
     CodeValidationError,
     validate_code_ast,
 )
@@ -99,9 +102,9 @@ def _validate_run_callable(
         )
     sig = inspect.signature(run_fn)
     names = list(sig.parameters.keys())
-    if names == ["artifacts", "schemas", "params"]:
+    if names == RUN_SIGNATURE_MULTI:
         return "multi", None
-    if names == ["data", "schema", "params"]:
+    if names == RUN_SIGNATURE_LEGACY:
         return "legacy", None
     return "invalid", CodeValidationError(
         code="CODE_ENTRYPOINT_MISSING",
@@ -111,7 +114,29 @@ def _validate_run_callable(
             "or run(data, schema, params)"
         ),
     )
-    return "invalid", None
+
+
+def _strip_locators(records: list[Any]) -> None:
+    """Remove ``_locator`` metadata in place before user code runs.
+
+    The ``_locator`` dict is entirely gateway-constructed.  Scalar
+    wrappers are identified by ``_locator["_scalar"] is True`` — a
+    flag that only the scalar branch of ``_with_locator`` sets — and
+    unwrapped to their ``value``.  Dict records have ``_locator``
+    removed.
+    """
+    for i, record in enumerate(records):
+        if not isinstance(record, dict) or "_locator" not in record:
+            continue
+        locator = record["_locator"]
+        if (
+            isinstance(locator, dict)
+            and locator.get("_scalar") is True
+            and "value" in record
+        ):
+            records[i] = record["value"]
+        else:
+            del record["_locator"]
 
 
 def _execute(payload: dict[str, Any]) -> dict[str, Any]:
@@ -221,6 +246,9 @@ def _execute(payload: dict[str, Any]) -> dict[str, Any]:
         if isinstance(single_schema, dict):
             schema_arg = single_schema
 
+    for rows in artifacts_val.values():
+        _strip_locators(rows)
+
     try:
         if run_mode == "legacy":
             if data_arg is None or schema_arg is None:
@@ -235,6 +263,10 @@ def _execute(payload: dict[str, Any]) -> dict[str, Any]:
             result = run_fn(data_arg, schema_arg, params_val)
         else:
             result = run_fn(artifacts_val, schemas_val, params_val)
+        if inspect.iscoroutine(result):
+            # Creates a fresh event loop; nested asyncio.run()
+            # inside user code will raise RuntimeError.
+            result = asyncio.run(result)
     except MemoryError:
         return _worker_error(
             "CODE_RUNTIME_MEMORY_LIMIT",

@@ -2,6 +2,37 @@
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-03-02
+
+### Added
+- Added `sift-gateway upstream login` command to run OAuth login for HTTP upstreams and persist auth headers in secret storage
+- Added headless OAuth login mode (`--headless`) for CI/testing flows
+- Added unit and integration coverage for OAuth login flow, including end-to-end headless lifecycle behavior
+
+### Changed
+- Updated quickstart and upstream registration docs to document OAuth login usage and behavior
+
+### Fixed
+- Fixed strict type-checking for OAuth transport selection by annotating shared transport assignment with `ClientTransport`
+
+## [0.3.1] - 2026-02-27
+
+### Added
+- Registry-backed upstream management: `sift-gateway upstream add/remove/list/enable/disable/sync` admin CLI with SQLite-backed upstream registry and registry-first loading (#121)
+- New DB migration `008_upstream_registry` for registry tables
+- `codegen.validate` module exposing AST guard as a reusable utility (#114)
+- `core.retrieval_helpers` expanded with reusable retrieval truncation utilities (#115)
+
+### Changed
+- Refactored CLI internals: extracted `cli/parse.py` and `cli/output.py` from monolithic `cli_main.py` (#97)
+- Refactored MCP server: extracted `mcp/server_helpers.py` and `mcp/server_runtime.py` from `mcp/server.py` (#97)
+- Refactored code-query core: split `artifact_code.py` into `artifact_code_collect.py`, `artifact_code_hints.py`, `artifact_code_internal.py`, and `artifact_code_parse.py` (#97)
+- `upstream add` now delegates to shared registry when registry is enabled (#121)
+- Config loading follows registry-first precedence when upstream registry is populated (#121)
+
+### Fixed
+- Stripped `_locator` metadata from codegen user data to prevent internal keys leaking into code-query context (#104)
+
 ## [0.3.0] - 2026-02-21
 
 ### Changed

@@ -678,7 +678,9 @@ def test_build_fastmcp_app_includes_mirrored_tools(tmp_path: Path) -> None:
         "single",
     ]
     assert artifact_schema["properties"]["query_kind"]["enum"] == ["code"]
-    assert "Third-party imports depend on installed packages" in code_description
+    assert (
+        "Third-party imports depend on installed packages" in code_description
+    )
     assert "pandas, numpy by default" not in code_description
 
 
@@ -1095,7 +1097,9 @@ def test_handle_mirrored_tool_passthroughs_small_response(
     assert payload["status"] == "ok"
     content = payload["content"]
     assert isinstance(content, list)
-    part_types = [part.get("type") for part in content if isinstance(part, dict)]
+    part_types = [
+        part.get("type") for part in content if isinstance(part, dict)
+    ]
     assert "json" in part_types
     assert "text" in part_types
     assert response != upstream_payload
@@ -1232,7 +1236,7 @@ def test_handle_mirrored_tool_schema_ref_uses_sample_item_when_consistent(
     assert isinstance(metadata, dict)
     usage = metadata.get("usage")
     assert isinstance(usage, dict)
-    assert usage.get("root_path") == "$.items"
+    assert usage.get("root_path") == "$"
 
 
 def test_handle_mirrored_tool_schema_ref_falls_back_on_mixed_shapes(
@@ -1294,7 +1298,7 @@ def test_handle_mirrored_tool_schema_ref_falls_back_on_mixed_shapes(
     assert isinstance(metadata, dict)
     usage = metadata.get("usage")
     assert isinstance(usage, dict)
-    assert usage.get("root_path") == "$.items"
+    assert usage.get("root_path") == "$"
 
 
 def test_handle_mirrored_tool_fails_closed_when_redaction_errors(

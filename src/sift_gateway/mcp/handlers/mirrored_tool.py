@@ -966,7 +966,9 @@ def _sanitize_envelope_payload(
     try:
         return normalize_envelope(
             upstream_instance_id=str(
-                payload.get("upstream_instance_id", envelope.upstream_instance_id)
+                payload.get(
+                    "upstream_instance_id", envelope.upstream_instance_id
+                )
             ),
             upstream_prefix=str(
                 payload.get("upstream_prefix", envelope.upstream_prefix)
@@ -1276,18 +1278,14 @@ async def handle_mirrored_tool(
         lineage["chain_seq"] = invocation.chain_seq
 
     payload_for_full = envelope.to_dict()
-    representative_sample, sample_root_path = _representative_schema_ref_sample(
+    representative_sample, _sample_root_path = _representative_schema_ref_sample(
         payload_for_full=payload_for_full,
         schemas=schemas,
         max_jsonpath_length=ctx.config.max_jsonpath_length,
         max_path_segments=ctx.config.max_path_segments,
         max_wildcard_expansion_total=ctx.config.max_wildcard_expansion_total,
     )
-    usage_root_path = (
-        sample_root_path
-        if isinstance(sample_root_path, str) and sample_root_path
-        else schema_primary_root_path(schemas)
-    )
+    usage_root_path = schema_primary_root_path(schemas)
 
     metadata: dict[str, Any] = {
         "usage": build_code_query_usage(

@@ -15,6 +15,7 @@ from sift_gateway.codegen.runtime import (
     encode_json_bytes,
     execute_code_in_subprocess,
 )
+from sift_gateway.codegen.validate import validate_code_for_execution
 
 __all__ = [
     "ALLOWED_IMPORT_ROOTS",
@@ -28,4 +29,5 @@ __all__ = [
     "encode_json_bytes",
     "execute_code_in_subprocess",
     "validate_code_ast",
+    "validate_code_for_execution",
 ]

@@ -14,20 +14,13 @@ Typical usage example::
 
 from __future__ import annotations
 
-import asyncio
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 import datetime as dt
-import importlib.util
-import json
-from pathlib import Path
-import shutil
 import time
 from typing import Any
 
 from fastmcp import FastMCP
-from fastmcp.server.dependencies import get_context
-from fastmcp.tools.tool import Tool, ToolResult
 
 from sift_gateway.artifacts.create import (
     ArtifactHandle,
@@ -39,7 +32,6 @@ from sift_gateway.cursor.payload import (
     build_cursor_payload,
 )
 from sift_gateway.cursor.token import (
-    CursorExpiredError,
     CursorTokenError,
     decode_cursor,
     encode_cursor,
@@ -47,7 +39,6 @@ from sift_gateway.cursor.token import (
 from sift_gateway.envelope.model import BinaryRefContentPart, Envelope
 from sift_gateway.envelope.normalize import normalize_envelope
 from sift_gateway.envelope.oversize import replace_oversized_json_parts
-from sift_gateway.envelope.responses import gateway_error
 from sift_gateway.fs.blob_store import BinaryRef, BlobStore
 from sift_gateway.mapping.runner import MappingInput
 from sift_gateway.mapping.worker import (
@@ -58,18 +49,81 @@ from sift_gateway.mcp.mirror import (
     MirroredTool,
     build_mirrored_tools,
 )
+from sift_gateway.mcp.server_helpers import (
+    RuntimeTool,
+)
+from sift_gateway.mcp.server_helpers import (
+    artifact_tool_description as _artifact_tool_description,
+)
+from sift_gateway.mcp.server_helpers import (
+    assert_cursor_field as _assert_cursor_field,
+)
+from sift_gateway.mcp.server_helpers import (
+    assert_unique_safe_tool_name as _assert_unique_safe_tool_name,
+)
+from sift_gateway.mcp.server_helpers import (
+    check_sample_corruption as _check_sample_corruption,
+)
+from sift_gateway.mcp.server_helpers import (
+    cursor_position as _cursor_position,
+)
+from sift_gateway.mcp.server_helpers import (
+    mcp_safe_name as _mcp_safe_name,
+)
+from sift_gateway.mcp.server_helpers import (
+    normalize_upstream_content as _normalize_upstream_content,
+)
+from sift_gateway.mcp.server_helpers import (
+    not_implemented as _not_implemented,
+)
+from sift_gateway.mcp.server_helpers import (
+    upstream_error_message as _upstream_error_message,
+)
+from sift_gateway.mcp.server_runtime import (
+    bounded_limit as _runtime_bounded_limit,
+)
+from sift_gateway.mcp.server_runtime import (
+    cursor_error as _runtime_cursor_error,
+)
+from sift_gateway.mcp.server_runtime import (
+    increment_metric as _runtime_increment_metric,
+)
+from sift_gateway.mcp.server_runtime import (
+    observe_metric as _runtime_observe_metric,
+)
+from sift_gateway.mcp.server_runtime import (
+    probe_db_recovery as _runtime_probe_db_recovery,
+)
+from sift_gateway.mcp.server_runtime import (
+    probe_upstream_tools as _runtime_probe_upstream_tools,
+)
+from sift_gateway.mcp.server_runtime import (
+    record_cursor_stale_reason as _runtime_record_cursor_stale_reason,
+)
+from sift_gateway.mcp.server_runtime import (
+    record_upstream_failure as _runtime_record_upstream_failure,
+)
+from sift_gateway.mcp.server_runtime import (
+    record_upstream_success as _runtime_record_upstream_success,
+)
+from sift_gateway.mcp.server_runtime import (
+    restore_protocol_response_fields as _runtime_restore_protocol_response_fields,
+)
+from sift_gateway.mcp.server_runtime import (
+    sanitize_tool_result as _runtime_sanitize_tool_result,
+)
+from sift_gateway.mcp.server_runtime import (
+    status_upstreams as _runtime_status_upstreams,
+)
 from sift_gateway.mcp.upstream import (
     UpstreamInstance,
     call_upstream_tool,
     connect_upstreams,
-    discover_tools,
 )
 from sift_gateway.mcp.upstream_errors import classify_upstream_exception
-from sift_gateway.obs.logging import LogEvents, get_logger
 from sift_gateway.obs.metrics import GatewayMetrics, get_metrics
 from sift_gateway.security.redaction import (
     ResponseSecretRedactor,
-    SecretRedactionError,
 )
 from sift_gateway.tools.usage_hint import (
     PAGINATION_COMPLETENESS_RULE,
@@ -80,13 +134,6 @@ _GENERIC_ARGS_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {},
     "additionalProperties": True,
-}
-_SUPPORTED_ENVELOPE_PARTS = {
-    "json",
-    "text",
-    "resource_ref",
-    "binary_ref",
-    "image_ref",
 }
 _BUILTIN_TOOL_DESCRIPTIONS: dict[str, str] = {
     "gateway.status": "Gateway health and configuration snapshot.",
@@ -207,337 +254,6 @@ _BUILTIN_TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
     },
 }
 
-_CURSOR_STALE_REASON_PATTERNS: tuple[tuple[str, str], ...] = (
-    ("sample_set_hash mismatch", "sample_set_mismatch"),
-    ("related_set_hash mismatch", "related_set_mismatch"),
-    ("map_budget_fingerprint mismatch", "map_budget_mismatch"),
-    ("traversal_contract_version mismatch", "traversal_version_mismatch"),
-    ("artifact_generation mismatch", "generation_mismatch"),
-    ("tool mismatch", "tool_mismatch"),
-    ("artifact binding mismatch", "artifact_binding_mismatch"),
-    ("workspace binding mismatch", "workspace_binding_mismatch"),
-    ("mapper_version mismatch", "mapper_version_mismatch"),
-    ("target mismatch", "target_mismatch"),
-    ("normalized_jsonpath mismatch", "jsonpath_mismatch"),
-    ("select_paths_hash mismatch", "select_paths_mismatch"),
-    ("where_hash mismatch", "where_hash_mismatch"),
-    ("root_path_filter mismatch", "root_path_filter_mismatch"),
-    ("root_path mismatch", "root_path_mismatch"),
-    ("scope mismatch", "scope_mismatch"),
-)
-
-
-def _artifact_tool_description(
-    *,
-    code_query_package_summary: str,
-) -> str:
-    """Build artifact-tool description with compact package summary."""
-    return (
-        "Interact with stored artifacts. "
-        "Actions: query and next_page. "
-        'Use action="query" with query_kind="code" to run Python over '
-        "stored artifacts. "
-        f"Code-query packages: {code_query_package_summary}. "
-        "Use action=\"next_page\" to fetch additional upstream pages for a "
-        "paginated artifact. "
-        f"{PAGINATION_COMPLETENESS_RULE}"
-    )
-
-
-def _not_implemented(tool_name: str) -> dict[str, Any]:
-    """Return a NOT_IMPLEMENTED gateway error for a tool.
-
-    Args:
-        tool_name: Qualified name of the unimplemented tool.
-
-    Returns:
-        Gateway error dict with code NOT_IMPLEMENTED.
-    """
-    return gateway_error(
-        "NOT_IMPLEMENTED",
-        f"{tool_name} is not wired to persistence yet",
-    )
-
-
-def _cursor_position(payload: dict[str, Any]) -> dict[str, Any]:
-    """Extract position_state dict from cursor payload.
-
-    Args:
-        payload: Decoded cursor payload dictionary.
-
-    Returns:
-        The position_state sub-dictionary.
-
-    Raises:
-        CursorTokenError: If position_state is missing or not
-            a dict.
-    """
-    position = payload.get("position_state")
-    if not isinstance(position, dict):
-        msg = "cursor missing position_state"
-        raise CursorTokenError(msg)
-    return position
-
-
-def _assert_cursor_field(
-    payload: Mapping[str, Any],
-    *,
-    field: str,
-    expected: object,
-) -> None:
-    """Raise CursorStaleError if a cursor field does not match.
-
-    Args:
-        payload: Decoded cursor payload mapping.
-        field: Key to look up in the payload.
-        expected: Value the field must equal.
-
-    Raises:
-        CursorStaleError: If the actual value differs from
-            expected.
-    """
-    actual = payload.get(field)
-    if actual != expected:
-        msg = f"cursor {field} mismatch"
-        raise CursorStaleError(msg)
-
-
-def _check_sample_corruption(
-    root_row: dict[str, Any],
-    sample_rows: list[dict[str, Any]],
-) -> dict[str, Any] | None:
-    """Return INTERNAL error if expected sample indices are missing rows.
-
-    Args:
-        root_row: Mapping root row containing sample_indices.
-        sample_rows: Fetched sample rows to verify against.
-
-    Returns:
-        Gateway error dict if corruption detected, else None.
-    """
-    expected_raw = root_row.get("sample_indices")
-    if not isinstance(expected_raw, list) or not expected_raw:
-        return None
-    expected = {int(i) for i in expected_raw if isinstance(i, int)}
-    actual = {
-        int(row["sample_index"])
-        for row in sample_rows
-        if isinstance(row.get("sample_index"), int)
-    }
-    missing = sorted(expected - actual)
-    if missing:
-        return gateway_error(
-            "INTERNAL",
-            "sample data corruption: expected sample rows missing",
-            details={
-                "root_key": root_row.get("root_key"),
-                "missing_indices": missing,
-                "expected_count": len(expected),
-                "actual_count": len(actual),
-            },
-        )
-    return None
-
-
-def _mcp_safe_name(qualified_name: str) -> str:
-    """Convert a dotted qualified name to an MCP-safe name.
-
-    MCP clients require tool names matching the pattern
-    ``^[a-zA-Z0-9_-]{1,64}$``.  Dots are replaced with
-    underscores.
-
-    Args:
-        qualified_name: Internal qualified tool name
-            (e.g. ``gateway.status``).
-
-    Returns:
-        MCP-safe tool name (e.g. ``gateway_status``).
-    """
-    return qualified_name.replace(".", "_")
-
-
-def _assert_unique_safe_tool_name(
-    seen: dict[str, str],
-    *,
-    safe_name: str,
-    qualified_name: str,
-) -> None:
-    """Ensure MCP-safe tool names remain collision-free.
-
-    Args:
-        seen: Mapping of MCP-safe names to original qualified names.
-        safe_name: Sanitized MCP-safe name.
-        qualified_name: Original qualified tool name.
-
-    Raises:
-        ValueError: If a different qualified name already mapped to
-            the same safe name.
-    """
-    existing = seen.get(safe_name)
-    if existing is not None and existing != qualified_name:
-        msg = (
-            "tool name collision after MCP-safe sanitization: "
-            f"{existing!r} and {qualified_name!r} -> {safe_name!r}"
-        )
-        raise ValueError(msg)
-    seen[safe_name] = qualified_name
-
-
-def _command_resolvable(command: str | None) -> bool:
-    """Return whether a stdio command appears resolvable on this host."""
-    if not command:
-        return False
-    if "/" in command:
-        candidate = Path(command)
-        return candidate.exists() and candidate.is_file()
-    return shutil.which(command) is not None
-
-
-def _stdio_module_probe(args: list[str]) -> dict[str, Any] | None:
-    """Return module import diagnostics for ``python -m <module>`` launches."""
-    if len(args) < 2 or args[0] != "-m":
-        return None
-    module = args[1]
-    probe: dict[str, Any] = {"module": module}
-    try:
-        spec = importlib.util.find_spec(module)
-    except ModuleNotFoundError as exc:
-        probe["importable"] = False
-        probe["error"] = str(exc)
-        return probe
-    probe["importable"] = spec is not None
-    if spec is None:
-        probe["error"] = "module not found"
-    return probe
-
-
-def _ensure_gateway_context(arguments: dict[str, Any]) -> dict[str, Any]:
-    """Auto-inject ``_gateway_context.session_id`` from MCP transport.
-
-    When the client omits ``_gateway_context`` or its ``session_id``,
-    derives one from the FastMCP session context so that callers
-    (e.g. Claude Code) need not manually supply it.
-
-    Args:
-        arguments: Raw tool arguments from the MCP client.
-
-    Returns:
-        Arguments dict with ``_gateway_context.session_id``
-        guaranteed present.
-    """
-    ctx = arguments.get("_gateway_context")
-    if isinstance(ctx, dict) and ctx.get("session_id"):
-        return arguments
-    try:
-        mcp_ctx = get_context()
-        session_id = mcp_ctx.session_id
-    except RuntimeError:
-        return arguments
-    gw_ctx: dict[str, Any] = dict(ctx) if isinstance(ctx, dict) else {}
-    gw_ctx.setdefault("session_id", session_id)
-    return {**arguments, "_gateway_context": gw_ctx}
-
-
-class RuntimeTool(Tool):
-    """FastMCP tool subclass that accepts raw argument dicts.
-
-    Bypasses FastMCP's Pydantic argument parsing so that gateway
-    tools and mirrored upstream tools receive the raw ``dict``
-    directly.
-
-    Attributes:
-        handler: Async callable that processes the raw arguments
-            and returns a structured result dict.
-    """
-
-    handler: Callable[[dict[str, Any]], Awaitable[dict[str, Any]]]
-    response_sanitizer: Callable[[dict[str, Any]], dict[str, Any]] | None = None
-
-    async def run(self, arguments: dict[str, Any]) -> ToolResult:
-        """Execute the handler with raw arguments.
-
-        Auto-injects ``_gateway_context.session_id`` from the
-        MCP transport session when the client omits it.
-
-        Args:
-            arguments: Raw argument dict passed by the MCP
-                client.
-
-        Returns:
-            ToolResult wrapping the handler's structured
-            content dict.
-        """
-        arguments = _ensure_gateway_context(arguments)
-        result = await self.handler(arguments)
-        if self.response_sanitizer is not None:
-            result = self.response_sanitizer(result)
-        return ToolResult(structured_content=result)
-
-
-def _upstream_error_message(result: dict[str, Any]) -> str:
-    """Extract a human-readable error message from an upstream result.
-
-    Args:
-        result: Upstream tool call result dict.
-
-    Returns:
-        First non-empty text block, or a generic fallback string.
-    """
-    content = result.get("content")
-    if isinstance(content, list):
-        for block in content:
-            if isinstance(block, dict):
-                text = block.get("text")
-                if isinstance(text, str) and text.strip():
-                    return text
-    return "upstream tool returned an error"
-
-
-def _normalize_upstream_content(
-    *,
-    content: list[dict[str, Any]] | None,
-    structured_content: Any,
-) -> list[Mapping[str, Any]]:
-    """Normalize upstream content blocks into envelope parts.
-
-    Converts structured content and MCP content blocks into
-    the canonical part types recognised by the envelope model.
-
-    Args:
-        content: List of MCP content blocks, or None.
-        structured_content: Optional structured JSON content
-            returned by the upstream tool.
-
-    Returns:
-        List of normalized content-part mappings.
-    """
-    normalized: list[Mapping[str, Any]] = []
-    if isinstance(structured_content, (dict, list)):
-        normalized.append({"type": "json", "value": structured_content})
-    elif structured_content is not None:
-        normalized.append(
-            {
-                "type": "text",
-                "text": json.dumps(structured_content, ensure_ascii=False),
-            }
-        )
-
-    for block in content or []:
-        part_type = block.get("type")
-        if part_type in _SUPPORTED_ENVELOPE_PARTS:
-            normalized.append(block)
-            continue
-        if isinstance(block.get("text"), str):
-            normalized.append({"type": "text", "text": block["text"]})
-            continue
-        normalized.append(
-            {
-                "type": "text",
-                "text": json.dumps(block, sort_keys=True, ensure_ascii=False),
-            }
-        )
-    return normalized
-
 
 @dataclass
 class GatewayServer:
@@ -590,25 +306,8 @@ class GatewayServer:
     # ------------------------------------------------------------------
 
     def _probe_db_recovery(self) -> bool:
-        """Probe DB pool and recover db_ok if healthy.
-
-        Called by the preflight health gate so that a transient
-        OperationalError (e.g. PoolTimeout) does not permanently
-        disable mirrored tool calls.
-
-        Returns:
-            True if the database connection is healthy and
-            db_ok was restored, False otherwise.
-        """
-        if self.db_pool is None:
-            return False
-        try:
-            with self.db_pool.connection() as conn:
-                conn.execute("SELECT 1")
-            self.db_ok = True
-            return True
-        except Exception:
-            return False
+        """Probe DB pool and recover db_ok if healthy."""
+        return _runtime_probe_db_recovery(self)
 
     def _not_implemented(self, tool_name: str) -> dict[str, Any]:
         """Return a NOT_IMPLEMENTED error for a tool.
@@ -629,41 +328,23 @@ class GatewayServer:
         message: str,
     ) -> None:
         """Persist the latest runtime failure metadata for an upstream."""
-        current = dict(self.upstream_runtime.get(prefix, {}))
-        current["last_error_code"] = code
-        current["last_error_message"] = message
-        current["last_error_at"] = dt.datetime.now(dt.UTC).isoformat()
-        self.upstream_runtime[prefix] = current
+        _runtime_record_upstream_failure(
+            self,
+            prefix=prefix,
+            code=code,
+            message=message,
+        )
 
     def _record_upstream_success(self, *, prefix: str) -> None:
         """Persist the latest successful upstream-call timestamp."""
-        current = dict(self.upstream_runtime.get(prefix, {}))
-        current["last_success_at"] = dt.datetime.now(dt.UTC).isoformat()
-        self.upstream_runtime[prefix] = current
+        _runtime_record_upstream_success(self, prefix=prefix)
 
     async def _probe_upstream_tools(
         self,
         upstream: UpstreamInstance,
     ) -> dict[str, Any]:
         """Run an active ``tools/list`` probe for one upstream."""
-        try:
-            tools = await asyncio.wait_for(
-                discover_tools(
-                    upstream.config,
-                    data_dir=str(self.config.data_dir),
-                ),
-                timeout=5.0,
-            )
-        except Exception as exc:
-            return {
-                "ok": False,
-                "error_code": classify_upstream_exception(exc),
-                "error": str(exc),
-            }
-        return {
-            "ok": True,
-            "tool_count": len(tools),
-        }
+        return await _runtime_probe_upstream_tools(self, upstream)
 
     async def _status_upstreams(
         self,
@@ -676,57 +357,9 @@ class GatewayServer:
             List of dicts describing each upstream's connection
             state, tool count, and any errors.
         """
-        payload: list[dict[str, Any]] = []
-        by_prefix: dict[str, dict[str, Any]] = {}
-        for upstream in self.upstreams:
-            entry: dict[str, Any] = {
-                "prefix": upstream.prefix,
-                "instance_id": upstream.instance_id,
-                "connected": True,
-                "tool_count": len(upstream.tools),
-                "transport": upstream.config.transport,
-            }
-            if upstream.config.transport == "stdio":
-                entry["command"] = upstream.config.command
-                entry["command_resolvable"] = _command_resolvable(
-                    upstream.config.command
-                )
-                module_probe = _stdio_module_probe(list(upstream.config.args))
-                if module_probe is not None:
-                    entry["module_probe"] = module_probe
-            else:
-                entry["url"] = upstream.config.url
-
-            runtime = self.upstream_runtime.get(upstream.prefix)
-            if runtime:
-                entry["runtime"] = dict(runtime)
-            if probe_upstreams:
-                entry["active_probe"] = await self._probe_upstream_tools(
-                    upstream
-                )
-            payload.append(entry)
-            by_prefix[upstream.prefix] = entry
-
-        for prefix, error in sorted(self.upstream_errors.items()):
-            if prefix in by_prefix:
-                by_prefix[prefix]["startup_error"] = {
-                    "code": "UPSTREAM_STARTUP_FAILURE",
-                    "message": error,
-                }
-                continue
-            payload.append(
-                {
-                    "prefix": prefix,
-                    "connected": False,
-                    "tool_count": 0,
-                    "transport": None,
-                    "startup_error": {
-                        "code": "UPSTREAM_STARTUP_FAILURE",
-                        "message": error,
-                    },
-                }
-            )
-        return payload
+        return await _runtime_status_upstreams(
+            self, probe_upstreams=probe_upstreams
+        )
 
     def _bounded_limit(self, raw_limit: Any) -> int:
         """Clamp a user-supplied limit to the configured maximum.
@@ -737,9 +370,7 @@ class GatewayServer:
         Returns:
             Positive integer capped at config.max_items.
         """
-        if isinstance(raw_limit, int) and raw_limit > 0:
-            return min(raw_limit, self.config.max_items)
-        return min(50, self.config.max_items)
+        return _runtime_bounded_limit(self, raw_limit)
 
     def _increment_metric(self, attr: str, amount: int = 1) -> None:
         """Increment a counter metric by the given amount.
@@ -748,10 +379,7 @@ class GatewayServer:
             attr: Attribute name on GatewayMetrics.
             amount: Increment value. Defaults to 1.
         """
-        counter = getattr(self.metrics, attr, None)
-        increment = getattr(counter, "inc", None)
-        if callable(increment):
-            increment(amount)
+        _runtime_increment_metric(self, attr, amount)
 
     def _observe_metric(self, attr: str, value: float) -> None:
         """Record an observation on a histogram metric.
@@ -760,10 +388,7 @@ class GatewayServer:
             attr: Attribute name on GatewayMetrics.
             value: Observation value (e.g. latency in ms).
         """
-        histogram = getattr(self.metrics, attr, None)
-        observe = getattr(histogram, "observe", None)
-        if callable(observe):
-            observe(value)
+        _runtime_observe_metric(self, attr, value)
 
     def _restore_protocol_response_fields(
         self,
@@ -772,38 +397,14 @@ class GatewayServer:
         sanitized: dict[str, Any],
     ) -> dict[str, Any]:
         """Preserve control-plane fields that must remain protocol-stable."""
-        for protocol_field in ("cursor", "next_cursor"):
-            if protocol_field in original:
-                sanitized[protocol_field] = original[protocol_field]
-        if "pagination" in original:
-            sanitized["pagination"] = original["pagination"]
-        return sanitized
+        return _runtime_restore_protocol_response_fields(
+            original=original,
+            sanitized=sanitized,
+        )
 
     def _sanitize_tool_result(self, result: dict[str, Any]) -> dict[str, Any]:
         """Redact detected secrets from a tool result payload."""
-        if self.response_redactor is None:
-            return result
-        try:
-            redaction = self.response_redactor.redact_payload(result)
-        except SecretRedactionError as exc:
-            self._increment_metric("secret_redaction_failures")
-            get_logger(component="mcp.server").warning(
-                "tool response redaction failed",
-                error_type=type(exc).__name__,
-            )
-            return gateway_error(
-                "INTERNAL",
-                "response redaction failed",
-            )
-        if redaction.redacted_count > 0:
-            self._increment_metric(
-                "secret_redaction_matches",
-                redaction.redacted_count,
-            )
-        return self._restore_protocol_response_fields(
-            original=result,
-            sanitized=redaction.payload,
-        )
+        return _runtime_sanitize_tool_result(self, result)
 
     async def _call_upstream_with_metrics(
         self,
@@ -861,16 +462,7 @@ class GatewayServer:
         Args:
             message: CursorStaleError message string.
         """
-        reason = "unknown"
-        for pattern, pattern_reason in _CURSOR_STALE_REASON_PATTERNS:
-            if pattern in message:
-                reason = pattern_reason
-                break
-        log = get_logger(component="mcp.server")
-        log.info(LogEvents.CURSOR_STALE, reason=reason, detail=message)
-        recorder = getattr(self.metrics, "record_cursor_stale_reason", None)
-        if callable(recorder):
-            recorder(reason)
+        _runtime_record_cursor_stale_reason(self, message)
 
     def _cursor_session_artifact_id(
         self, session_id: str, order_by: str
@@ -898,14 +490,7 @@ class GatewayServer:
         Returns:
             Gateway error dict with the matching error code.
         """
-        if isinstance(token_error, CursorExpiredError):
-            self._increment_metric("cursor_expired")
-            return gateway_error("CURSOR_EXPIRED", "cursor expired")
-        if isinstance(token_error, CursorStaleError):
-            self._record_cursor_stale_reason(str(token_error))
-            return gateway_error("CURSOR_STALE", str(token_error))
-        self._increment_metric("cursor_invalid")
-        return gateway_error("INVALID_ARGUMENT", "invalid cursor")
+        return _runtime_cursor_error(self, token_error)
 
     def _issue_cursor(
         self,

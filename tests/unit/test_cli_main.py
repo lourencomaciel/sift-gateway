@@ -30,9 +30,7 @@ class _ContinueConnection:
         self.query: str | None = None
         self.params: tuple[Any, ...] | None = None
 
-    def execute(
-        self, query: str, params: tuple[Any, ...]
-    ) -> _SingleRowCursor:
+    def execute(self, query: str, params: tuple[Any, ...]) -> _SingleRowCursor:
         self.query = query
         self.params = params
         return _SingleRowCursor(self._row)
@@ -435,7 +433,10 @@ def test_resolve_run_schema_ref_accepts_verbose_schema_payload(
                     "schema_hash": "sha256:derived",
                     "root_path": "$",
                     "mode": "exact",
-                    "coverage": {"completeness": "complete", "observed_records": 1},
+                    "coverage": {
+                        "completeness": "complete",
+                        "observed_records": 1,
+                    },
                     "fields": [
                         {
                             "path": "$.id",
@@ -728,8 +729,7 @@ def test_serve_run_injects_pagination_state_into_capture_meta(
             args=["fake"],
             returncode=0,
             stdout=(
-                b'{"next":"?after=CURSOR_2&limit=100",'
-                b'"items":[{"id":"1"}]}'
+                b'{"next":"?after=CURSOR_2&limit=100","items":[{"id":"1"}]}'
             ),
             stderr=b"",
         ),
@@ -973,7 +973,9 @@ def test_serve_run_fails_closed_on_redaction_error_before_capture(
     )
     capture_called = {"value": False}
 
-    def _capture_marker(runtime: Any, *, arguments: dict[str, Any]) -> dict[str, Any]:
+    def _capture_marker(
+        runtime: Any, *, arguments: dict[str, Any]
+    ) -> dict[str, Any]:
         del runtime, arguments
         capture_called["value"] = True
         return {"artifact_id": "art_should_not_exist"}
@@ -1048,7 +1050,7 @@ def test_serve_run_schema_ref_uses_sample_item_when_schema_is_consistent(
     assert isinstance(metadata, dict)
     usage = metadata.get("usage")
     assert isinstance(usage, dict)
-    assert usage.get("root_path") == "$.items"
+    assert usage.get("root_path") == "$"
 
 
 def test_serve_run_schema_ref_falls_back_to_schema_for_mixed_item_shapes(
@@ -1097,7 +1099,10 @@ def test_serve_run_schema_ref_falls_back_to_schema_for_mixed_item_shapes(
                     "schema_hash": "sha256:derived",
                     "root_path": "$",
                     "mode": "exact",
-                    "coverage": {"completeness": "complete", "observed_records": 2},
+                    "coverage": {
+                        "completeness": "complete",
+                        "observed_records": 2,
+                    },
                     "fields": [
                         {
                             "path": "$.value",
@@ -1128,7 +1133,7 @@ def test_serve_run_schema_ref_falls_back_to_schema_for_mixed_item_shapes(
     assert isinstance(metadata, dict)
     usage = metadata.get("usage")
     assert isinstance(usage, dict)
-    assert usage.get("root_path") == "$.items"
+    assert usage.get("root_path") == "$"
 
 
 def test_serve_run_continue_from_links_lineage_and_page_number(
@@ -1148,10 +1153,7 @@ def test_serve_run_continue_from_links_lineage_and_page_number(
         lambda *args, **kwargs: subprocess.CompletedProcess(
             args=["fake-api"],
             returncode=0,
-            stdout=(
-                b'{"next":"?after=CUR_3&limit=100",'
-                b'"items":[{"id":"2"}]}'
-            ),
+            stdout=(b'{"next":"?after=CUR_3&limit=100","items":[{"id":"2"}]}'),
             stderr=b"",
         ),
     )
@@ -1215,7 +1217,9 @@ def test_serve_run_continue_from_links_lineage_and_page_number(
     assert payload["pagination"]["page_number"] == 1
     assert captured["parent_artifact_id"] == "art_page_1"
     assert captured["chain_seq"] == 1
-    assert captured["capture_origin"]["continue_from_artifact_id"] == "art_page_1"
+    assert (
+        captured["capture_origin"]["continue_from_artifact_id"] == "art_page_1"
+    )
     assert captured["capture_origin"]["command_argv"] == [
         "fake-api",
         "--after",

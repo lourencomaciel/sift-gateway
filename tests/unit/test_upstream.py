@@ -1,13 +1,21 @@
 from __future__ import annotations
 
+import asyncio
 from typing import ClassVar
 
 import pytest
 
 from sift_gateway.config.settings import UpstreamConfig
+from sift_gateway.config.upstream_secrets import write_secret
 from sift_gateway.mcp.upstream import (
     UpstreamInstance,
+    _atomic_json_write,
+    _build_http_headers,
     _build_stdio_env,
+    _client_result_content,
+    _client_transport,
+    _effective_external_user_id,
+    _file_lock,
     call_upstream_tool,
     compute_auth_fingerprint,
     compute_upstream_instance_id,
@@ -173,6 +181,103 @@ def test_auth_fingerprint_returns_string_for_secrets() -> None:
     fp = compute_auth_fingerprint(cfg)
     assert isinstance(fp, str)
     assert len(fp) == 16
+
+
+def test_auth_fingerprint_http_none_when_only_salt_headers() -> None:
+    cfg = _http_config(
+        headers={"X-Org": "acme"},
+        semantic_salt_headers=["X-Org"],
+    )
+    assert compute_auth_fingerprint(cfg) is None
+
+
+def test_auth_fingerprint_uses_secret_env_for_stdio(tmp_path) -> None:
+    cfg = _stdio_config(
+        env={},
+        secret_ref="gh",
+        semantic_salt_env_keys=[],
+    )
+    write_secret(
+        tmp_path,
+        "gh",
+        transport="stdio",
+        env={"TOKEN": "abc"},
+    )
+
+    fp = compute_auth_fingerprint(cfg, str(tmp_path))
+    assert isinstance(fp, str)
+    assert len(fp) == 16
+
+
+def test_file_lock_noop_when_fcntl_unavailable(monkeypatch, tmp_path) -> None:
+    marker = tmp_path / "marker.txt"
+    monkeypatch.setattr("sift_gateway.mcp.upstream._fcntl", None)
+
+    with _file_lock(tmp_path / "lockfile.lock"):
+        marker.write_text("ok", encoding="utf-8")
+
+    assert marker.read_text(encoding="utf-8") == "ok"
+
+
+def test_atomic_json_write_cleans_tmp_file_on_write_error(
+    monkeypatch, tmp_path
+) -> None:
+    dest = tmp_path / "ids.json"
+
+    def _fail_write(_fd: int, _data: bytes) -> int:
+        raise OSError("disk full")
+
+    monkeypatch.setattr("sift_gateway.mcp.upstream.os.write", _fail_write)
+
+    with pytest.raises(OSError, match="disk full"):
+        _atomic_json_write(dest, {"a": "b"})
+
+    assert not dest.exists()
+    assert list(tmp_path.glob("*.tmp")) == []
+
+
+def test_effective_external_user_id_returns_none_for_malformed_flag() -> None:
+    assert _effective_external_user_id(["--external-user-id"], "resolved") is None
+
+
+def test_effective_external_user_id_returns_none_for_empty_equals() -> None:
+    assert (
+        _effective_external_user_id(["--external-user-id="], "resolved")
+        is None
+    )
+
+
+def test_http_transport_returns_raw_url_without_headers_or_oauth() -> None:
+    cfg = _http_config(headers={})
+    assert _client_transport(cfg) == "https://jira.example.com/mcp"
+
+
+def test_client_result_content_returns_empty_when_content_not_list() -> None:
+    class _Result:
+        content = "not-a-list"
+
+    assert _client_result_content(_Result()) == []
+
+
+def test_client_result_content_handles_dict_model_and_fallback() -> None:
+    class _ModelBlock:
+        def model_dump(self, *, by_alias: bool, exclude_none: bool) -> dict:
+            _ = by_alias, exclude_none
+            return {"type": "model", "value": 1}
+
+    class _Result:
+        def __init__(self) -> None:
+            self.content = [
+                {"type": "text", "text": "ok"},
+                _ModelBlock(),
+                123,
+            ]
+
+    assert _client_result_content(_Result()) == [
+        {"type": "text", "text": "ok"},
+        {"type": "model", "value": 1},
+        {"type": "text", "text": "123"},
+    ]
 
 
 class _FakeTool:
@@ -354,6 +459,29 @@ def test_stdio_env_inherit_parent_env_true(
     assert env.get("SIFT_TEST_SECRET") == "visible"
 
 
+def test_stdio_env_merges_secret_env(tmp_path) -> None:
+    cfg = _stdio_config(
+        env={"LOCAL_FLAG": "1"},
+        secret_ref="github",
+    )
+    write_secret(
+        tmp_path,
+        "github",
+        transport="stdio",
+        env={"FROM_SECRET": "abc"},
+    )
+
+    env = _build_stdio_env(cfg, str(tmp_path))
+    assert env["FROM_SECRET"] == "abc"
+    assert env["LOCAL_FLAG"] == "1"
+
+
+def test_stdio_env_ignores_non_dict_secret_env() -> None:
+    cfg = _stdio_config(env={"LOCAL_FLAG": "1"})
+    env = _build_stdio_env(cfg, secret={"env": "not-a-dict"})
+    assert env["LOCAL_FLAG"] == "1"
+
+
 @pytest.mark.asyncio
 async def test_stdio_transport_always_gets_env_dict(
     monkeypatch,
@@ -522,6 +650,27 @@ def test_resolve_external_user_id_non_string_stored_value(
     assert stored["github"] == uid
 
 
+def test_resolve_external_user_id_rechecks_under_lock(
+    monkeypatch, tmp_path
+) -> None:
+    cfg = _stdio_config(external_user_id="auto")
+    values = iter([{}, {"github": "already-written"}])
+
+    monkeypatch.setattr(
+        "sift_gateway.mcp.upstream._read_user_ids",
+        lambda _path: next(values),
+    )
+    monkeypatch.setattr(
+        "sift_gateway.mcp.upstream._atomic_json_write",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("should not write when value appears under lock")
+        ),
+    )
+
+    uid = resolve_external_user_id(cfg, str(tmp_path))
+    assert uid == "already-written"
+
+
 def test_instance_id_varies_with_external_user_id() -> None:
     """Different external_user_id values produce different instance IDs."""
     cfg = _stdio_config()
@@ -625,3 +774,216 @@ def test_stdio_transport_no_injection_when_none() -> None:
     transport = _client_transport(cfg)
     assert "--external-user-id" not in transport.args
     assert transport.args == ["--mode", "prod"]
+
+
+def test_build_http_headers_ignores_non_dict_secret_headers() -> None:
+    cfg = _http_config(headers={"X-Org": "acme"})
+    headers = _build_http_headers(cfg, secret={"headers": "invalid"})
+    assert headers == {"X-Org": "acme"}
+
+
+def test_http_transport_oauth_mode_uses_auth_and_drops_authorization(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    cfg = _http_config(
+        prefix="notion",
+        headers={"Authorization": "Bearer inline", "X-Org": "acme"},
+        secret_ref="notion",
+    )
+    write_secret(
+        tmp_path,
+        "notion",
+        transport="http",
+        headers={"Authorization": "Bearer secret", "X-Extra": "1"},
+        oauth={
+            "enabled": True,
+            "provider": "fastmcp",
+            "token_storage": "disk",
+        },
+    )
+    sentinel_auth = object()
+    monkeypatch.setattr(
+        "sift_gateway.mcp.upstream._build_runtime_oauth_auth",
+        lambda *_args, **_kwargs: sentinel_auth,
+    )
+
+    from sift_gateway.mcp.upstream import _client_transport
+
+    transport = _client_transport(cfg, str(tmp_path))
+
+    from fastmcp.client.transports import StreamableHttpTransport
+
+    assert isinstance(transport, StreamableHttpTransport)
+    assert transport.auth is sentinel_auth
+    assert "Authorization" not in transport.headers
+    assert transport.headers["X-Org"] == "acme"
+    assert transport.headers["X-Extra"] == "1"
+
+
+def test_http_transport_without_oauth_mode_keeps_authorization(
+    tmp_path,
+) -> None:
+    cfg = _http_config(
+        prefix="notion",
+        headers={"Authorization": "Bearer inline"},
+        secret_ref="notion",
+    )
+    write_secret(
+        tmp_path,
+        "notion",
+        transport="http",
+        headers={"Authorization": "Bearer secret"},
+    )
+
+    from sift_gateway.mcp.upstream import _client_transport
+
+    transport = _client_transport(cfg, str(tmp_path))
+
+    from fastmcp.client.transports import StreamableHttpTransport
+
+    assert isinstance(transport, StreamableHttpTransport)
+    assert transport.auth is None
+    assert transport.headers["Authorization"] == "Bearer inline"
+
+
+def test_build_runtime_oauth_auth_returns_none_without_oauth_metadata(
+    tmp_path,
+) -> None:
+    cfg = _http_config(
+        prefix="notion",
+        secret_ref="notion",
+    )
+    write_secret(
+        tmp_path,
+        "notion",
+        transport="http",
+        headers={"Authorization": "Bearer tok"},
+    )
+
+    from sift_gateway.mcp.upstream import _build_runtime_oauth_auth
+
+    assert _build_runtime_oauth_auth(cfg, str(tmp_path)) is None
+
+
+def test_build_runtime_oauth_auth_requires_url(tmp_path) -> None:
+    cfg = _stdio_config(
+        prefix="notion",
+        env={},
+        secret_ref="notion",
+    )
+    write_secret(
+        tmp_path,
+        "notion",
+        transport="http",
+        headers={"Authorization": "Bearer tok"},
+        oauth={
+            "enabled": True,
+            "provider": "fastmcp",
+            "token_storage": "disk",
+        },
+    )
+
+    from sift_gateway.mcp.upstream import _build_runtime_oauth_auth
+
+    assert _build_runtime_oauth_auth(cfg, str(tmp_path)) is None
+
+
+def test_build_runtime_oauth_auth_redirect_handler_is_non_interactive(
+    tmp_path,
+) -> None:
+    cfg = _http_config(
+        prefix="notion",
+        secret_ref="notion",
+    )
+    write_secret(
+        tmp_path,
+        "notion",
+        transport="http",
+        headers={"Authorization": "Bearer tok"},
+        oauth={
+            "enabled": True,
+            "provider": "fastmcp",
+            "token_storage": "disk",
+        },
+    )
+
+    from sift_gateway.mcp.upstream import _build_runtime_oauth_auth
+
+    auth = _build_runtime_oauth_auth(cfg, str(tmp_path))
+    assert auth is not None
+    with pytest.raises(RuntimeError, match="requires interactive login"):
+        asyncio.run(auth.redirect_handler("https://auth.example.test/start"))
+
+
+def test_http_transport_oauth_mode_uses_sse_transport(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    cfg = _http_config(
+        prefix="notion",
+        url="https://example.com/sse",
+        headers={"Authorization": "Bearer inline"},
+        secret_ref="notion",
+    )
+    write_secret(
+        tmp_path,
+        "notion",
+        transport="http",
+        headers={"Authorization": "Bearer secret"},
+        oauth={
+            "enabled": True,
+            "provider": "fastmcp",
+            "token_storage": "disk",
+        },
+    )
+    monkeypatch.setattr(
+        "fastmcp.mcp_config.infer_transport_type_from_url",
+        lambda _url: "sse",
+    )
+    sentinel_auth = object()
+    monkeypatch.setattr(
+        "sift_gateway.mcp.upstream._build_runtime_oauth_auth",
+        lambda *_args, **_kwargs: sentinel_auth,
+    )
+
+    from sift_gateway.mcp.upstream import _client_transport
+
+    transport = _client_transport(cfg, str(tmp_path))
+
+    from fastmcp.client.transports import SSETransport
+
+    assert isinstance(transport, SSETransport)
+    assert transport.auth is sentinel_auth
+    assert "Authorization" not in transport.headers
+
+
+def test_auth_fingerprint_oauth_mode_ignores_authorization_header(
+    tmp_path,
+) -> None:
+    cfg_a = _http_config(
+        prefix="notion",
+        headers={"Authorization": "Bearer inline_A"},
+        secret_ref="notion",
+    )
+    cfg_b = _http_config(
+        prefix="notion",
+        headers={"Authorization": "Bearer inline_B"},
+        secret_ref="notion",
+    )
+    write_secret(
+        tmp_path,
+        "notion",
+        transport="http",
+        headers={"Authorization": "Bearer secret"},
+        oauth={
+            "enabled": True,
+            "provider": "fastmcp",
+            "token_storage": "disk",
+        },
+    )
+
+    fp_a = compute_auth_fingerprint(cfg_a, str(tmp_path))
+    fp_b = compute_auth_fingerprint(cfg_b, str(tmp_path))
+    assert fp_a == fp_b
+    assert isinstance(fp_a, str)

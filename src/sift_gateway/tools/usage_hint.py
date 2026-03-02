@@ -135,7 +135,7 @@ def build_code_query_usage(
         artifact_id_token = shlex.quote(artifact_id)
         root_path_token = shlex.quote(root_path)
         example = (
-            f'sift-gateway code {artifact_id_token} '
+            f"sift-gateway code {artifact_id_token} "
             f'{root_path_token} --code "def run(data, schema, params): return len(data)"'
         )
     return {

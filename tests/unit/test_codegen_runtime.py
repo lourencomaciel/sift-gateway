@@ -134,7 +134,9 @@ def run(artifacts, schemas, params):
     assert result == [{"records": 3}]
 
 
-def test_execute_code_in_subprocess_multi_signature_accepts_single_input() -> None:
+def test_execute_code_in_subprocess_multi_signature_accepts_single_input() -> (
+    None
+):
     result = execute_code_in_subprocess(
         code="""
 def run(artifacts, schemas, params):
@@ -187,6 +189,80 @@ def run(data, schema, params):
     assert exc.value.code == "CODE_RUNTIME_EXCEPTION"
     assert exc.value.traceback is not None
     assert len(exc.value.traceback) <= 2000
+
+
+def test_execute_code_in_subprocess_strips_locator_from_dicts() -> None:
+    result = execute_code_in_subprocess(
+        code="""
+def run(data, schema, params):
+    return [{"keys": sorted(r.keys())} for r in data]
+""",
+        data=[
+            {"mag": 4.5, "_locator": {"artifact_id": "a1"}},
+            {"depth": 10, "_locator": {"artifact_id": "a2"}},
+        ],
+        schema={"root_path": "$.items"},
+        params={},
+        runtime=CodeRuntimeConfig(timeout_seconds=2.0, max_memory_mb=256),
+    )
+    assert result == [{"keys": ["mag"]}, {"keys": ["depth"]}]
+
+
+def test_execute_code_in_subprocess_unwraps_scalar_records() -> None:
+    result = execute_code_in_subprocess(
+        code="""
+def run(data, schema, params):
+    return {"sum": sum(data), "all_float": all(isinstance(v, float) for v in data)}
+""",
+        data=[
+            {"_locator": {"artifact_id": "a1", "_scalar": True}, "value": 1.5},
+            {"_locator": {"artifact_id": "a2", "_scalar": True}, "value": 2.5},
+        ],
+        schema={"root_path": "$.hourly.temperature_2m"},
+        params={},
+        runtime=CodeRuntimeConfig(timeout_seconds=2.0, max_memory_mb=256),
+    )
+    assert result == {"sum": 4.0, "all_float": True}
+
+
+def test_execute_code_in_subprocess_strips_locators_multi_artifact() -> None:
+    result = execute_code_in_subprocess(
+        code="""
+def run(artifacts, schemas, params):
+    temps = artifacts["temps"]
+    quakes = artifacts["quakes"]
+    return {
+        "temp_sum": sum(temps),
+        "quake_keys": [sorted(r.keys()) for r in quakes],
+    }
+""",
+        artifacts={
+            "temps": [
+                {
+                    "_locator": {"artifact_id": "t1", "_scalar": True},
+                    "value": 1.0,
+                },
+                {
+                    "_locator": {"artifact_id": "t2", "_scalar": True},
+                    "value": 2.0,
+                },
+            ],
+            "quakes": [
+                {"mag": 4.5, "_locator": {"artifact_id": "q1"}},
+                {"mag": 5.0, "_locator": {"artifact_id": "q2"}},
+            ],
+        },
+        schemas={
+            "temps": {"root_path": "$.hourly.temperature_2m"},
+            "quakes": {"root_path": "$.features"},
+        },
+        params={},
+        runtime=CodeRuntimeConfig(timeout_seconds=2.0, max_memory_mb=256),
+    )
+    assert result == {
+        "temp_sum": 3.0,
+        "quake_keys": [["mag"], ["mag"]],
+    }
 
 
 def test_build_env_filters_parent_environment(monkeypatch) -> None:
