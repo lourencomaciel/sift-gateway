@@ -349,3 +349,67 @@ def test_upstream_login_headless_end_to_end(tmp_path: Path) -> None:
         except subprocess.TimeoutExpired:
             upstream_proc.kill()
             upstream_proc.wait(timeout=5.0)
+
+
+def test_upstream_login_runtime_ignores_stale_auth_header(
+    tmp_path: Path,
+) -> None:
+    """Runtime should use persisted OAuth cache over static auth header."""
+    data_dir = tmp_path / "gateway"
+    port = _pick_free_port()
+    path = "/mcp"
+
+    upstream_proc = _run_oauth_upstream_server(port=port, path=path)
+    try:
+        _wait_until_listening(upstream_proc, port=port, path=path)
+        upstream_url = f"http://127.0.0.1:{port}{path}"
+
+        proc = _run_cli(
+            data_dir,
+            "upstream",
+            "add",
+            "--name",
+            "oauth-api",
+            "--transport",
+            "http",
+            "--url",
+            upstream_url,
+        )
+        assert proc.returncode == 0, proc.stderr
+
+        proc = _run_cli(
+            data_dir,
+            "upstream",
+            "login",
+            "--server",
+            "oauth-api",
+            "--headless",
+        )
+        assert proc.returncode == 0, proc.stderr
+
+        secret_path = (
+            data_dir / "state" / "upstream_secrets" / "oauth-api.json"
+        )
+        payload = json.loads(secret_path.read_text(encoding="utf-8"))
+        headers = payload.get("headers")
+        assert isinstance(headers, dict)
+        headers["Authorization"] = "Bearer definitely-invalid-static-token"
+        payload["headers"] = headers
+        secret_path.write_text(json.dumps(payload), encoding="utf-8")
+
+        proc = _run_cli(
+            data_dir,
+            "upstream",
+            "test",
+            "--server",
+            "oauth-api",
+        )
+        assert proc.returncode == 0, proc.stderr
+        assert "ok oauth-api" in proc.stdout
+    finally:
+        upstream_proc.terminate()
+        try:
+            upstream_proc.wait(timeout=5.0)
+        except subprocess.TimeoutExpired:
+            upstream_proc.kill()
+            upstream_proc.wait(timeout=5.0)
