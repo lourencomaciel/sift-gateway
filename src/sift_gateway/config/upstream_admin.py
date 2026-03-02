@@ -581,6 +581,7 @@ async def _oauth_login_access_token(
     from fastmcp import Client
     from fastmcp.client.auth import OAuth
     from fastmcp.client.transports import (
+        ClientTransport,
         SSETransport,
         StreamableHttpTransport,
     )
@@ -625,6 +626,7 @@ async def _oauth_login_access_token(
 
     oauth = _HeadlessOAuth(url) if headless else OAuth(url)
     inferred = infer_transport_type_from_url(url)
+    transport: ClientTransport
     if inferred == "sse":
         transport = SSETransport(url=url, auth=oauth)
     else:
