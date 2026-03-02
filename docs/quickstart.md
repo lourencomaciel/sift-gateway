@@ -196,6 +196,19 @@ Optional target override:
 sift-gateway upstream add '<json>' --from claude --data-dir /abs/path/to/data-dir
 ```
 
+For OAuth-enabled HTTP upstreams, run login after `upstream add`:
+
+```bash
+# Interactive browser flow
+sift-gateway upstream login --server notion
+
+# CI/testing (headless) flow
+sift-gateway upstream login --server notion --headless
+```
+
+Current behavior: `upstream login` stores the returned access token as an
+`Authorization: Bearer ...` header in secret storage.
+
 ## Manual configuration
 
 You can manually create `{data_dir}/state/config.json`:
