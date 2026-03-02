@@ -17,28 +17,7 @@ _HEX_ONLY_RE = re.compile(r"^[0-9a-fA-F]+$")
 # and skip scanner-only heuristic matches.
 _SCANNER_FILTER_FIELD_SUFFIX = "_url"
 _COMMON_FILE_EXTENSIONS = frozenset(
-    """
-    3g2 3gp 3mf 7z aab aac abw ac3 afm ai aif aiff alac amr ape apk appimage
-    ar arj asc asf asm asp aspx atom au avi avif avro azw azw3 bak bash bat
-    bcpio bin blend bmp bz2 c cab caf cbr cbt cbz cc cgi class conf cpio cpp
-    crt cs csh css csv cue cxx dart dat db db3 deb der diff dmg doc docm docx
-    dot dotm dotx dtd dxf dylib ear ebook ejs eml eot eps epub erb exe f4v fbx
-    fcgi feather flac flv fnt fpx fs ftl gcode gem gif glb gltf go gpx gz h hbs
-    hdf hdf5 heic heif hpp htm html ico ics iges igs ini ipa ipynb iso jar java
-    jfif jpe jpeg jpg js json json5 jsonl jsx kar key kml kmz kt kts less lock
-    log lua lz lz4 lzh m1v m2a m2ts m2v m3u m3u8 m4a m4b m4p m4v map markdown
-    md mdb mid midi mkv mml mm mov mp1 mp2 mp3 mp4 mpa mpe mpeg mpg mpp msi msp
-    mts mustache mxf nar ndjson nes njk numbers obj odp ods odt ogg ogm ogv one
-    onepkg opml opus orc ost otf p12 p7b p7c pak parquet pdf pem pfx pgp php pl
-    ply png pot potm potx ppa ppam pps ppsm ppsx ppt pptm pptx ps ps1 psm1 psql
-    pub py pyc pyd pyi qt r ra raf ram rar rb rdf reg rpm rst rtf rw2 s3m sass
-    sb3 sc scss sgi sh sig skp sln so sql sqlite sqlite3 stl stp svg svgz swf
-    swift tar tbz tcl tex text tfm tgz tif tiff tk tlz toml torrent tsv ttc ttf
-    twig txz txt vbs vcf vob vue wav weba webm webp wma wmv woff woff2 wpd wps
-    x3d xaml xcf xhtml xlam xls xlsb xlsm xlsx xlt xltm xltx xml xpi xps xsd
-    xsl xz yaml yml z zip zst
-    """
-    .split()
+    ["3g2", "3gp", "3mf", "7z", "aab", "aac", "abw", "ac3", "afm", "ai", "aif", "aiff", "alac", "amr", "ape", "apk", "appimage", "ar", "arj", "asc", "asf", "asm", "asp", "aspx", "atom", "au", "avi", "avif", "avro", "azw", "azw3", "bak", "bash", "bat", "bcpio", "bin", "blend", "bmp", "bz2", "c", "cab", "caf", "cbr", "cbt", "cbz", "cc", "cgi", "class", "conf", "cpio", "cpp", "crt", "cs", "csh", "css", "csv", "cue", "cxx", "dart", "dat", "db", "db3", "deb", "der", "diff", "dmg", "doc", "docm", "docx", "dot", "dotm", "dotx", "dtd", "dxf", "dylib", "ear", "ebook", "ejs", "eml", "eot", "eps", "epub", "erb", "exe", "f4v", "fbx", "fcgi", "feather", "flac", "flv", "fnt", "fpx", "fs", "ftl", "gcode", "gem", "gif", "glb", "gltf", "go", "gpx", "gz", "h", "hbs", "hdf", "hdf5", "heic", "heif", "hpp", "htm", "html", "ico", "ics", "iges", "igs", "ini", "ipa", "ipynb", "iso", "jar", "java", "jfif", "jpe", "jpeg", "jpg", "js", "json", "json5", "jsonl", "jsx", "kar", "key", "kml", "kmz", "kt", "kts", "less", "lock", "log", "lua", "lz", "lz4", "lzh", "m1v", "m2a", "m2ts", "m2v", "m3u", "m3u8", "m4a", "m4b", "m4p", "m4v", "map", "markdown", "md", "mdb", "mid", "midi", "mkv", "mml", "mm", "mov", "mp1", "mp2", "mp3", "mp4", "mpa", "mpe", "mpeg", "mpg", "mpp", "msi", "msp", "mts", "mustache", "mxf", "nar", "ndjson", "nes", "njk", "numbers", "obj", "odp", "ods", "odt", "ogg", "ogm", "ogv", "one", "onepkg", "opml", "opus", "orc", "ost", "otf", "p12", "p7b", "p7c", "pak", "parquet", "pdf", "pem", "pfx", "pgp", "php", "pl", "ply", "png", "pot", "potm", "potx", "ppa", "ppam", "pps", "ppsm", "ppsx", "ppt", "pptm", "pptx", "ps", "ps1", "psm1", "psql", "pub", "py", "pyc", "pyd", "pyi", "qt", "r", "ra", "raf", "ram", "rar", "rb", "rdf", "reg", "rpm", "rst", "rtf", "rw2", "s3m", "sass", "sb3", "sc", "scss", "sgi", "sh", "sig", "skp", "sln", "so", "sql", "sqlite", "sqlite3", "stl", "stp", "svg", "svgz", "swf", "swift", "tar", "tbz", "tcl", "tex", "text", "tfm", "tgz", "tif", "tiff", "tk", "tlz", "toml", "torrent", "tsv", "ttc", "ttf", "twig", "txz", "txt", "vbs", "vcf", "vob", "vue", "wav", "weba", "webm", "webp", "wma", "wmv", "woff", "woff2", "wpd", "wps", "x3d", "xaml", "xcf", "xhtml", "xlam", "xls", "xlsb", "xlsm", "xlsx", "xlt", "xltm", "xltx", "xml", "xpi", "xps", "xsd", "xsl", "xz", "yaml", "yml", "z", "zip", "zst"]
 )
 _NON_RELAXED_FILE_EXTENSIONS = frozenset(
     {
