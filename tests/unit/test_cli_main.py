@@ -1050,7 +1050,7 @@ def test_serve_run_schema_ref_uses_sample_item_when_schema_is_consistent(
     assert isinstance(metadata, dict)
     usage = metadata.get("usage")
     assert isinstance(usage, dict)
-    assert usage.get("root_path") == "$.items"
+    assert usage.get("root_path") == "$"
 
 
 def test_serve_run_schema_ref_falls_back_to_schema_for_mixed_item_shapes(
@@ -1133,7 +1133,7 @@ def test_serve_run_schema_ref_falls_back_to_schema_for_mixed_item_shapes(
     assert isinstance(metadata, dict)
     usage = metadata.get("usage")
     assert isinstance(usage, dict)
-    assert usage.get("root_path") == "$.items"
+    assert usage.get("root_path") == "$"
 
 
 def test_serve_run_continue_from_links_lineage_and_page_number(
