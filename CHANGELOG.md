@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+## [0.3.3] - 2026-03-02
+
+### Changed
+- Relaxed secret redaction for signed file/media URLs so URL query signatures remain usable while preserving known token-pattern redaction
+
+### Fixed
+- Fixed CI lint compliance in URL-extension allowlist construction used by response redaction
+
 ## [0.3.2] - 2026-03-02
 
 ### Added
