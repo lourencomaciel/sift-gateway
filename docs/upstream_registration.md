@@ -16,7 +16,7 @@ for Sift while preserving Sift's core guarantees
 
 1. No change to artifact/query contracts (`artifact(...)`, `run`, `code`).
 2. No change to response-mode logic (`full` vs `schema_ref`).
-3. No requirement to expose OAuth in phase 1.
+3. No requirement to implement provider-specific OAuth UX in phase 1.
 
 ## 3. CLI Surface
 
@@ -64,6 +64,12 @@ sift-gateway upstream auth set \
 sift-gateway upstream auth set \
   --server github \
   --env "GITHUB_TOKEN=$GITHUB_TOKEN"
+
+# Run OAuth login for HTTP upstreams and persist Authorization header
+sift-gateway upstream login --server notion
+
+# CI/testing mode (no browser popup)
+sift-gateway upstream login --server notion --headless
 
 # Remove upstream
 sift-gateway upstream remove --server notion
@@ -186,7 +192,7 @@ Write strategy for mutating commands:
 ## Phase 1+2 (implemented)
 
 1. CLI commands: `list`, `inspect`, `test`, flag-based `add`, `remove`,
-   `enable`, `disable`, `auth set`.
+   `enable`, `disable`, `auth set`, `login`.
 2. Migration `008_upstream_registry.sql` with single `upstream_registry`
    table.
 3. Registry repository, bootstrap import, and config mirror writes.
@@ -195,9 +201,9 @@ Write strategy for mutating commands:
 ## Phase 3 (future enhancements)
 
 1. `upstream_runtime_state` and `upstream_admin_events` tables.
-2. OAuth helper commands for HTTP upstreams (`upstream login`).
-3. Alias/script generator (`upstream script --install`).
-4. Interactive add mode (`upstream add --interactive`).
+2. Alias/script generator (`upstream script --install`).
+3. Interactive add mode (`upstream add --interactive`).
+4. OAuth lifecycle UX enhancements (re-login UX, provider-specific helpers).
 
 ## 8. Acceptance Criteria
 

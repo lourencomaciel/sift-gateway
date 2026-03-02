@@ -6,11 +6,14 @@ against a temporary data directory and asserting outcomes via stdout.
 
 from __future__ import annotations
 
+import http.client
 import json
 import os
 from pathlib import Path
+import socket
 import subprocess
 import sys
+import time
 
 
 def _clean_env() -> dict[str, str]:
@@ -48,6 +51,96 @@ def _run_cli(
         capture_output=True,
         text=True,
         timeout=30,
+        env=_clean_env(),
+    )
+
+
+def _pick_free_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        return int(sock.getsockname()[1])
+
+
+def _http_status(
+    *,
+    port: int,
+    path: str,
+) -> int:
+    conn = http.client.HTTPConnection("127.0.0.1", port, timeout=1.0)
+    try:
+        conn.request("GET", path)
+        response = conn.getresponse()
+        status = response.status
+        response.close()
+        return status
+    finally:
+        conn.close()
+
+
+def _wait_until_listening(
+    proc: subprocess.Popen[str],
+    *,
+    port: int,
+    path: str,
+    timeout_seconds: float = 10.0,
+) -> None:
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        if proc.poll() is not None:
+            stdout, stderr = proc.communicate(timeout=1.0)
+            msg = (
+                "oauth upstream exited before startup "
+                f"(code={proc.returncode})\n"
+                f"stdout:\n{stdout}\n"
+                f"stderr:\n{stderr}"
+            )
+            raise AssertionError(msg)
+        try:
+            _http_status(port=port, path=path)
+            return
+        except OSError:
+            time.sleep(0.05)
+    raise AssertionError(
+        f"Timed out waiting for oauth upstream on 127.0.0.1:{port}"
+    )
+
+
+def _run_oauth_upstream_server(
+    *,
+    port: int,
+    path: str,
+) -> subprocess.Popen[str]:
+    script = f"""
+from fastmcp import FastMCP
+from fastmcp.server.auth.providers.in_memory import InMemoryOAuthProvider
+from mcp.server.auth.settings import ClientRegistrationOptions
+
+app = FastMCP(
+    "oauth-upstream",
+    auth=InMemoryOAuthProvider(
+        base_url="http://127.0.0.1:{port}{path}",
+        client_registration_options=ClientRegistrationOptions(enabled=True),
+    ),
+)
+
+@app.tool
+def ping() -> str:
+    return "pong"
+
+app.run(
+    transport="streamable-http",
+    host="127.0.0.1",
+    port={port},
+    path={path!r},
+    show_banner=False,
+)
+"""
+    cmd = [sys.executable, "-c", script]
+    return subprocess.Popen(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
         env=_clean_env(),
     )
 
@@ -199,3 +292,124 @@ def test_upstream_lifecycle(tmp_path: Path) -> None:
     rows = json.loads(proc.stdout)
     assert len(rows) == 1
     assert rows[0]["name"] == "http-api"
+
+
+def test_upstream_login_headless_end_to_end(tmp_path: Path) -> None:
+    """Headless OAuth login flow: add HTTP upstream, login, probe successfully."""
+    data_dir = tmp_path / "gateway"
+    port = _pick_free_port()
+    path = "/mcp"
+
+    upstream_proc = _run_oauth_upstream_server(port=port, path=path)
+    try:
+        _wait_until_listening(upstream_proc, port=port, path=path)
+        upstream_url = f"http://127.0.0.1:{port}{path}"
+
+        proc = _run_cli(
+            data_dir,
+            "upstream",
+            "add",
+            "--name",
+            "oauth-api",
+            "--transport",
+            "http",
+            "--url",
+            upstream_url,
+        )
+        assert proc.returncode == 0, proc.stderr
+
+        proc = _run_cli(
+            data_dir,
+            "upstream",
+            "login",
+            "--server",
+            "oauth-api",
+            "--headless",
+            "--json",
+        )
+        assert proc.returncode == 0, proc.stderr
+        payload = json.loads(proc.stdout)
+        assert payload["server"] == "oauth-api"
+        assert payload["login"] == "oauth"
+        assert "Authorization" in payload["updated_header_keys"]
+
+        proc = _run_cli(
+            data_dir,
+            "upstream",
+            "test",
+            "--server",
+            "oauth-api",
+        )
+        assert proc.returncode == 0, proc.stderr
+        assert "ok oauth-api" in proc.stdout
+    finally:
+        upstream_proc.terminate()
+        try:
+            upstream_proc.wait(timeout=5.0)
+        except subprocess.TimeoutExpired:
+            upstream_proc.kill()
+            upstream_proc.wait(timeout=5.0)
+
+
+def test_upstream_login_runtime_ignores_stale_auth_header(
+    tmp_path: Path,
+) -> None:
+    """Runtime should use persisted OAuth cache over static auth header."""
+    data_dir = tmp_path / "gateway"
+    port = _pick_free_port()
+    path = "/mcp"
+
+    upstream_proc = _run_oauth_upstream_server(port=port, path=path)
+    try:
+        _wait_until_listening(upstream_proc, port=port, path=path)
+        upstream_url = f"http://127.0.0.1:{port}{path}"
+
+        proc = _run_cli(
+            data_dir,
+            "upstream",
+            "add",
+            "--name",
+            "oauth-api",
+            "--transport",
+            "http",
+            "--url",
+            upstream_url,
+        )
+        assert proc.returncode == 0, proc.stderr
+
+        proc = _run_cli(
+            data_dir,
+            "upstream",
+            "login",
+            "--server",
+            "oauth-api",
+            "--headless",
+        )
+        assert proc.returncode == 0, proc.stderr
+
+        secret_path = (
+            data_dir / "state" / "upstream_secrets" / "oauth-api.json"
+        )
+        payload = json.loads(secret_path.read_text(encoding="utf-8"))
+        headers = payload.get("headers")
+        assert isinstance(headers, dict)
+        headers["Authorization"] = "Bearer definitely-invalid-static-token"
+        payload["headers"] = headers
+        secret_path.write_text(json.dumps(payload), encoding="utf-8")
+
+        proc = _run_cli(
+            data_dir,
+            "upstream",
+            "test",
+            "--server",
+            "oauth-api",
+        )
+        assert proc.returncode == 0, proc.stderr
+        assert "ok oauth-api" in proc.stdout
+    finally:
+        upstream_proc.terminate()
+        try:
+            upstream_proc.wait(timeout=5.0)
+        except subprocess.TimeoutExpired:
+            upstream_proc.kill()
+            upstream_proc.wait(timeout=5.0)

@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-03-02
+
+### Added
+- Added `sift-gateway upstream login` command to run OAuth login for HTTP upstreams and persist auth headers in secret storage
+- Added headless OAuth login mode (`--headless`) for CI/testing flows
+- Added unit and integration coverage for OAuth login flow, including end-to-end headless lifecycle behavior
+
+### Changed
+- Updated quickstart and upstream registration docs to document OAuth login usage and behavior
+
+### Fixed
+- Fixed strict type-checking for OAuth transport selection by annotating shared transport assignment with `ClientTransport`
+
 ## [0.3.1] - 2026-02-27
 
 ### Added

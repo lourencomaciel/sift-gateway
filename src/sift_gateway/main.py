@@ -296,6 +296,22 @@ def _add_upstream_subcommand(
     )
     _add_upstream_common_flags(disable_parser, dry_run_flag=True)
 
+    login_parser = upstream_sub.add_parser(
+        "login",
+        help="Run OAuth login for one HTTP upstream and persist auth header",
+    )
+    login_parser.add_argument(
+        "--server",
+        required=True,
+        help="Upstream prefix to login",
+    )
+    login_parser.add_argument(
+        "--headless",
+        action="store_true",
+        help="Run OAuth login without opening a browser (CI/testing)",
+    )
+    _add_upstream_common_flags(login_parser, dry_run_flag=True)
+
     auth_parser = upstream_sub.add_parser(
         "auth",
         help="Manage upstream auth material",
@@ -950,6 +966,29 @@ def _run_upstream_auth_set(args: argparse.Namespace) -> int:
     return 0
 
 
+def _run_upstream_login(args: argparse.Namespace) -> int:
+    """Handle the ``upstream login`` subcommand."""
+    from sift_gateway.config.upstream_admin import login_upstream
+
+    data_dir = _resolve_upstream_data_dir_arg(getattr(args, "data_dir", None))
+    result = login_upstream(
+        server=args.server,
+        data_dir=data_dir,
+        dry_run=args.dry_run,
+        headless=bool(getattr(args, "headless", False)),
+    )
+
+    if getattr(args, "json", False):
+        _print_json_output(result)
+        return 0
+
+    if args.dry_run:
+        print(f"[dry run] would run OAuth login for upstream: {args.server}")
+    else:
+        print(f"OAuth login completed for upstream: {args.server}")
+    return 0
+
+
 def _run_init(args: argparse.Namespace) -> int:
     """Handle the ``init`` subcommand.
 
@@ -1273,6 +1312,8 @@ def serve(argv: list[str] | None = None) -> int:
             return _run_upstream_set_enabled(args, enabled=True)
         if upstream_command == "disable":
             return _run_upstream_set_enabled(args, enabled=False)
+        if upstream_command == "login":
+            return _run_upstream_login(args)
         if upstream_command == "auth":
             if getattr(args, "auth_command", None) == "set":
                 return _run_upstream_auth_set(args)
@@ -1285,7 +1326,7 @@ def serve(argv: list[str] | None = None) -> int:
         print(
             (
                 "usage: sift-gateway upstream "
-                "{add,list,inspect,test,remove,enable,disable,auth} ..."
+                "{add,list,inspect,test,remove,enable,disable,login,auth} ..."
             ),
             file=sys.stderr,
         )

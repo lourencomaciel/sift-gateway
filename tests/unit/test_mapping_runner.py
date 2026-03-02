@@ -11,6 +11,8 @@ from sift_gateway.mapping.runner import (
     MappingInput,
     RecordRow,
     RootInventory,
+    SampleRecord,
+    _collapse_partial_to_canonical_root,
     _extract_full_records,
     _navigate_to_root,
     run_mapping,
@@ -138,7 +140,7 @@ def test_text_part_json_string_is_parsed_for_mapping(tmp_path: Path) -> None:
     )
     assert result.map_status == "ready"
     assert result.schemas is not None
-    assert any(schema.root_path == "$.users" for schema in result.schemas)
+    assert any(schema.root_path == "$" for schema in result.schemas)
 
 
 def test_small_json_triggers_full_mapping(tmp_path: Path) -> None:
@@ -302,8 +304,8 @@ def test_run_mapping_closes_binary_stream(tmp_path: Path) -> None:
     assert len(closed) == 1
 
 
-def test_full_mapping_object_discovers_roots(tmp_path: Path) -> None:
-    """Full mapping of object discovers multiple roots sorted by score."""
+def test_full_mapping_object_maps_canonical_root(tmp_path: Path) -> None:
+    """Full mapping of object keeps a single canonical root at ``$``."""
     data = {
         "users": [{"id": 1}, {"id": 2}],
         "orders": [{"oid": 1}, {"oid": 2}, {"oid": 3}],
@@ -319,9 +321,9 @@ def test_full_mapping_object_discovers_roots(tmp_path: Path) -> None:
     )
     assert result.map_kind == "full"
     assert result.map_status == "ready"
-    assert len(result.roots) == 2
-    assert result.roots[0].root_key == "orders"
-    assert result.roots[1].root_key == "users"
+    assert len(result.roots) == 1
+    assert result.roots[0].root_key == "$"
+    assert result.roots[0].root_path == "$"
 
 
 def test_full_schema_resolves_json_encoded_strings(tmp_path: Path) -> None:
@@ -346,13 +348,15 @@ def test_full_schema_resolves_json_encoded_strings(tmp_path: Path) -> None:
     assert result.map_status == "ready"
     assert result.schemas is not None
     by_path = {schema.root_path: schema for schema in result.schemas}
-    assert "$.result.data" in by_path
-    data_schema = by_path["$.result.data"]
-    assert data_schema.observed_records == 2
+    assert "$" in by_path
+    data_schema = by_path["$"]
+    assert data_schema.observed_records == 1
     field_paths = {field.path for field in data_schema.fields}
-    assert "$.id" in field_paths
+    assert "$.result.data[*].id" in field_paths
     id_field = next(
-        field for field in data_schema.fields if field.path == "$.id"
+        field
+        for field in data_schema.fields
+        if field.path == "$.result.data[*].id"
     )
     assert id_field.example_value == "1"
 
@@ -377,9 +381,11 @@ def test_schema_field_example_value_truncates_long_values(
     assert result.map_kind == "full"
     assert result.schemas is not None
     by_path = {schema.root_path: schema for schema in result.schemas}
-    item_schema = by_path["$.items"]
+    item_schema = by_path["$"]
     desc_field = next(
-        field for field in item_schema.fields if field.path == "$.description"
+        field
+        for field in item_schema.fields
+        if field.path == "$.items[*].description"
     )
     assert (
         desc_field.example_value
@@ -403,9 +409,11 @@ def test_schema_field_distinct_values_are_capped_with_cardinality(
     assert result.map_kind == "full"
     assert result.schemas is not None
     by_path = {schema.root_path: schema for schema in result.schemas}
-    item_schema = by_path["$.items"]
+    item_schema = by_path["$"]
     action_field = next(
-        field for field in item_schema.fields if field.path == "$.action_type"
+        field
+        for field in item_schema.fields
+        if field.path == "$.items[*].action_type"
     )
     assert action_field.distinct_values is not None
     assert len(action_field.distinct_values) == 1
@@ -428,7 +436,7 @@ def test_sampled_schema_distinct_values_reflect_sampled_records(
     assert result.map_kind == "partial"
     assert result.schemas is not None
     by_path = {schema.root_path: schema for schema in result.schemas}
-    item_schema = by_path["$.items"]
+    item_schema = by_path["$"]
     action_field = next(
         field for field in item_schema.fields if field.path == "$.action_type"
     )
@@ -491,9 +499,9 @@ def test_schema_distinct_values_handle_float_values(tmp_path: Path) -> None:
     assert result.map_error is None
     assert result.schemas is not None
     by_path = {schema.root_path: schema for schema in result.schemas}
-    item_schema = by_path["$.items"]
+    item_schema = by_path["$"]
     spend_field = next(
-        field for field in item_schema.fields if field.path == "$.spend"
+        field for field in item_schema.fields if field.path == "$.items[*].spend"
     )
     assert spend_field.distinct_values is not None
     assert spend_field.distinct_values == [12.5]
@@ -544,6 +552,195 @@ def test_partial_mapping_populates_record_rows(tmp_path: Path) -> None:
         assert row.root_path == sample.root_path
         assert row.idx == sample.sample_index
         assert row.record == sample.record
+
+
+def test_partial_mapping_collapses_to_canonical_root_without_idx_collisions(
+    tmp_path: Path,
+) -> None:
+    data = {
+        "a": [{"id": i, "v": "x" * 20} for i in range(40)],
+        "b": [{"id": i, "v": "y" * 20} for i in range(40)],
+    }
+    envelope = {"content": [{"type": "json", "value": data}]}
+    result = run_mapping(
+        MappingInput(
+            artifact_id="a_partial_canonical",
+            payload_hash_full="p_partial_canonical",
+            envelope=envelope,
+            config=_config(tmp_path, max_full_map_bytes=100),
+        )
+    )
+
+    assert result.map_kind == "partial"
+    assert result.map_status == "ready"
+    assert len(result.roots) == 1
+    assert result.roots[0].root_key == "$"
+    assert result.roots[0].root_path == "$"
+
+    assert result.samples is not None
+    sample_indices = [sample.sample_index for sample in result.samples]
+    assert sample_indices == sorted(sample_indices)
+    assert all(sample.root_key == "$" for sample in result.samples)
+    assert all(sample.root_path == "$" for sample in result.samples)
+    assert len(set(sample_indices)) == len(sample_indices)
+
+
+def test_collapse_partial_to_canonical_root_preserves_source_index_signal() -> None:
+    roots = [
+        RootInventory(
+            root_key="a",
+            root_path="$.a[*]",
+            count_estimate=30,
+            root_shape="array",
+            fields_top={"id": {"number": 30}},
+            root_summary=None,
+            inventory_coverage=1.0,
+            root_score=30.0,
+            sample_indices=[10, 25],
+            sampled_prefix_len=30,
+        ),
+        RootInventory(
+            root_key="b",
+            root_path="$.b[*]",
+            count_estimate=4,
+            root_shape="array",
+            fields_top={"id": {"number": 4}},
+            root_summary=None,
+            inventory_coverage=1.0,
+            root_score=4.0,
+            sample_indices=[3],
+            sampled_prefix_len=4,
+        ),
+    ]
+    samples = [
+        SampleRecord(
+            root_key="a",
+            root_path="$.a[*]",
+            sample_index=25,
+            record={"id": 25},
+            record_bytes=10,
+            record_hash="h1",
+        ),
+        SampleRecord(
+            root_key="a",
+            root_path="$.a[*]",
+            sample_index=10,
+            record={"id": 10},
+            record_bytes=10,
+            record_hash="h2",
+        ),
+        SampleRecord(
+            root_key="b",
+            root_path="$.b[*]",
+            sample_index=3,
+            record={"id": 3},
+            record_bytes=10,
+            record_hash="h3",
+        ),
+    ]
+
+    collapsed_roots, collapsed_samples = _collapse_partial_to_canonical_root(
+        roots=roots,
+        samples=samples,
+    )
+    assert len(collapsed_roots) == 1
+    canonical_indices = [sample.sample_index for sample in collapsed_samples]
+    assert canonical_indices == [10, 25, 29]
+    assert canonical_indices != list(range(len(collapsed_samples)))
+    assert len(set(canonical_indices)) == len(canonical_indices)
+
+
+def test_collapse_partial_to_canonical_root_preserves_single_root_metadata(
+) -> None:
+    source_root = RootInventory(
+        root_key="$",
+        root_path="$",
+        count_estimate=40,
+        root_shape="array",
+        fields_top={"id": {"number": 40}},
+        root_summary=None,
+        inventory_coverage=1.0,
+        root_score=40.0,
+        sample_indices=[2, 5],
+        sampled_prefix_len=40,
+    )
+    source_samples = [
+        SampleRecord(
+            root_key="$",
+            root_path="$",
+            sample_index=5,
+            record={"id": 5},
+            record_bytes=10,
+            record_hash="ha",
+        ),
+        SampleRecord(
+            root_key="$",
+            root_path="$",
+            sample_index=2,
+            record={"id": 2},
+            record_bytes=10,
+            record_hash="hb",
+        ),
+    ]
+
+    collapsed_roots, collapsed_samples = _collapse_partial_to_canonical_root(
+        roots=[source_root],
+        samples=source_samples,
+    )
+    canonical_root = collapsed_roots[0]
+    assert canonical_root.count_estimate == 40
+    assert canonical_root.fields_top == {"id": {"number": 40}}
+    assert [sample.sample_index for sample in collapsed_samples] == [2, 5]
+
+
+def test_partial_mapping_collapsed_root_preserves_path_stats_coverage(
+    tmp_path: Path,
+) -> None:
+    data = [{"id": i, "group": i % 5} for i in range(300)]
+    envelope = {"content": [{"type": "json", "value": data}]}
+    result = run_mapping(
+        MappingInput(
+            artifact_id="a_partial_path_stats",
+            payload_hash_full="p_partial_path_stats",
+            envelope=envelope,
+            config=_config(tmp_path, max_full_map_bytes=100),
+        )
+    )
+
+    assert result.map_kind == "partial"
+    assert result.map_status == "ready"
+    assert result.schemas is not None
+    by_path = {schema.root_path: schema for schema in result.schemas}
+    schema = by_path["$"]
+    assert schema.observed_records == 300
+
+    id_field = next(field for field in schema.fields if field.path == "$.id")
+    assert id_field.observed_count == 300
+
+
+def test_partial_mapping_collapsed_root_preserves_skipped_oversize_counts(
+    tmp_path: Path,
+) -> None:
+    data = {
+        "a": [{"id": 1, "blob": "x" * 120_000}, {"id": 2, "blob": "ok"}],
+        "b": [{"id": 3, "blob": "y" * 120_000}, {"id": 4, "blob": "ok"}],
+    }
+    envelope = {"content": [{"type": "json", "value": data}]}
+    result = run_mapping(
+        MappingInput(
+            artifact_id="a_partial_oversize",
+            payload_hash_full="p_partial_oversize",
+            envelope=envelope,
+            config=_config(tmp_path, max_full_map_bytes=100),
+        )
+    )
+
+    assert result.map_kind == "partial"
+    assert result.map_status == "ready"
+    assert len(result.roots) == 1
+    summary = result.roots[0].root_summary or {}
+    assert summary.get("skipped_oversize_records") == 2
+    assert summary.get("skipped_oversize") == 2
 
 
 def test_navigate_to_root_top_level() -> None:
@@ -707,7 +904,7 @@ def test_partial_mapping_resolves_json_encoded_strings_for_schema(
     assert result.map_status == "ready"
     assert result.schemas is not None
     by_path = {schema.root_path: schema for schema in result.schemas}
-    assert "$.result.data" in by_path
-    data_schema = by_path["$.result.data"]
+    assert "$" in by_path
+    data_schema = by_path["$"]
     field_paths = {field.path for field in data_schema.fields}
     assert "$.id" in field_paths

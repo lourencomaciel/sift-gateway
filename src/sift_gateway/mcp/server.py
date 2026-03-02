@@ -24,14 +24,9 @@ from fastmcp import FastMCP
 
 from sift_gateway.artifacts.create import (
     ArtifactHandle,
-    CreateArtifactInput,
-    compute_payload_sizes,
-    generate_artifact_id,
-    prepare_envelope_storage,
 )
 from sift_gateway.config.settings import GatewayConfig
 from sift_gateway.constants import WORKSPACE_ID
-from sift_gateway.core.capture_identity import build_capture_identity
 from sift_gateway.cursor.payload import (
     CursorStaleError,
     build_cursor_payload,
@@ -934,71 +929,6 @@ class GatewayServer:
             if oversize_count > 0:
                 self._increment_metric("oversize_json_count", oversize_count)
         return transformed, binary_refs
-
-    def _build_non_persisted_handle(
-        self,
-        *,
-        input_data: CreateArtifactInput,
-    ) -> ArtifactHandle:
-        """Build an ArtifactHandle without database persistence.
-
-        Used when the database is unavailable to construct a
-        handle with computed hashes and sizes for passthrough
-        responses.
-
-        Args:
-            input_data: Artifact creation input with envelope
-                and metadata.
-
-        Returns:
-            ArtifactHandle with computed payload hashes and
-            size fields.
-        """
-        payload_hash, _, _, _ = prepare_envelope_storage(
-            input_data.envelope, self.config
-        )
-        payload_json_bytes, payload_binary_bytes_total, payload_total_bytes = (
-            compute_payload_sizes(input_data.envelope)
-        )
-        capture_identity = build_capture_identity(
-            artifact_kind=input_data.kind,
-            request_key=input_data.request_key,
-            prefix=input_data.prefix,
-            tool_name=input_data.tool_name,
-            upstream_instance_id=input_data.upstream_instance_id,
-            capture_kind=input_data.capture_kind,
-            capture_origin=input_data.capture_origin,
-            capture_key=input_data.capture_key,
-        )
-        return ArtifactHandle(
-            artifact_id=generate_artifact_id(),
-            created_seq=None,
-            generation=1,
-            session_id=input_data.session_id,
-            source_tool=f"{input_data.prefix}.{input_data.tool_name}",
-            upstream_instance_id=input_data.upstream_instance_id,
-            request_key=input_data.request_key,
-            capture_kind=capture_identity.capture_kind,
-            capture_origin=capture_identity.capture_origin,
-            capture_key=capture_identity.capture_key,
-            payload_hash_full=payload_hash,
-            payload_json_bytes=payload_json_bytes,
-            payload_binary_bytes_total=payload_binary_bytes_total,
-            payload_total_bytes=payload_total_bytes,
-            contains_binary_refs=input_data.envelope.contains_binary_refs,
-            map_kind="none",
-            map_status="pending",
-            index_status="off",
-            status=input_data.envelope.status,
-            error_summary=(
-                None
-                if input_data.envelope.error is None
-                else (
-                    f"{input_data.envelope.error.code}"
-                    f": {input_data.envelope.error.message}"
-                )
-            ),
-        )
 
     # ------------------------------------------------------------------
     # Tool registration
