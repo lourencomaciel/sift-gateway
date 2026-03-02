@@ -256,6 +256,25 @@ _ENV_ALLOWLIST: frozenset[str] = frozenset(
 )
 
 
+def _secret_oauth_enabled(secret: SecretData | None) -> bool:
+    """Return whether secret payload enables OAuth runtime auth mode."""
+    if not isinstance(secret, dict):
+        return False
+    oauth = secret.get("oauth")
+    return isinstance(oauth, dict) and bool(oauth.get("enabled"))
+
+
+def _headers_without_authorization(
+    headers: dict[str, str],
+) -> dict[str, str]:
+    """Return a copy of headers without Authorization entries."""
+    return {
+        key: value
+        for key, value in headers.items()
+        if key.lower() != "authorization"
+    }
+
+
 def _build_stdio_env(
     config: UpstreamConfig,
     data_dir: str | None = None,
@@ -358,6 +377,47 @@ def _build_http_headers(
     return base
 
 
+def _build_runtime_oauth_auth(
+    config: UpstreamConfig,
+    data_dir: str | None = None,
+    *,
+    secret: SecretData | None | object = _UNSET,
+) -> Any | None:
+    """Build non-interactive OAuth auth object for HTTP upstream runtime.
+
+    Returns ``None`` when OAuth mode is not enabled in the resolved
+    secret payload.
+    """
+    if secret is _UNSET:
+        secret = _resolve_secret_data(config, data_dir)
+    if not isinstance(secret, dict) or not _secret_oauth_enabled(secret):
+        return None
+    if not config.url:
+        return None
+
+    from fastmcp.client.auth import OAuth
+    from key_value.aio.stores.disk import DiskStore
+
+    from sift_gateway.config.upstream_secrets import oauth_cache_dir
+    from sift_gateway.constants import DEFAULT_DATA_DIR
+
+    class _RuntimeOAuth(OAuth):
+        async def redirect_handler(self, authorization_url: str) -> None:
+            _ = authorization_url
+            msg = (
+                "OAuth session requires interactive login. "
+                f"Run `sift-gateway upstream login --server {config.prefix}`."
+            )
+            raise RuntimeError(msg)
+
+    resolved_dir = data_dir or DEFAULT_DATA_DIR
+    secret_ref = config.secret_ref or config.prefix
+    token_storage = DiskStore(
+        directory=oauth_cache_dir(resolved_dir, secret_ref)
+    )
+    return _RuntimeOAuth(config.url, token_storage=token_storage)
+
+
 def _effective_external_user_id(
     args: list[str],
     resolved_user_id: str | None,
@@ -437,8 +497,14 @@ def _client_transport(
 
     # HTTP transport — merge headers from secret_ref
     headers = _build_http_headers(config, data_dir, secret=secret)
+    oauth_auth = _build_runtime_oauth_auth(
+        config, data_dir, secret=secret
+    )
+    if oauth_auth is not None:
+        # OAuth auth sets Authorization dynamically; avoid stale header clashes.
+        headers = _headers_without_authorization(headers)
     url = config.url or ""
-    if headers:
+    if headers or oauth_auth is not None:
         from fastmcp.mcp_config import (
             infer_transport_type_from_url,
         )
@@ -449,12 +515,16 @@ def _client_transport(
                 SSETransport,
             )
 
-            return SSETransport(url=url, headers=headers)
+            return SSETransport(url=url, headers=headers, auth=oauth_auth)
         from fastmcp.client.transports import (
             StreamableHttpTransport,
         )
 
-        return StreamableHttpTransport(url=url, headers=headers)
+        return StreamableHttpTransport(
+            url=url,
+            headers=headers,
+            auth=oauth_auth,
+        )
     return url
 
 
@@ -586,6 +656,10 @@ def compute_auth_fingerprint(
         if secret:
             all_headers.update(secret.get("headers") or {})
         all_headers.update(config.headers)
+        oauth_enabled = _secret_oauth_enabled(secret)
+        if oauth_enabled:
+            all_headers = _headers_without_authorization(all_headers)
+            auth_values["oauth_enabled"] = "1"
         for key, val in sorted(all_headers.items()):
             if key not in salt_keys:
                 auth_values[f"header_{key}"] = val

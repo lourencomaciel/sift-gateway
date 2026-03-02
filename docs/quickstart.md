@@ -206,8 +206,11 @@ sift-gateway upstream login --server notion
 sift-gateway upstream login --server notion --headless
 ```
 
-Current behavior: `upstream login` stores the returned access token as an
-`Authorization: Bearer ...` header in secret storage.
+Current behavior: `upstream login` persists an OAuth session cache (tokens +
+client registration metadata) and stores the current
+`Authorization: Bearer ...` header in secret storage for inspection.
+At runtime, OAuth-enabled upstreams use the persisted session and refresh
+tokens automatically when possible.
 
 ## Manual configuration
 

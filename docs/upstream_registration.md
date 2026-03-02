@@ -16,7 +16,7 @@ for Sift while preserving Sift's core guarantees
 
 1. No change to artifact/query contracts (`artifact(...)`, `run`, `code`).
 2. No change to response-mode logic (`full` vs `schema_ref`).
-3. No requirement to implement OAuth refresh/reauth automation in phase 1.
+3. No requirement to implement provider-specific OAuth UX in phase 1.
 
 ## 3. CLI Surface
 
@@ -203,7 +203,7 @@ Write strategy for mutating commands:
 1. `upstream_runtime_state` and `upstream_admin_events` tables.
 2. Alias/script generator (`upstream script --install`).
 3. Interactive add mode (`upstream add --interactive`).
-4. OAuth token lifecycle enhancements (refresh, re-login UX, provider-specific helpers).
+4. OAuth lifecycle UX enhancements (re-login UX, provider-specific helpers).
 
 ## 8. Acceptance Criteria
 

@@ -691,6 +691,10 @@ def _run_partial_mapping(
             if callable(close):
                 close()
 
+    roots, samples = _collapse_partial_to_canonical_root(
+        roots=roots,
+        samples=samples,
+    )
     record_rows = [
         RecordRow(s.root_path, s.sample_index, s.record) for s in samples
     ]
@@ -712,6 +716,226 @@ def _run_partial_mapping(
         ),
         record_rows=record_rows,
     )
+
+
+def _collapse_partial_to_canonical_root(
+    *,
+    roots: list[RootInventory],
+    samples: list[SampleRecord],
+) -> tuple[list[RootInventory], list[SampleRecord]]:
+    """Collapse partial-mapped roots into one canonical ``$`` root.
+
+    Partial mapping discovers sample-bearing array roots. For
+    downstream query consistency, present a single canonical
+    root at ``$`` while preserving source index signal.
+
+    Args:
+        roots: Partial mapper discovered roots.
+        samples: Partial mapper sampled records across roots.
+
+    Returns:
+        A tuple with exactly one canonical root and its
+        canonicalized samples.
+    """
+    sorted_samples = sorted(
+        samples,
+        key=lambda sample: (
+            str(sample.root_path),
+            int(sample.sample_index),
+            str(sample.record_hash),
+            int(sample.record_bytes),
+        ),
+    )
+    root_sample_widths: dict[str, int] = {}
+    for sample in sorted_samples:
+        root_path = str(sample.root_path)
+        sample_index = int(sample.sample_index)
+        if sample_index < 0:
+            continue
+        root_sample_widths[root_path] = max(
+            root_sample_widths.get(root_path, 0),
+            sample_index + 1,
+        )
+    root_offsets: dict[str, int] = {}
+    running_offset = 0
+    for root_path in sorted(root_sample_widths.keys()):
+        root_offsets[root_path] = running_offset
+        running_offset += root_sample_widths[root_path]
+
+    collapsed_samples = [
+        SampleRecord(
+            root_key="$",
+            root_path="$",
+            sample_index=(
+                root_offsets.get(str(sample.root_path), 0)
+                + int(sample.sample_index)
+            ),
+            record=sample.record,
+            record_bytes=sample.record_bytes,
+            record_hash=sample.record_hash,
+        )
+        for sample in sorted_samples
+    ]
+    sample_indices = [sample.sample_index for sample in collapsed_samples]
+
+    elements_seen_total = 0
+    skipped_oversize_total = 0
+    source_root_paths: list[str] = []
+    prefix_coverage = False
+    stop_reason: str | None = None
+    count_estimate_sum = 0
+    count_estimate_complete = bool(roots)
+    merged_fields_top: dict[str, dict[str, int]] = {}
+    merged_path_stats: dict[str, dict[str, Any]] = {}
+    for root in roots:
+        source_root_paths.append(root.root_path)
+        prefix_coverage = prefix_coverage or bool(root.prefix_coverage)
+        if (
+            stop_reason is None
+            and isinstance(root.stop_reason, str)
+            and root.stop_reason
+            and root.stop_reason != "none"
+        ):
+            stop_reason = root.stop_reason
+        if isinstance(root.count_estimate, int) and root.count_estimate >= 0:
+            count_estimate_sum += root.count_estimate
+        else:
+            count_estimate_complete = False
+        fields_top = root.fields_top
+        if isinstance(fields_top, dict):
+            for field_name, raw_counts in fields_top.items():
+                if not isinstance(raw_counts, dict):
+                    continue
+                merged_counts = merged_fields_top.setdefault(
+                    str(field_name),
+                    {},
+                )
+                for type_name, raw_count in raw_counts.items():
+                    if not isinstance(raw_count, int) or raw_count < 0:
+                        continue
+                    merged_counts[str(type_name)] = (
+                        merged_counts.get(str(type_name), 0) + raw_count
+                    )
+
+        summary = root.root_summary if isinstance(root.root_summary, dict) else None
+        seen_added = False
+        if summary is not None:
+            seen_raw = summary.get("elements_seen")
+            if isinstance(seen_raw, int) and seen_raw >= 0:
+                elements_seen_total += seen_raw
+                seen_added = True
+            skipped_raw = summary.get("skipped_oversize_records")
+            if not isinstance(skipped_raw, int):
+                skipped_raw = summary.get("skipped_oversize")
+            if isinstance(skipped_raw, int) and skipped_raw >= 0:
+                skipped_oversize_total += skipped_raw
+
+        if not seen_added and isinstance(
+            root.sampled_prefix_len, int
+        ) and root.sampled_prefix_len >= 0:
+            elements_seen_total += root.sampled_prefix_len
+
+        path_stats = root.path_stats
+        if isinstance(path_stats, dict):
+            for path in sorted(path_stats.keys()):
+                raw_stats = path_stats.get(path)
+                if not isinstance(raw_stats, dict):
+                    continue
+                merged = merged_path_stats.setdefault(
+                    str(path),
+                    {
+                        "types": set(),
+                        "observed_count": 0,
+                        "example_value": None,
+                    },
+                )
+                raw_types = raw_stats.get("types")
+                if isinstance(raw_types, list):
+                    merged_types = merged["types"]
+                    if isinstance(merged_types, set):
+                        merged_types.update(
+                            str(type_name) for type_name in raw_types
+                        )
+                raw_observed_count = raw_stats.get("observed_count")
+                if (
+                    isinstance(raw_observed_count, int)
+                    and raw_observed_count >= 0
+                ):
+                    merged["observed_count"] = int(merged["observed_count"]) + (
+                        raw_observed_count
+                    )
+                raw_example = raw_stats.get("example_value")
+                if merged["example_value"] is None and raw_example is not None:
+                    merged["example_value"] = raw_example
+
+    if not roots:
+        canonical_shape: str | None = None
+    elif len(roots) == 1 and roots[0].root_path == "$":
+        canonical_shape = roots[0].root_shape
+    else:
+        canonical_shape = "object"
+    canonical_count_estimate: int | None = (
+        count_estimate_sum if count_estimate_complete else None
+    )
+    canonical_fields_top: dict[str, Any] | None = (
+        dict(sorted(merged_fields_top.items()))
+        if merged_fields_top
+        else None
+    )
+
+    inventory_coverage: float | None = None
+    if elements_seen_total > 0:
+        inventory_coverage = len(sample_indices) / float(elements_seen_total)
+
+    canonical_path_stats: dict[str, Any] | None = None
+    if merged_path_stats:
+        canonical_path_stats = {}
+        for path in sorted(merged_path_stats.keys()):
+            merged = merged_path_stats[path]
+            raw_types = merged.get("types")
+            types: list[str] = []
+            if isinstance(raw_types, set):
+                types = sorted(str(type_name) for type_name in raw_types)
+            observed_count_raw = merged.get("observed_count")
+            observed_count = (
+                int(observed_count_raw)
+                if isinstance(observed_count_raw, int) and observed_count_raw >= 0
+                else 0
+            )
+            canonical_path_stats[path] = {
+                "types": types,
+                "observed_count": observed_count,
+                "example_value": merged.get("example_value"),
+            }
+
+    root_summary: dict[str, Any] = {
+        "elements_seen": elements_seen_total,
+        "sampled_record_count": len(sample_indices),
+        "sampled_prefix_len": elements_seen_total,
+        "prefix_coverage": prefix_coverage,
+        "stop_reason": stop_reason or "none",
+        "skipped_oversize": skipped_oversize_total,
+        "skipped_oversize_records": skipped_oversize_total,
+        "collapsed_from_partial_roots": True,
+        "source_root_count": len(roots),
+        "source_root_paths": sorted(set(source_root_paths)),
+    }
+    canonical_root = RootInventory(
+        root_key="$",
+        root_path="$",
+        count_estimate=canonical_count_estimate,
+        root_shape=canonical_shape,
+        fields_top=canonical_fields_top,
+        root_summary=root_summary,
+        inventory_coverage=inventory_coverage,
+        root_score=float(elements_seen_total),
+        sample_indices=sample_indices,
+        prefix_coverage=prefix_coverage,
+        stop_reason=(stop_reason if prefix_coverage else None),
+        sampled_prefix_len=elements_seen_total,
+        path_stats=canonical_path_stats,
+    )
+    return [canonical_root], collapsed_samples
 
 
 def run_mapping(
