@@ -6,7 +6,6 @@ from dataclasses import dataclass
 import hashlib
 import json
 import os
-from pathlib import Path
 import subprocess
 import sys
 from typing import Any
@@ -358,8 +357,3 @@ def execute_code_in_subprocess(
         )
 
     return parsed.get("result")
-
-
-def worker_path() -> Path:
-    """Return the filesystem path to the worker module for debugging."""
-    return Path(__file__).with_name("worker_main.py")
