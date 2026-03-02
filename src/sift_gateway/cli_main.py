@@ -700,7 +700,7 @@ def _execute_run(
         status = capture_payload.get("status")
         metadata: dict[str, Any] = {}
 
-        representative_sample, sample_root_path = _resolve_run_sample_ref(
+        representative_sample, _sample_root_path = _resolve_run_sample_ref(
             runtime,
             payload=execution.payload,
         )
@@ -710,16 +710,12 @@ def _execute_run(
                 runtime,
                 artifact_id=artifact_id,
             )
-            representative_sample, sample_root_path = _resolve_run_sample_ref(
+            representative_sample, _sample_root_path = _resolve_run_sample_ref(
                 runtime,
                 payload=execution.payload,
                 root_path=schema_primary_root_path(schemas),
             )
-        usage_root_path = (
-            sample_root_path
-            if isinstance(sample_root_path, str) and sample_root_path
-            else schema_primary_root_path(schemas)
-        )
+        usage_root_path = schema_primary_root_path(schemas)
         configured_roots = getattr(
             runtime, "code_query_allowed_import_roots", None
         )
