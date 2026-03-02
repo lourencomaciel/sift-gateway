@@ -13,6 +13,7 @@ import json
 import logging
 import os
 from pathlib import Path
+import shutil
 from typing import Any
 from urllib.parse import parse_qs, urljoin, urlparse
 
@@ -39,6 +40,8 @@ from sift_gateway.config.upstream_registry_convert import (
     _extract_gateway_fields,
 )
 from sift_gateway.config.upstream_secrets import (
+    oauth_cache_dir,
+    oauth_cache_dir_path,
     read_secret,
     secret_file_path,
     validate_prefix,
@@ -211,6 +214,21 @@ def _delete_secret_file(
         path.unlink()
 
 
+def _delete_oauth_cache_dir(
+    *,
+    data_dir: Path,
+    ref: str | None,
+) -> None:
+    """Delete per-upstream OAuth cache directory for ``ref`` when present."""
+    if not isinstance(ref, str) or not ref:
+        return
+    path = oauth_cache_dir_path(data_dir, ref)
+    if not path.exists():
+        return
+    with contextlib.suppress(OSError):
+        shutil.rmtree(path)
+
+
 def _secret_ref_is_still_referenced(
     *,
     data_dir: Path,
@@ -319,6 +337,21 @@ def inspect_upstream(
                 else [],
                 "updated_at": secret.get("updated_at"),
             }
+            oauth = secret.get("oauth")
+            if isinstance(oauth, dict):
+                secret_meta["oauth"] = {
+                    "enabled": bool(oauth.get("enabled")),
+                    "provider": (
+                        oauth.get("provider")
+                        if isinstance(oauth.get("provider"), str)
+                        else None
+                    ),
+                    "token_storage": (
+                        oauth.get("token_storage")
+                        if isinstance(oauth.get("token_storage"), str)
+                        else None
+                    ),
+                }
         except Exception as exc:
             secret_meta = {"ref": secret_ref, "error": str(exc)}
 
@@ -370,6 +403,10 @@ def remove_upstream(
             )
         ):
             _delete_secret_file(data_dir=resolved_data_dir, ref=secret_ref)
+            _delete_oauth_cache_dir(
+                data_dir=resolved_data_dir,
+                ref=secret_ref,
+            )
     else:
         config_path = resolved_data_dir / "state" / "config.json"
 
@@ -421,6 +458,8 @@ def set_upstream_auth(
     server: str,
     env_updates: dict[str, str] | None,
     header_updates: dict[str, str] | None,
+    oauth: dict[str, Any] | None = None,
+    clear_oauth: bool = True,
     data_dir: Path | None = None,
     dry_run: bool = False,
 ) -> dict[str, Any]:
@@ -458,6 +497,7 @@ def set_upstream_auth(
 
     merged_env: dict[str, str] = {}
     merged_headers: dict[str, str] = {}
+    merged_oauth: dict[str, Any] | None = None
     secret_data: dict[str, Any] | None = None
     if dry_run:
         secret_data = _read_secret_from_file(
@@ -491,9 +531,16 @@ def set_upstream_auth(
                     for k, v in (secret_data.get("headers") or {}).items()
                 }
             )
+        raw_oauth = secret_data.get("oauth")
+        if isinstance(raw_oauth, dict):
+            merged_oauth = dict(raw_oauth)
 
     merged_env.update(updates_env)
     merged_headers.update(updates_headers)
+    if oauth is not None:
+        merged_oauth = dict(oauth)
+    elif clear_oauth:
+        merged_oauth = None
 
     if not dry_run:
         write_secret(
@@ -502,7 +549,13 @@ def set_upstream_auth(
             transport=transport,
             env=merged_env if merged_env else None,
             headers=merged_headers if merged_headers else None,
+            oauth=merged_oauth if merged_oauth else None,
         )
+        if clear_oauth and not merged_oauth:
+            _delete_oauth_cache_dir(
+                data_dir=resolved_data_dir,
+                ref=target_ref,
+            )
         set_registry_upstream_secret_ref(
             data_dir=resolved_data_dir,
             prefix=server,
@@ -518,6 +571,9 @@ def set_upstream_auth(
         "secret_ref": target_ref,
         "updated_env_keys": sorted(updates_env),
         "updated_header_keys": sorted(updates_headers),
+        "oauth_enabled": bool(
+            isinstance(merged_oauth, dict) and merged_oauth.get("enabled")
+        ),
         "config_path": str(config_path),
         "dry_run": dry_run,
     }
@@ -576,6 +632,7 @@ async def _oauth_login_access_token(
     *,
     url: str,
     headless: bool = False,
+    token_storage: Any | None = None,
 ) -> str:
     """Run OAuth flow for an HTTP upstream and return an access token."""
     from fastmcp import Client
@@ -590,9 +647,14 @@ async def _oauth_login_access_token(
     class _HeadlessOAuth(OAuth):
         """OAuth provider variant that avoids browser interaction."""
 
-        def __init__(self, mcp_url: str):
+        def __init__(
+            self,
+            mcp_url: str,
+            *,
+            token_storage: Any | None = None,
+        ):
             self._callback_url: str | None = None
-            super().__init__(mcp_url)
+            super().__init__(mcp_url, token_storage=token_storage)
 
         async def redirect_handler(self, authorization_url: str) -> None:
             self._callback_url = await _resolve_oauth_callback_url_headless(
@@ -624,7 +686,11 @@ async def _oauth_login_access_token(
             state = params.get("state", [None])[0]
             return auth_code, state if isinstance(state, str) else None
 
-    oauth = _HeadlessOAuth(url) if headless else OAuth(url)
+    oauth = (
+        _HeadlessOAuth(url, token_storage=token_storage)
+        if headless
+        else OAuth(url, token_storage=token_storage)
+    )
     inferred = infer_transport_type_from_url(url)
     transport: ClientTransport
     if inferred == "sse":
@@ -685,25 +751,49 @@ def login_upstream(
     if not isinstance(url, str) or not url:
         msg = f"upstream {server!r} has no HTTP url configured"
         raise ValueError(msg)
+    secret_ref = record["secret_ref"]
+    if isinstance(secret_ref, str) and secret_ref:
+        target_ref = secret_ref.removesuffix(".json")
+    else:
+        target_ref = server
+    validate_prefix(target_ref)
+    oauth_meta = {
+        "enabled": True,
+        "provider": "fastmcp",
+        "token_storage": "disk",
+    }
 
     if dry_run:
         result = set_upstream_auth(
             server=server,
             env_updates=None,
             header_updates={"Authorization": "Bearer __OAUTH_ACCESS_TOKEN__"},
+            oauth=oauth_meta,
+            clear_oauth=False,
             data_dir=resolved_data_dir,
             dry_run=True,
         )
         result["login"] = "oauth"
         return result
 
+    from key_value.aio.stores.disk import DiskStore
+
+    token_storage = DiskStore(
+        directory=oauth_cache_dir(resolved_data_dir, target_ref)
+    )
     access_token = asyncio.run(
-        _oauth_login_access_token(url=url, headless=headless)
+        _oauth_login_access_token(
+            url=url,
+            headless=headless,
+            token_storage=token_storage,
+        )
     )
     result = set_upstream_auth(
         server=server,
         env_updates=None,
         header_updates={"Authorization": f"Bearer {access_token}"},
+        oauth=oauth_meta,
+        clear_oauth=False,
         data_dir=resolved_data_dir,
         dry_run=False,
     )

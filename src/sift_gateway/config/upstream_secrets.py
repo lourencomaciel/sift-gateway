@@ -17,6 +17,7 @@ from typing import Any
 from sift_gateway.constants import STATE_SUBDIR
 
 _SECRETS_SUBDIR = "upstream_secrets"
+_OAUTH_SUBDIR = "upstream_oauth"
 _VALID_TRANSPORTS = frozenset({"stdio", "http"})
 _REQUIRED_KEYS = frozenset({"version", "transport"})
 
@@ -64,6 +65,43 @@ def secrets_dir(data_dir: str | Path) -> Path:
     return path
 
 
+def oauth_cache_dir_path(data_dir: str | Path, ref: str) -> Path:
+    """Return the OAuth cache directory path for one upstream ref.
+
+    Args:
+        data_dir: Root data directory for Sift state.
+        ref: Secret reference string (upstream prefix, optionally
+            with a ``.json`` suffix).
+
+    Returns:
+        Path to ``{data_dir}/state/upstream_oauth/{prefix}``.
+
+    Raises:
+        ValueError: If the derived prefix contains path separators
+            or ``..``.
+    """
+    prefix = ref.removesuffix(".json")
+    validate_prefix(prefix)
+    return Path(data_dir) / STATE_SUBDIR / _OAUTH_SUBDIR / prefix
+
+
+def oauth_cache_dir(data_dir: str | Path, ref: str) -> Path:
+    """Return the OAuth cache directory, creating it if needed.
+
+    Args:
+        data_dir: Root data directory for Sift state.
+        ref: Secret reference string (upstream prefix, optionally
+            with a ``.json`` suffix).
+
+    Returns:
+        Path to ``{data_dir}/state/upstream_oauth/{prefix}``.
+    """
+    path = oauth_cache_dir_path(data_dir, ref)
+    path.mkdir(parents=True, exist_ok=True)
+    os.chmod(path, 0o700)
+    return path
+
+
 def validate_prefix(prefix: str) -> None:
     r"""Reject prefixes containing path separators or traversal.
 
@@ -89,6 +127,7 @@ def write_secret(
     transport: str,
     env: dict[str, str] | None = None,
     headers: dict[str, str] | None = None,
+    oauth: dict[str, Any] | None = None,
 ) -> Path:
     """Write a secret file for an upstream.
 
@@ -102,6 +141,7 @@ def write_secret(
         transport: Transport type (``"stdio"`` or ``"http"``).
         env: Environment variables for stdio transport.
         headers: HTTP headers for http transport.
+        oauth: Optional OAuth metadata for http transport.
 
     Returns:
         Path to the written secret file.
@@ -125,6 +165,7 @@ def write_secret(
         "transport": transport,
         "env": env,
         "headers": headers,
+        "oauth": oauth,
         "updated_at": now.isoformat(),
     }
 
@@ -157,7 +198,8 @@ def read_secret(data_dir: str | Path, prefix: str) -> dict[str, Any]:
     Returns:
         Parsed secret dict with keys ``version``,
         ``transport``, ``env``, ``headers``, and
-        ``updated_at``.
+        ``updated_at``.  Optional ``oauth`` metadata
+        may also be present.
 
     Raises:
         FileNotFoundError: If no secret file exists for
