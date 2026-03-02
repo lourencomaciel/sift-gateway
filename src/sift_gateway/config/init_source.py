@@ -27,12 +27,6 @@ _SOURCE_SHORTCUT_ALIASES: dict[str, str] = {
     "code": "vscode",
 }
 
-
-def supported_source_shortcuts() -> tuple[str, ...]:
-    """Return supported shortcut names for ``--from``."""
-    return SUPPORTED_SOURCE_SHORTCUTS
-
-
 def resolve_source_arg(
     source_arg: str | Path,
     *,
