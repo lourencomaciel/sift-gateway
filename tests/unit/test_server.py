@@ -1236,7 +1236,7 @@ def test_handle_mirrored_tool_schema_ref_uses_sample_item_when_consistent(
     assert isinstance(metadata, dict)
     usage = metadata.get("usage")
     assert isinstance(usage, dict)
-    assert usage.get("root_path") == "$.items"
+    assert usage.get("root_path") == "$"
 
 
 def test_handle_mirrored_tool_schema_ref_falls_back_on_mixed_shapes(
@@ -1298,7 +1298,7 @@ def test_handle_mirrored_tool_schema_ref_falls_back_on_mixed_shapes(
     assert isinstance(metadata, dict)
     usage = metadata.get("usage")
     assert isinstance(usage, dict)
-    assert usage.get("root_path") == "$.items"
+    assert usage.get("root_path") == "$"
 
 
 def test_handle_mirrored_tool_fails_closed_when_redaction_errors(
