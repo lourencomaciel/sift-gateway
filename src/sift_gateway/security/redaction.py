@@ -7,10 +7,82 @@ from dataclasses import dataclass
 import importlib
 import re
 from typing import Any, Protocol, cast
+from urllib.parse import parse_qsl, unquote, urlsplit
 
 _MIN_SECRET_CANDIDATE_LENGTH = 8
 _MIN_PLAUSIBLE_SECRET_LENGTH = 24
 _HEX_ONLY_RE = re.compile(r"^[0-9a-fA-F]+$")
+# Compatibility-first policy: apply relaxed redaction to file URLs to keep
+# signed links functional. In relaxed mode we redact only known token patterns
+# and skip scanner-only heuristic matches.
+_SCANNER_FILTER_FIELD_SUFFIX = "_url"
+_COMMON_FILE_EXTENSIONS = frozenset(
+    """
+    3g2 3gp 3mf 7z aab aac abw ac3 afm ai aif aiff alac amr ape apk appimage
+    ar arj asc asf asm asp aspx atom au avi avif avro azw azw3 bak bash bat
+    bcpio bin blend bmp bz2 c cab caf cbr cbt cbz cc cgi class conf cpio cpp
+    crt cs csh css csv cue cxx dart dat db db3 deb der diff dmg doc docm docx
+    dot dotm dotx dtd dxf dylib ear ebook ejs eml eot eps epub erb exe f4v fbx
+    fcgi feather flac flv fnt fpx fs ftl gcode gem gif glb gltf go gpx gz h hbs
+    hdf hdf5 heic heif hpp htm html ico ics iges igs ini ipa ipynb iso jar java
+    jfif jpe jpeg jpg js json json5 jsonl jsx kar key kml kmz kt kts less lock
+    log lua lz lz4 lzh m1v m2a m2ts m2v m3u m3u8 m4a m4b m4p m4v map markdown
+    md mdb mid midi mkv mml mm mov mp1 mp2 mp3 mp4 mpa mpe mpeg mpg mpp msi msp
+    mts mustache mxf nar ndjson nes njk numbers obj odp ods odt ogg ogm ogv one
+    onepkg opml opus orc ost otf p12 p7b p7c pak parquet pdf pem pfx pgp php pl
+    ply png pot potm potx ppa ppam pps ppsm ppsx ppt pptm pptx ps ps1 psm1 psql
+    pub py pyc pyd pyi qt r ra raf ram rar rb rdf reg rpm rst rtf rw2 s3m sass
+    sb3 sc scss sgi sh sig skp sln so sql sqlite sqlite3 stl stp svg svgz swf
+    swift tar tbz tcl tex text tfm tgz tif tiff tk tlz toml torrent tsv ttc ttf
+    twig txz txt vbs vcf vob vue wav weba webm webp wma wmv woff woff2 wpd wps
+    x3d xaml xcf xhtml xlam xls xlsb xlsm xlsx xlt xltm xltx xml xpi xps xsd
+    xsl xz yaml yml z zip zst
+    """
+    .split()
+)
+_NON_RELAXED_FILE_EXTENSIONS = frozenset(
+    {
+        "asp",
+        "aspx",
+        "cgi",
+        "ejs",
+        "erb",
+        "fcgi",
+        "htm",
+        "html",
+        "js",
+        "json",
+        "json5",
+        "jsonl",
+        "jsx",
+        "mustache",
+        "njk",
+        "php",
+        "ts",
+        "tsx",
+        "twig",
+        "xhtml",
+    }
+)
+_SIGNED_URL_QUERY_KEYS = frozenset(
+    {
+        "expires",
+        "googleaccessid",
+        "key-pair-id",
+        "oh",
+        "oe",
+        "policy",
+        "sig",
+        "signature",
+        "x-amz-credential",
+        "x-amz-expires",
+        "x-amz-security-token",
+        "x-amz-signature",
+        "x-goog-credential",
+        "x-goog-expires",
+        "x-goog-signature",
+    }
+)
 _QUERY_SECRET_RE = re.compile(
     r"(?i)([?&](?:access_token|api[_-]?key|client_secret|password|token)=)"
     r"([^&#\"\s]+)"
@@ -145,24 +217,36 @@ class ResponseSecretRedactor:
             redacted_count=redacted_count,
         )
 
-    def _redact_value(self, value: Any) -> tuple[Any, int]:
+    def _redact_value(
+        self,
+        value: Any,
+        *,
+        key_hint: str | None = None,
+    ) -> tuple[Any, int]:
         if isinstance(value, str):
-            return self._redact_string(value)
+            return self._redact_string(value, key_hint=key_hint)
 
         if isinstance(value, list):
-            return self._redact_list(value)
+            return self._redact_list(value, key_hint=key_hint)
 
         if isinstance(value, dict):
             return self._redact_dict(value)
 
         return value, 0
 
-    def _redact_list(self, values: list[Any]) -> tuple[list[Any], int]:
+    def _redact_list(
+        self,
+        values: list[Any],
+        *,
+        key_hint: str | None = None,
+    ) -> tuple[list[Any], int]:
         total = 0
         changed = False
         updated_items: list[Any] = []
         for item in values:
-            updated_item, item_redactions = self._redact_value(item)
+            updated_item, item_redactions = self._redact_value(
+                item, key_hint=key_hint
+            )
             total += item_redactions
             changed = changed or updated_item is not item
             updated_items.append(updated_item)
@@ -175,11 +259,61 @@ class ResponseSecretRedactor:
         changed = False
         updated_map: dict[str, Any] = {}
         for key, current in values.items():
-            updated_current, current_redactions = self._redact_value(current)
+            updated_current, current_redactions = self._redact_value(
+                current,
+                key_hint=key,
+            )
             total += current_redactions
             changed = changed or updated_current is not current
             updated_map[key] = updated_current
         return (updated_map if changed else values), total
+
+    def _should_use_relaxed_url_redaction(
+        self,
+        key_hint: str | None,
+        *,
+        text: str | None = None,
+    ) -> bool:
+        if not isinstance(text, str):
+            return False
+        if not self._looks_like_common_file_url(text):
+            return False
+        if isinstance(key_hint, str) and key_hint.lower().endswith(
+            _SCANNER_FILTER_FIELD_SUFFIX
+        ):
+            return True
+        return self._has_signed_file_url_query(text)
+
+    def _looks_like_common_file_url(self, text: str) -> bool:
+        parsed = urlsplit(text)
+        if parsed.scheme.lower() not in {"http", "https"}:
+            return False
+        if not parsed.netloc:
+            return False
+        filename = unquote(parsed.path.rsplit("/", 1)[-1]).lower()
+        if not filename or "." not in filename:
+            return False
+        extension = filename.rsplit(".", 1)[-1]
+        return (
+            extension in _COMMON_FILE_EXTENSIONS
+            and extension not in _NON_RELAXED_FILE_EXTENSIONS
+        )
+
+    def _has_signed_file_url_query(self, text: str) -> bool:
+        parsed = urlsplit(text)
+        if not parsed.query:
+            return False
+        for key, _ in parse_qsl(parsed.query, keep_blank_values=True):
+            normalized = key.lower()
+            if normalized in _SIGNED_URL_QUERY_KEYS:
+                return True
+            if normalized.startswith("_nc_"):
+                return True
+            if normalized.startswith("x-amz-"):
+                return True
+            if normalized.startswith("x-goog-"):
+                return True
+        return False
 
     def _should_scan_string(self, text: str) -> bool:
         raw = text.encode("utf-8", errors="replace")
@@ -196,7 +330,9 @@ class ResponseSecretRedactor:
         }
 
     def _replace_detected_secrets(
-        self, text: str, detected: set[str]
+        self,
+        text: str,
+        detected: set[str],
     ) -> tuple[str, int]:
         redacted = text
         total_hits = 0
@@ -206,14 +342,28 @@ class ResponseSecretRedactor:
                 redacted = redacted.replace(secret, self.replacement)
         return redacted, total_hits
 
-    def _redact_string(self, text: str) -> tuple[str, int]:
+    def _redact_string(
+        self,
+        text: str,
+        *,
+        key_hint: str | None = None,
+    ) -> tuple[str, int]:
         if not self._should_scan_string(text):
             return text, 0
 
         redacted, total_hits = self._redact_known_secret_patterns(text)
+        if self._should_use_relaxed_url_redaction(
+            key_hint,
+            text=text,
+        ):
+            if total_hits == 0 or redacted == text:
+                return text, 0
+            return redacted, total_hits
+
         detected = self._detected_secret_candidates(text)
         redacted, scanner_hits = self._replace_detected_secrets(
-            redacted, detected
+            redacted,
+            detected,
         )
         total_hits += scanner_hits
 

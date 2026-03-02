@@ -12,6 +12,20 @@ from sift_gateway.security.redaction import (
     SecretRedactionError,
 )
 
+_SIGNED_FBCDN_IMAGE_URL = (
+    "https://scontent.xx.fbcdn.net/v/t39.30808-6/"
+    "480888509_1647065635966054_3551861822251931659_n.jpg"
+    "?stp=dst-jpg_s526x395_tt6"
+    "&_nc_cat=110"
+    "&ccb=1-7"
+    "&_nc_sid=127cfc"
+    "&_nc_ohc=q4GQ1f7xJ7QQ7kNvgEMn-mz"
+    "&_nc_zt=23"
+    "&_nc_ht=scontent.xx"
+    "&oh=00_AYCG6k0omNJ7J2b7mE06Yev8QaN1V1zGgH93yqR5qqqF6A"
+    "&oe=67E7C2A3"
+)
+
 
 class _FakeScanner:
     def __init__(
@@ -226,6 +240,388 @@ def test_redact_payload_ignores_hex_digests_and_public_ids() -> None:
 
     assert result.payload is payload
     assert result.redacted_count == 0
+
+
+def test_redact_payload_skips_scanner_for_image_url_fields() -> None:
+    class _Scanner:
+        available = True
+
+        def detect(self, _text: str) -> set[str]:
+            return {
+                "_nc_ohc=q4GQ1f7xJ7QQ7kNvgEMn-mz",
+                "oh=00_AYCG6k0omNJ7J2b7mE06Yev8QaN1V1zGgH93yqR5qqqF6A",
+            }
+
+    redactor = _redactor(scanner=_Scanner())
+    payload = {
+        "image_url": _SIGNED_FBCDN_IMAGE_URL,
+        "thumbnail_url": _SIGNED_FBCDN_IMAGE_URL,
+    }
+
+    result = redactor.redact_payload(payload)
+
+    assert result.redacted_count == 0
+    assert result.payload["image_url"] == _SIGNED_FBCDN_IMAGE_URL
+    assert result.payload["thumbnail_url"] == _SIGNED_FBCDN_IMAGE_URL
+
+
+@pytest.mark.parametrize(
+    "field_name",
+    [
+        "image_url",
+        "thumbnail_url",
+        "file_url",
+        "video_url",
+        "Image_URL",
+        "PROFILE_IMAGE_URL",
+    ],
+)
+def test_redact_payload_scanner_bypass_field_name_is_case_insensitive(
+    field_name: str,
+) -> None:
+    class _Scanner:
+        available = True
+
+        def detect(self, _text: str) -> set[str]:
+            return {"_nc_ohc=q4GQ1f7xJ7QQ7kNvgEMn-mz"}
+
+    redactor = _redactor(scanner=_Scanner())
+    payload = {field_name: _SIGNED_FBCDN_IMAGE_URL}
+
+    result = redactor.redact_payload(payload)
+
+    assert result.redacted_count == 0
+    assert result.payload[field_name] == _SIGNED_FBCDN_IMAGE_URL
+
+
+def test_redact_payload_database_url_field_still_scans_non_http_urls() -> None:
+    secret = "Abcdef1234567890Ghijklmnopqrst"
+
+    class _Scanner:
+        available = True
+
+        def detect(self, _text: str) -> set[str]:
+            return {secret}
+
+    redactor = _redactor(scanner=_Scanner())
+    payload = {
+        "database_url": f"postgres://user:{secret}@db.example.test/prod"
+    }
+
+    result = redactor.redact_payload(payload)
+
+    assert result.redacted_count == 1
+    assert (
+        result.payload["database_url"]
+        == "postgres://user:[REDACTED_SECRET]@db.example.test/prod"
+    )
+
+
+def test_redact_payload_scanner_bypass_propagates_into_relaxed_url_lists() -> None:
+    class _Scanner:
+        available = True
+
+        def detect(self, _text: str) -> set[str]:
+            return {"_nc_ohc=q4GQ1f7xJ7QQ7kNvgEMn-mz"}
+
+    redactor = _redactor(scanner=_Scanner())
+    payload = {
+        "thumbnail_url": [_SIGNED_FBCDN_IMAGE_URL],
+        "images": [{"image_url": _SIGNED_FBCDN_IMAGE_URL}],
+    }
+
+    result = redactor.redact_payload(payload)
+
+    assert result.redacted_count == 0
+    assert result.payload["thumbnail_url"][0] == _SIGNED_FBCDN_IMAGE_URL
+    assert result.payload["images"][0]["image_url"] == _SIGNED_FBCDN_IMAGE_URL
+
+
+def test_redact_payload_image_url_still_redacts_known_query_tokens() -> None:
+    class _Scanner:
+        available = True
+
+        def detect(self, _text: str) -> set[str]:
+            return set()
+
+    redactor = _redactor(scanner=_Scanner())
+    payload = {
+        "image_url": (
+            "https://cdn.example.test/photo.jpg"
+            "?access_token=EAASlfHJq1gcBQq6VZAMRHvQ&size=large"
+        )
+    }
+
+    result = redactor.redact_payload(payload)
+
+    assert result.redacted_count == 1
+    assert (
+        result.payload["image_url"]
+        == "https://cdn.example.test/photo.jpg"
+        "?access_token=[REDACTED_SECRET]&size=large"
+    )
+
+
+def test_redact_payload_thumbnail_url_still_redacts_known_token_patterns() -> None:
+    class _Scanner:
+        available = True
+
+        def detect(self, _text: str) -> set[str]:
+            return set()
+
+    redactor = _redactor(scanner=_Scanner())
+    payload = {
+        "thumbnail_url": (
+            "https://cdn.example.test/photo.jpg"
+            "?sig=ghp_abcdefghijklmnopqrstuvwxyz123456"
+        )
+    }
+
+    result = redactor.redact_payload(payload)
+
+    assert result.redacted_count == 1
+    assert (
+        result.payload["thumbnail_url"]
+        == "https://cdn.example.test/photo.jpg?sig=[REDACTED_SECRET]"
+    )
+
+
+def test_redact_payload_skips_scanner_for_plain_url_field_with_file_extension() -> None:
+    class _Scanner:
+        available = True
+
+        def detect(self, _text: str) -> set[str]:
+            return {"_nc_ohc=q4GQ1f7xJ7QQ7kNvgEMn-mz"}
+
+    redactor = _redactor(scanner=_Scanner())
+    payload = {"url": _SIGNED_FBCDN_IMAGE_URL}
+
+    result = redactor.redact_payload(payload)
+
+    assert result.redacted_count == 0
+    assert result.payload["url"] == _SIGNED_FBCDN_IMAGE_URL
+
+
+def test_redact_payload_file_url_skips_scanner_query_candidates() -> None:
+    class _Scanner:
+        available = True
+
+        def detect(self, _text: str) -> set[str]:
+            return {"customsig_ABCdef1234567890xyz987"}
+
+    redactor = _redactor(scanner=_Scanner())
+    payload = {
+        "file_url": (
+            "https://cdn.example.test/archive.zip"
+            "?sig=customsig_ABCdef1234567890xyz987"
+        )
+    }
+
+    result = redactor.redact_payload(payload)
+
+    assert result.redacted_count == 0
+    assert (
+        result.payload["file_url"]
+        == "https://cdn.example.test/archive.zip"
+        "?sig=customsig_ABCdef1234567890xyz987"
+    )
+
+
+def test_redact_payload_unknown_field_skips_scanner_when_value_looks_like_file_url() -> None:
+    class _Scanner:
+        available = True
+
+        def detect(self, _text: str) -> set[str]:
+            return {"customsig_ABCdef1234567890xyz987"}
+
+    redactor = _redactor(scanner=_Scanner())
+    payload = {
+        "download_link": (
+            "https://cdn.example.test/manual.pdf"
+            "?sig=customsig_ABCdef1234567890xyz987"
+        )
+    }
+
+    result = redactor.redact_payload(payload)
+
+    assert result.redacted_count == 0
+    assert result.payload["download_link"] == payload["download_link"]
+
+
+def test_redact_payload_unknown_field_with_json_extension_still_scans() -> None:
+    class _Scanner:
+        available = True
+
+        def detect(self, _text: str) -> set[str]:
+            return {"customsig_ABCdef1234567890xyz987"}
+
+    redactor = _redactor(scanner=_Scanner())
+    payload = {
+        "download_link": (
+            "https://api.example.test/export.json"
+            "?sig=customsig_ABCdef1234567890xyz987"
+        )
+    }
+
+    result = redactor.redact_payload(payload)
+
+    assert result.redacted_count == 1
+    assert result.payload["download_link"] == (
+        "https://api.example.test/export.json?sig=[REDACTED_SECRET]"
+    )
+
+
+def test_redact_payload_unknown_field_without_file_extension_still_scans() -> None:
+    class _Scanner:
+        available = True
+
+        def detect(self, _text: str) -> set[str]:
+            return {"customsig_ABCdef1234567890xyz987"}
+
+    redactor = _redactor(scanner=_Scanner())
+    payload = {
+        "download_link": (
+            "https://cdn.example.test/download"
+            "?sig=customsig_ABCdef1234567890xyz987"
+        )
+    }
+
+    result = redactor.redact_payload(payload)
+
+    assert result.redacted_count == 1
+    assert result.payload["download_link"] == (
+        "https://cdn.example.test/download?sig=[REDACTED_SECRET]"
+    )
+
+
+def test_redact_payload_extension_trigger_still_redacts_known_tokens() -> None:
+    class _Scanner:
+        available = True
+
+        def detect(self, _text: str) -> set[str]:
+            return {"customsig_ABCdef1234567890xyz987"}
+
+    redactor = _redactor(scanner=_Scanner())
+    payload = {
+        "download_link": (
+            "https://cdn.example.test/manual.pdf"
+            "?access_token=EAASlfHJq1gcBQq6VZAMRHvQ"
+            "&sig=customsig_ABCdef1234567890xyz987"
+        )
+    }
+
+    result = redactor.redact_payload(payload)
+
+    assert result.redacted_count == 1
+    assert result.payload["download_link"] == (
+        "https://cdn.example.test/manual.pdf"
+        "?access_token=[REDACTED_SECRET]"
+        "&sig=customsig_ABCdef1234567890xyz987"
+    )
+
+
+def test_redact_payload_scanner_bypass_applies_to_any_url_suffix_field() -> None:
+    class _Scanner:
+        available = True
+
+        def detect(self, _text: str) -> set[str]:
+            return {"_nc_ohc=q4GQ1f7xJ7QQ7kNvgEMn-mz"}
+
+    redactor = _redactor(scanner=_Scanner())
+    payload = {"profile_image_url": _SIGNED_FBCDN_IMAGE_URL}
+
+    result = redactor.redact_payload(payload)
+
+    assert result.redacted_count == 0
+    assert result.payload["profile_image_url"] == _SIGNED_FBCDN_IMAGE_URL
+
+
+def test_redact_payload_image_url_skips_scanner_raw_value_candidates() -> None:
+    class _Scanner:
+        available = True
+
+        def detect(self, _text: str) -> set[str]:
+            return {"00_AYCG6k0omNJ7J2b7mE06Yev8QaN1V1zGgH93yqR5qqqF6A"}
+
+    redactor = _redactor(scanner=_Scanner())
+    payload = {"image_url": _SIGNED_FBCDN_IMAGE_URL}
+
+    result = redactor.redact_payload(payload)
+
+    assert result.redacted_count == 0
+    assert result.payload["image_url"] == _SIGNED_FBCDN_IMAGE_URL
+
+
+def test_redact_payload_image_url_relaxed_mode_is_host_agnostic() -> None:
+    class _Scanner:
+        available = True
+
+        def detect(self, _text: str) -> set[str]:
+            return {
+                "_nc_ohc=q4GQ1f7xJ7QQ7kNvgEMn-mz",
+                "oh=00_AYCG6k0omNJ7J2b7mE06Yev8QaN1V1zGgH93yqR5qqqF6A",
+            }
+
+    redactor = _redactor(scanner=_Scanner())
+    payload = {
+        "image_url": (
+            "https://cdn.example.test/photo.jpg"
+            "?_nc_ohc=q4GQ1f7xJ7QQ7kNvgEMn-mz"
+            "&oh=00_AYCG6k0omNJ7J2b7mE06Yev8QaN1V1zGgH93yqR5qqqF6A"
+        )
+    }
+
+    result = redactor.redact_payload(payload)
+
+    assert result.redacted_count == 0
+    assert result.payload["image_url"] == payload["image_url"]
+
+
+def test_redact_payload_image_url_skips_scanner_raw_values_outside_query() -> None:
+    shared_value = "Abcdef1234567890Ghijklmnopqrst"
+
+    class _Scanner:
+        available = True
+
+        def detect(self, _text: str) -> set[str]:
+            return {shared_value}
+
+    redactor = _redactor(scanner=_Scanner())
+    payload = {
+        "image_url": (
+            f"https://cdn.example.test/{shared_value}/photo.jpg"
+            f"?sig={shared_value}"
+        )
+    }
+
+    result = redactor.redact_payload(payload)
+
+    assert result.redacted_count == 0
+    assert result.payload["image_url"] == payload["image_url"]
+
+
+def test_redact_payload_image_url_skips_scanner_for_path_and_query_values() -> None:
+    long_sig = "Abcdef1234567890Ghijklmnopqrst" * 8
+    query_value = "00_AYCG6k0omNJ7J2b7mE06Yev8QaN1V1zGgH93yqR5qqqF6A"
+
+    class _Scanner:
+        available = True
+
+        def detect(self, _text: str) -> set[str]:
+            return {long_sig, query_value}
+
+    redactor = _redactor(scanner=_Scanner())
+    payload = {
+        "image_url": (
+            f"https://cdn.example.test/{long_sig}/photo.jpg"
+            f"?sig={long_sig}&any={query_value}"
+        )
+    }
+
+    result = redactor.redact_payload(payload)
+
+    assert result.redacted_count == 0
+    assert result.payload["image_url"] == payload["image_url"]
 
 
 def test_detect_secrets_scanner_calls_scan_line_with_line_only() -> None:
