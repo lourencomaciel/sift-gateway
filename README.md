@@ -235,7 +235,8 @@ sift-gateway install scipy matplotlib
 
 Code queries use AST validation, an import allowlist, timeout enforcement, and memory limits. This is not a full OS-level sandbox.
 
-Outbound secret redaction is enabled by default to reduce accidental leakage of API keys from upstream tool responses.
+Outbound secret redaction is enabled by default and intentionally conservative:
+only known secret exposure patterns are redacted.
 
 See [SECURITY.md](SECURITY.md) for the full security policy.
 
