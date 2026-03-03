@@ -114,8 +114,13 @@ Runtime behavior:
 |-----|------|---------|---------|-------------|
 | `secret_redaction_enabled` | bool | `true` | `SIFT_GATEWAY_SECRET_REDACTION_ENABLED` | Enable outbound response secret redaction |
 | `secret_redaction_fail_closed` | bool | `false` | `SIFT_GATEWAY_SECRET_REDACTION_FAIL_CLOSED` | Return INTERNAL when redaction cannot run |
-| `secret_redaction_max_scan_bytes` | int | `32768` | `SIFT_GATEWAY_SECRET_REDACTION_MAX_SCAN_BYTES` | Max UTF-8 bytes scanned per string value |
+| `secret_redaction_max_scan_bytes` | int | `32768` | `SIFT_GATEWAY_SECRET_REDACTION_MAX_SCAN_BYTES` | Max UTF-8 bytes inspected per string for known secret patterns |
 | `secret_redaction_placeholder` | string | `[REDACTED_SECRET]` | `SIFT_GATEWAY_SECRET_REDACTION_PLACEHOLDER` | Replacement token for redacted values |
+
+Redaction is deterministic and only applies known secret patterns:
+- Query params: `access_token`, `api_key`, `client_secret`, `password`
+- Authorization header values in `Bearer <token>` format
+- Known token formats (OpenAI `sk_*`, GitHub `gh*`/`github_pat_*`, Slack `xox*`, Meta `EA*`)
 
 Disable outbound redaction:
 
