@@ -135,11 +135,16 @@ def _normalize_binary_ref_part(
     if not isinstance(byte_count, int) or byte_count < 0:
         msg = "binary_ref part requires non-negative integer byte_count"
         raise ValueError(msg)
+    uri = raw.get("uri")
+    if uri is not None and (not isinstance(uri, str) or not uri):
+        msg = "binary_ref part uri must be a non-empty string when provided"
+        raise ValueError(msg)
     return BinaryRefContentPart(
         blob_id=blob_id,
         binary_hash=binary_hash,
         mime=mime,
         byte_count=byte_count,
+        uri=uri,
     )
 
 

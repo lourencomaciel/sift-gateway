@@ -147,7 +147,8 @@ def build_code_query_usage(
         "entrypoint_multi": "run(artifacts, schemas, params)",
         "multi_input_shape": "dict[artifact_id -> list[dict]]",
         "strategy": (
-            "Prefer scope=single first. Keep outputs compact "
+            "Prefer scope=single first. Use scope=all_related when you need "
+            "one query across pagination-chain artifacts. Keep outputs compact "
             "(aggregates or top <= 20 rows)."
         ),
         "packages": package_summary,

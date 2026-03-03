@@ -718,11 +718,14 @@ def test_build_fastmcp_app_includes_mirrored_tools(tmp_path: Path) -> None:
     )
     artifact_schema = tools["artifact"].parameters
     code_description = artifact_schema["properties"]["code"]["description"]
+    scope_description = artifact_schema["properties"]["scope"]["description"]
     assert "scope" in artifact_schema["properties"]
     assert artifact_schema["properties"]["scope"]["enum"] == [
         "all_related",
         "single",
     ]
+    assert "single (default)" in scope_description
+    assert "all_related executes across pagination-chain" in scope_description
     assert artifact_schema["properties"]["query_kind"]["enum"] == ["code"]
     assert (
         "Third-party imports depend on installed packages" in code_description

@@ -180,10 +180,10 @@ _BUILTIN_TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
                 "type": "string",
                 "enum": ["all_related", "single"],
                 "description": (
-                    "[query_kind=code] all_related (default) executes across "
-                    "pagination-chain related artifacts for each anchor; "
-                    "single executes against only the requested artifact(s). "
-                    "Prefer single unless cross-artifact logic is required."
+                    "[query_kind=code] single (default) executes against "
+                    "only the requested artifact(s). all_related executes "
+                    "across pagination-chain related artifacts for each "
+                    "anchor when cross-artifact logic is required."
                 ),
             },
             "artifact_id": {
@@ -907,9 +907,12 @@ class GatewayServer:
         content = upstream_result.get("content")
         structured_content = upstream_result.get("structuredContent")
         raw_content = content if isinstance(content, list) else []
+        binary_refs: list[BinaryRef] = []
         normalized_content = _normalize_upstream_content(
             content=[block for block in raw_content if isinstance(block, dict)],
             structured_content=structured_content,
+            blob_store=self.blob_store,
+            binary_refs_out=binary_refs,
         )
 
         error: dict[str, Any] | None = None
@@ -935,8 +938,7 @@ class GatewayServer:
             meta=meta,
         )
         if self.blob_store is None:
-            return envelope, []
-        binary_refs: list[BinaryRef] = []
+            return envelope, binary_refs
         transformed = replace_oversized_json_parts(
             envelope,
             max_json_part_parse_bytes=self.config.max_json_part_parse_bytes,

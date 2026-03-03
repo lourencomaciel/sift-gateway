@@ -54,7 +54,8 @@ Pagination detection happens before redaction. Persisted payloads are redacted.
 
 ### Optional arguments
 
-- `scope`: `all_related` (default, pagination-chain related artifacts) or `single`
+- `scope`: `single` (default, anchor artifact(s) only) or `all_related`
+  (pagination-chain related artifacts)
 - `params`: JSON object passed to `run(..., ..., params)`
 
 ### Runtime entrypoints

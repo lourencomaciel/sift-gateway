@@ -40,6 +40,26 @@ def test_normalize_image_ref_aliases_to_binary_ref() -> None:
     assert isinstance(envelope.content[0], BinaryRefContentPart)
 
 
+def test_normalize_binary_ref_preserves_uri_pointer() -> None:
+    envelope = normalize_envelope(
+        upstream_instance_id="up_1",
+        upstream_prefix="github",
+        tool="search_issues",
+        content=[
+            {
+                "type": "binary_ref",
+                "blob_id": "bin_1",
+                "binary_hash": "abc",
+                "mime": "video/mp4",
+                "byte_count": 42,
+                "uri": "sift://blob/bin_1",
+            }
+        ],
+    )
+    payload = envelope.to_dict()
+    assert payload["content"][0]["uri"] == "sift://blob/bin_1"
+
+
 def test_normalize_infers_error_when_error_object_is_present() -> None:
     envelope = normalize_envelope(
         upstream_instance_id="up_1",

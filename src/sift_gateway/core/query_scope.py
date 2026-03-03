@@ -32,7 +32,7 @@ def resolve_scope(
             # Backward compatibility for pre-scope cursors.
             scope = "single"
     if scope is None:
-        scope = "all_related"
+        scope = "single"
     return scope, None
 
 

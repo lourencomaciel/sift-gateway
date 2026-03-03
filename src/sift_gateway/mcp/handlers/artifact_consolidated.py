@@ -53,7 +53,7 @@ def _validate_code_query_arguments(
 
     raw_scope = query_args.get("scope")
     if raw_scope is None:
-        query_args["scope"] = "all_related"
+        query_args["scope"] = "single"
     elif not isinstance(raw_scope, str) or raw_scope not in _QUERY_SCOPES:
         return gateway_error(
             "INVALID_ARGUMENT",

@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import ast
 import asyncio
 import builtins as _builtins
+import importlib.util
 import inspect
 import sys
 import traceback
+from functools import lru_cache
+from pathlib import Path
 from typing import Any
 
 from sift_gateway.codegen.ast_guard import (
@@ -19,6 +23,8 @@ from sift_gateway.codegen.ast_guard import (
 from sift_gateway.codegen.runtime import decode_json_bytes, encode_json_bytes
 
 _ALLOWED_IMPORT_ROOTS: frozenset[str] = ALLOWED_IMPORT_ROOTS
+_STDLIB_IMPORT_ROOTS = frozenset(sys.stdlib_module_names)
+_TRUSTED_IMPORTED_STDLIB_ROOTS: set[str] = set()
 
 _BLOCKED_BUILTINS = frozenset(
     {
@@ -55,12 +61,119 @@ def _safe_import(
         raise ImportError("relative imports are not allowed")
     root = name.split(".", 1)[0]
     if root not in _ALLOWED_IMPORT_ROOTS:
-        raise ImportError(f"import not allowed: {name}")
+        if not _is_allowed_transitive_stdlib_import(
+            name=name,
+            globals_dict=globals,
+        ):
+            raise ImportError(f"import not allowed: {name}")
     if root == "urllib" and name not in _ALLOWED_URLLIB_MODULES:
         raise ImportError(
             f"import not allowed: {name} (only urllib.parse is permitted)"
         )
-    return _builtins.__import__(name, globals, locals, fromlist, level)
+    imported = _builtins.__import__(name, globals, locals, fromlist, level)
+    if root in _ALLOWED_IMPORT_ROOTS and root in _STDLIB_IMPORT_ROOTS:
+        _TRUSTED_IMPORTED_STDLIB_ROOTS.add(root)
+    return imported
+
+
+def _is_allowed_transitive_stdlib_import(
+    *,
+    name: str,
+    globals_dict: dict[str, Any] | None,
+) -> bool:
+    """Allow stdlib-to-stdlib transitive imports from allowlisted stdlib roots.
+
+    This keeps direct user imports policy-constrained while allowing internal
+    stdlib imports (for example ``datetime`` loading ``_strptime``).
+    """
+    root = name.split(".", 1)[0]
+    if root in _ALLOWED_IMPORT_ROOTS:
+        return True
+    if root not in _STDLIB_IMPORT_ROOTS:
+        return False
+    if not isinstance(globals_dict, dict):
+        if not root.startswith("_") or not _TRUSTED_IMPORTED_STDLIB_ROOTS:
+            return False
+        return any(
+            root in _transitive_stdlib_import_roots(trusted_root)
+            for trusted_root in _TRUSTED_IMPORTED_STDLIB_ROOTS
+        )
+    importer_name = globals_dict.get("__name__")
+    if isinstance(importer_name, str) and importer_name:
+        importer_root = importer_name.split(".", 1)[0]
+        if (
+            importer_root in _ALLOWED_IMPORT_ROOTS
+            and importer_root in _STDLIB_IMPORT_ROOTS
+        ):
+            return True
+        if importer_name != "__main__":
+            return False
+    if not root.startswith("_") or not _TRUSTED_IMPORTED_STDLIB_ROOTS:
+        return False
+    return any(
+        root in _transitive_stdlib_import_roots(trusted_root)
+        for trusted_root in _TRUSTED_IMPORTED_STDLIB_ROOTS
+    )
+
+
+@lru_cache(maxsize=None)
+def _direct_stdlib_import_roots(module_name: str) -> frozenset[str]:
+    """Return direct stdlib import roots referenced by a stdlib module."""
+    try:
+        spec = importlib.util.find_spec(module_name)
+    except (ImportError, ValueError):
+        return frozenset()
+    if spec is None:
+        return frozenset()
+    origin = spec.origin
+    if not isinstance(origin, str) or not origin.endswith(".py"):
+        return frozenset()
+    try:
+        source = Path(origin).read_text(encoding="utf-8")
+    except OSError:
+        return frozenset()
+    try:
+        module = ast.parse(source, mode="exec")
+    except SyntaxError:
+        return frozenset()
+
+    package_root = module_name.split(".", 1)[0]
+    imports: set[str] = set()
+    for node in ast.walk(module):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                root = alias.name.split(".", 1)[0]
+                if root in _STDLIB_IMPORT_ROOTS:
+                    imports.add(root)
+        elif isinstance(node, ast.ImportFrom):
+            if node.module:
+                root = node.module.split(".", 1)[0]
+                if root in _STDLIB_IMPORT_ROOTS:
+                    imports.add(root)
+            elif node.level and package_root in _STDLIB_IMPORT_ROOTS:
+                imports.add(package_root)
+    return frozenset(imports)
+
+
+@lru_cache(maxsize=None)
+def _transitive_stdlib_import_roots(module_root: str) -> frozenset[str]:
+    """Return recursively discovered stdlib import roots for ``module_root``."""
+    if module_root not in _STDLIB_IMPORT_ROOTS:
+        return frozenset()
+    discovered: set[str] = set()
+    pending = [module_root]
+    visited: set[str] = set()
+    while pending:
+        current = pending.pop()
+        if current in visited:
+            continue
+        visited.add(current)
+        for dep in _direct_stdlib_import_roots(current):
+            if dep in discovered:
+                continue
+            discovered.add(dep)
+            pending.append(dep)
+    return frozenset(discovered)
 
 
 def _safe_builtins() -> dict[str, Any]:
@@ -203,6 +316,7 @@ def _execute(payload: dict[str, Any]) -> dict[str, Any]:
         )
 
     _ALLOWED_IMPORT_ROOTS = allowed_roots
+    _TRUSTED_IMPORTED_STDLIB_ROOTS.clear()
 
     try:
         module = validate_code_ast(

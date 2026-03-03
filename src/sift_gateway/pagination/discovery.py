@@ -39,6 +39,8 @@ class PaginationDiscovery:
         rejected_reason: Optional detector rejection reason when
             has-more signals exist but no advancing continuation could
             be derived (for example ``"non_advancing_cursor"``).
+        rejected_param: Likely request parameter causing a non-advancing
+            cursor rejection when available (for example ``"after"``).
     """
 
     has_more: bool | None
@@ -47,6 +49,7 @@ class PaginationDiscovery:
     confidence: float
     limit_hit: bool
     rejected_reason: str | None = None
+    rejected_param: str | None = None
 
 
 _PAGINATION_PARAM_NAMES = frozenset(
@@ -1237,6 +1240,27 @@ def _detect_non_advancing_cursor_rejection(
     return None
 
 
+def _likely_rejected_cursor_param(
+    *,
+    original_args: dict[str, Any],
+) -> str | None:
+    """Return a best-effort likely cursor parameter from request args."""
+    for key in original_args:
+        if not isinstance(key, str) or not key:
+            continue
+        if not _is_non_empty_scalar(original_args.get(key)):
+            continue
+        normalized = _normalize_name(key)
+        if not normalized:
+            continue
+        if normalized not in _PAGINATION_PARAM_NAMES:
+            continue
+        if _is_non_advancing_param_name(key):
+            continue
+        return key
+    return None
+
+
 def discover_pagination(
     *,
     json_value: Any,
@@ -1274,12 +1298,17 @@ def discover_pagination(
     )
 
     rejected_reason: str | None = None
+    rejected_param: str | None = None
     if has_more_signal is True and next_params is None:
         rejected_reason = _detect_non_advancing_cursor_rejection(
             json_value=json_value,
             original_args=original_args,
             upstream_meta=upstream_meta,
         )
+        if rejected_reason == _REJECTED_REASON_NON_ADVANCING_CURSOR:
+            rejected_param = _likely_rejected_cursor_param(
+                original_args=original_args
+            )
 
     if has_more_signal is None and next_params is not None:
         has_more_signal = True
@@ -1291,4 +1320,5 @@ def discover_pagination(
         confidence=confidence,
         limit_hit=limit_hit,
         rejected_reason=rejected_reason,
+        rejected_param=rejected_param,
     )
