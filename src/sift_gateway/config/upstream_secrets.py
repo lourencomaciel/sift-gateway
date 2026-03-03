@@ -6,20 +6,170 @@ MCP servers, stored as individual JSON files under the data directory.
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 import contextlib
 import datetime
 import json
 import os
 from pathlib import Path
 import tempfile
-from typing import Any
+from typing import Any, SupportsFloat
+
+from key_value.aio.protocols import AsyncKeyValue
 
 from sift_gateway.constants import STATE_SUBDIR
 
 _SECRETS_SUBDIR = "upstream_secrets"
 _OAUTH_SUBDIR = "upstream_oauth"
+_OAUTH_TOKEN_COLLECTION = "mcp-oauth-token"
 _VALID_TRANSPORTS = frozenset({"stdio", "http"})
 _REQUIRED_KEYS = frozenset({"version", "transport"})
+
+
+class _OAuthTokenTtlCompatibleStore:
+    """Proxy AsyncKeyValue store that disables TTL for OAuth token entries.
+
+    Older OAuth client implementations may persist OAuth tokens using a TTL
+    equal to access-token lifetime. That can evict refresh tokens too early and
+    force repeated interactive re-login. This adapter keeps token entries
+    durable by stripping TTL only for the OAuth token collection.
+    """
+
+    def __init__(self, inner: AsyncKeyValue) -> None:
+        self._inner = inner
+
+    @staticmethod
+    def _effective_ttl(
+        *,
+        collection: str | None,
+        ttl: SupportsFloat | None,
+    ) -> SupportsFloat | None:
+        if collection == _OAUTH_TOKEN_COLLECTION:
+            return None
+        return ttl
+
+    async def get(
+        self,
+        key: str,
+        *,
+        collection: str | None = None,
+    ) -> dict[str, Any] | None:
+        return await self._inner.get(key=key, collection=collection)
+
+    async def ttl(
+        self,
+        key: str,
+        *,
+        collection: str | None = None,
+    ) -> tuple[dict[str, Any] | None, float | None]:
+        return await self._inner.ttl(key=key, collection=collection)
+
+    async def put(
+        self,
+        key: str,
+        value: Mapping[str, Any],
+        *,
+        collection: str | None = None,
+        ttl: SupportsFloat | None = None,
+    ) -> None:
+        await self._inner.put(
+            key=key,
+            value=value,
+            collection=collection,
+            ttl=self._effective_ttl(collection=collection, ttl=ttl),
+        )
+
+    async def delete(
+        self,
+        key: str,
+        *,
+        collection: str | None = None,
+    ) -> bool:
+        return await self._inner.delete(key=key, collection=collection)
+
+    async def get_many(
+        self,
+        keys: Sequence[str],
+        *,
+        collection: str | None = None,
+    ) -> list[dict[str, Any] | None]:
+        return await self._inner.get_many(keys=keys, collection=collection)
+
+    async def ttl_many(
+        self,
+        keys: Sequence[str],
+        *,
+        collection: str | None = None,
+    ) -> list[tuple[dict[str, Any] | None, float | None]]:
+        return await self._inner.ttl_many(keys=keys, collection=collection)
+
+    async def put_many(
+        self,
+        keys: Sequence[str],
+        values: Sequence[Mapping[str, Any]],
+        *,
+        collection: str | None = None,
+        ttl: SupportsFloat | None = None,
+    ) -> None:
+        await self._inner.put_many(
+            keys=keys,
+            values=values,
+            collection=collection,
+            ttl=self._effective_ttl(collection=collection, ttl=ttl),
+        )
+
+    async def delete_many(
+        self,
+        keys: Sequence[str],
+        *,
+        collection: str | None = None,
+    ) -> int:
+        return await self._inner.delete_many(keys=keys, collection=collection)
+
+
+def oauth_token_cache_key(server_url: str) -> str:
+    """Return the OAuth token cache key for one MCP server URL.
+
+    The key format mirrors FastMCP's token storage adapter behavior so
+    gateway utilities can read/update persisted token records directly.
+    """
+    return f"{server_url.rstrip('/')}/tokens"
+
+
+async def mark_oauth_access_token_stale(
+    token_storage: AsyncKeyValue,
+    *,
+    server_url: str,
+) -> bool:
+    """Mark a stored OAuth access token stale while preserving refresh state.
+
+    Returns ``True`` only when a refresh-capable token record was found and
+    updated. The next OAuth request will then attempt refresh before sending
+    the upstream call.
+    """
+    cache_key = oauth_token_cache_key(server_url)
+    token_entry = await token_storage.get(
+        key=cache_key,
+        collection=_OAUTH_TOKEN_COLLECTION,
+    )
+    if not isinstance(token_entry, dict):
+        return False
+
+    refresh_token = token_entry.get("refresh_token")
+    if not isinstance(refresh_token, str) or not refresh_token.strip():
+        return False
+
+    updated = dict(token_entry)
+    # Force the next auth flow to refresh first using the stored refresh token.
+    updated["access_token"] = ""
+    updated["expires_in"] = 0
+    await token_storage.put(
+        key=cache_key,
+        value=updated,
+        collection=_OAUTH_TOKEN_COLLECTION,
+        ttl=None,
+    )
+    return True
 
 
 def secret_file_path(data_dir: str | Path, ref: str) -> Path:
@@ -297,3 +447,17 @@ def validate_no_secret_conflict(
             "secret_ref for upstream. Use one or the other."
         )
         raise ValueError(msg)
+
+
+def oauth_token_storage(data_dir: str | Path, ref: str) -> AsyncKeyValue:
+    """Create disk-backed OAuth token storage for one upstream.
+
+    Returns an AsyncKeyValue-compatible store that persists under
+    ``state/upstream_oauth/<prefix>`` and keeps OAuth token entries without
+    short TTL expiry.
+    """
+    from key_value.aio.stores.disk import DiskStore
+
+    return _OAuthTokenTtlCompatibleStore(
+        DiskStore(directory=oauth_cache_dir(data_dir, ref))
+    )

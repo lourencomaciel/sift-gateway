@@ -413,3 +413,79 @@ def test_upstream_login_runtime_ignores_stale_auth_header(
         except subprocess.TimeoutExpired:
             upstream_proc.kill()
             upstream_proc.wait(timeout=5.0)
+
+
+def test_upstream_auth_check_persists_refresh_across_cli_restarts(
+    tmp_path: Path,
+) -> None:
+    """OAuth refresh preflight remains healthy across separate CLI runs."""
+    data_dir = tmp_path / "gateway"
+    port = _pick_free_port()
+    path = "/mcp"
+
+    upstream_proc = _run_oauth_upstream_server(port=port, path=path)
+    try:
+        _wait_until_listening(upstream_proc, port=port, path=path)
+        upstream_url = f"http://127.0.0.1:{port}{path}"
+
+        proc = _run_cli(
+            data_dir,
+            "upstream",
+            "add",
+            "--name",
+            "oauth-api",
+            "--transport",
+            "http",
+            "--url",
+            upstream_url,
+        )
+        assert proc.returncode == 0, proc.stderr
+
+        proc = _run_cli(
+            data_dir,
+            "upstream",
+            "login",
+            "--server",
+            "oauth-api",
+            "--headless",
+        )
+        assert proc.returncode == 0, proc.stderr
+
+        first_check = _run_cli(
+            data_dir,
+            "upstream",
+            "auth",
+            "check",
+            "--server",
+            "oauth-api",
+            "--json",
+        )
+        assert first_check.returncode == 0, first_check.stderr
+        first_payload = json.loads(first_check.stdout)
+        assert first_payload["ok"] is True
+        assert first_payload["total"] == 1
+        assert first_payload["results"][0]["name"] == "oauth-api"
+        assert first_payload["results"][0]["forced_refresh"] is True
+
+        second_check = _run_cli(
+            data_dir,
+            "upstream",
+            "auth",
+            "check",
+            "--server",
+            "oauth-api",
+            "--json",
+        )
+        assert second_check.returncode == 0, second_check.stderr
+        second_payload = json.loads(second_check.stdout)
+        assert second_payload["ok"] is True
+        assert second_payload["total"] == 1
+        assert second_payload["results"][0]["name"] == "oauth-api"
+        assert second_payload["results"][0]["forced_refresh"] is True
+    finally:
+        upstream_proc.terminate()
+        try:
+            upstream_proc.wait(timeout=5.0)
+        except subprocess.TimeoutExpired:
+            upstream_proc.kill()
+            upstream_proc.wait(timeout=5.0)

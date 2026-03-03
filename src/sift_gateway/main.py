@@ -343,6 +343,25 @@ def _add_upstream_subcommand(
     )
     _add_upstream_common_flags(auth_set_parser, dry_run_flag=True)
 
+    auth_check_parser = auth_sub.add_parser(
+        "check",
+        help="Probe OAuth upstream sessions with forced refresh preflight",
+    )
+    auth_check_scope = auth_check_parser.add_mutually_exclusive_group(
+        required=True
+    )
+    auth_check_scope.add_argument(
+        "--server",
+        default=None,
+        help="OAuth-enabled upstream prefix to check",
+    )
+    auth_check_scope.add_argument(
+        "--all",
+        action="store_true",
+        help="Check all OAuth-enabled upstreams",
+    )
+    _add_upstream_common_flags(auth_check_parser)
+
 
 def _add_init_subcommand(
     sub: argparse._SubParsersAction[argparse.ArgumentParser],
@@ -989,6 +1008,41 @@ def _run_upstream_login(args: argparse.Namespace) -> int:
     return 0
 
 
+def _run_upstream_auth_check(args: argparse.Namespace) -> int:
+    """Handle the ``upstream auth check`` subcommand."""
+    from sift_gateway.config.upstream_admin import probe_oauth_upstreams
+
+    data_dir = _resolve_upstream_data_dir_arg(getattr(args, "data_dir", None))
+    report = probe_oauth_upstreams(
+        server=getattr(args, "server", None),
+        all_servers=bool(getattr(args, "all", False)),
+        data_dir=data_dir,
+    )
+
+    if getattr(args, "json", False):
+        _print_json_output(report)
+        return 0 if report.get("ok") else 1
+
+    for row in report.get("results", []):
+        name = row.get("name")
+        if row.get("ok"):
+            forced_refresh = bool(row.get("forced_refresh"))
+            print(
+                f"ok {name} "
+                f"tool_count={row.get('tool_count', 0)} "
+                f"forced_refresh={forced_refresh}"
+            )
+            continue
+        print(
+            "fail "
+            f"{name} "
+            f"error_code={row.get('error_code', 'UNKNOWN')} "
+            f"error={row.get('error', '')}"
+        )
+    print(f"summary: {report.get('ok_count', 0)}/{report.get('total', 0)} ok")
+    return 0 if report.get("ok") else 1
+
+
 def _run_init(args: argparse.Namespace) -> int:
     """Handle the ``init`` subcommand.
 
@@ -1317,8 +1371,10 @@ def serve(argv: list[str] | None = None) -> int:
         if upstream_command == "auth":
             if getattr(args, "auth_command", None) == "set":
                 return _run_upstream_auth_set(args)
+            if getattr(args, "auth_command", None) == "check":
+                return _run_upstream_auth_check(args)
             print(
-                "usage: sift-gateway upstream auth {set} ...",
+                "usage: sift-gateway upstream auth {set,check} ...",
                 file=sys.stderr,
             )
             return 1
