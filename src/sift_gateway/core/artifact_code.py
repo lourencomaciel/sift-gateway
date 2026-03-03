@@ -501,15 +501,15 @@ def _build_code_response(
         schema_ref_payload["sampled_only"] = True
     if state.warnings:
         schema_ref_payload["warnings"] = state.warnings
+    raw_max_bytes = getattr(runtime, "code_query_max_bytes_out", 200_000)
     response_mode = select_response_mode(
         has_pagination=False,
         full_payload=full_payload,
         schema_ref_payload=schema_ref_payload,
         max_bytes=(
-            runtime.max_bytes_out
-            if isinstance(runtime.max_bytes_out, int)
-            and runtime.max_bytes_out > 0
-            else 5_000_000
+            raw_max_bytes
+            if isinstance(raw_max_bytes, int) and raw_max_bytes > 0
+            else 200_000
         ),
     )
     if response_mode == "schema_ref":

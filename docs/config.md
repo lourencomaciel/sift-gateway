@@ -106,7 +106,7 @@ Runtime behavior:
 | `max_bytes_out` | int | `5000000` | `SIFT_GATEWAY_MAX_BYTES_OUT` | Max response bytes |
 | `max_wildcards` | int | `10000` | `SIFT_GATEWAY_MAX_WILDCARDS` | Max wildcard expansions |
 | `max_compute_steps` | int | `1000000` | `SIFT_GATEWAY_MAX_COMPUTE_STEPS` | Max retrieval compute steps |
-| `passthrough_max_bytes` | int | `8192` | `SIFT_GATEWAY_PASSTHROUGH_MAX_BYTES` | Legacy-named inline response cap used for `full` vs `schema_ref` mode selection |
+| `passthrough_max_bytes` | int | `8192` | `SIFT_GATEWAY_PASSTHROUGH_MAX_BYTES` | Inline response cap for mirrored upstream and CLI `run` full-vs-schema mode selection |
 
 ## Outbound secret redaction
 
@@ -144,7 +144,7 @@ Lineage query rules for `artifact(action="query")`:
 - `query_kind=code` requires `artifact_id` (single) or `artifact_ids` (multi).
 - `scope` applies to `query_kind=code` and defaults to `all_related` (pagination-chain related artifacts).
 - `scope=single` restricts inputs to the requested anchor artifact(s) only.
-- `query_kind=code` returns one response bounded by `max_bytes_out`.
+- `query_kind=code` returns one response bounded by `code_query_max_bytes_out`.
 - `query_kind=code` runtime failures can include `details.traceback`
   (up to 2000 chars).
 
@@ -157,6 +157,7 @@ Lineage query rules for `artifact(action="query")`:
 | `code_query_max_memory_mb` | int | `512` | `SIFT_GATEWAY_CODE_QUERY_MAX_MEMORY_MB` | Best-effort subprocess memory cap |
 | `code_query_max_input_records` | int | `100000` | `SIFT_GATEWAY_CODE_QUERY_MAX_INPUT_RECORDS` | Max root records passed to code runtime |
 | `code_query_max_input_bytes` | int | `50000000` | `SIFT_GATEWAY_CODE_QUERY_MAX_INPUT_BYTES` | Max serialized runtime input size |
+| `code_query_max_bytes_out` | int | `200000` | `SIFT_GATEWAY_CODE_QUERY_MAX_BYTES_OUT` | Max serialized code-query response bytes before `schema_ref` mode |
 
 Example env override:
 
@@ -333,7 +334,7 @@ Mode policy:
 
 - pagination present -> `schema_ref`
 - otherwise if full bytes exceed `passthrough_max_bytes` -> `schema_ref`
-- otherwise return `schema_ref` only when it is at least 50% smaller
+- otherwise return `full`
 
 ### `_gateway.secret_ref`
 

@@ -45,6 +45,7 @@ def test_build_status_response_contains_all_budget_fields() -> None:
     expected_budget_keys = {
         "max_items",
         "max_bytes_out",
+        "passthrough_max_bytes",
         "max_wildcards",
         "max_compute_steps",
         "max_json_part_parse_bytes",
@@ -57,12 +58,17 @@ def test_build_status_response_contains_all_budget_fields() -> None:
         "max_record_bytes_partial",
         "max_leaf_paths_partial",
         "artifact_search_max_limit",
+        "code_query_max_bytes_out",
     }
     assert set(budgets.keys()) == expected_budget_keys
 
     # Verify values match config
     assert budgets["max_items"] == config.max_items
     assert budgets["max_bytes_out"] == config.max_bytes_out
+    assert budgets["passthrough_max_bytes"] == config.passthrough_max_bytes
+    assert (
+        budgets["code_query_max_bytes_out"] == config.code_query_max_bytes_out
+    )
     assert budgets["max_wildcards"] == config.max_wildcards
     assert budgets["max_compute_steps"] == config.max_compute_steps
     assert (

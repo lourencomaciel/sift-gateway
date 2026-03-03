@@ -63,8 +63,7 @@ Returns schema reference:
 
 1. If pagination exists: `schema_ref`.
 2. Else if full bytes > configured cap: `schema_ref`.
-3. Else if `schema_ref` is at least 50% smaller: `schema_ref`.
-4. Else: `full`.
+3. Else: `full`.
 
 ## 5. Pagination model
 
@@ -135,7 +134,7 @@ Highlights:
 - inputs are loaded from persisted, redacted artifacts
 - `scope=all_related` resolves pagination-chain related artifacts
 - outputs must be JSON-serializable
-- output size bounded by `max_bytes_out`
+- output size bounded by `code_query_max_bytes_out`
 - runtime enforces AST/import/time/memory guardrails
 
 ## 9. Request identity and lineage

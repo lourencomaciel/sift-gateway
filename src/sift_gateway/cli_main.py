@@ -757,11 +757,11 @@ def _execute_run(
         has_pagination = (
             pagination is not None or parent_artifact_id is not None
         )
-        raw_max_bytes = getattr(runtime, "max_bytes_out", 5_000_000)
+        raw_max_bytes = getattr(runtime, "passthrough_max_bytes", 8_192)
         max_bytes = (
             raw_max_bytes
-            if isinstance(raw_max_bytes, int) and raw_max_bytes > 0
-            else 5_000_000
+            if isinstance(raw_max_bytes, int) and raw_max_bytes >= 0
+            else 8_192
         )
         response_mode = select_response_mode(
             has_pagination=has_pagination,
