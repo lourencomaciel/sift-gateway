@@ -2,14 +2,18 @@
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 import stat
 
 import pytest
 
 from sift_gateway.config.upstream_secrets import (
+    mark_oauth_access_token_stale,
     oauth_cache_dir,
     oauth_cache_dir_path,
+    oauth_token_cache_key,
+    oauth_token_storage,
     read_secret,
     resolve_secret_ref,
     secrets_dir,
@@ -37,6 +41,245 @@ class TestOauthCacheDir:
         assert result.is_dir()
         mode = stat.S_IMODE(result.stat().st_mode)
         assert mode == 0o700
+
+    def test_oauth_token_storage_disables_ttl_for_token_collection(
+        self,
+        tmp_path: Path,
+        monkeypatch,
+    ) -> None:
+        seen: dict[str, object] = {}
+
+        class _FakeDiskStore:
+            def __init__(self, *, directory: Path | str) -> None:
+                seen["directory"] = Path(directory)
+                seen["put"] = []
+                seen["put_many"] = []
+
+            async def get(
+                self,
+                key: str,
+                *,
+                collection: str | None = None,
+            ) -> dict[str, object] | None:
+                _ = (key, collection)
+                return None
+
+            async def ttl(
+                self,
+                key: str,
+                *,
+                collection: str | None = None,
+            ) -> tuple[dict[str, object] | None, float | None]:
+                _ = (key, collection)
+                return None, None
+
+            async def put(
+                self,
+                key: str,
+                value: dict[str, object],
+                *,
+                collection: str | None = None,
+                ttl: float | None = None,
+            ) -> None:
+                _ = (key, value)
+                put_calls = seen["put"]
+                assert isinstance(put_calls, list)
+                put_calls.append((collection, ttl))
+
+            async def delete(
+                self,
+                key: str,
+                *,
+                collection: str | None = None,
+            ) -> bool:
+                _ = (key, collection)
+                return True
+
+            async def get_many(
+                self,
+                keys: list[str],
+                *,
+                collection: str | None = None,
+            ) -> list[dict[str, object] | None]:
+                _ = (keys, collection)
+                return []
+
+            async def ttl_many(
+                self,
+                keys: list[str],
+                *,
+                collection: str | None = None,
+            ) -> list[tuple[dict[str, object] | None, float | None]]:
+                _ = (keys, collection)
+                return []
+
+            async def put_many(
+                self,
+                keys: list[str],
+                values: list[dict[str, object]],
+                *,
+                collection: str | None = None,
+                ttl: float | None = None,
+            ) -> None:
+                _ = (keys, values)
+                put_many_calls = seen["put_many"]
+                assert isinstance(put_many_calls, list)
+                put_many_calls.append((collection, ttl))
+
+            async def delete_many(
+                self,
+                keys: list[str],
+                *,
+                collection: str | None = None,
+            ) -> int:
+                _ = (keys, collection)
+                return 0
+
+        monkeypatch.setattr(
+            "key_value.aio.stores.disk.DiskStore",
+            _FakeDiskStore,
+        )
+
+        storage = oauth_token_storage(tmp_path, "notion")
+        assert seen["directory"] == (
+            tmp_path / "state" / "upstream_oauth" / "notion"
+        )
+
+        asyncio.run(
+            storage.put(
+                key="token",
+                value={"v": "x"},
+                collection="mcp-oauth-token",
+                ttl=30.0,
+            )
+        )
+        asyncio.run(
+            storage.put(
+                key="client",
+                value={"v": "x"},
+                collection="mcp-oauth-client-info",
+                ttl=30.0,
+            )
+        )
+        asyncio.run(
+            storage.put_many(
+                keys=["token"],
+                values=[{"v": "x"}],
+                collection="mcp-oauth-token",
+                ttl=30.0,
+            )
+        )
+        asyncio.run(
+            storage.put_many(
+                keys=["client"],
+                values=[{"v": "x"}],
+                collection="mcp-oauth-client-info",
+                ttl=30.0,
+            )
+        )
+
+        assert seen["put"] == [
+            ("mcp-oauth-token", None),
+            ("mcp-oauth-client-info", 30.0),
+        ]
+        assert seen["put_many"] == [
+            ("mcp-oauth-token", None),
+            ("mcp-oauth-client-info", 30.0),
+        ]
+
+    def test_oauth_token_cache_key_normalizes_trailing_slash(self) -> None:
+        assert (
+            oauth_token_cache_key("https://api.example.test/mcp/")
+            == "https://api.example.test/mcp/tokens"
+        )
+
+    def test_mark_oauth_access_token_stale_updates_refresh_capable_token(
+        self,
+    ) -> None:
+        class _FakeStore:
+            def __init__(self) -> None:
+                self.values: dict[tuple[str, str | None], dict[str, object]] = {
+                    (
+                        "https://api.example.test/mcp/tokens",
+                        "mcp-oauth-token",
+                    ): {
+                        "access_token": "old-access",
+                        "refresh_token": "refresh-1",
+                        "token_type": "Bearer",
+                        "expires_in": 3600,
+                    }
+                }
+
+            async def get(
+                self,
+                key: str,
+                *,
+                collection: str | None = None,
+            ) -> dict[str, object] | None:
+                value = self.values.get((key, collection))
+                return dict(value) if isinstance(value, dict) else None
+
+            async def put(
+                self,
+                key: str,
+                value: dict[str, object],
+                *,
+                collection: str | None = None,
+                ttl: float | None = None,
+            ) -> None:
+                _ = ttl
+                self.values[(key, collection)] = dict(value)
+
+        store = _FakeStore()
+        changed = asyncio.run(
+            mark_oauth_access_token_stale(
+                store,  # type: ignore[arg-type]
+                server_url="https://api.example.test/mcp",
+            )
+        )
+        assert changed is True
+        updated = store.values[
+            ("https://api.example.test/mcp/tokens", "mcp-oauth-token")
+        ]
+        assert updated["access_token"] == ""
+        assert updated["refresh_token"] == "refresh-1"
+        assert updated["expires_in"] == 0
+
+    def test_mark_oauth_access_token_stale_noop_without_refresh_token(
+        self,
+    ) -> None:
+        class _FakeStore:
+            async def get(
+                self,
+                key: str,
+                *,
+                collection: str | None = None,
+            ) -> dict[str, object] | None:
+                _ = (key, collection)
+                return {
+                    "access_token": "old-access",
+                    "token_type": "Bearer",
+                    "expires_in": 3600,
+                }
+
+            async def put(
+                self,
+                key: str,
+                value: dict[str, object],
+                *,
+                collection: str | None = None,
+                ttl: float | None = None,
+            ) -> None:
+                _ = (key, value, collection, ttl)
+                raise AssertionError("put should not be called")
+
+        changed = asyncio.run(
+            mark_oauth_access_token_stale(
+                _FakeStore(),  # type: ignore[arg-type]
+                server_url="https://api.example.test/mcp",
+            )
+        )
+        assert changed is False
 
 
 class TestWriteAndReadRoundtrip:

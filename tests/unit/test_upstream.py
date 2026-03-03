@@ -387,6 +387,108 @@ async def test_call_upstream_tool_normalizes_result(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
+async def test_call_upstream_tool_retries_once_after_oauth_auth_failure(
+    monkeypatch,
+) -> None:
+    seen: dict[str, object] = {"call_count": 0, "stale_calls": 0}
+
+    class _RetryClient:
+        def __init__(self, transport, timeout: float | None = None) -> None:
+            _ = (transport, timeout)
+
+        async def __aenter__(self) -> _RetryClient:
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb) -> bool:
+            _ = (exc_type, exc, tb)
+            return False
+
+        async def call_tool(self, name: str, arguments: dict) -> _FakeCallResult:
+            _ = (name, arguments)
+            call_count = int(seen["call_count"])
+            seen["call_count"] = call_count + 1
+            if call_count == 0:
+                raise RuntimeError("401 unauthorized")
+            return _FakeCallResult()
+
+    async def _mark_stale(**_kwargs) -> bool:
+        stale_calls = int(seen["stale_calls"])
+        seen["stale_calls"] = stale_calls + 1
+        return True
+
+    monkeypatch.setattr("sift_gateway.mcp.upstream.Client", _RetryClient)
+    monkeypatch.setattr(
+        "sift_gateway.mcp.upstream._client_transport",
+        lambda *_args, **_kwargs: object(),
+    )
+    monkeypatch.setattr(
+        "sift_gateway.mcp.upstream._mark_runtime_oauth_access_token_stale",
+        _mark_stale,
+    )
+
+    cfg = _http_config()
+    instance = UpstreamInstance(
+        config=cfg,
+        instance_id="inst1",
+        tools=[],
+        secret_data={"oauth": {"enabled": True}},
+    )
+    result = await call_upstream_tool(instance, "tool_a", {"x": 1})
+
+    assert result["isError"] is False
+    assert seen["call_count"] == 2
+    assert seen["stale_calls"] == 1
+
+
+@pytest.mark.asyncio
+async def test_call_upstream_tool_no_retry_when_no_refresh_capability(
+    monkeypatch,
+) -> None:
+    seen: dict[str, int] = {"call_count": 0}
+
+    class _FailClient:
+        def __init__(self, transport, timeout: float | None = None) -> None:
+            _ = (transport, timeout)
+
+        async def __aenter__(self) -> _FailClient:
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb) -> bool:
+            _ = (exc_type, exc, tb)
+            return False
+
+        async def call_tool(self, name: str, arguments: dict) -> _FakeCallResult:
+            _ = (name, arguments)
+            seen["call_count"] += 1
+            raise RuntimeError("401 unauthorized")
+
+    async def _mark_stale(**_kwargs) -> bool:
+        return False
+
+    monkeypatch.setattr("sift_gateway.mcp.upstream.Client", _FailClient)
+    monkeypatch.setattr(
+        "sift_gateway.mcp.upstream._client_transport",
+        lambda *_args, **_kwargs: object(),
+    )
+    monkeypatch.setattr(
+        "sift_gateway.mcp.upstream._mark_runtime_oauth_access_token_stale",
+        _mark_stale,
+    )
+
+    cfg = _http_config()
+    instance = UpstreamInstance(
+        config=cfg,
+        instance_id="inst1",
+        tools=[],
+        secret_data={"oauth": {"enabled": True}},
+    )
+    with pytest.raises(RuntimeError, match="401 unauthorized"):
+        await call_upstream_tool(instance, "tool_a", {"x": 1})
+
+    assert seen["call_count"] == 1
+
+
+@pytest.mark.asyncio
 async def test_connect_upstream_builds_instance(monkeypatch) -> None:
     _FakeClient.instances.clear()
     _FakeClient.tools = [_FakeTool("search", "Search", {"type": "object"})]
