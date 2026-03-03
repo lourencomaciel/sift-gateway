@@ -681,6 +681,35 @@ def test_assess_pagination_without_config_first_page_missing_token() -> None:
     assert assessment.retrieval_status == "PARTIAL"
     assert assessment.partial_reason == "NEXT_TOKEN_MISSING"
     assert assessment.warning == "INCOMPLETE_RESULT_SET"
+    assert assessment.detector is not None
+    assert assessment.detector.get("mode") == "discovery"
+
+
+def test_assess_pagination_without_config_non_advancing_reason() -> None:
+    assessment = assess_pagination(
+        json_value={
+            "paging": {
+                "next": (
+                    "https://api.example.test/items?limit=100&after=CURSOR_1"
+                ),
+            }
+        },
+        pagination_config=None,
+        original_args={"limit": 100, "after": "CURSOR_1"},
+        upstream_prefix="api",
+        tool_name="list_items",
+    )
+    assert assessment is not None
+    assert assessment.state is None
+    assert assessment.has_more is False
+    assert assessment.retrieval_status == "PARTIAL"
+    assert assessment.partial_reason == "NEXT_TOKEN_MISSING"
+    assert assessment.warning == "INCOMPLETE_RESULT_SET"
+    assert assessment.detector is not None
+    assert assessment.detector.get("mode") == "discovery"
+    assert assessment.detector.get("rejected_reason") == (
+        "non_advancing_cursor"
+    )
 
 
 def test_assess_pagination_without_config_followup_no_signal_marks_complete() -> (

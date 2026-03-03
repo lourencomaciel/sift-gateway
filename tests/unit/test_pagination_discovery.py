@@ -426,3 +426,40 @@ def test_discover_pagination_next_object_non_advancing_falls_back_to_numeric() -
     assert discovered.has_more is True
     assert discovered.next_params == {"page": 2}
     assert discovered.strategy == "numeric_args"
+
+
+def test_discover_pagination_sets_rejected_reason_non_advancing_next_url() -> (
+    None
+):
+    discovered = discover_pagination(
+        json_value={
+            "paging": {
+                "next": (
+                    "https://api.example.test/items?limit=100&after=CURSOR_1"
+                ),
+            }
+        },
+        original_args={"limit": 100, "after": "CURSOR_1"},
+    )
+    assert discovered.has_more is True
+    assert discovered.next_params is None
+    assert discovered.strategy is None
+    assert discovered.rejected_reason == "non_advancing_cursor"
+
+
+def test_discover_pagination_sets_rejected_reason_non_advancing_cursor_path() -> (
+    None
+):
+    discovered = discover_pagination(
+        json_value={
+            "pageInfo": {
+                "hasNextPage": True,
+                "endCursor": "CURSOR_1",
+            }
+        },
+        original_args={"after": "CURSOR_1"},
+    )
+    assert discovered.has_more is True
+    assert discovered.next_params is None
+    assert discovered.strategy is None
+    assert discovered.rejected_reason == "non_advancing_cursor"

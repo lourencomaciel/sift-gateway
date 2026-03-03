@@ -36,6 +36,9 @@ class PaginationDiscovery:
         strategy: Detector strategy name that produced ``next_params``.
         confidence: Heuristic confidence in ``[0, 1]``.
         limit_hit: True when observed record count is at least request limit.
+        rejected_reason: Optional detector rejection reason when
+            has-more signals exist but no advancing continuation could
+            be derived (for example ``"non_advancing_cursor"``).
     """
 
     has_more: bool | None
@@ -43,6 +46,7 @@ class PaginationDiscovery:
     strategy: str | None
     confidence: float
     limit_hit: bool
+    rejected_reason: str | None = None
 
 
 _PAGINATION_PARAM_NAMES = frozenset(
@@ -114,6 +118,8 @@ _HEADER_HAS_MORE_KEYS = (
 _TRUE_STRINGS = frozenset({"1", "true", "yes", "y", "on"})
 
 _FALSE_STRINGS = frozenset({"0", "false", "no", "n", "off"})
+
+_REJECTED_REASON_NON_ADVANCING_CURSOR = "non_advancing_cursor"
 
 _LINK_NEXT_PATTERN = re.compile(
     r"\s*<([^>]+)>(.*)",
@@ -1082,6 +1088,155 @@ def _discover_next_params(
     return None, 0.0, None
 
 
+def _query_params_are_non_advancing(
+    *,
+    query_pairs: list[tuple[str, str]],
+    original_args: dict[str, Any],
+) -> bool:
+    """Return True when pagination query params only echo request position."""
+    arg_lookup = _arg_name_lookup(original_args)
+    saw_pagination_param = False
+    for raw_name, raw_value in query_pairs:
+        normalized = _normalize_name(raw_name)
+        if not normalized:
+            continue
+        existing_key = arg_lookup.get(normalized)
+        is_known_pagination = _is_pagination_param_name(raw_name)
+        if existing_key is None and not is_known_pagination:
+            continue
+        if existing_key is None:
+            continue
+        if _is_non_advancing_param_name(existing_key):
+            continue
+        saw_pagination_param = True
+        example_value = original_args.get(existing_key)
+        coerced = _coerce_query_value_like_example(
+            raw_value=raw_value,
+            example_value=example_value,
+        )
+        if coerced != example_value:
+            return False
+    return saw_pagination_param
+
+
+def _looks_non_advancing_next_url(
+    *,
+    url_value: str,
+    original_args: dict[str, Any],
+) -> bool:
+    """Return True when next URL includes cursor params but no progression."""
+    parsed = urlparse(url_value)
+    query_pairs = parse_qsl(parsed.query, keep_blank_values=False)
+    if not query_pairs:
+        return False
+    return _query_params_are_non_advancing(
+        query_pairs=query_pairs,
+        original_args=original_args,
+    )
+
+
+def _detect_non_advancing_cursor_rejection(
+    *,
+    json_value: Any,
+    original_args: dict[str, Any],
+    upstream_meta: Any | None,
+) -> str | None:
+    """Return rejection reason when continuation tokens do not advance."""
+    arg_lookup = _arg_name_lookup(original_args)
+
+    for path, param_candidates, _confidence in _CURSOR_PATH_SPECS:
+        raw_value = _evaluate_path(json_value, path)
+        if not _is_non_empty_scalar(raw_value):
+            continue
+        for candidate in param_candidates:
+            existing_key = arg_lookup.get(_normalize_name(candidate))
+            if existing_key is None:
+                continue
+            if _is_non_advancing_param_name(existing_key):
+                continue
+            if original_args.get(existing_key) == raw_value:
+                return _REJECTED_REASON_NON_ADVANCING_CURSOR
+
+    next_candidates = (
+        _evaluate_path(json_value, "$.next"),
+        _evaluate_path(json_value, "$.paging.next"),
+        _evaluate_path(json_value, "$.pagination.next"),
+        _evaluate_path(json_value, "$.result.next"),
+        _evaluate_path(json_value, "$.result.paging.next"),
+        _evaluate_path(json_value, "$.result.pagination.next"),
+    )
+    for next_candidate in next_candidates:
+        if isinstance(next_candidate, str) and _looks_like_url(next_candidate) and (
+            _looks_non_advancing_next_url(
+                url_value=next_candidate,
+                original_args=original_args,
+            )
+        ):
+            return _REJECTED_REASON_NON_ADVANCING_CURSOR
+        if not isinstance(next_candidate, dict):
+            continue
+        for key, value in next_candidate.items():
+            if not isinstance(key, str):
+                continue
+            if not _is_non_empty_scalar(value):
+                continue
+            existing_key = arg_lookup.get(_normalize_name(key))
+            if existing_key is None:
+                continue
+            if _is_non_advancing_param_name(existing_key):
+                continue
+            if original_args.get(existing_key) == value:
+                return _REJECTED_REASON_NON_ADVANCING_CURSOR
+
+    for path in _NEXT_URL_PATHS:
+        raw_value = _evaluate_path(json_value, path)
+        if not isinstance(raw_value, str):
+            continue
+        url_value = raw_value.strip()
+        if not url_value or not _looks_like_url(url_value):
+            continue
+        if _looks_non_advancing_next_url(
+            url_value=url_value,
+            original_args=original_args,
+        ):
+            return _REJECTED_REASON_NON_ADVANCING_CURSOR
+
+    headers = _normalize_headers(upstream_meta)
+    if headers:
+        link_next = _discover_link_next_url(headers)
+        if isinstance(link_next, str) and _looks_non_advancing_next_url(
+            url_value=link_next,
+            original_args=original_args,
+        ):
+            return _REJECTED_REASON_NON_ADVANCING_CURSOR
+        for key in _HEADER_NEXT_URL_KEYS:
+            raw_value = headers.get(key)
+            if not isinstance(raw_value, str):
+                continue
+            if _looks_non_advancing_next_url(
+                url_value=raw_value.strip(),
+                original_args=original_args,
+            ):
+                return _REJECTED_REASON_NON_ADVANCING_CURSOR
+        for key in _HEADER_CURSOR_KEYS:
+            raw_value = headers.get(key)
+            if not isinstance(raw_value, str):
+                continue
+            cursor_value = raw_value.strip()
+            if not cursor_value:
+                continue
+            for candidate in _cursor_header_candidates(key):
+                existing_key = arg_lookup.get(_normalize_name(candidate))
+                if existing_key is None:
+                    continue
+                if _is_non_advancing_param_name(existing_key):
+                    continue
+                if original_args.get(existing_key) == cursor_value:
+                    return _REJECTED_REASON_NON_ADVANCING_CURSOR
+
+    return None
+
+
 def discover_pagination(
     *,
     json_value: Any,
@@ -1118,6 +1273,14 @@ def discover_pagination(
         limit_hit=limit_hit,
     )
 
+    rejected_reason: str | None = None
+    if has_more_signal is True and next_params is None:
+        rejected_reason = _detect_non_advancing_cursor_rejection(
+            json_value=json_value,
+            original_args=original_args,
+            upstream_meta=upstream_meta,
+        )
+
     if has_more_signal is None and next_params is not None:
         has_more_signal = True
 
@@ -1127,4 +1290,5 @@ def discover_pagination(
         strategy=strategy,
         confidence=confidence,
         limit_hit=limit_hit,
+        rejected_reason=rejected_reason,
     )
