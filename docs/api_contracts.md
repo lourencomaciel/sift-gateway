@@ -147,8 +147,7 @@ Mode selection is shared across mirrored calls and code output:
 
 1. If pagination exists: `schema_ref`.
 2. Else if serialized `full` bytes exceed configured cap: `schema_ref`.
-3. Else if `schema_ref` is at least 50% smaller: `schema_ref`.
-4. Else: `full`.
+3. Else: `full`.
 
 ## Pagination Metadata
 

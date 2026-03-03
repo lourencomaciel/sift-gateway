@@ -213,7 +213,8 @@ See [SECURITY.md](SECURITY.md) for the full security policy.
 | Env var | Default | Description |
 |---|---|---|
 | `SIFT_GATEWAY_DATA_DIR` | `.sift-gateway` | Root data directory |
-| `SIFT_GATEWAY_PASSTHROUGH_MAX_BYTES` | `8192` | Inline response cap |
+| `SIFT_GATEWAY_PASSTHROUGH_MAX_BYTES` | `8192` | Inline response cap for mirrored upstream and CLI `run` responses |
+| `SIFT_GATEWAY_CODE_QUERY_MAX_BYTES_OUT` | `200000` | Code-query full-response cap before returning `schema_ref` |
 | `SIFT_GATEWAY_SECRET_REDACTION_ENABLED` | `true` | Redact secrets from tool output |
 | `SIFT_GATEWAY_AUTH_TOKEN` | unset | Required for non-local HTTP binds |
 

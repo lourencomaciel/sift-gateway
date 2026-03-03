@@ -28,6 +28,7 @@ def select_response_mode(
     max_bytes: int,
 ) -> str:
     """Choose response mode according to contract-v1 rules."""
+    del schema_ref_payload
     if has_pagination:
         return "schema_ref"
     try:
@@ -35,12 +36,6 @@ def select_response_mode(
     except Exception:
         return "schema_ref"
     if full_bytes > max_bytes:
-        return "schema_ref"
-    try:
-        schema_ref_bytes = _json_size_bytes(schema_ref_payload)
-    except Exception:
-        return "full"
-    if schema_ref_bytes * 2 <= full_bytes:
         return "schema_ref"
     return "full"
 
