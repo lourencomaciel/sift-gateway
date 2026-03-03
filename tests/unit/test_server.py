@@ -719,6 +719,20 @@ def test_build_fastmcp_app_includes_mirrored_tools(tmp_path: Path) -> None:
     artifact_schema = tools["artifact"].parameters
     code_description = artifact_schema["properties"]["code"]["description"]
     scope_description = artifact_schema["properties"]["scope"]["description"]
+    action_enum = artifact_schema["properties"]["action"]["enum"]
+    assert action_enum == [
+        "query",
+        "next_page",
+        "blob_list",
+        "blob_materialize",
+        "blob_cleanup",
+        "blob_manifest",
+    ]
+    assert "max_bytes" in artifact_schema["properties"]
+    assert "materialize_mode" in artifact_schema["properties"]
+    assert "older_than_seconds" in artifact_schema["properties"]
+    assert "dry_run" in artifact_schema["properties"]
+    assert "format" in artifact_schema["properties"]
     assert "scope" in artifact_schema["properties"]
     assert artifact_schema["properties"]["scope"]["enum"] == [
         "all_related",

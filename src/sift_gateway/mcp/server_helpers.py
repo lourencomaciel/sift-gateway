@@ -39,12 +39,20 @@ def artifact_tool_description(
     """Build artifact-tool description with compact package summary."""
     return (
         "Interact with stored artifacts. "
-        "Actions: query and next_page. "
+        "Actions: query, next_page, blob_list, blob_materialize, blob_cleanup, blob_manifest. "
         'Use action="query" with query_kind="code" to run Python over '
         "stored artifacts. "
         f"Code-query packages: {code_query_package_summary}. "
         'Use action="next_page" to fetch additional upstream pages for a '
         "paginated artifact. "
+        "Use action=\"blob_list\" to discover linked blobs without "
+        "returning bytes. "
+        "Use action=\"blob_materialize\" to stage one blob as a local "
+        "file path for downstream tools. "
+        "Use action=\"blob_cleanup\" to remove staged blob files from "
+        "allowed local staging roots. "
+        "Use action=\"blob_manifest\" to export blob metadata to local "
+        "CSV/JSON files. "
         f"{PAGINATION_COMPLETENESS_RULE}"
     )
 

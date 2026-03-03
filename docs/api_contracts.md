@@ -15,6 +15,11 @@ Public workflows are intentionally narrow:
 3. Analyze artifacts:
    - MCP: `artifact(action="query", query_kind="code", ...)`
    - CLI: `sift-gateway code ...`
+4. Materialize binary refs as local files:
+   - MCP: `artifact(action="blob_list", ...)`
+   - MCP: `artifact(action="blob_materialize", ...)`
+   - MCP: `artifact(action="blob_cleanup", ...)`
+   - MCP: `artifact(action="blob_manifest", ...)`
 
 Legacy retrieval query kinds are not part of this contract.
 
@@ -111,6 +116,119 @@ If upstream pagination state is missing, the gateway returns
 `INVALID_ARGUMENT` with diagnostics in `details` (for example:
 `queryable_json_found`, `has_more_detected`, `next_params_detected`,
 `continuable`, and `query_json_source` when available).
+
+## `artifact(action="blob_list")`
+
+### Required arguments
+
+- `_gateway_context.session_id`
+- `action="blob_list"`
+- one target shape:
+  - single anchor: `artifact_id` (optionally `scope="all_related"`)
+  - explicit list: `artifact_ids` (single-scope only)
+
+### Optional arguments
+
+- `scope`: `single` (default) or `all_related` (anchor only)
+- `limit`: max blobs to return (default `100`, max `1000`)
+
+### Behavior
+
+- joins `artifacts -> payload_binary_refs -> binary_blobs`
+- returns metadata only (never inline blob bytes)
+- deduplicates by `binary_hash`
+
+Typical fields per blob row:
+
+- `blob_id`
+- `binary_hash`
+- `mime`
+- `byte_count`
+- `artifact_ids`
+- `source_artifact_id`
+- `source_tool`
+- `uri` (`sift://blob/<blob_id>`)
+
+## `artifact(action="blob_materialize")`
+
+### Required arguments
+
+- `_gateway_context.session_id`
+- `action="blob_materialize"`
+- one identifier: `blob_id` or `binary_hash`
+
+### Optional arguments
+
+- `destination_dir` (must be under allowed staging roots)
+- `filename`
+- `extension`
+- `if_exists`: `reuse` (default), `overwrite`, `fail`
+- `materialize_mode`: `copy` (default), `hardlink`, `auto`
+- `max_bytes`: optional byte-size guardrail
+
+### Behavior
+
+- resolves blob metadata from `binary_blobs`
+- stages the blob to local filesystem and returns `path`
+- returns metadata/path only (never inline blob bytes)
+- includes `sha256` (same value as `binary_hash`) for upload handoff
+- returns `materialize_mode_used` so callers can audit copy vs hardlink
+
+Extension resolution order:
+
+1. explicit `extension` (or filename suffix)
+2. `python-magic` MIME (when available)
+3. stored MIME map
+4. `.bin` fallback
+
+## `artifact(action="blob_cleanup")`
+
+### Required arguments
+
+- `_gateway_context.session_id`
+- `action="blob_cleanup"`
+
+### Optional arguments
+
+- explicit cleanup mode:
+  - `path` (single staged file path)
+  - `paths` (list of staged file paths)
+- sweep mode:
+  - `destination_dir` (defaults to gateway staging dir)
+  - `older_than_seconds` (default `0`, meaning all files)
+- controls:
+  - `dry_run` (report only)
+  - `limit` (candidate cap)
+
+### Behavior
+
+- cleans staged local files only (does not remove DB blob records)
+- enforces allowed staging roots
+- supports explicit-path cleanup and directory sweep cleanup
+
+## `artifact(action="blob_manifest")`
+
+### Required arguments
+
+- `_gateway_context.session_id`
+- `action="blob_manifest"`
+- one target shape:
+  - single anchor: `artifact_id` (optionally `scope="all_related"`)
+  - explicit list: `artifact_ids` (single-scope only)
+
+### Optional arguments
+
+- `format`: `csv` (default) or `json`
+- `destination_dir`
+- `filename`
+- `limit`
+- `if_exists`: `reuse`, `overwrite` (default), `fail`
+
+### Behavior
+
+- exports blob metadata from `blob_list`-style discovery into a local file
+- returns manifest `path` and summary counts
+- exports metadata only; no inline blob bytes
 
 ## Mirrored Response Contract
 

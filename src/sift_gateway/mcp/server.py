@@ -163,10 +163,18 @@ _BUILTIN_TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
                 "enum": [
                     "query",
                     "next_page",
+                    "blob_list",
+                    "blob_materialize",
+                    "blob_cleanup",
+                    "blob_manifest",
                 ],
                 "description": (
                     'query: execute code query (query_kind="code"). '
-                    "next_page: fetch next upstream page."
+                    "next_page: fetch next upstream page. "
+                    "blob_list: list linked blobs as metadata only. "
+                    "blob_materialize: stage a linked blob as a local file. "
+                    "blob_cleanup: clean staged blob files from local roots. "
+                    "blob_manifest: export blob metadata to CSV/JSON."
                 ),
             },
             "query_kind": {
@@ -180,7 +188,7 @@ _BUILTIN_TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
                 "type": "string",
                 "enum": ["all_related", "single"],
                 "description": (
-                    "[query_kind=code] single (default) executes against "
+                    "[query_kind=code/blob_list] single (default) executes against "
                     "only the requested artifact(s). all_related executes "
                     "across pagination-chain related artifacts for each "
                     "anchor when cross-artifact logic is required."
@@ -190,6 +198,8 @@ _BUILTIN_TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
                 "type": "string",
                 "description": (
                     "Anchor artifact. Required for action=next_page. "
+                    "For action=blob_list, use artifact_id (single/all_related) "
+                    "or artifact_ids (explicit list). "
                     "For query_kind=code, use artifact_id (single) or "
                     "artifact_ids (multi)."
                 ),
@@ -198,9 +208,20 @@ _BUILTIN_TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
                 "type": "array",
                 "items": {"type": "string"},
                 "description": (
+                    "[action=blob_list] Optional explicit artifact list "
+                    "(single-scope only). "
                     "[query_kind=code] Optional list of anchor artifacts for "
                     "multi-artifact queries (run(artifacts, schemas, params)). "
                     "Mutually exclusive with artifact_id."
+                ),
+            },
+            "limit": {
+                "type": "integer",
+                "description": (
+                    "[action=blob_list] Maximum blobs to return "
+                    "(default: 100, max: 1000). "
+                    "[action=blob_cleanup] Maximum candidate files to "
+                    "evaluate (default: 1000, max: 10000)."
                 ),
             },
             "root_path": {
@@ -249,6 +270,112 @@ _BUILTIN_TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
                     "argument to run(..., ..., params)."
                 ),
                 "additionalProperties": True,
+            },
+            "blob_id": {
+                "type": "string",
+                "description": (
+                    "[action=blob_materialize] Blob identifier "
+                    "(e.g. bin_...)."
+                ),
+            },
+            "binary_hash": {
+                "type": "string",
+                "description": (
+                    "[action=blob_materialize] Full SHA-256 blob hash. "
+                    "Use this when blob_id is unavailable."
+                ),
+            },
+            "destination_dir": {
+                "type": "string",
+                "description": (
+                    "[action=blob_materialize] Destination directory for "
+                    "staged file. Must be under allowed staging roots. "
+                    "[action=blob_cleanup] Sweep root for cleanup mode. "
+                    "[action=blob_manifest] Output directory for manifest file."
+                ),
+            },
+            "filename": {
+                "type": "string",
+                "description": (
+                    "[action=blob_materialize] Optional output filename "
+                    "(leaf only, no path separators). "
+                    "[action=blob_manifest] Optional output manifest filename."
+                ),
+            },
+            "extension": {
+                "type": "string",
+                "description": (
+                    "[action=blob_materialize] Optional extension override "
+                    "(without bytes in response)."
+                ),
+            },
+            "overwrite": {
+                "type": "boolean",
+                "description": (
+                    "[action=blob_materialize] Deprecated alias for "
+                    "if_exists=overwrite."
+                ),
+            },
+            "if_exists": {
+                "type": "string",
+                "enum": ["reuse", "overwrite", "fail"],
+                "description": (
+                    "[action=blob_materialize] Target file policy "
+                    "(default: reuse)."
+                ),
+            },
+            "materialize_mode": {
+                "type": "string",
+                "enum": ["copy", "hardlink", "auto"],
+                "description": (
+                    "[action=blob_materialize] Local file strategy "
+                    "(default: copy). auto tries hardlink then falls back "
+                    "to copy."
+                ),
+            },
+            "max_bytes": {
+                "type": "integer",
+                "description": (
+                    "[action=blob_materialize] Optional safety limit; "
+                    "returns RESOURCE_EXHAUSTED when blob is larger."
+                ),
+            },
+            "path": {
+                "type": "string",
+                "description": (
+                    "[action=blob_cleanup] Optional single staged file path "
+                    "to clean."
+                ),
+            },
+            "paths": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": (
+                    "[action=blob_cleanup] Optional staged file paths to "
+                    "clean. When omitted, cleanup uses sweep mode."
+                ),
+            },
+            "older_than_seconds": {
+                "type": "integer",
+                "description": (
+                    "[action=blob_cleanup] In sweep mode, only delete files "
+                    "older than this age (default: 0, meaning all)."
+                ),
+            },
+            "dry_run": {
+                "type": "boolean",
+                "description": (
+                    "[action=blob_cleanup] When true, report candidates "
+                    "without deleting files."
+                ),
+            },
+            "format": {
+                "type": "string",
+                "enum": ["csv", "json"],
+                "description": (
+                    "[action=blob_manifest] Manifest output format "
+                    "(default: csv)."
+                ),
             },
         },
         "required": ["action"],

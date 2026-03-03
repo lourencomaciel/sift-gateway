@@ -475,7 +475,7 @@ async def test_call_upstream_tool_no_retry_when_no_refresh_capability(
         _mark_stale,
     )
 
-    cfg = _http_config()
+    cfg = _http_config(headers={"X-Org": "acme"})
     instance = UpstreamInstance(
         config=cfg,
         instance_id="inst1",
@@ -486,6 +486,122 @@ async def test_call_upstream_tool_no_retry_when_no_refresh_capability(
         await call_upstream_tool(instance, "tool_a", {"x": 1})
 
     assert seen["call_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_call_upstream_tool_falls_back_to_static_auth_when_refresh_unavailable(
+    monkeypatch,
+) -> None:
+    seen: dict[str, object] = {
+        "disable_oauth_calls": [],
+        "stale_calls": 0,
+    }
+
+    async def _call_once(
+        *,
+        instance: UpstreamInstance,
+        tool_name: str,
+        arguments: dict[str, object],
+        data_dir: str | None,
+        disable_oauth: bool = False,
+    ) -> dict[str, object]:
+        _ = (instance, tool_name, arguments, data_dir)
+        calls = seen["disable_oauth_calls"]
+        assert isinstance(calls, list)
+        calls.append(disable_oauth)
+        if not disable_oauth:
+            raise RuntimeError("401 unauthorized")
+        return {
+            "content": [{"type": "text", "text": "ok"}],
+            "structuredContent": {"value": 1},
+            "isError": False,
+            "meta": {},
+        }
+
+    async def _mark_stale(**_kwargs) -> bool:
+        stale_calls = int(seen["stale_calls"])
+        seen["stale_calls"] = stale_calls + 1
+        return False
+
+    monkeypatch.setattr("sift_gateway.mcp.upstream._call_tool_once", _call_once)
+    monkeypatch.setattr(
+        "sift_gateway.mcp.upstream._mark_runtime_oauth_access_token_stale",
+        _mark_stale,
+    )
+
+    cfg = _http_config()
+    instance = UpstreamInstance(
+        config=cfg,
+        instance_id="inst1",
+        tools=[],
+        secret_data={
+            "oauth": {"enabled": True},
+            "headers": {"Authorization": "Bearer static-token"},
+        },
+    )
+    result = await call_upstream_tool(instance, "tool_a", {"x": 1})
+
+    assert result["isError"] is False
+    assert seen["stale_calls"] == 1
+    assert seen["disable_oauth_calls"] == [False, True]
+
+
+@pytest.mark.asyncio
+async def test_call_upstream_tool_falls_back_to_static_auth_after_refresh_retry_failure(
+    monkeypatch,
+) -> None:
+    seen: dict[str, object] = {
+        "disable_oauth_calls": [],
+        "stale_calls": 0,
+    }
+
+    async def _call_once(
+        *,
+        instance: UpstreamInstance,
+        tool_name: str,
+        arguments: dict[str, object],
+        data_dir: str | None,
+        disable_oauth: bool = False,
+    ) -> dict[str, object]:
+        _ = (instance, tool_name, arguments, data_dir)
+        calls = seen["disable_oauth_calls"]
+        assert isinstance(calls, list)
+        calls.append(disable_oauth)
+        if not disable_oauth:
+            raise RuntimeError("401 unauthorized")
+        return {
+            "content": [{"type": "text", "text": "ok"}],
+            "structuredContent": {"value": 1},
+            "isError": False,
+            "meta": {},
+        }
+
+    async def _mark_stale(**_kwargs) -> bool:
+        stale_calls = int(seen["stale_calls"])
+        seen["stale_calls"] = stale_calls + 1
+        return True
+
+    monkeypatch.setattr("sift_gateway.mcp.upstream._call_tool_once", _call_once)
+    monkeypatch.setattr(
+        "sift_gateway.mcp.upstream._mark_runtime_oauth_access_token_stale",
+        _mark_stale,
+    )
+
+    cfg = _http_config()
+    instance = UpstreamInstance(
+        config=cfg,
+        instance_id="inst1",
+        tools=[],
+        secret_data={
+            "oauth": {"enabled": True},
+            "headers": {"Authorization": "Bearer static-token"},
+        },
+    )
+    result = await call_upstream_tool(instance, "tool_a", {"x": 1})
+
+    assert result["isError"] is False
+    assert seen["stale_calls"] == 1
+    assert seen["disable_oauth_calls"] == [False, False, True]
 
 
 @pytest.mark.asyncio
