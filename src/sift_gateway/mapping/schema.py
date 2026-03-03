@@ -30,6 +30,7 @@ from sift_gateway.util.hashing import sha256_hex
 
 SCHEMA_VERSION = "schema_v1"
 _MAX_DISTINCT_VALUES = 1
+_MAX_DISTINCT_TEXT_CHARS = 30
 
 
 @dataclass(frozen=True)
@@ -138,6 +139,13 @@ def _truncate_example(text: str, *, max_chars: int = 30) -> str:
     return f"[{text[:max_chars]}]({remaining} more chars truncated)"
 
 
+def _normalize_distinct_value(value: Any) -> Any:
+    """Normalize distinct values for compact schema payloads."""
+    if isinstance(value, str):
+        return _truncate_example(value, max_chars=_MAX_DISTINCT_TEXT_CHARS)
+    return value
+
+
 def _format_example_value(value: Any) -> str:
     """Format one deterministic example value for schema output."""
     if isinstance(value, str):
@@ -237,7 +245,10 @@ def _build_fields(
                 example_value=path_stats.example_value,
                 distinct_values=(
                     sorted(
-                        path_stats.distinct_values.values(),
+                        (
+                            _normalize_distinct_value(value)
+                            for value in path_stats.distinct_values.values()
+                        ),
                         key=_distinct_sort_key,
                     )[:_MAX_DISTINCT_VALUES]
                     if path_stats.distinct_values
@@ -396,7 +407,10 @@ def build_sampled_schema(
             distinct_values: list[Any] | None = None
             if isinstance(raw_distinct_values, list) and raw_distinct_values:
                 distinct_values = sorted(
-                    raw_distinct_values,
+                    [
+                        _normalize_distinct_value(value)
+                        for value in raw_distinct_values
+                    ],
                     key=_distinct_sort_key,
                 )[:_MAX_DISTINCT_VALUES]
             cardinality_raw = raw.get("cardinality")
