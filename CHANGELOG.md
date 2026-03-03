@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+## [0.3.4] - 2026-03-03
+
+### Added
+- Declared `py-key-value-aio[disk]>=0.3.0` as a direct dependency so `upstream login` has a guaranteed disk-backed token storage backend.
+
+### Fixed
+- Improved `upstream login` OAuth initialization compatibility with FastMCP token storage variants while preserving disk-backed persistence.
+- Rewrote missing disk-backend failures to a user-facing actionable error message (`pip install 'py-key-value-aio[disk]'`).
+- Added unit coverage for OAuth dependency error rewriting.
+
 ## [0.3.2] - 2026-03-02
 
 ### Added
