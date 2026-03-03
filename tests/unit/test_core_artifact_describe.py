@@ -269,6 +269,7 @@ def test_execute_artifact_describe_single_scope_returns_compact_roots() -> None:
     assert result["artifact_id"] == "art_1"
     assert result["scope"] == "single"
     assert result["roots"][0]["root_path"] == "$.items"
+    assert result["queryable_roots"] == ["$.items"]
     assert result["roots"][0]["compatible_for_select"] is True
     assert "schemas" in result
     assert result["schemas"][0]["root_path"] == "$.items"
@@ -409,6 +410,116 @@ def test_execute_artifact_describe_surfaces_upstream_pagination_meta() -> None:
         "continue_from_artifact_id": "art_1",
         "command_line": "sift-gateway run --continue-from art_1 -- <next-command>",
         "params": {"after": "C2"},
+    }
+    assert result["pagination"]["capability"] == {
+        "has_more_signal_detected": True,
+        "continuable": True,
+        "next_params_detected": True,
+    }
+
+
+def test_execute_artifact_describe_surfaces_pagination_capability_without_state() -> (
+    None
+):
+    conn = _SeqConnection(
+        [
+            _FakeCursor(
+                one=(
+                    "art_1",
+                    "partial",
+                    "ready",
+                    "mapper_v1",
+                    "mbf",
+                    "backend",
+                    "prng_xoshiro256ss_v1",
+                    0,
+                    None,
+                    1,
+                )
+            ),
+            _FakeCursor(
+                all_rows=[
+                    (
+                        "rk_1",
+                        "$.items",
+                        10,
+                        1.0,
+                        {},
+                        10.0,
+                        "array",
+                        {"id": {"number": 10}},
+                        [0, 1],
+                    )
+                ]
+            ),
+            _FakeCursor(
+                all_rows=[
+                    (
+                        "rk_1",
+                        "$.items",
+                        "schema_v1",
+                        "sha256:schema_items",
+                        "sampled",
+                        "partial",
+                        2,
+                        "sha256:dataset_items",
+                        "traversal_v1",
+                        "mbf",
+                    )
+                ]
+            ),
+            _FakeCursor(
+                all_rows=[
+                    (
+                        "$.id",
+                        ["number"],
+                        False,
+                        True,
+                        2,
+                        "1",
+                        [1, 2],
+                        2,
+                    )
+                ]
+            ),
+            _FakeCursor(
+                one=(
+                    "art_1",
+                    "hash_1",
+                    {
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": '{"results":[{"id":"1"}],"has_more":true}',
+                            }
+                        ],
+                        "meta": {"warnings": []},
+                    },
+                    "none",
+                    "payload/path",
+                )
+            ),
+        ]
+    )
+    runtime = _Runtime(db_pool=_SeqPool(conn))
+
+    result = execute_artifact_describe(
+        runtime,
+        arguments={
+            "_gateway_context": {"session_id": "sess_1"},
+            "artifact_id": "art_1",
+            "scope": "single",
+        },
+    )
+
+    assert result["pagination"]["layer"] == "upstream"
+    assert result["pagination"]["retrieval_status"] == "PARTIAL"
+    assert result["pagination"]["partial_reason"] == "NEXT_TOKEN_MISSING"
+    assert result["pagination"]["next"] is None
+    assert result["pagination"]["capability"] == {
+        "has_more_signal_detected": True,
+        "continuable": False,
+        "next_params_detected": False,
     }
 
 

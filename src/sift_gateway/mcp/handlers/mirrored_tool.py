@@ -17,9 +17,12 @@ from sift_gateway.artifacts.create import (
     persist_artifact,
 )
 from sift_gateway.constants import WORKSPACE_ID
+from sift_gateway.envelope.content_extract import (
+    first_queryable_json_from_envelope,
+    first_queryable_json_from_payload,
+)
 from sift_gateway.envelope.model import (
     Envelope,
-    JsonContentPart,
 )
 from sift_gateway.envelope.normalize import normalize_envelope
 from sift_gateway.envelope.responses import (
@@ -45,6 +48,7 @@ from sift_gateway.obs.logging import get_logger
 from sift_gateway.pagination.contract import (
     PAGINATION_WARNING_INCOMPLETE_RESULT_SET,
     RETRIEVAL_STATUS_PARTIAL,
+    UPSTREAM_PARTIAL_REASON_NEXT_TOKEN_MISSING,
     UPSTREAM_PARTIAL_REASON_SIGNAL_INCONCLUSIVE,
     UpstreamNextKind,
     build_upstream_pagination_meta,
@@ -56,7 +60,6 @@ from sift_gateway.pagination.extract import (
 from sift_gateway.request_identity import compute_request_identity
 from sift_gateway.response_sample import (
     build_representative_item_sample,
-    first_json_content_value,
     resolve_item_sequence_with_path,
 )
 from sift_gateway.tools.artifact_describe import (
@@ -523,6 +526,69 @@ def _schema_payload_from_describe(
     )
 
 
+def _queryable_root_paths_from_schemas(
+    schemas: list[dict[str, Any]],
+) -> list[str]:
+    """Return sorted unique schema root paths used as queryable roots."""
+    paths: set[str] = set()
+    for schema in schemas:
+        root_path = schema.get("root_path")
+        if isinstance(root_path, str) and root_path:
+            paths.add(root_path)
+    return sorted(paths)
+
+
+def _has_more_signal_detected(assessment: PaginationAssessment) -> bool:
+    """Return whether upstream signaled more pages even if not continuable."""
+    if assessment.has_more:
+        return True
+    return assessment.partial_reason == UPSTREAM_PARTIAL_REASON_NEXT_TOKEN_MISSING
+
+
+def _pagination_capability_payload(
+    assessment: PaginationAssessment,
+) -> dict[str, Any]:
+    """Build a compact capability summary for pagination handling."""
+    has_next_params = bool(
+        assessment.state is not None and assessment.state.next_params
+    )
+    return {
+        "has_more_signal_detected": _has_more_signal_detected(assessment),
+        "continuable": assessment.state is not None,
+        "next_params_detected": has_next_params,
+    }
+
+
+def _build_cardinality_summary(
+    *,
+    json_value: Any,
+    sample_root_path: str | None,
+    sample_root_count: int | None,
+) -> dict[str, Any]:
+    """Build compact payload cardinality hints for schema-ref responses."""
+    summary: dict[str, Any] = {}
+    if isinstance(json_value, list):
+        summary["root_type"] = "array"
+        summary["root_count"] = len(json_value)
+    elif isinstance(json_value, dict):
+        summary["root_type"] = "object"
+        summary["top_level_keys"] = sorted(str(key) for key in json_value)[
+            :20
+        ]
+        array_counts = {
+            str(key): len(value)
+            for key, value in json_value.items()
+            if isinstance(value, list)
+        }
+        if array_counts:
+            summary["top_level_array_counts"] = array_counts
+    if isinstance(sample_root_path, str) and sample_root_path:
+        summary["sample_root_path"] = sample_root_path
+    if isinstance(sample_root_count, int):
+        summary["sample_root_count"] = sample_root_count
+    return summary
+
+
 def _representative_schema_ref_sample(
     *,
     payload_for_full: dict[str, Any],
@@ -530,21 +596,25 @@ def _representative_schema_ref_sample(
     max_jsonpath_length: int,
     max_path_segments: int,
     max_wildcard_expansion_total: int,
-) -> tuple[dict[str, Any] | None, str | None]:
+) -> tuple[dict[str, Any] | None, str | None, int | None]:
     """Build representative sample for mirrored schema-ref responses."""
-    json_value = first_json_content_value(payload_for_full)
-    if json_value is None:
-        return None, None
+    resolved_json = first_queryable_json_from_payload(payload_for_full)
+    if resolved_json is None:
+        return None, None, None
     items, resolved_root_path = resolve_item_sequence_with_path(
-        json_value,
+        resolved_json.value,
         root_path=schema_primary_root_path(schemas),
         max_jsonpath_length=max_jsonpath_length,
         max_path_segments=max_path_segments,
         max_wildcard_expansion_total=max_wildcard_expansion_total,
     )
     if items is None:
-        return None, resolved_root_path
-    return build_representative_item_sample(items), resolved_root_path
+        return None, resolved_root_path, None
+    return (
+        build_representative_item_sample(items),
+        resolved_root_path,
+        len(items),
+    )
 
 
 def _inject_pagination_state(
@@ -556,7 +626,7 @@ def _inject_pagination_state(
 ) -> tuple[Envelope, PaginationAssessment | None]:
     """Extract pagination signals and inject state into meta.
 
-    Inspects the first ``JsonContentPart`` in the envelope for
+    Inspects the first queryable JSON content part in the envelope for
     pagination indicators using the upstream's pagination config.
     When a next page is detected, creates a new envelope with
     the pagination state stored in ``meta["_gateway_pagination"]``.
@@ -594,11 +664,8 @@ def _inject_pagination_state(
         )
         return envelope, assessment
 
-    json_value = None
-    for part in envelope.content:
-        if isinstance(part, JsonContentPart):
-            json_value = part.value
-            break
+    resolved_json = first_queryable_json_from_envelope(envelope)
+    json_value = resolved_json.value if resolved_json is not None else None
 
     if json_value is None:
         if pagination_config is None and page_number == 0:
@@ -657,7 +724,7 @@ def _pagination_response_meta(
         else None
     )
     page_number = assessment.page_number
-    return build_upstream_pagination_meta(
+    meta = build_upstream_pagination_meta(
         artifact_id=artifact_id,
         page_number=page_number,
         retrieval_status=assessment.retrieval_status,
@@ -677,6 +744,8 @@ def _pagination_response_meta(
         ),
         extra_warnings=extra_warnings,
     )
+    meta["capability"] = _pagination_capability_payload(assessment)
+    return meta
 
 
 def _preflight_mirrored_gateway(ctx: GatewayServer) -> dict[str, Any] | None:
@@ -1278,14 +1347,30 @@ async def handle_mirrored_tool(
         lineage["chain_seq"] = invocation.chain_seq
 
     payload_for_full = envelope.to_dict()
-    representative_sample, _sample_root_path = _representative_schema_ref_sample(
+    (
+        representative_sample,
+        sample_root_path,
+        sample_root_count,
+    ) = _representative_schema_ref_sample(
         payload_for_full=payload_for_full,
         schemas=schemas,
         max_jsonpath_length=ctx.config.max_jsonpath_length,
         max_path_segments=ctx.config.max_path_segments,
         max_wildcard_expansion_total=ctx.config.max_wildcard_expansion_total,
     )
+    resolved_json = first_queryable_json_from_payload(payload_for_full)
     usage_root_path = schema_primary_root_path(schemas)
+    queryable_roots = _queryable_root_paths_from_schemas(schemas)
+    if not queryable_roots:
+        queryable_roots = [usage_root_path]
+
+    cardinality_summary: dict[str, Any] = {}
+    if resolved_json is not None:
+        cardinality_summary = _build_cardinality_summary(
+            json_value=resolved_json.value,
+            sample_root_path=sample_root_path,
+            sample_root_count=sample_root_count,
+        )
 
     metadata: dict[str, Any] = {
         "usage": build_code_query_usage(
@@ -1293,8 +1378,17 @@ async def handle_mirrored_tool(
             artifact_id=artifact_id,
             root_path=usage_root_path,
             configured_roots=ctx.config.code_query_allowed_import_roots,
-        )
+        ),
+        "queryable_roots": queryable_roots,
     }
+    if cardinality_summary:
+        metadata["cardinality"] = cardinality_summary
+    if resolved_json is not None:
+        metadata["query_json_source"] = {
+            "part_index": resolved_json.part_index,
+            "part_type": resolved_json.part_type,
+            "encoding": resolved_json.source_encoding,
+        }
 
     full_payload = gateway_tool_result(
         response_mode="full",

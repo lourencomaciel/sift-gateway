@@ -208,6 +208,66 @@ def test_inject_no_json_content() -> None:
     assert assessment.partial_reason == "SIGNAL_INCONCLUSIVE"
 
 
+def test_inject_uses_text_json_content_for_discovery() -> None:
+    config = _no_pagination_config()
+    env = Envelope(
+        upstream_instance_id="inst_test",
+        upstream_prefix="demo",
+        tool="list_items",
+        status="ok",
+        content=[
+            TextContentPart(
+                text=(
+                    '{"items":[{"id":"1"}],'
+                    '"paging":{"next":"https://example.test/items?after=C2"}}'
+                )
+            )
+        ],
+        meta={"warnings": []},
+    )
+    result_env, assessment = _inject_pagination_state(
+        env,
+        config,
+        {"after": "C1"},
+        "demo",
+    )
+    assert assessment is not None
+    assert assessment.state is not None
+    assert assessment.state.next_params == {"after": "C2"}
+    assert result_env is not env
+    assert result_env.meta["_gateway_pagination"] == assessment.state.to_dict()
+
+
+def test_inject_uses_text_json_content_with_configured_pagination() -> None:
+    config = _meta_ads_config()
+    env = Envelope(
+        upstream_instance_id="inst_test",
+        upstream_prefix="meta-ads",
+        tool="get_ads",
+        status="ok",
+        content=[
+            TextContentPart(
+                text=(
+                    '{"data":[{"id":"1"}],'
+                    '"paging":{"cursors":{"after":"CURSOR_2"},'
+                    '"next":"https://example.test/next"}}'
+                )
+            )
+        ],
+        meta={"warnings": []},
+    )
+    result_env, assessment = _inject_pagination_state(
+        env,
+        config,
+        {"limit": 100},
+        "meta-ads",
+    )
+    assert assessment is not None
+    assert assessment.state is not None
+    assert assessment.state.next_params == {"after": "CURSOR_2"}
+    assert result_env.meta["_gateway_pagination"] == assessment.state.to_dict()
+
+
 def test_inject_no_json_content_discovery_followup_clears_state() -> None:
     config = _no_pagination_config()
     env = Envelope(
@@ -351,6 +411,12 @@ def test_pagination_response_meta_shape() -> None:
     assert meta["warning"] == "INCOMPLETE_RESULT_SET"
     assert meta["warnings"] == [{"code": "INCOMPLETE_RESULT_SET"}]
     assert meta["page_number"] == 0
+    capability = meta.get("capability")
+    assert capability == {
+        "has_more_signal_detected": True,
+        "continuable": True,
+        "next_params_detected": True,
+    }
     assert "art_123" in meta["hint"]
     assert "limit=100" in meta["hint"]
     assert 'after="ABC"' in meta["hint"]
@@ -372,6 +438,11 @@ def test_pagination_response_meta_complete_page() -> None:
     assert meta["retrieval_status"] == "COMPLETE"
     assert meta["partial_reason"] is None
     assert meta["has_more"] is False
+    assert meta["capability"] == {
+        "has_more_signal_detected": False,
+        "continuable": False,
+        "next_params_detected": False,
+    }
     assert meta["next"] is None
     assert meta["warning"] is None
     assert "warnings" not in meta

@@ -19,6 +19,9 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from sift_gateway.config.settings import GatewayConfig, UpstreamConfig
+from sift_gateway.envelope.content_extract import (
+    first_queryable_json_from_envelope,
+)
 from sift_gateway.envelope.model import (
     ContentPart,
     Envelope,
@@ -110,7 +113,7 @@ _COMMON_WRAPPER_KEYS = ("data", "results", "items", "records", "entries")
 
 
 def _extract_json_content(envelope: Envelope) -> Any | None:
-    """Extract the JSON value from the first JsonContentPart.
+    """Extract the first queryable JSON value from envelope content.
 
     Args:
         envelope: Envelope to inspect.
@@ -118,10 +121,10 @@ def _extract_json_content(envelope: Envelope) -> Any | None:
     Returns:
         The JSON value, or ``None`` if no JSON part exists.
     """
-    for part in envelope.content:
-        if isinstance(part, JsonContentPart):
-            return part.value
-    return None
+    resolved = first_queryable_json_from_envelope(envelope)
+    if resolved is None:
+        return None
+    return resolved.value
 
 
 def _count_json_records(envelope: Envelope) -> int:
@@ -211,12 +214,18 @@ def merge_envelopes(
 
     new_parts: list[ContentPart] = []
     replaced = False
-    for part in base.content:
-        if isinstance(part, JsonContentPart) and not replaced:
+    resolved = first_queryable_json_from_envelope(base)
+    target_part_index = resolved.part_index if resolved is not None else None
+    for idx, part in enumerate(base.content):
+        if (
+            target_part_index is not None
+            and idx == target_part_index
+            and not replaced
+        ):
             new_parts.append(JsonContentPart(value=merged_value))
             replaced = True
-        else:
-            new_parts.append(part)
+            continue
+        new_parts.append(part)
 
     new_meta = dict(base.meta)
     if final_assessment.state is not None:

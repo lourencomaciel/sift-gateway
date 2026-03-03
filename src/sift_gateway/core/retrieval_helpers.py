@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-import contextlib
-import json
 from typing import Any, Protocol
+
+from sift_gateway.envelope.content_extract import (
+    parse_text_as_json,
+    queryable_json_from_part,
+)
 
 
 class RetrievalTouchRuntime(Protocol):
@@ -27,21 +30,7 @@ def _parse_text_as_json(text: str) -> Any | None:
     Handles double-encoded JSON strings (e.g. ``"\\"{ ... }\\""``)
     consistently with the mapping runner's ``_score_text_part``.
     """
-    trimmed = text.strip()
-    if not trimmed:
-        return None
-    try:
-        parsed = json.loads(trimmed)
-    except (json.JSONDecodeError, ValueError):
-        return None
-    if isinstance(parsed, str):
-        nested = parsed.strip()
-        if nested:
-            with contextlib.suppress(json.JSONDecodeError, ValueError):
-                parsed = json.loads(nested)
-    if isinstance(parsed, (dict, list)):
-        return parsed
-    return None
+    return parse_text_as_json(text)
 
 
 def extract_json_target(
@@ -64,12 +53,9 @@ def extract_json_target(
         part = content[mapped_part_index]
         if not isinstance(part, dict):
             return envelope
-        if part.get("type") == "json" and "value" in part:
-            return resolve_json_strings(part["value"])
-        if part.get("type") == "text" and isinstance(part.get("text"), str):
-            parsed = _parse_text_as_json(part["text"])
-            if parsed is not None:
-                return resolve_json_strings(parsed)
+        parsed, _part_type, _encoding = queryable_json_from_part(part)
+        if parsed is not None:
+            return resolve_json_strings(parsed)
     return envelope
 
 

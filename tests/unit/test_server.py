@@ -1237,6 +1237,14 @@ def test_handle_mirrored_tool_schema_ref_uses_sample_item_when_consistent(
     usage = metadata.get("usage")
     assert isinstance(usage, dict)
     assert usage.get("root_path") == "$"
+    assert metadata.get("queryable_roots") == ["$"]
+    cardinality = metadata.get("cardinality")
+    assert isinstance(cardinality, dict)
+    assert cardinality.get("sample_root_path") == "$.items"
+    assert cardinality.get("sample_root_count") == 1
+    source = metadata.get("query_json_source")
+    assert isinstance(source, dict)
+    assert source.get("part_type") == "json"
 
 
 def test_handle_mirrored_tool_schema_ref_falls_back_on_mixed_shapes(
@@ -1299,6 +1307,79 @@ def test_handle_mirrored_tool_schema_ref_falls_back_on_mixed_shapes(
     usage = metadata.get("usage")
     assert isinstance(usage, dict)
     assert usage.get("root_path") == "$"
+    assert metadata.get("queryable_roots") == ["$"]
+    cardinality = metadata.get("cardinality")
+    assert isinstance(cardinality, dict)
+    assert cardinality.get("sample_root_path") == "$.items"
+    assert cardinality.get("sample_root_count") == 2
+
+
+def test_handle_mirrored_tool_schema_ref_metadata_for_text_json_source(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    server = GatewayServer(
+        config=GatewayConfig(
+            data_dir=tmp_path,
+            passthrough_max_bytes=1,
+            quota_enforcement_enabled=False,
+        ),
+        upstreams=[_upstream()],
+        db_pool=_FakePool(None),  # type: ignore[arg-type]
+        metrics=GatewayMetrics(),
+    )
+    mirrored = server.mirrored_tools["demo.echo"]
+
+    async def _text_json_response(*_args, **_kwargs):
+        return {
+            "content": [
+                {
+                    "type": "text",
+                    "text": '{"results":[{"id":"1"}],"has_more":true}',
+                }
+            ],
+            "isError": False,
+            "meta": {"trace_id": "abc"},
+        }
+
+    monkeypatch.setattr(
+        "sift_gateway.mcp.server.call_upstream_tool",
+        _text_json_response,
+    )
+    monkeypatch.setattr(
+        "sift_gateway.mcp.handlers.mirrored_tool.persist_artifact",
+        lambda **_kwargs: _persisted_handle(),
+    )
+    monkeypatch.setattr(
+        server,
+        "_run_mapping_inline",
+        lambda *_args, **_kwargs: True,
+    )
+    _patch_schema_ready_describe(monkeypatch)
+
+    response = asyncio.run(
+        server.handle_mirrored_tool(
+            mirrored,
+            {
+                "_gateway_context": {"session_id": "sess_1"},
+                "message": "hello",
+            },
+        )
+    )
+
+    assert response["response_mode"] == "schema_ref"
+    metadata = response.get("metadata")
+    assert isinstance(metadata, dict)
+    assert metadata.get("queryable_roots") == ["$"]
+    source = metadata.get("query_json_source")
+    assert isinstance(source, dict)
+    assert source.get("part_type") == "text"
+    assert source.get("encoding") == "parsed_text_json"
+    cardinality = metadata.get("cardinality")
+    assert isinstance(cardinality, dict)
+    assert cardinality.get("top_level_array_counts") == {"results": 1}
+    assert cardinality.get("sample_root_path") == "$.results"
+    assert cardinality.get("sample_root_count") == 1
 
 
 def test_handle_mirrored_tool_fails_closed_when_redaction_errors(
