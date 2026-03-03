@@ -73,6 +73,17 @@ def run(data, schema, params):
     assert exc.value.code == "CODE_AST_REJECTED"
 
 
+def test_validate_code_ast_rejects___builtins___name_access() -> None:
+    code = """
+def run(data, schema, params):
+    return __builtins__
+"""
+    with pytest.raises(CodeValidationError) as exc:
+        validate_code_ast(code)
+    assert exc.value.code == "CODE_AST_REJECTED"
+    assert "__builtins__" in exc.value.message
+
+
 def test_validate_code_ast_rejects_dunder_attribute_access() -> None:
     code = """
 def run(data, schema, params):

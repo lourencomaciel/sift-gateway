@@ -710,6 +710,7 @@ def test_assess_pagination_without_config_non_advancing_reason() -> None:
     assert assessment.detector.get("rejected_reason") == (
         "non_advancing_cursor"
     )
+    assert assessment.detector.get("rejected_param") == "after"
 
 
 def test_assess_pagination_without_config_followup_no_signal_marks_complete() -> (

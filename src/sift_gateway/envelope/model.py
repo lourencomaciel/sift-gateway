@@ -141,6 +141,7 @@ class BinaryRefContentPart:
 
     Attributes:
         blob_id: Content-addressed blob store identifier.
+        uri: Optional blob URI pointer (e.g. ``sift://blob/bin_...``).
         binary_hash: SHA-256 hex digest of the raw bytes.
         mime: MIME type of the binary content.
         byte_count: Size of the binary content in bytes.
@@ -151,6 +152,7 @@ class BinaryRefContentPart:
     binary_hash: str
     mime: str
     byte_count: int
+    uri: str | None = None
     type: Literal["binary_ref"] = "binary_ref"
 
     def to_dict(self) -> dict[str, Any]:
@@ -158,15 +160,18 @@ class BinaryRefContentPart:
 
         Returns:
             A dict with type, blob_id, binary_hash, mime, and
-            byte_count keys.
+            byte_count keys. Includes ``uri`` when present.
         """
-        return {
+        payload: dict[str, Any] = {
             "type": self.type,
             "blob_id": self.blob_id,
             "binary_hash": self.binary_hash,
             "mime": self.mime,
             "byte_count": self.byte_count,
         }
+        if self.uri is not None:
+            payload["uri"] = self.uri
+        return payload
 
 
 ContentPart = (

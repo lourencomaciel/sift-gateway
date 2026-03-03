@@ -175,6 +175,26 @@ artifact(
 )
 ```
 
+Materialize linked blobs without returning bytes in context:
+
+```python
+artifact(action="blob_list", artifact_id="art_...", scope="all_related")
+artifact(
+    action="blob_materialize",
+    blob_id="bin_...",
+    filename="asset.mp4",
+    if_exists="reuse",
+    materialize_mode="auto",
+)
+artifact(action="blob_cleanup", older_than_seconds=3600)
+artifact(
+    action="blob_manifest",
+    artifact_id="art_...",
+    scope="all_related",
+    format="csv",
+)
+```
+
 ## Adding MCP servers after initial setup
 
 After `init`, source config usually contains only the Sift gateway entry. To add

@@ -445,6 +445,7 @@ def test_discover_pagination_sets_rejected_reason_non_advancing_next_url() -> (
     assert discovered.next_params is None
     assert discovered.strategy is None
     assert discovered.rejected_reason == "non_advancing_cursor"
+    assert discovered.rejected_param == "after"
 
 
 def test_discover_pagination_sets_rejected_reason_non_advancing_cursor_path() -> (
@@ -463,3 +464,4 @@ def test_discover_pagination_sets_rejected_reason_non_advancing_cursor_path() ->
     assert discovered.next_params is None
     assert discovered.strategy is None
     assert discovered.rejected_reason == "non_advancing_cursor"
+    assert discovered.rejected_param == "after"

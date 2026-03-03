@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
 from collections.abc import Awaitable, Callable, Mapping
 import importlib.util
 import json
@@ -15,6 +17,7 @@ from fastmcp.tools.tool import Tool, ToolResult
 from sift_gateway.cursor.payload import CursorStaleError
 from sift_gateway.cursor.token import CursorTokenError
 from sift_gateway.envelope.responses import gateway_error
+from sift_gateway.fs.blob_store import BinaryRef, BlobStore
 from sift_gateway.tools.usage_hint import PAGINATION_COMPLETENESS_RULE
 
 _SUPPORTED_ENVELOPE_PARTS = {
@@ -24,6 +27,9 @@ _SUPPORTED_ENVELOPE_PARTS = {
     "binary_ref",
     "image_ref",
 }
+_MEDIA_BLOCK_TYPES = {"image", "video"}
+_MEDIA_DATA_KEYS = ("data", "base64", "image_data", "video_data")
+_MEDIA_MIME_KEYS = ("mime", "mimeType", "mime_type", "media_type", "mediaType")
 
 
 def artifact_tool_description(
@@ -33,12 +39,20 @@ def artifact_tool_description(
     """Build artifact-tool description with compact package summary."""
     return (
         "Interact with stored artifacts. "
-        "Actions: query and next_page. "
+        "Actions: query, next_page, blob_list, blob_materialize, blob_cleanup, blob_manifest. "
         'Use action="query" with query_kind="code" to run Python over '
         "stored artifacts. "
         f"Code-query packages: {code_query_package_summary}. "
         'Use action="next_page" to fetch additional upstream pages for a '
         "paginated artifact. "
+        "Use action=\"blob_list\" to discover linked blobs without "
+        "returning bytes. "
+        "Use action=\"blob_materialize\" to stage one blob as a local "
+        "file path for downstream tools. "
+        "Use action=\"blob_cleanup\" to remove staged blob files from "
+        "allowed local staging roots. "
+        "Use action=\"blob_manifest\" to export blob metadata to local "
+        "CSV/JSON files. "
         f"{PAGINATION_COMPLETENESS_RULE}"
     )
 
@@ -194,12 +208,90 @@ def upstream_error_message(result: dict[str, Any]) -> str:
     return "upstream tool returned an error"
 
 
+def _blob_uri(blob_id: str) -> str:
+    """Return stable internal URI for a stored blob ID."""
+    return f"sift://blob/{blob_id}"
+
+
+def _mime_from_mapping(value: Mapping[str, Any] | None) -> str | None:
+    """Extract a MIME string from a mapping, if available."""
+    if not isinstance(value, Mapping):
+        return None
+    for key in _MEDIA_MIME_KEYS:
+        candidate = value.get(key)
+        if isinstance(candidate, str) and candidate.strip():
+            return candidate.strip()
+    return None
+
+
+def _decode_base64_payload(raw: str) -> tuple[bytes, str | None] | None:
+    """Decode base64 payloads, including optional ``data:*;base64,`` URLs."""
+    payload = raw.strip()
+    mime_from_data_url: str | None = None
+    if payload.startswith("data:"):
+        prefix, sep, encoded = payload.partition(",")
+        if not sep:
+            return None
+        meta = prefix[5:]
+        mime_candidate, _, extra = meta.partition(";")
+        if "base64" not in extra.lower():
+            return None
+        if mime_candidate.strip():
+            mime_from_data_url = mime_candidate.strip()
+        payload = encoded.strip()
+    try:
+        return base64.b64decode(payload, validate=True), mime_from_data_url
+    except (binascii.Error, ValueError):
+        return None
+
+
+def _extract_inline_media_payload(
+    block: Mapping[str, Any],
+) -> tuple[bytes, str | None, str] | None:
+    """Extract inline image/video bytes from an MCP content block."""
+    part_type_raw = block.get("type")
+    if not isinstance(part_type_raw, str):
+        return None
+    part_type = part_type_raw.lower().strip()
+    if part_type not in _MEDIA_BLOCK_TYPES:
+        return None
+
+    source = block.get("source")
+    candidates: list[Mapping[str, Any]] = [block]
+    if isinstance(source, Mapping):
+        candidates.insert(0, source)
+
+    for candidate in candidates:
+        for key in _MEDIA_DATA_KEYS:
+            raw_data = candidate.get(key)
+            if not isinstance(raw_data, str) or not raw_data.strip():
+                continue
+            decoded = _decode_base64_payload(raw_data)
+            if decoded is None:
+                continue
+            payload, mime_from_data_url = decoded
+            mime = (
+                mime_from_data_url
+                or _mime_from_mapping(candidate)
+                or _mime_from_mapping(block)
+            )
+            return payload, mime, part_type
+    return None
+
+
 def normalize_upstream_content(
     *,
     content: list[dict[str, Any]] | None,
     structured_content: Any,
+    blob_store: BlobStore | None = None,
+    binary_refs_out: list[BinaryRef] | None = None,
 ) -> list[Mapping[str, Any]]:
-    """Normalize upstream content blocks into envelope parts."""
+    """Normalize upstream content blocks into envelope parts.
+
+    Inline image/video base64 payloads are converted to binary refs when a
+    blob store is available, preventing large media blobs from re-entering
+    model context.
+    """
     normalized: list[Mapping[str, Any]] = []
     if isinstance(structured_content, (dict, list)):
         normalized.append({"type": "json", "value": structured_content})
@@ -212,6 +304,31 @@ def normalize_upstream_content(
         )
 
     for block in content or []:
+        if blob_store is not None:
+            media_payload = _extract_inline_media_payload(block)
+            if media_payload is not None:
+                payload, mime, media_kind = media_payload
+                resolved_mime = mime or (
+                    "image/png" if media_kind == "image" else "video/mp4"
+                )
+                blob_ref = blob_store.put_bytes(payload, mime=resolved_mime)
+                if binary_refs_out is not None:
+                    binary_refs_out.append(blob_ref)
+                normalized.append(
+                    {
+                        "type": (
+                            "image_ref"
+                            if media_kind == "image"
+                            else "binary_ref"
+                        ),
+                        "blob_id": blob_ref.blob_id,
+                        "binary_hash": blob_ref.binary_hash,
+                        "mime": blob_ref.mime,
+                        "byte_count": blob_ref.byte_count,
+                        "uri": _blob_uri(blob_ref.blob_id),
+                    }
+                )
+                continue
         part_type = block.get("type")
         if part_type in _SUPPORTED_ENVELOPE_PARTS:
             normalized.append(block)

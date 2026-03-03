@@ -77,6 +77,7 @@ _KNOWN_TOKEN_PATTERNS = (
 )
 _PUBLIC_ID_PREFIXES = (
     "art_",
+    "bin_",
     "act_",
     "ad_",
     "adset_",
@@ -84,6 +85,17 @@ _PUBLIC_ID_PREFIXES = (
     "page_",
     "biz_",
 )
+_HTTP_URL_IN_TEXT_RE = re.compile(r"(?i)https?://[^\s`\"']+")
+_URL_PATH_ID_SEGMENT_RE = re.compile(r"^[A-Za-z0-9_-]{20,128}$")
+_ID_WORD_RE = re.compile(r"(?i)\bid\b")
+
+
+@dataclass(frozen=True)
+class _HttpUrlContext:
+    span_start: int
+    span_end: int
+    path_segments: frozenset[str]
+    path_variants: frozenset[str]
 
 
 class SecretRedactionError(RuntimeError):
@@ -272,6 +284,10 @@ class ResponseSecretRedactor:
         if not isinstance(value, str):
             return False
         normalized_key = key.lower()
+        if normalized_key == "blob_id" and value.startswith("bin_"):
+            return True
+        if normalized_key == "uri" and value.startswith("sift://blob/"):
+            return True
         if normalized_key not in {"data", "base64", "image_data"}:
             return False
         mime_type = parent.get("mimeType")
@@ -392,11 +408,142 @@ class ResponseSecretRedactor:
     ) -> tuple[str, int]:
         redacted = text
         total_hits = 0
+        url_contexts = self._extract_http_url_contexts(text)
         for secret in sorted(detected, key=len, reverse=True):
+            if self._is_public_url_path_identifier(
+                secret,
+                text=text,
+                url_contexts=url_contexts,
+            ):
+                continue
             if secret in redacted:
                 total_hits += 1
                 redacted = redacted.replace(secret, self.replacement)
         return redacted, total_hits
+
+    def _extract_http_url_contexts(self, text: str) -> list[_HttpUrlContext]:
+        contexts: list[_HttpUrlContext] = []
+        for match in _HTTP_URL_IN_TEXT_RE.finditer(text):
+            url = match.group(0)
+            parsed = urlsplit(url)
+            if parsed.scheme.lower() not in {"http", "https"}:
+                continue
+            if not parsed.netloc:
+                continue
+            path = unquote(parsed.path or "")
+            normalized_path = path.lstrip("/")
+            path_segments = frozenset(
+                segment
+                for segment in normalized_path.split("/")
+                if _URL_PATH_ID_SEGMENT_RE.fullmatch(segment)
+            )
+            path_variants: set[str] = set()
+            if normalized_path:
+                path_variants.add(normalized_path)
+                if parsed.query:
+                    path_variants.add(f"{normalized_path}?{parsed.query}")
+                host_labels = [
+                    label for label in parsed.netloc.split(".") if label
+                ]
+                for idx in range(len(host_labels)):
+                    host_suffix = ".".join(host_labels[idx:])
+                    if not host_suffix:
+                        continue
+                    path_variants.add(f"{host_suffix}/{normalized_path}")
+                    if parsed.query:
+                        path_variants.add(
+                            f"{host_suffix}/{normalized_path}?{parsed.query}"
+                        )
+            contexts.append(
+                _HttpUrlContext(
+                    span_start=match.start(),
+                    span_end=match.end(),
+                    path_segments=path_segments,
+                    path_variants=frozenset(path_variants),
+                )
+            )
+        return contexts
+
+    def _is_inside_url_span(
+        self,
+        *,
+        start: int,
+        end: int,
+        url_contexts: list[_HttpUrlContext],
+    ) -> bool:
+        return any(
+            start >= context.span_start and end <= context.span_end
+            for context in url_contexts
+        )
+
+    def _has_id_labeled_occurrence_outside_urls(
+        self,
+        candidate: str,
+        *,
+        text: str,
+        url_contexts: list[_HttpUrlContext],
+    ) -> bool:
+        for match in re.finditer(re.escape(candidate), text):
+            if self._is_inside_url_span(
+                start=match.start(),
+                end=match.end(),
+                url_contexts=url_contexts,
+            ):
+                continue
+            window_start = max(0, match.start() - 32)
+            window_end = min(len(text), match.end() + 32)
+            window = text[window_start:window_end]
+            if _ID_WORD_RE.search(window):
+                return True
+        return False
+
+    def _is_public_url_path_identifier(
+        self,
+        candidate: str,
+        *,
+        text: str,
+        url_contexts: list[_HttpUrlContext],
+    ) -> bool:
+        if not candidate:
+            return False
+        if not url_contexts:
+            return False
+        normalized = candidate.lstrip("/")
+        if "/" in normalized:
+            if "?" in normalized or "&" in normalized or "=" in normalized:
+                return False
+            if not any(
+                normalized in context.path_variants
+                for context in url_contexts
+            ):
+                return False
+            segments = [
+                segment
+                for segment in normalized.split("/")
+                if _URL_PATH_ID_SEGMENT_RE.fullmatch(segment)
+            ]
+            if not segments:
+                return False
+            return any(
+                self._has_id_labeled_occurrence_outside_urls(
+                    segment,
+                    text=text,
+                    url_contexts=url_contexts,
+                )
+                for segment in segments
+            )
+        if not _URL_PATH_ID_SEGMENT_RE.fullmatch(candidate):
+            return False
+        if not any(
+            candidate in context.path_segments
+            for context in url_contexts
+        ):
+            return False
+        return self._has_id_labeled_occurrence_outside_urls(
+            candidate,
+            text=text,
+            url_contexts=url_contexts,
+        )
 
     def _redact_string(
         self,
