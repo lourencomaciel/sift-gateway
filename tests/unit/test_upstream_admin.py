@@ -1427,6 +1427,33 @@ def test_login_upstream_headless_passes_flag(
     assert seen["has_token_storage"] is True
 
 
+def test_login_upstream_rewrites_oauth_dependency_error(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _write_gateway_config(
+        tmp_path,
+        {"mcpServers": {"api": {"url": "https://example.com/mcp"}}},
+    )
+
+    async def _fail_oauth(
+        *,
+        url: str,
+        headless: bool = False,
+        token_storage: object | None = None,
+    ) -> str:
+        _ = (url, headless, token_storage)
+        msg = "DiskStore requires py-key-value-aio[disk]"
+        raise RuntimeError(msg)
+
+    monkeypatch.setattr(
+        "sift_gateway.config.upstream_admin._oauth_login_access_token",
+        _fail_oauth,
+    )
+
+    with pytest.raises(RuntimeError, match="pip install"):
+        login_upstream(server="api", data_dir=tmp_path)
+
+
 def test_inspect_upstream_not_found_raises(tmp_path: Path) -> None:
     _write_gateway_config(tmp_path, {"mcpServers": {}})
 

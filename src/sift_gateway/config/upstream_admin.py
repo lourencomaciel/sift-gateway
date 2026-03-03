@@ -57,6 +57,20 @@ _OAUTH_REDIRECT_STATUS_CODES = (301, 302, 303, 307, 308)
 _OAUTH_REDIRECT_MAX_HOPS = 20
 
 
+def _oauth_dependency_runtime_error(
+    exc: BaseException,
+) -> RuntimeError | None:
+    """Return a user-facing RuntimeError for known OAuth dependency gaps."""
+    if "py-key-value-aio[disk]" not in str(exc):
+        return None
+    msg = (
+        "OAuth login could not initialize token storage because "
+        "`py-key-value-aio[disk]` is missing. Install it and retry with: "
+        "pip install 'py-key-value-aio[disk]'"
+    )
+    return RuntimeError(msg)
+
+
 def parse_kv_pairs(
     raw_pairs: list[str] | None,
     *,
@@ -644,6 +658,18 @@ async def _oauth_login_access_token(
     )
     from fastmcp.mcp_config import infer_transport_type_from_url
 
+    def _create_oauth(oauth_url: str) -> OAuth:
+        try:
+            return OAuth(oauth_url, token_storage=token_storage)
+        except TypeError as exc:
+            if "token_storage" in str(exc):
+                msg = (
+                    "OAuth provider does not support configurable token "
+                    "storage in this environment."
+                )
+                raise RuntimeError(msg) from exc
+            raise
+
     class _HeadlessOAuth(OAuth):
         """OAuth provider variant that avoids browser interaction."""
 
@@ -654,7 +680,16 @@ async def _oauth_login_access_token(
             token_storage: Any | None = None,
         ):
             self._callback_url: str | None = None
-            super().__init__(mcp_url, token_storage=token_storage)
+            try:
+                super().__init__(mcp_url, token_storage=token_storage)
+            except TypeError as exc:
+                if "token_storage" in str(exc):
+                    msg = (
+                        "OAuth provider does not support configurable token "
+                        "storage in this environment."
+                    )
+                    raise RuntimeError(msg) from exc
+                raise
 
         async def redirect_handler(self, authorization_url: str) -> None:
             self._callback_url = await _resolve_oauth_callback_url_headless(
@@ -686,11 +721,17 @@ async def _oauth_login_access_token(
             state = params.get("state", [None])[0]
             return auth_code, state if isinstance(state, str) else None
 
-    oauth = (
-        _HeadlessOAuth(url, token_storage=token_storage)
-        if headless
-        else OAuth(url, token_storage=token_storage)
-    )
+    try:
+        oauth = (
+            _HeadlessOAuth(url, token_storage=token_storage)
+            if headless
+            else _create_oauth(url)
+        )
+    except Exception as exc:
+        rewritten = _oauth_dependency_runtime_error(exc)
+        if rewritten is not None:
+            raise rewritten from exc
+        raise
     inferred = infer_transport_type_from_url(url)
     transport: ClientTransport
     if inferred == "sse":
@@ -776,18 +817,24 @@ def login_upstream(
         result["login"] = "oauth"
         return result
 
-    from key_value.aio.stores.disk import DiskStore
+    try:
+        from key_value.aio.stores.disk import DiskStore
 
-    token_storage = DiskStore(
-        directory=oauth_cache_dir(resolved_data_dir, target_ref)
-    )
-    access_token = asyncio.run(
-        _oauth_login_access_token(
-            url=url,
-            headless=headless,
-            token_storage=token_storage,
+        token_storage = DiskStore(
+            directory=oauth_cache_dir(resolved_data_dir, target_ref)
         )
-    )
+        access_token = asyncio.run(
+            _oauth_login_access_token(
+                url=url,
+                headless=headless,
+                token_storage=token_storage,
+            )
+        )
+    except Exception as exc:
+        rewritten = _oauth_dependency_runtime_error(exc)
+        if rewritten is not None:
+            raise rewritten from exc
+        raise
     result = set_upstream_auth(
         server=server,
         env_updates=None,
