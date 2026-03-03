@@ -37,7 +37,7 @@ Notes:
 | `NOT_FOUND` | Artifact (or related upstream tool) does not exist or is not visible in session scope |
 | `GONE` | Artifact exists but has been soft-deleted |
 | `RESOURCE_EXHAUSTED` | Query budget/limit exceeded (for example lineage size limits) |
-| `RESPONSE_TOO_LARGE` | Response exceeded configured output-size budget (for example code-query output over `max_bytes_out`) |
+| `RESPONSE_TOO_LARGE` | Response exceeded configured output-size budget (for example code-query output over `code_query_max_bytes_out`) |
 | `NOT_IMPLEMENTED` | Requested operation requires a database that is not configured |
 
 ### Cursor-specific

@@ -66,12 +66,25 @@ def _fake_runtime_context_with_small_budget(*, data_dir_override: str | None):
     del data_dir_override
 
     class _RuntimeWithSmallBudget:
-        max_bytes_out = 96
+        passthrough_max_bytes = 96
         max_jsonpath_length = 4096
         max_path_segments = 64
         max_wildcard_expansion_total = 10_000
 
     yield _RuntimeWithSmallBudget()
+
+
+@contextmanager
+def _fake_runtime_context_with_zero_budget(*, data_dir_override: str | None):
+    del data_dir_override
+
+    class _RuntimeWithZeroBudget:
+        passthrough_max_bytes = 0
+        max_jsonpath_length = 4096
+        max_path_segments = 64
+        max_wildcard_expansion_total = 10_000
+
+    yield _RuntimeWithZeroBudget()
 
 
 @contextmanager
@@ -1051,6 +1064,57 @@ def test_serve_run_schema_ref_uses_sample_item_when_schema_is_consistent(
     usage = metadata.get("usage")
     assert isinstance(usage, dict)
     assert usage.get("root_path") == "$"
+
+
+def test_serve_run_schema_ref_when_passthrough_disabled(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr(
+        "sift_gateway.cli_main._runtime_context",
+        _fake_runtime_context_with_zero_budget,
+    )
+    monkeypatch.setattr(
+        "sift_gateway.cli_main.subprocess.run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(
+            args=["fake"],
+            returncode=0,
+            stdout=b'{"items":[{"value":"x"}]}',
+            stderr=b"",
+        ),
+    )
+    monkeypatch.setattr(
+        "sift_gateway.cli_main.execute_artifact_capture",
+        lambda runtime, *, arguments: {
+            "artifact_id": "art_new",
+            "created_seq": 8,
+            "status": "ok",
+            "kind": "data",
+            "capture_kind": "cli_command",
+            "capture_key": str(arguments["capture_key"]),
+            "payload_json_bytes": 24,
+            "payload_binary_bytes_total": 0,
+            "payload_total_bytes": 24,
+            "expires_at": None,
+            "reused": False,
+        },
+    )
+    monkeypatch.setattr(
+        "sift_gateway.cli_main.execute_artifact_describe",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("schema fallback should not run")
+        ),
+    )
+
+    exit_code = cli_main.serve(["run", "--json", "--", "fake-command"])
+    out = capsys.readouterr().out.strip()
+    payload = json.loads(out)
+
+    assert exit_code == 0
+    assert payload["response_mode"] == "schema_ref"
+    assert "schemas" not in payload
+    assert payload["sample_item_source_index"] == 0
+    assert payload["sample_item_count"] == 1
 
 
 def test_serve_run_schema_ref_falls_back_to_schema_for_mixed_item_shapes(

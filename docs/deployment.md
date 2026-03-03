@@ -148,17 +148,16 @@ Sift records Prometheus-style counters and histograms internally for gateway ope
 
 ### Response Mode Handling
 
-Mirrored upstream responses are always persisted as artifacts. Return shape is
-controlled by full-vs-schema mode selection.
+Mirrored upstream and CLI `run` responses are always persisted as artifacts.
+Return shape is controlled by full-vs-schema mode selection.
 
 ```bash
-export SIFT_GATEWAY_PASSTHROUGH_MAX_BYTES=8192  # Legacy name; inline-mode cap
+export SIFT_GATEWAY_PASSTHROUGH_MAX_BYTES=8192  # Inline-mode cap (8 KB)
 ```
 
 - If upstream pagination is present, Sift returns `response_mode="schema_ref"`.
 - If non-paginated full payload exceeds the cap, Sift returns `schema_ref`.
-- Under the cap, Sift returns `schema_ref` only when the schema-ref payload is
-  at least 50% smaller than full payload; otherwise it returns `full`.
+- Under the cap, Sift returns `full`.
 
 To limit disk growth, tune storage quota settings instead:
 
@@ -191,6 +190,7 @@ Shorter TTLs reduce storage overhead but may break long-running pagination workf
 Configure Python code query execution:
 
 ```bash
+export SIFT_GATEWAY_CODE_QUERY_MAX_BYTES_OUT=200000
 export SIFT_GATEWAY_CODE_QUERY_TIMEOUT_SECONDS=30
 export SIFT_GATEWAY_CODE_QUERY_MAX_INPUT_RECORDS=10000
 export SIFT_GATEWAY_CODE_QUERY_ALLOWED_IMPORT_ROOTS='["math","json","jmespath","numpy","pandas"]'

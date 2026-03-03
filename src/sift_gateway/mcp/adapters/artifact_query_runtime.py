@@ -70,6 +70,11 @@ class GatewayArtifactQueryRuntime:
         return self.gateway.config.max_bytes_out
 
     @property
+    def passthrough_max_bytes(self) -> int:
+        """Return inline response cap used for full/schema_ref selection."""
+        return self.gateway.config.passthrough_max_bytes
+
+    @property
     def blobs_payload_dir(self) -> Any:
         """Return payload blob directory for envelope reconstruction."""
         return self.gateway.config.blobs_payload_dir
@@ -88,6 +93,11 @@ class GatewayArtifactQueryRuntime:
     def code_query_max_input_bytes(self) -> int:
         """Return maximum code-query input byte budget."""
         return self.gateway.config.code_query_max_input_bytes
+
+    @property
+    def code_query_max_bytes_out(self) -> int:
+        """Return maximum code-query response bytes before schema_ref mode."""
+        return self.gateway.config.code_query_max_bytes_out
 
     @property
     def code_query_timeout_seconds(self) -> float:
