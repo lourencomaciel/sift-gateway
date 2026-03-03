@@ -128,7 +128,22 @@ async def test_execute_artifact_next_page_replays_next_upstream_call() -> None:
 async def test_execute_artifact_next_page_rejects_missing_pagination_state() -> (
     None
 ):
-    row = ("art_1", None, "hash_1", {"meta": {"warnings": []}}, "none", "")
+    row = (
+        "art_1",
+        None,
+        "hash_1",
+        {
+            "content": [
+                {
+                    "type": "text",
+                    "text": '{"results":[{"id":"1"}],"has_more":true}',
+                }
+            ],
+            "meta": {"warnings": []},
+        },
+        "none",
+        "",
+    )
     conn = _SeqConnection([row])
     runtime = _Runtime(
         db_pool=_SeqPool(conn),
@@ -145,3 +160,65 @@ async def test_execute_artifact_next_page_rejects_missing_pagination_state() -> 
 
     assert result["code"] == "INVALID_ARGUMENT"
     assert "no upstream pagination state" in result["message"]
+    assert result["details"]["queryable_json_found"] is True
+    assert result["details"]["has_more_detected"] is True
+    assert result["details"]["next_params_detected"] is False
+    assert result["details"]["continuable"] is False
+
+
+@pytest.mark.asyncio
+async def test_execute_artifact_next_page_missing_state_without_queryable_json() -> (
+    None
+):
+    row = ("art_1", None, "hash_1", {"meta": {"warnings": []}}, "none", "")
+    conn = _SeqConnection([row])
+    runtime = _Runtime(
+        db_pool=_SeqPool(conn),
+        mirrored_lookup={"demo.echo": {"qualified_name": "demo.echo"}},
+    )
+
+    result = await execute_artifact_next_page(
+        runtime,
+        arguments={
+            "_gateway_context": {"session_id": "sess_1"},
+            "artifact_id": "art_1",
+        },
+    )
+
+    assert result["code"] == "INVALID_ARGUMENT"
+    assert result["details"]["queryable_json_found"] is False
+
+
+@pytest.mark.asyncio
+async def test_execute_artifact_next_page_missing_state_with_no_has_more_signal() -> (
+    None
+):
+    row = (
+        "art_1",
+        None,
+        "hash_1",
+        {
+            "content": [{"type": "json", "value": {"items": [{"id": "1"}]}}],
+            "meta": {"warnings": []},
+        },
+        "none",
+        "",
+    )
+    conn = _SeqConnection([row])
+    runtime = _Runtime(
+        db_pool=_SeqPool(conn),
+        mirrored_lookup={"demo.echo": {"qualified_name": "demo.echo"}},
+    )
+
+    result = await execute_artifact_next_page(
+        runtime,
+        arguments={
+            "_gateway_context": {"session_id": "sess_1"},
+            "artifact_id": "art_1",
+        },
+    )
+
+    assert result["code"] == "INVALID_ARGUMENT"
+    assert result["details"]["queryable_json_found"] is True
+    assert result["details"]["has_more_detected"] is False
+    assert result["details"]["continuable"] is False

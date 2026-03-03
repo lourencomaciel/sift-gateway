@@ -57,6 +57,13 @@ _SCHEMA_ROOT_COLUMNS = [
     "map_budget_fingerprint",
 ]
 
+_FETCH_ARTIFACT_ROOT_PATHS_SQL = """
+SELECT root_path
+FROM artifact_roots
+WHERE workspace_id = %s AND artifact_id = %s
+ORDER BY root_path ASC
+"""
+
 CandidateRow = tuple[str, dict[str, Any], dict[str, Any], dict[str, Any]]
 
 
@@ -79,6 +86,41 @@ class SingleRootCandidate:
     candidate_rows: list[CandidateRow]
     missing_root_artifacts: list[str]
     anchor_meta: dict[str, Any] | None
+
+
+def _available_root_paths(
+    connection: Any,
+    *,
+    artifact_id: str,
+) -> list[str]:
+    """Return sorted available mapped root paths for one artifact."""
+    rows = connection.execute(
+        _FETCH_ARTIFACT_ROOT_PATHS_SQL,
+        (WORKSPACE_ID, artifact_id),
+    ).fetchall()
+    paths = [
+        str(row[0])
+        for row in rows
+        if isinstance(row, (list, tuple)) and row and isinstance(row[0], str)
+    ]
+    return sorted(set(paths))
+
+
+def _suggested_root_path(
+    *,
+    requested_root_path: str,
+    available_root_paths: list[str],
+) -> str | None:
+    """Return one suggested root path when a single clear choice exists."""
+    if not available_root_paths:
+        return None
+    if requested_root_path in available_root_paths:
+        return requested_root_path
+    if len(available_root_paths) == 1:
+        return available_root_paths[0]
+    if "$" in available_root_paths:
+        return "$"
+    return available_root_paths[0]
 
 
 def resolve_single_root_candidate(
@@ -122,6 +164,10 @@ def resolve_single_root_candidate(
     )
     if root_row is None or schema_root is None:
         missing_root_artifacts = [anchor_artifact_id]
+        available_root_paths = _available_root_paths(
+            connection,
+            artifact_id=anchor_artifact_id,
+        )
         return gateway_error(
             "NOT_FOUND",
             "root_path not found",
@@ -129,6 +175,11 @@ def resolve_single_root_candidate(
                 "root_path": root_path,
                 "skipped_artifacts": len(missing_root_artifacts),
                 "artifact_ids": missing_root_artifacts,
+                "available_root_paths": available_root_paths,
+                "suggested_root_path": _suggested_root_path(
+                    requested_root_path=root_path,
+                    available_root_paths=available_root_paths,
+                ),
             },
         )
     return SingleRootCandidate(
@@ -244,10 +295,28 @@ def resolve_all_related_root_candidates(
     if not candidate_rows:
         details: dict[str, Any] = {}
         if missing_root_artifacts:
+            available_root_paths_by_artifact: dict[str, list[str]] = {}
+            merged_paths: set[str] = set()
+            for artifact_id in sorted(set(missing_root_artifacts)):
+                artifact_paths = _available_root_paths(
+                    connection,
+                    artifact_id=artifact_id,
+                )
+                available_root_paths_by_artifact[artifact_id] = artifact_paths
+                merged_paths.update(artifact_paths)
+            merged_root_paths = sorted(merged_paths)
             details = {
                 "root_path": root_path,
                 "skipped_artifacts": len(missing_root_artifacts),
                 "artifact_ids": missing_root_artifacts,
+                "available_root_paths": merged_root_paths,
+                "available_root_paths_by_artifact": (
+                    available_root_paths_by_artifact
+                ),
+                "suggested_root_path": _suggested_root_path(
+                    requested_root_path=root_path,
+                    available_root_paths=merged_root_paths,
+                ),
             }
         return gateway_error(
             "NOT_FOUND",

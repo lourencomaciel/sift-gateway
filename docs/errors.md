@@ -104,3 +104,25 @@ Some handlers include a secondary machine code in `details.code`.
 - If outbound redaction is configured fail-closed and redaction fails, tool
   responses return `INTERNAL` with message `response redaction failed`.
 - `artifact(action="query", query_kind="code")` is the canonical retrieval surface; legacy handler entrypoints exist only for compatibility wrappers.
+
+## Error detail examples
+
+### `NOT_FOUND` + `root_path not found`
+
+Code-query root-path misses can include:
+
+- `root_path` (requested path)
+- `available_root_paths` (merged candidate roots)
+- `available_root_paths_by_artifact` (all-related mode)
+- `suggested_root_path` (best-effort hint)
+
+### `INVALID_ARGUMENT` + missing upstream pagination state
+
+`artifact(action="next_page")` misses can include:
+
+- `queryable_json_found`
+- `has_more_detected`
+- `next_params_detected`
+- `continuable`
+- optional `query_json_source` (`part_index`, `part_type`, `encoding`)
+- `hint`

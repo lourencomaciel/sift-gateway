@@ -11,14 +11,19 @@ from sift_gateway.core.retrieval_helpers import touch_retrieval_artifacts
 from sift_gateway.core.rows import row_to_dict, rows_to_dicts
 from sift_gateway.core.runtime import ArtifactGetRuntime
 from sift_gateway.core.schema_payload import build_schema_payload
+from sift_gateway.envelope.content_extract import (
+    first_queryable_json_from_payload,
+)
 from sift_gateway.envelope.responses import gateway_error
 from sift_gateway.pagination.contract import (
     PAGINATION_WARNING_INCOMPLETE_RESULT_SET,
     RETRIEVAL_STATUS_PARTIAL,
     UPSTREAM_PARTIAL_REASON_MORE_PAGES_AVAILABLE,
+    UPSTREAM_PARTIAL_REASON_NEXT_TOKEN_MISSING,
     UpstreamNextKind,
     build_upstream_pagination_meta,
 )
+from sift_gateway.pagination.extract import assess_pagination
 from sift_gateway.storage.payload_store import reconstruct_envelope
 from sift_gateway.tools.artifact_describe import (
     FETCH_DESCRIBE_SQL,
@@ -351,6 +356,14 @@ def _build_describe_response(
         "lineage": lineage,
         "artifacts": artifact_summaries,
         "roots": roots,
+        "queryable_roots": sorted(
+            {
+                root_path
+                for root in roots
+                if isinstance((root_path := root.get("root_path")), str)
+                and root_path
+            }
+        ),
     }
     if scope == "single" and anchor_schemas:
         response["schemas"] = anchor_schemas
@@ -410,24 +423,66 @@ def _describe_pagination_meta(
     if envelope is None:
         return None
     state = _extract_pagination_state(envelope)
-    if state is None or not state.next_params:
+    if state is not None and state.next_params:
+        next_kind: UpstreamNextKind = (
+            "command"
+            if state.upstream_prefix == "cli" and state.tool_name == "run"
+            else "tool_call"
+        )
+        meta = build_upstream_pagination_meta(
+            artifact_id=anchor_artifact_id,
+            page_number=state.page_number,
+            retrieval_status=RETRIEVAL_STATUS_PARTIAL,
+            has_more=True,
+            partial_reason=UPSTREAM_PARTIAL_REASON_MORE_PAGES_AVAILABLE,
+            warning=PAGINATION_WARNING_INCOMPLETE_RESULT_SET,
+            next_kind=next_kind,
+            next_params=state.next_params,
+            original_args=state.original_args,
+        )
+        meta["capability"] = {
+            "has_more_signal_detected": True,
+            "continuable": True,
+            "next_params_detected": bool(state.next_params),
+        }
+        return meta
+
+    resolved = first_queryable_json_from_payload(envelope)
+    if resolved is None:
         return None
-    next_kind: UpstreamNextKind = (
-        "command"
-        if state.upstream_prefix == "cli" and state.tool_name == "run"
-        else "tool_call"
+    assessment = assess_pagination(
+        json_value=resolved.value,
+        pagination_config=None,
+        original_args={},
+        upstream_prefix="",
+        tool_name="",
+        page_number=0,
     )
-    return build_upstream_pagination_meta(
+    if assessment is None:
+        return None
+    has_more_signal_detected = (
+        assessment.has_more
+        or assessment.partial_reason == UPSTREAM_PARTIAL_REASON_NEXT_TOKEN_MISSING
+    )
+    meta = build_upstream_pagination_meta(
         artifact_id=anchor_artifact_id,
-        page_number=state.page_number,
-        retrieval_status=RETRIEVAL_STATUS_PARTIAL,
-        has_more=True,
-        partial_reason=UPSTREAM_PARTIAL_REASON_MORE_PAGES_AVAILABLE,
-        warning=PAGINATION_WARNING_INCOMPLETE_RESULT_SET,
-        next_kind=next_kind,
-        next_params=state.next_params,
-        original_args=state.original_args,
+        page_number=assessment.page_number,
+        retrieval_status=assessment.retrieval_status,
+        has_more=assessment.has_more,
+        partial_reason=assessment.partial_reason,
+        warning=assessment.warning,
     )
+    meta["capability"] = {
+        "has_more_signal_detected": has_more_signal_detected,
+        "continuable": False,
+        "next_params_detected": False,
+    }
+    meta["query_json_source"] = {
+        "part_index": resolved.part_index,
+        "part_type": resolved.part_type,
+        "encoding": resolved.source_encoding,
+    }
+    return meta
 
 
 def execute_artifact_describe(
