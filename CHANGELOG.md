@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+## [0.3.5] - 2026-03-03
+
+### Added
+- Added `sift-gateway upstream auth check` with `--server` and `--all` scopes to probe OAuth-backed upstream session health with forced refresh preflight reporting.
+
+### Fixed
+- Added runtime OAuth auth-failure recovery to retry one tool call after forcing a token refresh path when refresh-capable credentials are present.
+- Hardened OAuth token persistence compatibility by centralizing token storage construction and disabling short TTL eviction for OAuth token collection entries.
+
 ## [0.3.4] - 2026-03-03
 
 ### Added
