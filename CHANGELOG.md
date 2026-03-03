@@ -2,6 +2,21 @@
 
 ## [Unreleased]
 
+## [0.3.6] - 2026-03-03
+
+### Fixed
+- Cleared cached OAuth client registration before `sift-gateway upstream login` to avoid `invalid_grant` / `Invalid redirect URI` failures when providers bind client IDs to previously registered callback URIs.
+- Added unit coverage for OAuth client-registration cache reset behavior during login.
+
+## [0.3.5] - 2026-03-03
+
+### Added
+- Added `sift-gateway upstream auth check` with `--server` and `--all` scopes to probe OAuth-backed upstream session health with forced refresh preflight reporting.
+
+### Fixed
+- Added runtime OAuth auth-failure recovery to retry one tool call after forcing a token refresh path when refresh-capable credentials are present.
+- Hardened OAuth token persistence compatibility by centralizing token storage construction and disabling short TTL eviction for OAuth token collection entries.
+
 ## [0.3.4] - 2026-03-03
 
 ### Added

@@ -22,6 +22,7 @@ from sift_gateway.constants import STATE_SUBDIR
 _SECRETS_SUBDIR = "upstream_secrets"
 _OAUTH_SUBDIR = "upstream_oauth"
 _OAUTH_TOKEN_COLLECTION = "mcp-oauth-token"
+_OAUTH_CLIENT_INFO_COLLECTION = "mcp-oauth-client-info"
 _VALID_TRANSPORTS = frozenset({"stdio", "http"})
 _REQUIRED_KEYS = frozenset({"version", "transport"})
 
@@ -136,6 +137,11 @@ def oauth_token_cache_key(server_url: str) -> str:
     return f"{server_url.rstrip('/')}/tokens"
 
 
+def oauth_client_info_cache_key(server_url: str) -> str:
+    """Return the OAuth client-info cache key for one MCP server URL."""
+    return f"{server_url.rstrip('/')}/client_info"
+
+
 async def mark_oauth_access_token_stale(
     token_storage: AsyncKeyValue,
     *,
@@ -170,6 +176,23 @@ async def mark_oauth_access_token_stale(
         ttl=None,
     )
     return True
+
+
+async def clear_oauth_client_registration(
+    token_storage: AsyncKeyValue,
+    *,
+    server_url: str,
+) -> bool:
+    """Delete cached OAuth client registration for one MCP server URL.
+
+    This forces the next interactive OAuth login flow to perform dynamic
+    client registration again, which avoids stale redirect URI mismatches on
+    providers that bind redirect URI to registered client IDs.
+    """
+    return await token_storage.delete(
+        key=oauth_client_info_cache_key(server_url),
+        collection=_OAUTH_CLIENT_INFO_COLLECTION,
+    )
 
 
 def secret_file_path(data_dir: str | Path, ref: str) -> Path:

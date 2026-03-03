@@ -1298,6 +1298,59 @@ def test_login_upstream_http_persists_authorization_header(
     assert oauth_cache_dir_path(tmp_path, "api").exists()
 
 
+def test_login_upstream_clears_cached_client_registration(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _write_gateway_config(
+        tmp_path,
+        {"mcpServers": {"api": {"url": "https://example.com/mcp"}}},
+    )
+    seen: dict[str, object] = {}
+
+    class _FakeStorage:
+        pass
+
+    storage = _FakeStorage()
+
+    monkeypatch.setattr(
+        "sift_gateway.config.upstream_admin.oauth_token_storage",
+        lambda _data_dir, _ref: storage,
+    )
+
+    async def _fake_clear_client_registration(
+        *,
+        token_storage: object,
+        server_url: str,
+    ) -> bool:
+        seen["token_storage"] = token_storage
+        seen["server_url"] = server_url
+        return True
+
+    async def _fake_oauth(
+        *,
+        url: str,
+        headless: bool = False,
+        token_storage: object | None = None,
+    ) -> str:
+        _ = (url, headless)
+        seen["oauth_token_storage"] = token_storage
+        return "tok_123"
+
+    monkeypatch.setattr(
+        "sift_gateway.config.upstream_admin.clear_oauth_client_registration",
+        _fake_clear_client_registration,
+    )
+    monkeypatch.setattr(
+        "sift_gateway.config.upstream_admin._oauth_login_access_token",
+        _fake_oauth,
+    )
+
+    login_upstream(server="api", data_dir=tmp_path)
+    assert seen["token_storage"] is storage
+    assert seen["server_url"] == "https://example.com/mcp"
+    assert seen["oauth_token_storage"] is storage
+
+
 def test_login_upstream_rejects_non_http_transport(tmp_path: Path) -> None:
     _write_gateway_config(
         tmp_path,
