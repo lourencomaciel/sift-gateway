@@ -273,18 +273,51 @@ def test_redact_payload_ignores_hex_digests_and_public_ids() -> None:
             return {
                 "abcd1234abcd1234abcd1234",
                 "art_fb55ded7de7864c126ee92f0ff686b03",
+                "bin_42b7d9ae99ee75a488d474c30fb0a61c",
             }
 
     redactor = _redactor(scanner=_Scanner())
     payload = {
         "hash": "sha256:abcd1234abcd1234abcd1234",
         "artifact_id": "art_fb55ded7de7864c126ee92f0ff686b03",
+        "blob_id": "bin_42b7d9ae99ee75a488d474c30fb0a61c",
     }
 
     result = redactor.redact_payload(payload)
 
     assert result.payload is payload
     assert result.redacted_count == 0
+
+
+def test_redact_payload_preserves_binary_ref_blob_uri_and_id() -> None:
+    class _Scanner:
+        available = True
+
+        def detect(self, text: str) -> set[str]:
+            if text.startswith("sift://blob/"):
+                return {text.removeprefix("sift:")}
+            return {
+                "bin_42b7d9ae99ee75a488d474c30fb0a61c",
+            }
+
+    redactor = _redactor(scanner=_Scanner())
+    payload = {
+        "type": "binary_ref",
+        "blob_id": "bin_42b7d9ae99ee75a488d474c30fb0a61c",
+        "binary_hash": (
+            "42b7d9ae99ee75a488d474c30fb0a61c3b224d89ccb42026f051c64083cfe36f"
+        ),
+        "mime": "image/jpeg",
+        "byte_count": 225585,
+        "uri": "sift://blob/bin_42b7d9ae99ee75a488d474c30fb0a61c",
+    }
+
+    result = redactor.redact_payload(payload)
+
+    assert result.redacted_count == 0
+    assert result.payload is payload
+    assert payload["blob_id"].startswith("bin_")
+    assert payload["uri"].startswith("sift://blob/bin_")
 
 
 def test_redact_payload_skips_scanner_for_image_url_fields() -> None:

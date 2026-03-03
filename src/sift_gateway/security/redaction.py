@@ -77,6 +77,7 @@ _KNOWN_TOKEN_PATTERNS = (
 )
 _PUBLIC_ID_PREFIXES = (
     "art_",
+    "bin_",
     "act_",
     "ad_",
     "adset_",
@@ -272,6 +273,10 @@ class ResponseSecretRedactor:
         if not isinstance(value, str):
             return False
         normalized_key = key.lower()
+        if normalized_key == "blob_id" and value.startswith("bin_"):
+            return True
+        if normalized_key == "uri" and value.startswith("sift://blob/"):
+            return True
         if normalized_key not in {"data", "base64", "image_data"}:
             return False
         mime_type = parent.get("mimeType")
