@@ -137,6 +137,7 @@ def build_status_response_with_runtime(
         "budgets": {
             "max_items": config.max_items,
             "max_bytes_out": config.max_bytes_out,
+            "passthrough_max_bytes": config.passthrough_max_bytes,
             "max_wildcards": config.max_wildcards,
             "max_compute_steps": config.max_compute_steps,
             "max_json_part_parse_bytes": config.max_json_part_parse_bytes,
@@ -151,6 +152,7 @@ def build_status_response_with_runtime(
             "max_record_bytes_partial": config.max_record_bytes_partial,
             "max_leaf_paths_partial": config.max_leaf_paths_partial,
             "artifact_search_max_limit": config.artifact_search_max_limit,
+            "code_query_max_bytes_out": config.code_query_max_bytes_out,
         },
         "storage_caps": {
             "max_binary_blob_bytes": config.max_binary_blob_bytes,

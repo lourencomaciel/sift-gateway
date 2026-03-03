@@ -69,6 +69,18 @@ def test_select_response_mode_uses_full_when_under_cap_and_not_smaller() -> (
     assert mode == "full"
 
 
+def test_select_response_mode_uses_full_even_when_schema_ref_is_smaller() -> (
+    None
+):
+    mode = select_response_mode(
+        has_pagination=False,
+        full_payload={"response_mode": "full", "payload": {"rows": ["x" * 50]}},
+        schema_ref_payload={"response_mode": "schema_ref", "schemas": []},
+        max_bytes=10_000,
+    )
+    assert mode == "full"
+
+
 def test_select_response_mode_uses_schema_ref_when_full_exceeds_cap() -> None:
     mode = select_response_mode(
         has_pagination=False,

@@ -80,6 +80,7 @@ def _server(
     *,
     code_query_max_input_records: int = 100_000,
     code_query_max_input_bytes: int = 50_000_000,
+    code_query_max_bytes_out: int = 200_000,
     code_query_allowed_import_roots: list[str] | None = None,
     max_bytes_out: int = 5_000_000,
 ) -> GatewayServer:
@@ -87,6 +88,7 @@ def _server(
         data_dir=tmp_path,
         code_query_max_input_records=code_query_max_input_records,
         code_query_max_input_bytes=code_query_max_input_bytes,
+        code_query_max_bytes_out=code_query_max_bytes_out,
         code_query_allowed_import_roots=code_query_allowed_import_roots,
         max_bytes_out=max_bytes_out,
     )
@@ -1110,7 +1112,7 @@ def test_code_query_rejects_output_above_transport_budget(
             ),
         ]
     )
-    server = _server(tmp_path, conn, max_bytes_out=30)
+    server = _server(tmp_path, conn, code_query_max_bytes_out=30)
 
     monkeypatch.setattr(
         "sift_gateway.mcp.adapters.artifact_query_runtime.GatewayArtifactQueryRuntime.resolve_related_artifacts",
@@ -1181,7 +1183,7 @@ def test_code_query_schema_ref_preserves_describe_schema(
             ),
         ]
     )
-    server = _server(tmp_path, conn, max_bytes_out=30)
+    server = _server(tmp_path, conn, code_query_max_bytes_out=30)
 
     monkeypatch.setattr(
         "sift_gateway.mcp.adapters.artifact_query_runtime.GatewayArtifactQueryRuntime.resolve_related_artifacts",
