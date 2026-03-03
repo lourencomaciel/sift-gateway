@@ -117,12 +117,17 @@ def _meta_row(
     )
 
 
-def _root_row(root_key: str, root_path: str = "$.items") -> tuple[object, ...]:
+def _root_row(
+    root_key: str,
+    root_path: str = "$.items",
+    *,
+    root_shape: str = "array",
+) -> tuple[object, ...]:
     return (
         root_key,
         root_path,
         1,
-        "array",
+        root_shape,
         {"id": {"number": 1}},
         None,
         {},
@@ -134,13 +139,14 @@ def _schema_root_row(
     root_path: str = "$.items",
     *,
     schema_hash: str = "sha256:schema_items",
+    schema_mode: str = "exact",
 ) -> tuple[object, ...]:
     return (
         root_key,
         root_path,
         "schema_v1",
         schema_hash,
-        "exact",
+        schema_mode,
         "complete",
         1,
         "sha256:dataset",
@@ -278,20 +284,20 @@ def test_code_query_all_related_merges_records(
     }
 
 
-def test_code_query_all_related_rejects_incompatible_schema_signatures(
+def test_code_query_all_related_rejects_incompatible_root_shapes(
     tmp_path: Path, monkeypatch
 ) -> None:
     conn = _SeqConnection(
         [
             _SeqCursor(one=_meta_row("art_1")),
-            _SeqCursor(one=_root_row("rk_1")),
+            _SeqCursor(one=_root_row("rk_1", root_shape="array")),
             _SeqCursor(
                 one=_schema_root_row(
                     "rk_1", schema_hash="sha256:schema_items_a"
                 )
             ),
             _SeqCursor(one=_meta_row("art_2")),
-            _SeqCursor(one=_root_row("rk_2")),
+            _SeqCursor(one=_root_row("rk_2", root_shape="object")),
             _SeqCursor(
                 one=_schema_root_row(
                     "rk_2", schema_hash="sha256:schema_items_b"
@@ -344,6 +350,188 @@ def test_code_query_all_related_rejects_incompatible_schema_signatures(
     assert response["details"]["root_path"] == "$.items"
     assert len(response["details"]["signature_groups"]) == 2
     assert runtime_called is False
+
+
+def test_code_query_all_related_allows_mixed_schema_hash_with_warning(
+    tmp_path: Path, monkeypatch
+) -> None:
+    conn = _SeqConnection(
+        [
+            _SeqCursor(one=_meta_row("art_1")),
+            _SeqCursor(one=_root_row("rk_1", root_shape="array")),
+            _SeqCursor(
+                one=_schema_root_row(
+                    "rk_1", schema_hash="sha256:schema_items_a"
+                )
+            ),
+            _SeqCursor(one=_meta_row("art_2")),
+            _SeqCursor(one=_root_row("rk_2", root_shape="array")),
+            _SeqCursor(
+                one=_schema_root_row(
+                    "rk_2", schema_hash="sha256:schema_items_b"
+                )
+            ),
+            _SeqCursor(all_rows=[_schema_field_row()]),
+            _SeqCursor(
+                one=_artifact_row(
+                    "art_1",
+                    {
+                        "content": [
+                            {
+                                "type": "json",
+                                "value": {"items": [{"id": 1}]},
+                            }
+                        ]
+                    },
+                )
+            ),
+            _SeqCursor(
+                one=_artifact_row(
+                    "art_2",
+                    {
+                        "content": [
+                            {
+                                "type": "json",
+                                "value": {"items": [{"id": 2}]},
+                            }
+                        ]
+                    },
+                )
+            ),
+        ]
+    )
+    server = _server(tmp_path, conn)
+
+    monkeypatch.setattr(
+        "sift_gateway.mcp.adapters.artifact_query_runtime.GatewayArtifactQueryRuntime.resolve_related_artifacts",
+        lambda *_args, **_kwargs: [
+            {"artifact_id": "art_1", "generation": 1},
+            {"artifact_id": "art_2", "generation": 1},
+        ],
+    )
+    monkeypatch.setattr(
+        server,
+        "_safe_touch_for_retrieval_many",
+        lambda *args, **kwargs: None,
+    )
+    monkeypatch.setattr(
+        "sift_gateway.core.artifact_code.execute_code_in_subprocess",
+        lambda **kwargs: [
+            {
+                "id": item["id"],
+                "artifact": item["_locator"]["artifact_id"],
+            }
+            for item in kwargs["data"]
+        ],
+    )
+
+    response = asyncio.run(
+        server.handle_artifact(
+            {
+                "action": "query",
+                "query_kind": "code",
+                "_gateway_context": {"session_id": "sess_1"},
+                "artifact_id": "art_1",
+                "root_path": "$.items",
+                "code": "def run(data, schema, params): return data",
+            }
+        )
+    )
+
+    assert response["total_matched"] == 2
+    assert response["lineage"]["artifact_count"] == 2
+    assert response["scope"] == "all_related"
+    warnings = response.get("warnings", [])
+    assert warnings
+    assert warnings[0]["code"] == "MIXED_SCHEMA_SIGNATURES"
+
+
+def test_code_query_all_related_allows_mixed_schema_mode_with_warning(
+    tmp_path: Path, monkeypatch
+) -> None:
+    conn = _SeqConnection(
+        [
+            _SeqCursor(one=_meta_row("art_1")),
+            _SeqCursor(one=_root_row("rk_1", root_shape="array")),
+            _SeqCursor(one=_schema_root_row("rk_1", schema_mode="exact")),
+            _SeqCursor(one=_meta_row("art_2")),
+            _SeqCursor(one=_root_row("rk_2", root_shape="array")),
+            _SeqCursor(
+                one=_schema_root_row("rk_2", schema_mode="sampled")
+            ),
+            _SeqCursor(all_rows=[_schema_field_row()]),
+            _SeqCursor(
+                one=_artifact_row(
+                    "art_1",
+                    {
+                        "content": [
+                            {
+                                "type": "json",
+                                "value": {"items": [{"id": 1}]},
+                            }
+                        ]
+                    },
+                )
+            ),
+            _SeqCursor(
+                one=_artifact_row(
+                    "art_2",
+                    {
+                        "content": [
+                            {
+                                "type": "json",
+                                "value": {"items": [{"id": 2}]},
+                            }
+                        ]
+                    },
+                )
+            ),
+        ]
+    )
+    server = _server(tmp_path, conn)
+
+    monkeypatch.setattr(
+        "sift_gateway.mcp.adapters.artifact_query_runtime.GatewayArtifactQueryRuntime.resolve_related_artifacts",
+        lambda *_args, **_kwargs: [
+            {"artifact_id": "art_1", "generation": 1},
+            {"artifact_id": "art_2", "generation": 1},
+        ],
+    )
+    monkeypatch.setattr(
+        server,
+        "_safe_touch_for_retrieval_many",
+        lambda *args, **kwargs: None,
+    )
+    monkeypatch.setattr(
+        "sift_gateway.core.artifact_code.execute_code_in_subprocess",
+        lambda **kwargs: [
+            {
+                "id": item["id"],
+                "artifact": item["_locator"]["artifact_id"],
+            }
+            for item in kwargs["data"]
+        ],
+    )
+
+    response = asyncio.run(
+        server.handle_artifact(
+            {
+                "action": "query",
+                "query_kind": "code",
+                "_gateway_context": {"session_id": "sess_1"},
+                "artifact_id": "art_1",
+                "root_path": "$.items",
+                "code": "def run(data, schema, params): return data",
+            }
+        )
+    )
+
+    assert response["total_matched"] == 2
+    assert response["lineage"]["artifact_count"] == 2
+    assert response["scope"] == "all_related"
+    warnings = response.get("warnings", [])
+    assert warnings
+    assert warnings[0]["code"] == "MIXED_SCHEMA_SIGNATURES"
 
 
 def test_code_query_root_path_not_found_includes_available_roots(

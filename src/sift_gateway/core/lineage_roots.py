@@ -11,6 +11,7 @@ from sift_gateway.core.rows import row_to_dict
 from sift_gateway.envelope.responses import gateway_error
 from sift_gateway.mcp.lineage import (
     compute_related_set_hash,
+    compute_root_compatibility_signature,
     compute_root_signature,
     resolve_related_artifacts,
 )
@@ -76,6 +77,7 @@ class AllRelatedRootCandidates:
     related_set_hash: str
     candidate_rows: list[CandidateRow]
     missing_root_artifacts: list[str]
+    mixed_schema_signature_groups: list[dict[str, Any]]
 
 
 @dataclass(frozen=True)
@@ -241,7 +243,8 @@ def resolve_all_related_root_candidates(
 
     candidate_rows: list[CandidateRow] = []
     missing_root_artifacts: list[str] = []
-    signature_groups: dict[str, list[str]] = {}
+    strict_signature_groups: dict[str, list[str]] = {}
+    compatibility_signature_groups: dict[str, list[str]] = {}
 
     for artifact_id in related_ids:
         artifact_meta = row_to_dict(
@@ -287,7 +290,14 @@ def resolve_all_related_root_candidates(
             schema_mode=schema_root.get("mode"),
             schema_completeness=schema_root.get("completeness"),
         )
-        signature_groups.setdefault(signature, []).append(artifact_id)
+        strict_signature_groups.setdefault(signature, []).append(artifact_id)
+        compatibility_signature = compute_root_compatibility_signature(
+            root_path=root_path,
+            root_shape=root_row.get("root_shape"),
+        )
+        compatibility_signature_groups.setdefault(
+            compatibility_signature, []
+        ).append(artifact_id)
         candidate_rows.append(
             (artifact_id, artifact_meta, root_row, schema_root)
         )
@@ -324,7 +334,7 @@ def resolve_all_related_root_candidates(
             details=details,
         )
 
-    if len(signature_groups) > 1:
+    if len(compatibility_signature_groups) > 1:
         return gateway_error(
             "INVALID_ARGUMENT",
             "incompatible lineage schema for root_path",
@@ -342,11 +352,32 @@ def resolve_all_related_root_candidates(
                         "artifact_ids": sorted(artifact_ids),
                     }
                     for signature, artifact_ids in sorted(
-                        signature_groups.items()
+                        compatibility_signature_groups.items()
+                    )
+                ],
+                "strict_signature_groups": [
+                    {
+                        "signature": signature,
+                        "artifact_ids": sorted(artifact_ids),
+                    }
+                    for signature, artifact_ids in sorted(
+                        strict_signature_groups.items()
                     )
                 ],
             },
         )
+
+    mixed_schema_signature_groups: list[dict[str, Any]] = []
+    if len(strict_signature_groups) > 1:
+        mixed_schema_signature_groups = [
+            {
+                "signature": signature,
+                "artifact_ids": sorted(artifact_ids),
+            }
+            for signature, artifact_ids in sorted(
+                strict_signature_groups.items()
+            )
+        ]
 
     return AllRelatedRootCandidates(
         related_rows=related_rows,
@@ -354,4 +385,5 @@ def resolve_all_related_root_candidates(
         related_set_hash=related_set_hash,
         candidate_rows=candidate_rows,
         missing_root_artifacts=missing_root_artifacts,
+        mixed_schema_signature_groups=mixed_schema_signature_groups,
     )

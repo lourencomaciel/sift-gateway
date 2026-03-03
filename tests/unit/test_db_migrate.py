@@ -520,3 +520,24 @@ class TestUpstreamRegistryMigration:
 
     def test_includes_auto_paginate_timeout_seconds(self) -> None:
         assert "auto_paginate_timeout_seconds" in self.sql
+
+
+class TestSessionRuntimeProvenanceMigration:
+    """009_session_runtime_provenance.sql adds session runtime fields."""
+
+    @pytest.fixture(autouse=True)
+    def _load_sql(self) -> None:
+        self.sql = _normalize(
+            _read_sql("009_session_runtime_provenance.sql")
+        ).lower()
+
+    def test_adds_runtime_pid_column(self) -> None:
+        assert "alter table sessions add column last_runtime_pid integer" in (
+            self.sql
+        )
+
+    def test_adds_runtime_instance_uuid_column(self) -> None:
+        assert (
+            "alter table sessions add column "
+            "last_runtime_instance_uuid text"
+        ) in self.sql

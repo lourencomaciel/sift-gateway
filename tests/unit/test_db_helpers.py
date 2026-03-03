@@ -7,7 +7,19 @@ from sift_gateway.db.repos.sessions_repo import upsert_session_params
 
 
 def test_repo_param_helpers_include_workspace() -> None:
-    assert upsert_session_params("sess-1") == ("local", "sess-1")
+    assert upsert_session_params("sess-1") == (
+        "local",
+        "sess-1",
+        None,
+        None,
+    )
+    assert upsert_session_params(
+        "sess-1",
+        runtime_provenance={
+            "gateway_pid": 1234,
+            "gateway_instance_uuid": "inst-1",
+        },
+    ) == ("local", "sess-1", 1234, "inst-1")
     assert soft_delete_expired_params() == ("local",)
 
     payload_params = payload_blob_params(

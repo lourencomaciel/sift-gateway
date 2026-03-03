@@ -164,6 +164,37 @@ def compute_root_signature(
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
+def compute_root_compatibility_signature(
+    *,
+    root_path: str,
+    root_shape: Any,
+) -> str:
+    """Compute coarse compatibility signature for query-time merging.
+
+    Unlike ``compute_root_signature`` (strict, schema-hash aware), this
+    signature intentionally ignores per-page value drift such as example values
+    and dataset hashes. It is used to decide whether lineage pages are safe to
+    merge for code queries.
+    """
+    normalized_root_shape = None
+    if isinstance(root_shape, str):
+        lower = root_shape.strip().lower()
+        if lower.startswith("array"):
+            normalized_root_shape = "array"
+        elif lower.startswith("object"):
+            normalized_root_shape = "object"
+        elif lower.startswith("scalar"):
+            normalized_root_shape = "scalar"
+        else:
+            normalized_root_shape = lower
+    payload = {
+        "root_path": root_path,
+        "root_shape": normalized_root_shape,
+    }
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
 def build_lineage_root_catalog(
     entries: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
@@ -187,11 +218,15 @@ def build_lineage_root_catalog(
         schema_hash = entry.get("schema_hash")
         if not isinstance(schema_hash, str) or not schema_hash:
             schema_hash = f"__missing__:{artifact_id}"
-        signature = compute_root_signature(
+        strict_signature = compute_root_signature(
             root_path=root_path,
             schema_hash=schema_hash,
             schema_mode=entry.get("schema_mode"),
             schema_completeness=entry.get("schema_completeness"),
+        )
+        compatibility_signature = compute_root_compatibility_signature(
+            root_path=root_path,
+            root_shape=entry.get("root_shape"),
         )
         row = grouped.setdefault(
             root_path,
@@ -199,16 +234,18 @@ def build_lineage_root_catalog(
                 "root_path": root_path,
                 "artifact_ids": set(),
                 "signature_groups": {},
+                "compatibility_signatures": set(),
                 "count_estimate_total": 0,
                 "has_count": False,
             },
         )
         row["artifact_ids"].add(artifact_id)
+        row["compatibility_signatures"].add(compatibility_signature)
         signature_groups = row["signature_groups"]
         group = signature_groups.setdefault(
-            signature,
+            strict_signature,
             {
-                "signature": signature,
+                "signature": strict_signature,
                 "artifact_ids": [],
                 "root_shape": entry.get("root_shape"),
                 "schema_hash": schema_hash,
@@ -245,7 +282,7 @@ def build_lineage_root_catalog(
                 }
             )
 
-        compatible = len(signature_groups_list) == 1
+        compatible = len(row["compatibility_signatures"]) == 1
         representative = (
             signature_groups_list[0] if signature_groups_list else {}
         )

@@ -17,8 +17,10 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 import datetime as dt
+import os
 import time
 from typing import Any
+import uuid
 
 from fastmcp import FastMCP
 
@@ -118,7 +120,7 @@ from sift_gateway.mcp.server_runtime import (
 from sift_gateway.mcp.upstream import (
     UpstreamInstance,
     call_upstream_tool,
-    connect_upstreams,
+    connect_upstream,
 )
 from sift_gateway.mcp.upstream_errors import classify_upstream_exception
 from sift_gateway.obs.metrics import GatewayMetrics, get_metrics
@@ -288,6 +290,10 @@ class GatewayServer:
     upstream_runtime: dict[str, dict[str, Any]] = field(default_factory=dict)
     mirrored_tools: dict[str, MirroredTool] = field(default_factory=dict)
     response_redactor: ResponseSecretRedactor | None = None
+    gateway_instance_uuid: str = field(
+        default_factory=lambda: str(uuid.uuid4())
+    )
+    gateway_pid: int = field(default_factory=os.getpid)
 
     def __post_init__(self) -> None:
         """Initialize mirrored-tool cache and response redactor defaults."""
@@ -308,6 +314,13 @@ class GatewayServer:
     def _probe_db_recovery(self) -> bool:
         """Probe DB pool and recover db_ok if healthy."""
         return _runtime_probe_db_recovery(self)
+
+    def _runtime_provenance(self) -> dict[str, Any]:
+        """Return stable per-process runtime provenance fields."""
+        return {
+            "gateway_pid": int(self.gateway_pid),
+            "gateway_instance_uuid": str(self.gateway_instance_uuid),
+        }
 
     def _not_implemented(self, tool_name: str) -> dict[str, Any]:
         """Return a NOT_IMPLEMENTED error for a tool.
@@ -679,7 +692,13 @@ class GatewayServer:
         if not callable(execute):
             return False
 
-        execute(UPSERT_SESSION_SQL, upsert_session_params(session_id))
+        execute(
+            UPSERT_SESSION_SQL,
+            upsert_session_params(
+                session_id,
+                runtime_provenance=self._runtime_provenance(),
+            ),
+        )
         if now is None:
             execute(
                 """
@@ -752,7 +771,13 @@ class GatewayServer:
         execute = getattr(connection, "execute", None)
         if not callable(execute):
             return False
-        execute(UPSERT_SESSION_SQL, upsert_session_params(session_id))
+        execute(
+            UPSERT_SESSION_SQL,
+            upsert_session_params(
+                session_id,
+                runtime_provenance=self._runtime_provenance(),
+            ),
+        )
         _ = (artifact_ids, now)
         return True
 
@@ -1131,14 +1156,34 @@ async def bootstrap_server(
         A fully initialized GatewayServer with connected
         upstreams.
     """
-    upstreams = await connect_upstreams(
-        config.upstreams, data_dir=str(config.data_dir)
-    )
+    upstreams: list[UpstreamInstance] = []
+    upstream_errors: dict[str, str] = {}
+    upstream_runtime: dict[str, dict[str, Any]] = {}
+
+    for upstream_config in config.upstreams:
+        try:
+            instance = await connect_upstream(
+                upstream_config,
+                data_dir=str(config.data_dir),
+            )
+        except Exception as exc:
+            error_message = str(exc)
+            upstream_errors[upstream_config.prefix] = error_message
+            upstream_runtime[upstream_config.prefix] = {
+                "last_error_code": classify_upstream_exception(exc),
+                "last_error_message": error_message,
+                "last_error_at": dt.datetime.now(dt.UTC).isoformat(),
+            }
+            continue
+        upstreams.append(instance)
+
     return GatewayServer(
         config=config,
         db_pool=db_pool,
         blob_store=blob_store,
         upstreams=upstreams,
+        upstream_errors=upstream_errors,
+        upstream_runtime=upstream_runtime,
         fs_ok=fs_ok,
         db_ok=db_ok,
     )
