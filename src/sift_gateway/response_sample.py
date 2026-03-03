@@ -6,6 +6,9 @@ from collections.abc import Mapping, Sequence
 import re
 from typing import Any
 
+from sift_gateway.envelope.content_extract import (
+    first_queryable_json_from_payload,
+)
 from sift_gateway.mapping.json_strings import resolve_json_strings
 from sift_gateway.query.jsonpath import JsonPathError, evaluate_jsonpath
 
@@ -214,16 +217,10 @@ def resolve_item_sequence(
 
 def first_json_content_value(envelope_payload: Mapping[str, Any]) -> Any | None:
     """Return first ``content`` part JSON value from an envelope payload."""
-    content = envelope_payload.get("content")
-    if not isinstance(content, list):
+    resolved = first_queryable_json_from_payload(envelope_payload)
+    if resolved is None:
         return None
-    for part in content:
-        if not isinstance(part, Mapping):
-            continue
-        if part.get("type") != "json":
-            continue
-        return part.get("value")
-    return None
+    return resolved.value
 
 
 __all__ = [

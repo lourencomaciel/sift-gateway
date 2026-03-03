@@ -155,6 +155,8 @@ sift-gateway run --continue-from <artifact_id> -- <next-command-with-next-params
    - `response_mode="full"` with inline `payload`, or
    - `response_mode="schema_ref"` with `artifact_id` and either `sample_item`
      preview or `schemas` fallback.
+   - In `schema_ref`, prefer `metadata.queryable_roots` (or `metadata.usage.root_path`)
+     when choosing `root_path` for follow-up code queries.
 4. If pagination is partial, continue with:
 
 ```python
@@ -168,7 +170,7 @@ artifact(
     action="query",
     query_kind="code",
     artifact_id="art_...",
-    root_path="$.items",
+    root_path="$",
     code="def run(data, schema, params): return {'rows': len(data)}",
 )
 ```

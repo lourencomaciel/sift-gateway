@@ -344,6 +344,91 @@ def test_code_query_all_related_rejects_incompatible_schema_signatures(
     assert runtime_called is False
 
 
+def test_code_query_root_path_not_found_includes_available_roots(
+    tmp_path: Path,
+) -> None:
+    conn = _SeqConnection(
+        [
+            _SeqCursor(one=_meta_row("art_1")),
+            _SeqCursor(one=None),
+            _SeqCursor(one=None),
+            _SeqCursor(all_rows=[("$",), ("$.items",)]),
+        ]
+    )
+    server = _server(tmp_path, conn)
+
+    response = asyncio.run(
+        server.handle_artifact(
+            {
+                "action": "query",
+                "query_kind": "code",
+                "_gateway_context": {"session_id": "sess_1"},
+                "artifact_id": "art_1",
+                "scope": "single",
+                "root_path": "$.missing",
+                "code": "def run(data, schema, params): return data",
+            }
+        )
+    )
+
+    assert response["code"] == "NOT_FOUND"
+    assert response["message"] == "root_path not found"
+    assert response["details"]["root_path"] == "$.missing"
+    assert response["details"]["available_root_paths"] == ["$", "$.items"]
+    assert response["details"]["suggested_root_path"] == "$"
+
+
+def test_code_query_all_related_root_path_not_found_includes_per_artifact_roots(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    conn = _SeqConnection(
+        [
+            _SeqCursor(one=_meta_row("art_1")),
+            _SeqCursor(one=None),
+            _SeqCursor(one=_meta_row("art_2")),
+            _SeqCursor(one=None),
+            _SeqCursor(all_rows=[("$",), ("$.items",)]),
+            _SeqCursor(all_rows=[("$.records",)]),
+        ]
+    )
+    server = _server(tmp_path, conn)
+
+    monkeypatch.setattr(
+        "sift_gateway.mcp.adapters.artifact_query_runtime.GatewayArtifactQueryRuntime.resolve_related_artifacts",
+        lambda *_args, **_kwargs: [
+            {"artifact_id": "art_1", "generation": 1},
+            {"artifact_id": "art_2", "generation": 1},
+        ],
+    )
+
+    response = asyncio.run(
+        server.handle_artifact(
+            {
+                "action": "query",
+                "query_kind": "code",
+                "_gateway_context": {"session_id": "sess_1"},
+                "artifact_id": "art_1",
+                "scope": "all_related",
+                "root_path": "$.missing",
+                "code": "def run(data, schema, params): return data",
+            }
+        )
+    )
+
+    assert response["code"] == "NOT_FOUND"
+    assert response["message"] == "root_path not found"
+    assert response["details"]["available_root_paths"] == [
+        "$",
+        "$.items",
+        "$.records",
+    ]
+    assert response["details"]["available_root_paths_by_artifact"] == {
+        "art_1": ["$", "$.items"],
+        "art_2": ["$.records"],
+    }
+
+
 def test_code_query_normalizes_scalar_return_to_list(
     tmp_path: Path, monkeypatch
 ) -> None:

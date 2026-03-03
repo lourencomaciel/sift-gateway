@@ -8,8 +8,17 @@ from typing import Any
 from sift_gateway.constants import WORKSPACE_ID
 from sift_gateway.core.rows import row_to_dict
 from sift_gateway.core.runtime import ArtifactNextPageRuntime
+from sift_gateway.envelope.content_extract import (
+    first_queryable_json_from_payload,
+)
 from sift_gateway.envelope.responses import gateway_error
-from sift_gateway.pagination.extract import PaginationState
+from sift_gateway.pagination.contract import (
+    UPSTREAM_PARTIAL_REASON_NEXT_TOKEN_MISSING,
+)
+from sift_gateway.pagination.extract import (
+    PaginationState,
+    assess_pagination,
+)
 from sift_gateway.storage.payload_store import reconstruct_envelope
 
 _PAGINATION_COLUMNS = [
@@ -58,6 +67,54 @@ def _extract_pagination_state(
         return PaginationState.from_dict(pagination_data)
     except (TypeError, ValueError, KeyError):
         return None
+
+
+def _diagnose_missing_pagination_state(
+    envelope_dict: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Build diagnostics when next_page cannot find continuation state."""
+    if not isinstance(envelope_dict, dict):
+        return {}
+    resolved = first_queryable_json_from_payload(envelope_dict)
+    if resolved is None:
+        return {"queryable_json_found": False}
+
+    assessment = assess_pagination(
+        json_value=resolved.value,
+        pagination_config=None,
+        original_args={},
+        upstream_prefix="",
+        tool_name="",
+        page_number=0,
+    )
+    if assessment is None:
+        return {
+            "queryable_json_found": True,
+            "has_more_detected": False,
+            "next_params_detected": False,
+            "continuable": False,
+        }
+
+    has_more_detected = (
+        assessment.has_more
+        or assessment.partial_reason == UPSTREAM_PARTIAL_REASON_NEXT_TOKEN_MISSING
+    )
+    return {
+        "queryable_json_found": True,
+        "has_more_detected": has_more_detected,
+        "next_params_detected": bool(
+            assessment.state is not None and assessment.state.next_params
+        ),
+        "continuable": assessment.state is not None,
+        "retrieval_status": assessment.retrieval_status,
+        "partial_reason": assessment.partial_reason,
+        "warning": assessment.warning,
+        "query_json_source": {
+            "part_index": resolved.part_index,
+            "part_type": resolved.part_type,
+            "encoding": resolved.source_encoding,
+        },
+    }
 
 
 def _extract_envelope_dict(
@@ -143,10 +200,17 @@ async def execute_artifact_next_page(
     )
     state = _extract_pagination_state(envelope_dict)
     if state is None:
+        diagnostics = _diagnose_missing_pagination_state(envelope_dict)
+        hint = (
+            "This artifact does not include a continuation cursor/token. "
+            "If has_more was signaled upstream, configure pagination mapping "
+            "for that upstream/tool so next_params can be derived."
+        )
         return gateway_error(
             "INVALID_ARGUMENT",
             "artifact has no upstream pagination state. "
             "next_page only fetches additional upstream pages.",
+            details={**diagnostics, "hint": hint},
         )
 
     qualified_name = f"{state.upstream_prefix}.{state.tool_name}"

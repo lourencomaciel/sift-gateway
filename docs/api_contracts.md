@@ -106,6 +106,11 @@ Code query responses do not expose a query-cursor loop.
 - persists a new artifact linked with `parent_artifact_id` and `chain_seq`
 - returns the same mirrored response contract (`full` or `schema_ref`)
 
+If upstream pagination state is missing, the gateway returns
+`INVALID_ARGUMENT` with diagnostics in `details` (for example:
+`queryable_json_found`, `has_more_detected`, `next_params_detected`,
+`continuable`, and `query_json_source` when available).
+
 ## Mirrored Response Contract
 
 Mirrored upstream calls and `next_page` return:
@@ -129,6 +134,13 @@ Includes:
   `sample_item_source_index`, optional `sample_item_text_truncated`)
 - or `schemas` (verbose schema fallback when sample preview is not representative)
 
+`metadata` commonly includes:
+
+- `usage` (code-query follow-up helper)
+- `queryable_roots` (root paths valid for `root_path`/`root_paths`)
+- optional `cardinality` (compact payload shape/count hints)
+- optional `query_json_source` (`part_index`, `part_type`, `encoding`)
+
 ## Response Mode Selection
 
 Mode selection is shared across mirrored calls and code output:
@@ -149,6 +161,7 @@ When upstream pagination exists, `pagination` includes:
 - `next` (object or `null`)
 - `next.kind` (`tool_call` | `command` | `params_only`)
 - optional `next.params`
+- `capability` (`has_more_signal_detected`, `continuable`, `next_params_detected`)
 - continuation hint
 
 Do not claim completion until `pagination.retrieval_status == "COMPLETE"`.

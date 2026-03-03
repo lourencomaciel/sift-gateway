@@ -231,6 +231,17 @@ def test_extract_json_returns_none_for_text_only() -> None:
     assert _extract_json_content(env) is None
 
 
+def test_extract_json_parses_text_json_content() -> None:
+    env = Envelope(
+        upstream_instance_id="i",
+        upstream_prefix="p",
+        tool="t",
+        status="ok",
+        content=[TextContentPart(text='{"data":[1,2]}')],
+    )
+    assert _extract_json_content(env) == {"data": [1, 2]}
+
+
 # ---- _merge_json_values ----
 
 
@@ -325,3 +336,19 @@ def test_merge_envelopes_multiple_pages() -> None:
     result = merge_envelopes(base, [[3, 4], [5, 6]], assessment)
     json_val = _extract_json_content(result)
     assert json_val == [1, 2, 3, 4, 5, 6]
+
+
+def test_merge_envelopes_replaces_text_json_part() -> None:
+    base = Envelope(
+        upstream_instance_id="i",
+        upstream_prefix="p",
+        tool="t",
+        status="ok",
+        content=[TextContentPart(text='{"data":[1]}')],
+        meta={},
+    )
+    assessment = _make_assessment(has_more=False)
+    result = merge_envelopes(base, [{"data": [2]}], assessment)
+    json_val = _extract_json_content(result)
+    assert json_val == {"data": [1, 2]}
+    assert isinstance(result.content[0], JsonContentPart)
