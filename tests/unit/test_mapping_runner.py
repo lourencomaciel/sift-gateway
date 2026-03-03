@@ -420,6 +420,36 @@ def test_schema_field_distinct_values_are_capped_with_cardinality(
     assert action_field.cardinality == 1
 
 
+def test_schema_field_distinct_values_truncate_long_strings(
+    tmp_path: Path,
+) -> None:
+    data = {
+        "items": [
+            {"text": "abcdefghijklmnopqrstuvwxyz1234567890"},
+        ]
+    }
+    envelope = {"content": [{"type": "json", "value": data}]}
+    result = run_mapping(
+        MappingInput(
+            artifact_id="a_distinct_long",
+            payload_hash_full="p_distinct_long",
+            envelope=envelope,
+            config=_config(tmp_path, max_full_map_bytes=10_000_000),
+        )
+    )
+    assert result.map_kind == "full"
+    assert result.schemas is not None
+    by_path = {schema.root_path: schema for schema in result.schemas}
+    item_schema = by_path["$"]
+    text_field = next(
+        field for field in item_schema.fields if field.path == "$.items[*].text"
+    )
+    assert text_field.distinct_values == [
+        "[abcdefghijklmnopqrstuvwxyz1234](6 more chars truncated)"
+    ]
+    assert text_field.cardinality == 1
+
+
 def test_sampled_schema_distinct_values_reflect_sampled_records(
     tmp_path: Path,
 ) -> None:
