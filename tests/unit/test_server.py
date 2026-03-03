@@ -20,6 +20,7 @@ from sift_gateway.mcp.server import (
     GatewayServer,
     RuntimeTool,
     _check_sample_corruption,
+    bootstrap_server,
 )
 from sift_gateway.mcp.upstream import (
     UpstreamInstance,
@@ -536,6 +537,51 @@ def test_status_handler_includes_upstream_connectivity(tmp_path: Path) -> None:
         disconnected[0]["startup_error"]["code"] == "UPSTREAM_STARTUP_FAILURE"
     )
     assert disconnected[0]["startup_error"]["message"] == "timeout"
+
+
+@pytest.mark.asyncio
+async def test_bootstrap_server_tolerates_startup_upstream_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ok_cfg = UpstreamConfig(
+        prefix="ok",
+        transport="stdio",
+        command="/usr/bin/printf",
+    )
+    bad_cfg = UpstreamConfig(
+        prefix="bad",
+        transport="stdio",
+        command="/usr/bin/printf",
+    )
+    config = GatewayConfig(
+        data_dir=tmp_path,
+        passthrough_max_bytes=0,
+        upstreams=[ok_cfg, bad_cfg],
+    )
+
+    async def _connect_upstream(
+        upstream: UpstreamConfig,
+        data_dir: str | None = None,
+    ) -> UpstreamInstance:
+        _ = data_dir
+        if upstream.prefix == "bad":
+            raise RuntimeError("oauth expired")
+        return _upstream(upstream.prefix)
+
+    monkeypatch.setattr(
+        "sift_gateway.mcp.server.connect_upstream",
+        _connect_upstream,
+    )
+
+    server = await bootstrap_server(config)
+
+    assert [upstream.prefix for upstream in server.upstreams] == ["ok"]
+    assert server.upstream_errors == {"bad": "oauth expired"}
+    runtime = server.upstream_runtime["bad"]
+    assert runtime["last_error_code"] == "UPSTREAM_RUNTIME_FAILURE"
+    assert runtime["last_error_message"] == "oauth expired"
+    assert isinstance(runtime["last_error_at"], str)
 
 
 def test_status_handler_runs_active_upstream_probes(
@@ -1658,7 +1704,10 @@ def test_safe_touch_for_retrieval_writes_session_and_artifact(
     assert touched is True
     assert len(conn.calls) == 2
     assert "INSERT INTO sessions" in conn.calls[0][0]
-    assert conn.calls[0][1] == ("local", "sess_1")
+    assert conn.calls[0][1][0] == "local"
+    assert conn.calls[0][1][1] == "sess_1"
+    assert conn.calls[0][1][2] == server.gateway_pid
+    assert conn.calls[0][1][3] == server.gateway_instance_uuid
     assert "UPDATE artifacts" in conn.calls[1][0]
     assert conn.calls[1][1] == ("local", "art_1")
 
@@ -1699,7 +1748,10 @@ def test_safe_touch_for_search_updates_session_only(
     assert touched is True
     assert len(conn.calls) == 1
     assert "INSERT INTO sessions" in conn.calls[0][0]
-    assert conn.calls[0][1] == ("local", "sess_1")
+    assert conn.calls[0][1][0] == "local"
+    assert conn.calls[0][1][1] == "sess_1"
+    assert conn.calls[0][1][2] == server.gateway_pid
+    assert conn.calls[0][1][3] == server.gateway_instance_uuid
 
 
 def test_artifact_next_page_returns_gone_for_deleted_artifact(

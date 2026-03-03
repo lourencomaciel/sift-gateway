@@ -138,6 +138,8 @@ class CreateArtifactInput:
             provenance object override.
         capture_key: Optional explicit protocol-neutral capture
             identity key override.
+        runtime_provenance: Optional runtime provenance fields
+            persisted alongside session heartbeat metadata.
         expires_at: Optional absolute expiration timestamp.
     """
 
@@ -157,6 +159,7 @@ class CreateArtifactInput:
     capture_kind: str | None = None
     capture_origin: dict[str, Any] | None = None
     capture_key: str | None = None
+    runtime_provenance: dict[str, Any] | None = None
     expires_at: dt.datetime | None = None
 
 
@@ -526,7 +529,11 @@ def persist_artifact(
             ),
         )
         connection.execute(
-            UPSERT_SESSION_SQL, upsert_session_params(input_data.session_id)
+            UPSERT_SESSION_SQL,
+            upsert_session_params(
+                input_data.session_id,
+                runtime_provenance=input_data.runtime_provenance,
+            ),
         )
         created_row = connection.execute(
             INSERT_ARTIFACT_SQL,
