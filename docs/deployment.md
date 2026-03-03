@@ -66,8 +66,8 @@ sift-gateway --transport sse --host 0.0.0.0
 ### Outbound secret redaction
 
 Outbound tool responses are redacted by default before they are returned to the
-MCP client. This helps prevent accidental leakage of API keys/tokens from
-upstream payloads.
+MCP client. Redaction is deterministic and conservative: only known secret
+exposure patterns are masked.
 
 ```bash
 # Enabled by default
