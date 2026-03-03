@@ -483,6 +483,46 @@ def test_pagination_response_meta_merges_extra_warnings() -> None:
     ]
 
 
+def test_pagination_response_meta_duplicate_non_advancing_marks_complete() -> (
+    None
+):
+    assessment = PaginationAssessment(
+        state=None,
+        has_more=False,
+        retrieval_status="PARTIAL",
+        partial_reason="NEXT_TOKEN_MISSING",
+        warning="INCOMPLETE_RESULT_SET",
+        page_number=1,
+    )
+    meta = _pagination_response_meta(
+        assessment,
+        "art_123",
+        extra_warnings=[
+            {
+                "code": "PAGINATION_DUPLICATE_PAGE",
+                "previous_artifact_id": "art_prev",
+            }
+        ],
+    )
+    assert meta["retrieval_status"] == "COMPLETE"
+    assert meta["partial_reason"] is None
+    assert meta["has_more"] is False
+    assert meta["next"] is None
+    assert meta["warning"] is None
+    assert meta["warnings"] == [
+        {
+            "code": "PAGINATION_DUPLICATE_PAGE",
+            "previous_artifact_id": "art_prev",
+        }
+    ]
+    assert meta["capability"] == {
+        "has_more_signal_detected": True,
+        "continuable": False,
+        "next_params_detected": False,
+    }
+    assert "No additional pages are available." in meta["hint"]
+
+
 # -- gateway_tool_result with pagination --
 
 

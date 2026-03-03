@@ -97,6 +97,8 @@ class PaginationAssessment:
         warning: Optional warning code (e.g.
             ``INCOMPLETE_RESULT_SET``).
         page_number: Zero-based page number for this response.
+        detector: Optional detector diagnostics to expose in response
+            pagination metadata.
     """
 
     state: PaginationState | None
@@ -105,6 +107,25 @@ class PaginationAssessment:
     partial_reason: UpstreamPartialReason | None
     warning: str | None
     page_number: int
+    detector: dict[str, Any] | None = None
+
+
+def _discovery_detector_payload(discovered: Any) -> dict[str, Any]:
+    """Build compact diagnostics payload for discovery-mode decisions."""
+    payload: dict[str, Any] = {
+        "mode": "discovery",
+        "limit_hit": bool(getattr(discovered, "limit_hit", False)),
+    }
+    strategy = getattr(discovered, "strategy", None)
+    if isinstance(strategy, str) and strategy:
+        payload["strategy"] = strategy
+    confidence = getattr(discovered, "confidence", None)
+    if isinstance(confidence, (int, float)):
+        payload["confidence"] = float(confidence)
+    rejected_reason = getattr(discovered, "rejected_reason", None)
+    if isinstance(rejected_reason, str) and rejected_reason:
+        payload["rejected_reason"] = rejected_reason
+    return payload
 
 
 def _has_more(
@@ -305,6 +326,7 @@ def assess_pagination(
             original_args=original_args,
             upstream_meta=upstream_meta,
         )
+        detector_payload = _discovery_detector_payload(discovered)
         has_more_signal = discovered.has_more
         next_params = discovered.next_params
         # Explicit terminal signal should always mark completion,
@@ -317,6 +339,7 @@ def assess_pagination(
                 partial_reason=None,
                 warning=None,
                 page_number=page_number,
+                detector=detector_payload,
             )
         if next_params is None:
             if has_more_signal is True:
@@ -327,6 +350,7 @@ def assess_pagination(
                     partial_reason=UPSTREAM_PARTIAL_REASON_NEXT_TOKEN_MISSING,
                     warning=PAGINATION_WARNING_INCOMPLETE_RESULT_SET,
                     page_number=page_number,
+                    detector=detector_payload,
                 )
             # Keep page-0 behavior conservative (no warnings or
             # completeness claim when no signal exists at all), but on
@@ -341,6 +365,7 @@ def assess_pagination(
                 partial_reason=None,
                 warning=None,
                 page_number=page_number,
+                detector=detector_payload,
             )
     else:
         # MCP-configured strategy path: honor explicit config.

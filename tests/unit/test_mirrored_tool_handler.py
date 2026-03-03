@@ -311,6 +311,7 @@ def test_detect_duplicate_page_warning_emits_warning() -> None:
     assert warning["previous_artifact_id"] == "art_prev"
     assert warning["cursor_param"] == "after"
     assert warning["cursor_value"] == "CURSOR_2"
+    assert warning["match_method"] == "payload_hash"
 
 
 def test_detect_duplicate_page_warning_skips_when_hash_differs() -> None:
@@ -334,6 +335,213 @@ def test_detect_duplicate_page_warning_skips_when_hash_differs() -> None:
         ),
     )
     assert warning is None
+
+
+def test_detect_duplicate_page_warning_discovery_mode_after_cursor() -> None:
+    conn = MagicMock()
+    cursor = MagicMock()
+    cursor.fetchone.return_value = ("art_prev", "hash_same")
+    conn.execute.return_value = cursor
+    warning = _detect_duplicate_page_warning(
+        connection=conn,
+        artifact_id="art_new",
+        payload_hash_full="hash_same",
+        created_seq=11,
+        session_id="sess_1",
+        source_tool="meta-ads.get_ads",
+        forwarded_args={"limit": 500, "after": "CURSOR_2"},
+        pagination_config=None,
+    )
+    assert warning is not None
+    assert warning["code"] == "PAGINATION_DUPLICATE_PAGE"
+    assert warning["cursor_param"] == "after"
+    assert warning["cursor_value"] == "CURSOR_2"
+    assert warning["match_method"] == "payload_hash"
+
+
+def test_detect_duplicate_page_warning_discovery_mode_skips_without_cursor() -> None:
+    conn = MagicMock()
+    warning = _detect_duplicate_page_warning(
+        connection=conn,
+        artifact_id="art_new",
+        payload_hash_full="hash_same",
+        created_seq=11,
+        session_id="sess_1",
+        source_tool="meta-ads.get_ads",
+        forwarded_args={"limit": 500},
+        pagination_config=None,
+    )
+    assert warning is None
+
+
+def test_detect_duplicate_page_warning_emits_schema_overlap_warning() -> None:
+    conn = MagicMock()
+
+    def _execute(sql: str, params: tuple[object, ...]) -> MagicMock:
+        cursor = MagicMock()
+        if "SELECT artifact_id, payload_hash_full" in sql:
+            cursor.fetchone.return_value = ("art_prev", "hash_prev")
+            return cursor
+        if (
+            "FROM artifact_schema_roots" in sql
+            and len(params) >= 2
+            and params[1] == "art_new"
+        ):
+            cursor.fetchall.return_value = [
+                ("$.result.data", "sha256:data_same", 500),
+                ("$.result.paging", "sha256:paging_new", 1),
+            ]
+            return cursor
+        if (
+            "FROM artifact_schema_roots" in sql
+            and len(params) >= 2
+            and params[1] == "art_prev"
+        ):
+            cursor.fetchall.return_value = [
+                ("$.result.data", "sha256:data_same", 500),
+                ("$.result.paging", "sha256:paging_old", 1),
+            ]
+            return cursor
+        cursor.fetchall.return_value = []
+        return cursor
+
+    conn.execute.side_effect = _execute
+    warning = _detect_duplicate_page_warning(
+        connection=conn,
+        artifact_id="art_new",
+        payload_hash_full="hash_new",
+        created_seq=11,
+        session_id="sess_1",
+        source_tool="meta-ads.get_ads",
+        forwarded_args={"limit": 500, "after": "CURSOR_2"},
+        pagination_config=PaginationConfig(
+            strategy="cursor",
+            cursor_response_path="$.paging.cursors.after",
+            cursor_param_name="after",
+            has_more_response_path="$.paging.next",
+        ),
+    )
+    assert warning is not None
+    assert warning["code"] == "PAGINATION_DUPLICATE_PAGE"
+    assert warning["previous_artifact_id"] == "art_prev"
+    assert warning["match_method"] == "schema_dataset_hash"
+    assert warning["duplicate_root_path"] == "$.result.data"
+    assert warning["duplicate_dataset_hash"] == "sha256:data_same"
+    assert warning["duplicate_observed_records"] == 500
+
+
+def test_detect_duplicate_page_warning_ignores_paging_signature_only() -> None:
+    conn = MagicMock()
+
+    def _execute(sql: str, params: tuple[object, ...]) -> MagicMock:
+        cursor = MagicMock()
+        if "SELECT artifact_id, payload_hash_full" in sql:
+            cursor.fetchone.return_value = ("art_prev", "hash_prev")
+            return cursor
+        if "FROM artifact_schema_roots" in sql:
+            cursor.fetchall.return_value = [
+                ("$.result.paging", "sha256:paging_same", 1),
+            ]
+            return cursor
+        cursor.fetchall.return_value = []
+        return cursor
+
+    conn.execute.side_effect = _execute
+    warning = _detect_duplicate_page_warning(
+        connection=conn,
+        artifact_id="art_new",
+        payload_hash_full="hash_new",
+        created_seq=11,
+        session_id="sess_1",
+        source_tool="meta-ads.get_ads",
+        forwarded_args={"limit": 500, "after": "CURSOR_2"},
+        pagination_config=PaginationConfig(
+            strategy="cursor",
+            cursor_response_path="$.paging.cursors.after",
+            cursor_param_name="after",
+            has_more_response_path="$.paging.next",
+        ),
+    )
+    assert warning is None
+
+
+def test_detect_duplicate_page_warning_uses_payload_collection_hash_fallback() -> (
+    None
+):
+    conn = MagicMock()
+    current_envelope_payload = {
+        "content": [
+            {
+                "type": "json",
+                "value": {
+                    "result": {
+                        "data": [{"id": "1"}, {"id": "2"}],
+                        "paging": {"next": "https://api.example.test/page2"},
+                    }
+                },
+            }
+        ]
+    }
+    previous_envelope_payload = {
+        "content": [
+            {
+                "type": "json",
+                "value": {
+                    "result": {
+                        "data": [{"id": "1"}, {"id": "2"}],
+                        "paging": {"next": "https://api.example.test/page3"},
+                    }
+                },
+            }
+        ]
+    }
+
+    def _execute(sql: str, params: tuple[object, ...]) -> MagicMock:
+        cursor = MagicMock()
+        if "SELECT artifact_id, payload_hash_full" in sql:
+            cursor.fetchone.return_value = ("art_prev", "hash_prev")
+            return cursor
+        if "FROM artifact_schema_roots" in sql:
+            cursor.fetchall.return_value = []
+            return cursor
+        if "SELECT pb.envelope" in sql:
+            cursor.fetchone.return_value = (
+                previous_envelope_payload,
+                "none",
+                None,
+                "hash_prev",
+            )
+            return cursor
+        cursor.fetchone.return_value = None
+        cursor.fetchall.return_value = []
+        return cursor
+
+    conn.execute.side_effect = _execute
+    warning = _detect_duplicate_page_warning(
+        connection=conn,
+        artifact_id="art_new",
+        payload_hash_full="hash_new",
+        created_seq=11,
+        session_id="sess_1",
+        source_tool="meta-ads.get_ads",
+        forwarded_args={"limit": 500, "after": "CURSOR_2"},
+        pagination_config=PaginationConfig(
+            strategy="cursor",
+            cursor_response_path="$.paging.cursors.after",
+            cursor_param_name="after",
+            has_more_response_path="$.paging.next",
+        ),
+        current_envelope_payload=current_envelope_payload,
+        blobs_payload_dir="/tmp",
+    )
+    assert warning is not None
+    assert warning["code"] == "PAGINATION_DUPLICATE_PAGE"
+    assert warning["previous_artifact_id"] == "art_prev"
+    assert warning["match_method"] == "payload_collection_hash"
+    assert warning["duplicate_root_path"] == "$.result.data"
+    assert warning["duplicate_dataset_hash"].startswith("sha256:")
+    assert warning["duplicate_observed_records"] == 2
+    assert warning["duplicate_previous_observed_records"] == 2
 
 
 def test_fetch_inline_describe_dedupes_exact_duplicate_schema_roots() -> None:

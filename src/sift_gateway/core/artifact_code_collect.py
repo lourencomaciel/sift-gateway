@@ -65,6 +65,7 @@ class _RequestedCodeCandidates:
     missing_root_artifacts: list[str]
     related_ids: list[str]
     related_set_hash: str
+    mixed_schema_signature_groups: list[dict[str, Any]]
 
 
 def _new_collection_state(request: Any) -> _CodeCollectionState:
@@ -579,6 +580,7 @@ def _resolve_requested_code_candidates(
                     requested_artifact_id=requested_artifact_id,
                     anchor_meta=resolved_single.anchor_meta,
                 ),
+                mixed_schema_signature_groups=[],
             ),
             None,
         )
@@ -600,6 +602,9 @@ def _resolve_requested_code_candidates(
             missing_root_artifacts=resolved_candidates.missing_root_artifacts,
             related_ids=resolved_candidates.related_ids,
             related_set_hash=resolved_candidates.related_set_hash,
+            mixed_schema_signature_groups=(
+                resolved_candidates.mixed_schema_signature_groups
+            ),
         ),
         None,
     )
@@ -626,6 +631,22 @@ def _record_requested_code_lineage_state(
         root_path_for_requested=root_path_for_requested,
         missing_root_artifacts=resolved_candidates.missing_root_artifacts,
     )
+    if resolved_candidates.mixed_schema_signature_groups:
+        warning: dict[str, Any] = {
+            "code": "MIXED_SCHEMA_SIGNATURES",
+            "root_path": root_path_for_requested,
+            "signature_groups": (
+                resolved_candidates.mixed_schema_signature_groups
+            ),
+            "message": (
+                "all_related inputs include multiple strict schema "
+                "signatures; proceeding because root shape/mode are "
+                "compatible."
+            ),
+        }
+        if len(request.requested_artifact_ids) > 1:
+            warning["anchor_artifact_id"] = requested_artifact_id
+        state.warnings.append(warning)
 
 
 def _store_requested_code_schema(

@@ -67,7 +67,7 @@ def test_compute_related_set_hash_is_order_independent() -> None:
     assert compute_related_set_hash(rows_a) == compute_related_set_hash(rows_b)
 
 
-def test_build_lineage_root_catalog_marks_compatibility_by_schema() -> None:
+def test_build_lineage_root_catalog_marks_compatibility_by_shape_and_mode() -> None:
     entries = [
         {
             "artifact_id": "art_1",
@@ -100,5 +100,34 @@ def test_build_lineage_root_catalog_marks_compatibility_by_schema() -> None:
     roots = build_lineage_root_catalog(entries)
     assert len(roots) == 1
     assert roots[0]["root_path"] == "$.items"
-    assert roots[0]["compatible_for_select"] is False
+    assert roots[0]["compatible_for_select"] is True
+    # Strict groups are still surfaced for diagnostics/UX.
+    assert len(roots[0]["signature_groups"]) == 2
+
+
+def test_build_lineage_root_catalog_tolerates_schema_mode_drift() -> None:
+    entries = [
+        {
+            "artifact_id": "art_1",
+            "root_path": "$.items",
+            "root_shape": "array",
+            "count_estimate": 2,
+            "schema_hash": "sha256:" + ("a" * 64),
+            "schema_mode": "exact",
+            "schema_completeness": "complete",
+        },
+        {
+            "artifact_id": "art_2",
+            "root_path": "$.items",
+            "root_shape": "array",
+            "count_estimate": 1,
+            "schema_hash": "sha256:" + ("b" * 64),
+            "schema_mode": "sampled",
+            "schema_completeness": "partial",
+        },
+    ]
+    roots = build_lineage_root_catalog(entries)
+    assert len(roots) == 1
+    assert roots[0]["root_path"] == "$.items"
+    assert roots[0]["compatible_for_select"] is True
     assert len(roots[0]["signature_groups"]) == 2

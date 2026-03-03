@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 from dataclasses import dataclass
 import importlib
+import json
 import re
 from typing import Any, Protocol, cast
 from urllib.parse import parse_qsl, unquote, urlsplit
@@ -201,12 +202,17 @@ class ResponseSecretRedactor:
         value: Any,
         *,
         key_hint: str | None = None,
+        skip_scanner: bool = False,
     ) -> tuple[Any, int]:
         if isinstance(value, str):
-            return self._redact_string(value, key_hint=key_hint)
+            return self._redact_string(
+                value, key_hint=key_hint, skip_scanner=skip_scanner
+            )
 
         if isinstance(value, list):
-            return self._redact_list(value, key_hint=key_hint)
+            return self._redact_list(
+                value, key_hint=key_hint, skip_scanner=skip_scanner
+            )
 
         if isinstance(value, dict):
             return self._redact_dict(value)
@@ -218,13 +224,16 @@ class ResponseSecretRedactor:
         values: list[Any],
         *,
         key_hint: str | None = None,
+        skip_scanner: bool = False,
     ) -> tuple[list[Any], int]:
         total = 0
         changed = False
         updated_items: list[Any] = []
         for item in values:
             updated_item, item_redactions = self._redact_value(
-                item, key_hint=key_hint
+                item,
+                key_hint=key_hint,
+                skip_scanner=skip_scanner,
             )
             total += item_redactions
             changed = changed or updated_item is not item
@@ -238,14 +247,40 @@ class ResponseSecretRedactor:
         changed = False
         updated_map: dict[str, Any] = {}
         for key, current in values.items():
+            skip_scanner = self._should_skip_scanner_for_field(
+                key=key,
+                value=current,
+                parent=values,
+            )
             updated_current, current_redactions = self._redact_value(
                 current,
                 key_hint=key,
+                skip_scanner=skip_scanner,
             )
             total += current_redactions
             changed = changed or updated_current is not current
             updated_map[key] = updated_current
         return (updated_map if changed else values), total
+
+    def _should_skip_scanner_for_field(
+        self,
+        *,
+        key: str,
+        value: Any,
+        parent: dict[str, Any],
+    ) -> bool:
+        if not isinstance(value, str):
+            return False
+        normalized_key = key.lower()
+        if normalized_key not in {"data", "base64", "image_data"}:
+            return False
+        mime_type = parent.get("mimeType")
+        if not isinstance(mime_type, str):
+            mime_type = parent.get("mime_type")
+        if isinstance(mime_type, str) and mime_type.lower().startswith("image/"):
+            return True
+        payload_type = parent.get("type")
+        return isinstance(payload_type, str) and payload_type.lower() == "image"
 
     def _should_use_relaxed_url_redaction(
         self,
@@ -255,20 +290,62 @@ class ResponseSecretRedactor:
     ) -> bool:
         if not isinstance(text, str):
             return False
-        if not self._looks_like_common_file_url(text):
+        if not self._is_http_url(text):
             return False
+        # Meta/Facebook CDN media URLs frequently include high-entropy signing
+        # fragments that trigger scanner heuristics. Treat all fbcdn URLs in
+        # relaxed mode and rely on explicit known-token patterns for secrets.
+        if self._is_likely_media_cdn_host(text):
+            return True
+        if isinstance(key_hint, str):
+            normalized_key = key_hint.lower()
+            if (
+                normalized_key in {"url", "src"}
+                and self._is_likely_media_cdn_host(text)
+            ):
+                return self._has_signed_file_url_query(text)
+        if self._looks_like_common_file_url(text):
+            if isinstance(key_hint, str) and key_hint.lower().endswith(
+                _SCANNER_FILTER_FIELD_SUFFIX
+            ):
+                return True
+            return self._has_signed_file_url_query(text)
         if isinstance(key_hint, str) and key_hint.lower().endswith(
             _SCANNER_FILTER_FIELD_SUFFIX
         ):
-            return True
-        return self._has_signed_file_url_query(text)
+            return self._has_signed_file_url_query(text)
+        if not self._has_signed_file_url_query(text):
+            return False
+        return self._query_contains_embedded_http_url(text)
+
+    def _is_http_url(self, text: str) -> bool:
+        parsed = urlsplit(text)
+        return parsed.scheme.lower() in {"http", "https"} and bool(
+            parsed.netloc
+        )
+
+    def _is_likely_media_cdn_host(self, text: str) -> bool:
+        parsed = urlsplit(text)
+        host = parsed.netloc.lower().split(":", 1)[0]
+        return host.endswith("fbcdn.net")
+
+    def _query_contains_embedded_http_url(self, text: str) -> bool:
+        parsed = urlsplit(text)
+        if not parsed.query:
+            return False
+        for _key, value in parse_qsl(parsed.query, keep_blank_values=True):
+            candidate = unquote(value).strip()
+            if not candidate:
+                continue
+            nested = urlsplit(candidate)
+            if nested.scheme.lower() in {"http", "https"} and nested.netloc:
+                return True
+        return False
 
     def _looks_like_common_file_url(self, text: str) -> bool:
+        if not self._is_http_url(text):
+            return False
         parsed = urlsplit(text)
-        if parsed.scheme.lower() not in {"http", "https"}:
-            return False
-        if not parsed.netloc:
-            return False
         filename = unquote(parsed.path.rsplit("/", 1)[-1]).lower()
         if not filename or "." not in filename:
             return False
@@ -326,11 +403,22 @@ class ResponseSecretRedactor:
         text: str,
         *,
         key_hint: str | None = None,
+        skip_scanner: bool = False,
     ) -> tuple[str, int]:
+        json_result = self._redact_embedded_json_string(
+            text,
+            key_hint=key_hint,
+        )
+        if json_result is not None:
+            return json_result
         if not self._should_scan_string(text):
             return text, 0
 
         redacted, total_hits = self._redact_known_secret_patterns(text)
+        if skip_scanner:
+            if total_hits == 0 or redacted == text:
+                return text, 0
+            return redacted, total_hits
         if self._should_use_relaxed_url_redaction(
             key_hint,
             text=text,
@@ -349,6 +437,45 @@ class ResponseSecretRedactor:
         if total_hits == 0 or redacted == text:
             return text, 0
         return redacted, total_hits
+
+    def _redact_embedded_json_string(
+        self,
+        text: str,
+        *,
+        key_hint: str | None = None,
+    ) -> tuple[str, int] | None:
+        stripped = text.strip()
+        if len(stripped) < 2:
+            return None
+        if stripped[0] not in {"{", "["}:
+            return None
+        if stripped[-1] not in {"}", "]"}:
+            return None
+        try:
+            parsed = json.loads(stripped)
+        except Exception:
+            return None
+        if not isinstance(parsed, (dict, list)):
+            return None
+        redacted_value, redacted_count = self._redact_value(
+            parsed,
+            key_hint=key_hint,
+            skip_scanner=False,
+        )
+        if redacted_count == 0:
+            return text, 0
+        serialized = json.dumps(
+            redacted_value,
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        if stripped == text:
+            return serialized, redacted_count
+        leading = len(text) - len(text.lstrip())
+        trailing = len(text) - len(text.rstrip())
+        prefix = text[:leading]
+        suffix = text[len(text) - trailing :] if trailing else ""
+        return f"{prefix}{serialized}{suffix}", redacted_count
 
     def _replace_group_two_pattern(
         self,
