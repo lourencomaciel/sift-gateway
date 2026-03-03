@@ -40,6 +40,7 @@ from sift_gateway.config.upstream_registry_convert import (
     _extract_gateway_fields,
 )
 from sift_gateway.config.upstream_secrets import (
+    clear_oauth_client_registration,
     mark_oauth_access_token_stale,
     oauth_cache_dir_path,
     oauth_token_storage,
@@ -820,6 +821,19 @@ def login_upstream(
 
     try:
         token_storage = oauth_token_storage(resolved_data_dir, target_ref)
+        try:
+            asyncio.run(
+                clear_oauth_client_registration(
+                    token_storage=token_storage,
+                    server_url=url,
+                )
+            )
+        except Exception as exc:
+            _logger.debug(
+                "skipped oauth client registration reset for %s: %s",
+                server,
+                exc,
+            )
         access_token = asyncio.run(
             _oauth_login_access_token(
                 url=url,
