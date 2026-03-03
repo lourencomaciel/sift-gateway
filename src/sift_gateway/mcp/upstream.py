@@ -254,6 +254,13 @@ _ENV_ALLOWLIST: frozenset[str] = frozenset(
         "SHELL",
     }
 )
+_AUTH_STATUS_CODES: frozenset[int] = frozenset({401, 403})
+_AUTH_ERROR_HINTS: tuple[str, ...] = (
+    "unauthorized",
+    "invalid_token",
+    "access_denied",
+    "interactive login",
+)
 
 
 def _secret_oauth_enabled(secret: SecretData | None) -> bool:
@@ -396,9 +403,8 @@ def _build_runtime_oauth_auth(
         return None
 
     from fastmcp.client.auth import OAuth
-    from key_value.aio.stores.disk import DiskStore
 
-    from sift_gateway.config.upstream_secrets import oauth_cache_dir
+    from sift_gateway.config.upstream_secrets import oauth_token_storage
     from sift_gateway.constants import DEFAULT_DATA_DIR
 
     class _RuntimeOAuth(OAuth):
@@ -412,10 +418,87 @@ def _build_runtime_oauth_auth(
 
     resolved_dir = data_dir or DEFAULT_DATA_DIR
     secret_ref = config.secret_ref or config.prefix
-    token_storage = DiskStore(
-        directory=oauth_cache_dir(resolved_dir, secret_ref)
-    )
+    token_storage = oauth_token_storage(resolved_dir, secret_ref)
     return _RuntimeOAuth(config.url, token_storage=token_storage)
+
+
+def _exception_http_status(exc: Exception) -> int | None:
+    """Best-effort extraction of HTTP status code from transport exceptions."""
+    status = getattr(exc, "status_code", None)
+    if isinstance(status, int):
+        return status
+
+    response = getattr(exc, "response", None)
+    response_status = getattr(response, "status_code", None)
+    if isinstance(response_status, int):
+        return response_status
+    return None
+
+
+def _is_auth_failure_exception(exc: Exception) -> bool:
+    """Return whether *exc* signals an authentication failure."""
+    status = _exception_http_status(exc)
+    if status in _AUTH_STATUS_CODES:
+        return True
+
+    text = str(exc).lower()
+    return any(hint in text for hint in _AUTH_ERROR_HINTS)
+
+
+async def _mark_runtime_oauth_access_token_stale(
+    *,
+    config: UpstreamConfig,
+    data_dir: str | None,
+) -> bool:
+    """Mark stored access token stale to force refresh on next OAuth request."""
+    if config.transport != "http":
+        return False
+    if not config.url:
+        return False
+
+    from sift_gateway.config.upstream_secrets import (
+        mark_oauth_access_token_stale,
+        oauth_token_storage,
+    )
+    from sift_gateway.constants import DEFAULT_DATA_DIR
+
+    resolved_dir = data_dir or DEFAULT_DATA_DIR
+    secret_ref = config.secret_ref or config.prefix
+    token_storage = oauth_token_storage(resolved_dir, secret_ref)
+    return await mark_oauth_access_token_stale(
+        token_storage,
+        server_url=config.url,
+    )
+
+
+async def _call_tool_once(
+    *,
+    instance: UpstreamInstance,
+    tool_name: str,
+    arguments: dict[str, Any],
+    data_dir: str | None,
+) -> dict[str, Any]:
+    """Call upstream once and normalize the tool result."""
+    transport = _client_transport(
+        instance.config,
+        data_dir,
+        secret=instance.secret_data,
+        resolved_user_id=instance.resolved_external_user_id,
+    )
+    async with Client(transport, timeout=30.0) as client:
+        result = await client.call_tool(tool_name, arguments)
+
+    normalized_content = _client_result_content(result)
+    structured = getattr(result, "structured_content", None)
+    is_error = bool(getattr(result, "is_error", False))
+    meta = getattr(result, "meta", None)
+
+    return {
+        "content": normalized_content,
+        "structuredContent": structured,
+        "isError": is_error,
+        "meta": meta if isinstance(meta, dict) else {},
+    }
 
 
 def _effective_external_user_id(
@@ -776,23 +859,31 @@ async def call_upstream_tool(
         Dict with ``content`` (list), ``structuredContent``,
         ``isError`` (bool), and ``meta`` keys.
     """
-    transport = _client_transport(
-        instance.config,
-        data_dir,
-        secret=instance.secret_data,
-        resolved_user_id=instance.resolved_external_user_id,
-    )
-    async with Client(transport, timeout=30.0) as client:
-        result = await client.call_tool(tool_name, arguments)
+    try:
+        return await _call_tool_once(
+            instance=instance,
+            tool_name=tool_name,
+            arguments=arguments,
+            data_dir=data_dir,
+        )
+    except Exception as exc:
+        if (
+            instance.config.transport != "http"
+            or not _secret_oauth_enabled(instance.secret_data)
+            or not _is_auth_failure_exception(exc)
+        ):
+            raise
 
-    normalized_content = _client_result_content(result)
-    structured = getattr(result, "structured_content", None)
-    is_error = bool(getattr(result, "is_error", False))
-    meta = getattr(result, "meta", None)
+        refreshed = await _mark_runtime_oauth_access_token_stale(
+            config=instance.config,
+            data_dir=data_dir,
+        )
+        if not refreshed:
+            raise
 
-    return {
-        "content": normalized_content,
-        "structuredContent": structured,
-        "isError": is_error,
-        "meta": meta if isinstance(meta, dict) else {},
-    }
+        return await _call_tool_once(
+            instance=instance,
+            tool_name=tool_name,
+            arguments=arguments,
+            data_dir=data_dir,
+        )
