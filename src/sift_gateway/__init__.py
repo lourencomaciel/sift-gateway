@@ -5,5 +5,5 @@ intercepts upstream tool results and stores them as durable,
 content-addressed artifact envelopes.
 """
 
-__version__ = "0.3.4"
+__version__ = "0.3.6"
 __all__ = ["__version__"]
