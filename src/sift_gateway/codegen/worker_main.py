@@ -5,12 +5,12 @@ from __future__ import annotations
 import ast
 import asyncio
 import builtins as _builtins
+from functools import cache
 import importlib.util
 import inspect
+from pathlib import Path
 import sys
 import traceback
-from functools import lru_cache
-from pathlib import Path
 from typing import Any
 
 from sift_gateway.codegen.ast_guard import (
@@ -60,12 +60,11 @@ def _safe_import(
     if level != 0:
         raise ImportError("relative imports are not allowed")
     root = name.split(".", 1)[0]
-    if root not in _ALLOWED_IMPORT_ROOTS:
-        if not _is_allowed_transitive_stdlib_import(
-            name=name,
-            globals_dict=globals,
-        ):
-            raise ImportError(f"import not allowed: {name}")
+    if root not in _ALLOWED_IMPORT_ROOTS and not _is_allowed_transitive_stdlib_import(
+        name=name,
+        globals_dict=globals,
+    ):
+        raise ImportError(f"import not allowed: {name}")
     if root == "urllib" and name not in _ALLOWED_URLLIB_MODULES:
         raise ImportError(
             f"import not allowed: {name} (only urllib.parse is permitted)"
@@ -116,7 +115,7 @@ def _is_allowed_transitive_stdlib_import(
     )
 
 
-@lru_cache(maxsize=None)
+@cache
 def _direct_stdlib_import_roots(module_name: str) -> frozenset[str]:
     """Return direct stdlib import roots referenced by a stdlib module."""
     try:
@@ -155,7 +154,7 @@ def _direct_stdlib_import_roots(module_name: str) -> frozenset[str]:
     return frozenset(imports)
 
 
-@lru_cache(maxsize=None)
+@cache
 def _transitive_stdlib_import_roots(module_root: str) -> frozenset[str]:
     """Return recursively discovered stdlib import roots for ``module_root``."""
     if module_root not in _STDLIB_IMPORT_ROOTS:
