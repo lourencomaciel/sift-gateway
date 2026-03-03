@@ -40,8 +40,9 @@ from sift_gateway.config.upstream_registry_convert import (
     _extract_gateway_fields,
 )
 from sift_gateway.config.upstream_secrets import (
-    oauth_cache_dir,
+    mark_oauth_access_token_stale,
     oauth_cache_dir_path,
+    oauth_token_storage,
     read_secret,
     secret_file_path,
     validate_prefix,
@@ -818,11 +819,7 @@ def login_upstream(
         return result
 
     try:
-        from key_value.aio.stores.disk import DiskStore
-
-        token_storage = DiskStore(
-            directory=oauth_cache_dir(resolved_data_dir, target_ref)
-        )
+        token_storage = oauth_token_storage(resolved_data_dir, target_ref)
         access_token = asyncio.run(
             _oauth_login_access_token(
                 url=url,
@@ -1072,6 +1069,210 @@ def probe_upstreams(
             data_dir=resolved_data_dir,
         )
     )
+    ok_count = sum(1 for item in results if item.get("ok"))
+    return {
+        "results": results,
+        "ok": ok_count == len(results),
+        "ok_count": ok_count,
+        "total": len(results),
+    }
+
+
+def _upstream_secret_ref(upstream: Any) -> str | None:
+    """Return normalized secret ref for one upstream config."""
+    raw_secret_ref = getattr(upstream, "secret_ref", None)
+    if isinstance(raw_secret_ref, str) and raw_secret_ref:
+        return raw_secret_ref.removesuffix(".json")
+
+    raw_prefix = getattr(upstream, "prefix", None)
+    if isinstance(raw_prefix, str) and raw_prefix:
+        return raw_prefix
+    return None
+
+
+def _upstream_oauth_enabled(upstream: Any, data_dir: Path) -> bool:
+    """Return whether one HTTP upstream has OAuth runtime auth enabled."""
+    if getattr(upstream, "transport", None) != "http":
+        return False
+    raw_secret_ref = getattr(upstream, "secret_ref", None)
+    has_explicit_secret_ref = (
+        isinstance(raw_secret_ref, str) and bool(raw_secret_ref)
+    )
+    secret_ref = _upstream_secret_ref(upstream)
+    if not isinstance(secret_ref, str) or not secret_ref:
+        return False
+    name = str(getattr(upstream, "prefix", secret_ref))
+    try:
+        secret = read_secret(data_dir, secret_ref)
+    except FileNotFoundError as exc:
+        if not has_explicit_secret_ref:
+            return False
+        msg = f"upstream {name!r} secret file {secret_ref!r} not found"
+        raise ValueError(msg) from exc
+    except Exception as exc:
+        msg = (
+            f"upstream {name!r} has invalid secret file "
+            f"{secret_ref!r}: {exc}"
+        )
+        raise ValueError(msg) from exc
+    oauth = secret.get("oauth")
+    return isinstance(oauth, dict) and bool(oauth.get("enabled"))
+
+
+async def _probe_one_oauth_upstream(
+    upstream: Any,
+    data_dir: Path,
+) -> dict[str, Any]:
+    """Probe one OAuth-enabled upstream with a forced refresh attempt."""
+    name = str(getattr(upstream, "prefix", ""))
+    url = getattr(upstream, "url", None)
+    if not isinstance(url, str) or not url:
+        return {
+            "name": name,
+            "ok": False,
+            "error_code": "UPSTREAM_CONFIG_ERROR",
+            "error": "oauth upstream has no HTTP url configured",
+        }
+
+    secret_ref = _upstream_secret_ref(upstream)
+    if not isinstance(secret_ref, str) or not secret_ref:
+        return {
+            "name": name,
+            "ok": False,
+            "error_code": "UPSTREAM_CONFIG_ERROR",
+            "error": "oauth upstream has no secret_ref configured",
+        }
+
+    forced_refresh = False
+    try:
+        token_storage = oauth_token_storage(data_dir, secret_ref)
+        forced_refresh = await mark_oauth_access_token_stale(
+            token_storage=token_storage,
+            server_url=url,
+        )
+        tools = await discover_tools(
+            upstream,
+            data_dir=str(data_dir),
+        )
+    except Exception as exc:
+        return {
+            "name": name,
+            "ok": False,
+            "error_code": classify_upstream_exception(exc),
+            "error": str(exc),
+            "forced_refresh": forced_refresh,
+        }
+    return {
+        "name": name,
+        "ok": True,
+        "tool_count": len(tools),
+        "forced_refresh": forced_refresh,
+    }
+
+
+async def _probe_oauth_upstream_configs(
+    *,
+    upstreams: list[Any],
+    data_dir: Path,
+) -> list[dict[str, Any]]:
+    """Probe OAuth-enabled upstreams concurrently with refresh checks."""
+    return list(
+        await asyncio.gather(
+            *(
+                _probe_one_oauth_upstream(upstream, data_dir)
+                for upstream in upstreams
+            )
+        )
+    )
+
+
+def probe_oauth_upstreams(
+    *,
+    server: str | None = None,
+    all_servers: bool = False,
+    data_dir: Path | None = None,
+) -> dict[str, Any]:
+    """Probe OAuth upstream session health with a forced refresh preflight."""
+    if server and all_servers:
+        msg = "--server and --all are mutually exclusive"
+        raise ValueError(msg)
+    if not server and not all_servers:
+        msg = "one of --server or --all is required"
+        raise ValueError(msg)
+
+    resolved_data_dir = resolve_upstream_data_dir(data_dir)
+    from sift_gateway.config import load_gateway_config
+
+    config = load_gateway_config(data_dir_override=str(resolved_data_dir))
+    active = list(config.upstreams)
+
+    if server:
+        active = [up for up in active if up.prefix == server]
+        if not active:
+            raw_items = list_upstreams(data_dir=resolved_data_dir)
+            disabled = any(
+                item["name"] == server and not item["enabled"]
+                for item in raw_items
+            )
+            if disabled:
+                msg = f"upstream {server!r} is disabled"
+                raise ValueError(msg)
+            msg = f"upstream {server!r} not found"
+            raise ValueError(msg)
+
+    oauth_upstream_indexes: list[int] = []
+    oauth_upstreams: list[Any] = []
+    preflight_failures: dict[int, dict[str, Any]] = {}
+    for idx, upstream in enumerate(active):
+        try:
+            oauth_enabled = _upstream_oauth_enabled(upstream, resolved_data_dir)
+        except ValueError as exc:
+            preflight_failures[idx] = {
+                "name": str(getattr(upstream, "prefix", "")),
+                "ok": False,
+                "error_code": "UPSTREAM_CONFIG_ERROR",
+                "error": str(exc),
+                "forced_refresh": False,
+            }
+            continue
+        if oauth_enabled:
+            oauth_upstream_indexes.append(idx)
+            oauth_upstreams.append(upstream)
+
+    if server and preflight_failures:
+        first_failure = next(iter(preflight_failures.values()))
+        return {
+            "results": [first_failure],
+            "ok": False,
+            "ok_count": 0,
+            "total": 1,
+        }
+    if server and not oauth_upstreams:
+        msg = f"upstream {server!r} is not OAuth-enabled"
+        raise ValueError(msg)
+
+    oauth_results = asyncio.run(
+        _probe_oauth_upstream_configs(
+            upstreams=oauth_upstreams,
+            data_dir=resolved_data_dir,
+        )
+    )
+    oauth_results_by_index = dict(
+        zip(
+            oauth_upstream_indexes,
+            oauth_results,
+            strict=True,
+        )
+    )
+    results: list[dict[str, Any]] = []
+    for idx, _upstream in enumerate(active):
+        if idx in preflight_failures:
+            results.append(preflight_failures[idx])
+            continue
+        oauth_row = oauth_results_by_index.get(idx)
+        if oauth_row is not None:
+            results.append(oauth_row)
+
     ok_count = sum(1 for item in results if item.get("ok"))
     return {
         "results": results,

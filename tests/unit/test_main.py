@@ -13,6 +13,7 @@ from sift_gateway.main import (
     _extract_logs_flag,
     _parse_args,
     _run_upstream_add,
+    _run_upstream_auth_check,
     _run_upstream_auth_set,
     _run_upstream_inspect,
     _run_upstream_list,
@@ -828,6 +829,76 @@ def test_run_upstream_auth_set_prints_json(
     assert payload["secret_ref"] == "gh"
 
 
+def test_run_upstream_auth_check_prints_text_summary(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    monkeypatch.setattr(
+        "sift_gateway.config.upstream_admin.probe_oauth_upstreams",
+        lambda **_kwargs: {
+            "results": [
+                {
+                    "name": "oauth-api",
+                    "ok": True,
+                    "tool_count": 2,
+                    "forced_refresh": True,
+                },
+                {
+                    "name": "broken-api",
+                    "ok": False,
+                    "error_code": "UPSTREAM_RUNTIME_FAILURE",
+                    "error": "boom",
+                },
+            ],
+            "ok": False,
+            "ok_count": 1,
+            "total": 2,
+        },
+    )
+    args = argparse.Namespace(
+        server=None,
+        all=True,
+        data_dir=str(tmp_path),
+        json=False,
+    )
+
+    exit_code = _run_upstream_auth_check(args)
+    captured = capsys.readouterr()
+
+    assert exit_code == 1
+    assert "ok oauth-api tool_count=2 forced_refresh=True" in captured.out
+    assert (
+        "fail broken-api error_code=UPSTREAM_RUNTIME_FAILURE error=boom"
+        in captured.out
+    )
+    assert "summary: 1/2 ok" in captured.out
+
+
+def test_run_upstream_auth_check_prints_json(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    monkeypatch.setattr(
+        "sift_gateway.config.upstream_admin.probe_oauth_upstreams",
+        lambda **_kwargs: {
+            "results": [],
+            "ok": True,
+            "ok_count": 0,
+            "total": 0,
+        },
+    )
+    args = argparse.Namespace(
+        server=None,
+        all=True,
+        data_dir=str(tmp_path),
+        json=True,
+    )
+
+    exit_code = _run_upstream_auth_check(args)
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert json.loads(captured.out)["ok"] is True
+
+
 def test_run_upstream_login_prints_json(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:
@@ -882,6 +953,24 @@ def test_serve_dispatches_upstream_auth_set_command(monkeypatch) -> None:
     assert exit_code == 19
 
 
+def test_serve_dispatches_upstream_auth_check_command(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "sift_gateway.main._parse_args",
+        lambda: argparse.Namespace(
+            command="upstream",
+            upstream_command="auth",
+            auth_command="check",
+        ),
+    )
+    monkeypatch.setattr(
+        "sift_gateway.main._run_upstream_auth_check",
+        lambda _args: 29,
+    )
+
+    exit_code = serve()
+    assert exit_code == 29
+
+
 def test_serve_dispatches_upstream_login_command(monkeypatch) -> None:
     monkeypatch.setattr(
         "sift_gateway.main._parse_args",
@@ -913,7 +1002,7 @@ def test_serve_upstream_auth_requires_subcommand(monkeypatch, capsys) -> None:
     captured = capsys.readouterr()
 
     assert exit_code == 1
-    assert "upstream auth {set}" in captured.err
+    assert "upstream auth {set,check}" in captured.err
 
 
 def test_serve_dispatches_artifact_cli_mode(monkeypatch) -> None:
@@ -1319,6 +1408,25 @@ def test_parse_args_upstream_auth_set(monkeypatch) -> None:
     assert args.auth_command == "set"
     assert args.server == "api"
     assert args.header_pairs == ["Authorization=Bearer tok"]
+
+
+def test_parse_args_upstream_auth_check(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "sift-gateway",
+            "upstream",
+            "auth",
+            "check",
+            "--all",
+        ],
+    )
+    args = _parse_args()
+    assert args.command == "upstream"
+    assert args.upstream_command == "auth"
+    assert args.auth_command == "check"
+    assert args.all is True
+    assert args.server is None
 
 
 def test_parse_args_upstream_login(monkeypatch) -> None:

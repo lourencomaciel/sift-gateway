@@ -14,6 +14,8 @@ from sift_gateway.config.upstream_admin import (
     _delete_secret_file,
     _load_config_server_entry,
     _oauth_login_access_token,
+    _probe_oauth_upstream_configs,
+    _probe_one_oauth_upstream,
     _probe_one_upstream,
     _probe_upstream_configs,
     _read_secret_from_file,
@@ -25,6 +27,7 @@ from sift_gateway.config.upstream_admin import (
     login_upstream,
     normalize_input_servers,
     parse_kv_pairs,
+    probe_oauth_upstreams,
     probe_upstreams,
     reconcile_after_add,
     remove_upstream,
@@ -1503,6 +1506,223 @@ def test_probe_upstreams_reports_not_found(tmp_path: Path, monkeypatch) -> None:
         probe_upstreams(server="missing", data_dir=tmp_path)
 
 
+def test_probe_oauth_upstreams_requires_server_or_all() -> None:
+    with pytest.raises(
+        ValueError, match="one of --server or --all is required"
+    ):
+        probe_oauth_upstreams(server=None, all_servers=False)
+
+
+def test_probe_oauth_upstreams_rejects_server_and_all() -> None:
+    with pytest.raises(
+        ValueError, match="--server and --all are mutually exclusive"
+    ):
+        probe_oauth_upstreams(server="api", all_servers=True)
+
+
+def test_probe_oauth_upstreams_rejects_non_oauth_server(
+    tmp_path: Path, monkeypatch
+) -> None:
+    upstream = SimpleNamespace(
+        prefix="api",
+        transport="http",
+        url="https://example.com/mcp",
+        secret_ref="api",
+    )
+    write_secret(
+        tmp_path,
+        "api",
+        transport="http",
+        headers={"Authorization": "Bearer tok"},
+    )
+    monkeypatch.setattr(
+        "sift_gateway.config.load_gateway_config",
+        lambda **_kwargs: SimpleNamespace(upstreams=[upstream]),
+    )
+
+    with pytest.raises(ValueError, match="not OAuth-enabled"):
+        probe_oauth_upstreams(server="api", data_dir=tmp_path)
+
+
+def test_probe_oauth_upstreams_server_reports_missing_secret_file(
+    tmp_path: Path, monkeypatch
+) -> None:
+    upstream = SimpleNamespace(
+        prefix="oauth-api",
+        transport="http",
+        url="https://example.com/mcp",
+        secret_ref="oauth-api",
+    )
+    monkeypatch.setattr(
+        "sift_gateway.config.load_gateway_config",
+        lambda **_kwargs: SimpleNamespace(upstreams=[upstream]),
+    )
+
+    report = probe_oauth_upstreams(server="oauth-api", data_dir=tmp_path)
+    assert report == {
+        "results": [
+            {
+                "name": "oauth-api",
+                "ok": False,
+                "error_code": "UPSTREAM_CONFIG_ERROR",
+                "error": "upstream 'oauth-api' secret file 'oauth-api' not found",
+                "forced_refresh": False,
+            }
+        ],
+        "ok": False,
+        "ok_count": 0,
+        "total": 1,
+    }
+
+
+def test_probe_oauth_upstreams_all_filters_to_oauth_enabled(
+    tmp_path: Path, monkeypatch
+) -> None:
+    oauth_upstream = SimpleNamespace(
+        prefix="oauth",
+        transport="http",
+        url="https://example.com/oauth",
+        secret_ref="oauth",
+    )
+    plain_upstream = SimpleNamespace(
+        prefix="plain",
+        transport="http",
+        url="https://example.com/plain",
+        secret_ref="plain",
+    )
+    write_secret(
+        tmp_path,
+        "oauth",
+        transport="http",
+        headers={"Authorization": "Bearer tok"},
+        oauth={
+            "enabled": True,
+            "provider": "fastmcp",
+            "token_storage": "disk",
+        },
+    )
+    write_secret(
+        tmp_path,
+        "plain",
+        transport="http",
+        headers={"Authorization": "Bearer tok"},
+    )
+    monkeypatch.setattr(
+        "sift_gateway.config.load_gateway_config",
+        lambda **_kwargs: SimpleNamespace(
+            upstreams=[oauth_upstream, plain_upstream]
+        ),
+    )
+
+    async def _fake_probe_oauth_configs(*, upstreams, data_dir):
+        assert upstreams == [oauth_upstream]
+        assert data_dir == tmp_path
+        return [
+            {
+                "name": "oauth",
+                "ok": True,
+                "tool_count": 1,
+                "forced_refresh": True,
+            }
+        ]
+
+    monkeypatch.setattr(
+        "sift_gateway.config.upstream_admin._probe_oauth_upstream_configs",
+        _fake_probe_oauth_configs,
+    )
+
+    report = probe_oauth_upstreams(all_servers=True, data_dir=tmp_path)
+    assert report == {
+        "results": [
+            {
+                "name": "oauth",
+                "ok": True,
+                "tool_count": 1,
+                "forced_refresh": True,
+            }
+        ],
+        "ok": True,
+        "ok_count": 1,
+        "total": 1,
+    }
+
+
+def test_probe_oauth_upstreams_all_includes_secret_read_failures(
+    tmp_path: Path, monkeypatch
+) -> None:
+    broken_upstream = SimpleNamespace(
+        prefix="broken",
+        transport="http",
+        url="https://example.com/broken",
+        secret_ref="broken",
+    )
+    oauth_upstream = SimpleNamespace(
+        prefix="oauth",
+        transport="http",
+        url="https://example.com/oauth",
+        secret_ref="oauth",
+    )
+    write_secret(
+        tmp_path,
+        "oauth",
+        transport="http",
+        headers={"Authorization": "Bearer tok"},
+        oauth={
+            "enabled": True,
+            "provider": "fastmcp",
+            "token_storage": "disk",
+        },
+    )
+    seen: dict[str, object] = {}
+    monkeypatch.setattr(
+        "sift_gateway.config.load_gateway_config",
+        lambda **_kwargs: SimpleNamespace(
+            upstreams=[broken_upstream, oauth_upstream]
+        ),
+    )
+
+    async def _fake_probe_oauth_configs(*, upstreams, data_dir):
+        seen["upstreams"] = upstreams
+        seen["data_dir"] = data_dir
+        return [
+            {
+                "name": "oauth",
+                "ok": True,
+                "tool_count": 1,
+                "forced_refresh": True,
+            }
+        ]
+
+    monkeypatch.setattr(
+        "sift_gateway.config.upstream_admin._probe_oauth_upstream_configs",
+        _fake_probe_oauth_configs,
+    )
+
+    report = probe_oauth_upstreams(all_servers=True, data_dir=tmp_path)
+    assert seen["upstreams"] == [oauth_upstream]
+    assert seen["data_dir"] == tmp_path
+    assert report == {
+        "results": [
+            {
+                "name": "broken",
+                "ok": False,
+                "error_code": "UPSTREAM_CONFIG_ERROR",
+                "error": "upstream 'broken' secret file 'broken' not found",
+                "forced_refresh": False,
+            },
+            {
+                "name": "oauth",
+                "ok": True,
+                "tool_count": 1,
+                "forced_refresh": True,
+            },
+        ],
+        "ok": False,
+        "ok_count": 1,
+        "total": 2,
+    }
+
+
 def test_test_upstreams_reports_disabled_server(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -1884,6 +2104,76 @@ def test_probe_one_upstream_success_payload(tmp_path: Path, monkeypatch) -> None
     assert result == {"name": "api", "ok": True, "tool_count": 2}
 
 
+def test_probe_one_oauth_upstream_success_payload(
+    tmp_path: Path, monkeypatch
+) -> None:
+    upstream = SimpleNamespace(
+        prefix="api",
+        transport="http",
+        url="https://example.com/mcp",
+        secret_ref="api",
+    )
+
+    async def _fake_mark_stale(*_args, **_kwargs) -> bool:
+        return True
+
+    async def _fake_discover_tools(*_args, **_kwargs):
+        return ["a", "b", "c"]
+
+    monkeypatch.setattr(
+        "sift_gateway.config.upstream_admin.mark_oauth_access_token_stale",
+        _fake_mark_stale,
+    )
+    monkeypatch.setattr(
+        "sift_gateway.config.upstream_admin.discover_tools",
+        _fake_discover_tools,
+    )
+
+    result = asyncio.run(_probe_one_oauth_upstream(upstream, tmp_path))
+    assert result == {
+        "name": "api",
+        "ok": True,
+        "tool_count": 3,
+        "forced_refresh": True,
+    }
+
+
+def test_probe_one_oauth_upstream_error_payload(
+    tmp_path: Path, monkeypatch
+) -> None:
+    upstream = SimpleNamespace(
+        prefix="api",
+        transport="http",
+        url="https://example.com/mcp",
+        secret_ref="api",
+    )
+
+    async def _fake_mark_stale(*_args, **_kwargs) -> bool:
+        return False
+
+    monkeypatch.setattr(
+        "sift_gateway.config.upstream_admin.mark_oauth_access_token_stale",
+        _fake_mark_stale,
+    )
+    monkeypatch.setattr(
+        "sift_gateway.config.upstream_admin.discover_tools",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("noauth")),
+    )
+    monkeypatch.setattr(
+        "sift_gateway.config.upstream_admin.classify_upstream_exception",
+        lambda _exc: "auth_error",
+    )
+
+    result = asyncio.run(_probe_one_oauth_upstream(upstream, tmp_path))
+    assert result == {
+        "name": "api",
+        "ok": False,
+        "error_code": "auth_error",
+        "error": "noauth",
+        "forced_refresh": False,
+    }
+
+
 def test_probe_upstream_configs_runs_for_each_upstream(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -1903,4 +2193,31 @@ def test_probe_upstream_configs_runs_for_each_upstream(
     assert result == [
         {"name": "a", "ok": True, "tool_count": 1},
         {"name": "b", "ok": True, "tool_count": 1},
+    ]
+
+
+def test_probe_oauth_upstream_configs_runs_for_each_upstream(
+    tmp_path: Path, monkeypatch
+) -> None:
+    upstreams = [SimpleNamespace(prefix="a"), SimpleNamespace(prefix="b")]
+
+    async def _fake_probe_one(upstream, _data_dir):
+        return {
+            "name": upstream.prefix,
+            "ok": True,
+            "tool_count": 1,
+            "forced_refresh": True,
+        }
+
+    monkeypatch.setattr(
+        "sift_gateway.config.upstream_admin._probe_one_oauth_upstream",
+        _fake_probe_one,
+    )
+
+    result = asyncio.run(
+        _probe_oauth_upstream_configs(upstreams=upstreams, data_dir=tmp_path)
+    )
+    assert result == [
+        {"name": "a", "ok": True, "tool_count": 1, "forced_refresh": True},
+        {"name": "b", "ok": True, "tool_count": 1, "forced_refresh": True},
     ]
