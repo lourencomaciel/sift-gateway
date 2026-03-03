@@ -571,6 +571,8 @@ def _client_transport(
         resolved_user_id: Pre-resolved external user ID.  When
             provided, used directly instead of re-resolving
             from disk.
+        disable_oauth: When true, skip runtime OAuth auth wiring
+            and use static header auth only.
 
     Returns:
         A fastmcp transport object suitable for ``Client``.
