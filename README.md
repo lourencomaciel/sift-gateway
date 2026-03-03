@@ -44,7 +44,7 @@ pipx install sift-gateway
 sift-gateway init --from claude
 ```
 
-Restart your MCP client. Sift mirrors upstream tools, persists outputs as artifacts, and returns either the full payload (for small responses) or a schema reference (for large responses). The agent can query stored artifacts with `artifact(action="query", query_kind="code", ...)`.
+Restart your MCP client. Sift mirrors upstream tools, persists outputs as artifacts, and returns either the full payload (for small responses) or a schema reference (for large responses). The agent can query stored artifacts with `artifact(action="query", query_kind="code", ...)` and can materialize linked media/files with `artifact(action="blob_list", ...)` + `artifact(action="blob_materialize", ...)`.
 
 `--from` shortcuts: `claude`, `claude-code`, `cursor`, `vscode`, `windsurf`, `zed`, `auto`, or an explicit path.
 
@@ -187,6 +187,37 @@ def run(artifacts, schemas, params):
     return [{"user": users.get(o["user_id"]), "amount": o["amount"]}
             for o in artifacts["art_orders"]]
 """,
+)
+```
+
+Blob handoff example (keep bytes out of context):
+
+```python
+# 1) Discover blobs linked to an artifact chain
+artifact(
+    action="blob_list",
+    artifact_id="art_123",
+    scope="all_related",
+)
+
+# 2) Materialize one blob to a local staging path
+artifact(
+    action="blob_materialize",
+    blob_id="bin_abc123...",
+    filename="creative.mp4",
+    if_exists="reuse",
+    materialize_mode="auto",
+)
+
+# 3) Clean staged files when done
+artifact(action="blob_cleanup", older_than_seconds=3600)
+
+# 4) Export shareable blob manifest for later pipelines
+artifact(
+    action="blob_manifest",
+    artifact_id="art_123",
+    scope="all_related",
+    format="csv",
 )
 ```
 

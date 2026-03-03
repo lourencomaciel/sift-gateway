@@ -267,6 +267,7 @@ def test_code_query_all_related_merges_records(
                 "query_kind": "code",
                 "_gateway_context": {"session_id": "sess_1"},
                 "artifact_id": "art_1",
+                "scope": "all_related",
                 "root_path": "$.items",
                 "code": "def run(data, schema, params): return data",
             }
@@ -338,6 +339,7 @@ def test_code_query_all_related_rejects_incompatible_root_shapes(
                 "query_kind": "code",
                 "_gateway_context": {"session_id": "sess_1"},
                 "artifact_id": "art_1",
+                "scope": "all_related",
                 "root_path": "$.items",
                 "code": "def run(data, schema, params): return data",
             }
@@ -432,6 +434,7 @@ def test_code_query_all_related_allows_mixed_schema_hash_with_warning(
                 "query_kind": "code",
                 "_gateway_context": {"session_id": "sess_1"},
                 "artifact_id": "art_1",
+                "scope": "all_related",
                 "root_path": "$.items",
                 "code": "def run(data, schema, params): return data",
             }
@@ -520,6 +523,7 @@ def test_code_query_all_related_allows_mixed_schema_mode_with_warning(
                 "query_kind": "code",
                 "_gateway_context": {"session_id": "sess_1"},
                 "artifact_id": "art_1",
+                "scope": "all_related",
                 "root_path": "$.items",
                 "code": "def run(data, schema, params): return data",
             }
@@ -837,6 +841,7 @@ def test_code_query_accepts_float_params(tmp_path: Path, monkeypatch) -> None:
     )
 
     assert response["items"] == []
+    assert response["scope"] == "single"
     assert response["determinism"]["params_hash"].startswith("sha256:")
 
 

@@ -125,6 +125,9 @@ def _discovery_detector_payload(discovered: Any) -> dict[str, Any]:
     rejected_reason = getattr(discovered, "rejected_reason", None)
     if isinstance(rejected_reason, str) and rejected_reason:
         payload["rejected_reason"] = rejected_reason
+    rejected_param = getattr(discovered, "rejected_param", None)
+    if isinstance(rejected_param, str) and rejected_param:
+        payload["rejected_param"] = rejected_param
     return payload
 
 

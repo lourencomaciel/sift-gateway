@@ -265,6 +265,109 @@ def test_redact_payload_redacts_access_token_query_param() -> None:
     assert "EAASlfHJq1gcBQq6VZAMRHvQ" not in result.payload["next"]
 
 
+def test_redact_payload_preserves_google_workspace_ids_in_docs_links() -> None:
+    spreadsheet_id = "1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms"
+
+    class _Scanner:
+        available = True
+
+        def detect(self, _text: str) -> set[str]:
+            return {
+                spreadsheet_id,
+                f"com/spreadsheets/d/{spreadsheet_id}/edit",
+            }
+
+    redactor = _redactor(scanner=_Scanner())
+    payload = {
+        "message": (
+            'A new Google Spreadsheet titled "Q1 Report" has been created.\n'
+            f"Its Spreadsheet ID is: `{spreadsheet_id}`\n"
+            "You can access it at: "
+            f"`https://docs.google.com/spreadsheets/d/{spreadsheet_id}/edit?gid=0`"
+        )
+    }
+
+    result = redactor.redact_payload(payload)
+
+    assert result.redacted_count == 0
+    assert result.payload["message"] == payload["message"]
+
+
+def test_redact_payload_google_workspace_id_without_host_context_still_redacts() -> None:
+    spreadsheet_id = "1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms"
+
+    class _Scanner:
+        available = True
+
+        def detect(self, _text: str) -> set[str]:
+            return {spreadsheet_id}
+
+    redactor = _redactor(scanner=_Scanner())
+    payload = {"message": f"Its Spreadsheet ID is: `{spreadsheet_id}`"}
+
+    result = redactor.redact_payload(payload)
+
+    assert result.redacted_count == 1
+    assert (
+        result.payload["message"]
+        == "Its Spreadsheet ID is: `[REDACTED_SECRET]`"
+    )
+
+
+def test_redact_payload_preserves_generic_url_path_id_when_labeled() -> None:
+    resource_id = "Abcdef1234567890GhijklmnopqrstUVWX"
+
+    class _Scanner:
+        available = True
+
+        def detect(self, _text: str) -> set[str]:
+            return {
+                resource_id,
+                f"test/reports/{resource_id}/view",
+            }
+
+    redactor = _redactor(scanner=_Scanner())
+    payload = {
+        "message": (
+            "Resource created.\n"
+            f"Resource ID: `{resource_id}`\n"
+            "Open: "
+            f"`https://api.example.test/reports/{resource_id}/view?from=tool`"
+        )
+    }
+
+    result = redactor.redact_payload(payload)
+
+    assert result.redacted_count == 0
+    assert result.payload["message"] == payload["message"]
+
+
+def test_redact_payload_url_path_id_without_labeled_occurrence_still_redacts() -> None:
+    resource_id = "Abcdef1234567890GhijklmnopqrstUVWX"
+
+    class _Scanner:
+        available = True
+
+        def detect(self, _text: str) -> set[str]:
+            return {resource_id}
+
+    redactor = _redactor(scanner=_Scanner())
+    payload = {
+        "message": (
+            "Download report: "
+            f"https://api.example.test/reports/{resource_id}/view?from=tool"
+        )
+    }
+
+    result = redactor.redact_payload(payload)
+
+    assert result.redacted_count == 1
+    assert result.payload["message"] == (
+        "Download report: "
+        "https://api.example.test/reports/[REDACTED_SECRET]/view?from=tool"
+    )
+
+
 def test_redact_payload_ignores_hex_digests_and_public_ids() -> None:
     class _Scanner:
         available = True
@@ -273,18 +376,51 @@ def test_redact_payload_ignores_hex_digests_and_public_ids() -> None:
             return {
                 "abcd1234abcd1234abcd1234",
                 "art_fb55ded7de7864c126ee92f0ff686b03",
+                "bin_42b7d9ae99ee75a488d474c30fb0a61c",
             }
 
     redactor = _redactor(scanner=_Scanner())
     payload = {
         "hash": "sha256:abcd1234abcd1234abcd1234",
         "artifact_id": "art_fb55ded7de7864c126ee92f0ff686b03",
+        "blob_id": "bin_42b7d9ae99ee75a488d474c30fb0a61c",
     }
 
     result = redactor.redact_payload(payload)
 
     assert result.payload is payload
     assert result.redacted_count == 0
+
+
+def test_redact_payload_preserves_binary_ref_blob_uri_and_id() -> None:
+    class _Scanner:
+        available = True
+
+        def detect(self, text: str) -> set[str]:
+            if text.startswith("sift://blob/"):
+                return {text.removeprefix("sift:")}
+            return {
+                "bin_42b7d9ae99ee75a488d474c30fb0a61c",
+            }
+
+    redactor = _redactor(scanner=_Scanner())
+    payload = {
+        "type": "binary_ref",
+        "blob_id": "bin_42b7d9ae99ee75a488d474c30fb0a61c",
+        "binary_hash": (
+            "42b7d9ae99ee75a488d474c30fb0a61c3b224d89ccb42026f051c64083cfe36f"
+        ),
+        "mime": "image/jpeg",
+        "byte_count": 225585,
+        "uri": "sift://blob/bin_42b7d9ae99ee75a488d474c30fb0a61c",
+    }
+
+    result = redactor.redact_payload(payload)
+
+    assert result.redacted_count == 0
+    assert result.payload is payload
+    assert payload["blob_id"].startswith("bin_")
+    assert payload["uri"].startswith("sift://blob/bin_")
 
 
 def test_redact_payload_skips_scanner_for_image_url_fields() -> None:

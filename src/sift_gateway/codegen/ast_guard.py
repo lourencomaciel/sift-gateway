@@ -104,6 +104,7 @@ _BLOCKED_NAME_PATTERNS = frozenset(
         "shutil",
         "importlib",
         "builtins",
+        "__builtins__",
     }
 )
 

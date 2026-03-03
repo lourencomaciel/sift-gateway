@@ -115,3 +115,100 @@ def test_query_code_rejects_disallowed_select_args(tmp_path: Path) -> None:
     )
     assert response["code"] == "INVALID_ARGUMENT"
     assert "does not accept" in response["message"]
+
+
+def test_blob_list_requires_artifact_anchor(tmp_path: Path) -> None:
+    server = _server(tmp_path)
+    response = asyncio.run(
+        server.handle_artifact(
+            {
+                "action": "blob_list",
+                "_gateway_context": {"session_id": "sess_1"},
+            }
+        )
+    )
+    assert response["code"] == "INVALID_ARGUMENT"
+    assert "artifact_id or artifact_ids" in response["message"]
+
+
+def test_blob_list_not_implemented_without_db(tmp_path: Path) -> None:
+    server = _server(tmp_path)
+    response = asyncio.run(
+        server.handle_artifact(
+            {
+                "action": "blob_list",
+                "_gateway_context": {"session_id": "sess_1"},
+                "artifact_id": "art_1",
+            }
+        )
+    )
+    assert response["code"] == "NOT_IMPLEMENTED"
+
+
+def test_blob_materialize_requires_blob_reference(tmp_path: Path) -> None:
+    server = _server(tmp_path)
+    response = asyncio.run(
+        server.handle_artifact(
+            {
+                "action": "blob_materialize",
+                "_gateway_context": {"session_id": "sess_1"},
+            }
+        )
+    )
+    assert response["code"] == "INVALID_ARGUMENT"
+    assert "blob_id or binary_hash" in response["message"]
+
+
+def test_blob_materialize_not_implemented_without_db(tmp_path: Path) -> None:
+    server = _server(tmp_path)
+    response = asyncio.run(
+        server.handle_artifact(
+            {
+                "action": "blob_materialize",
+                "_gateway_context": {"session_id": "sess_1"},
+                "blob_id": "bin_123",
+            }
+        )
+    )
+    assert response["code"] == "NOT_IMPLEMENTED"
+
+
+def test_blob_cleanup_not_implemented_without_db(tmp_path: Path) -> None:
+    server = _server(tmp_path)
+    response = asyncio.run(
+        server.handle_artifact(
+            {
+                "action": "blob_cleanup",
+                "_gateway_context": {"session_id": "sess_1"},
+            }
+        )
+    )
+    assert response["code"] == "NOT_IMPLEMENTED"
+
+
+def test_blob_manifest_requires_artifact_anchor(tmp_path: Path) -> None:
+    server = _server(tmp_path)
+    response = asyncio.run(
+        server.handle_artifact(
+            {
+                "action": "blob_manifest",
+                "_gateway_context": {"session_id": "sess_1"},
+            }
+        )
+    )
+    assert response["code"] == "INVALID_ARGUMENT"
+    assert "artifact_id or artifact_ids" in response["message"]
+
+
+def test_blob_manifest_not_implemented_without_db(tmp_path: Path) -> None:
+    server = _server(tmp_path)
+    response = asyncio.run(
+        server.handle_artifact(
+            {
+                "action": "blob_manifest",
+                "_gateway_context": {"session_id": "sess_1"},
+                "artifact_id": "art_1",
+            }
+        )
+    )
+    assert response["code"] == "NOT_IMPLEMENTED"

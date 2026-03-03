@@ -282,6 +282,16 @@ def _headers_without_authorization(
     }
 
 
+def _headers_have_authorization(headers: dict[str, str]) -> bool:
+    """Return whether headers contain a non-empty Authorization value."""
+    for key, value in headers.items():
+        if key.lower() != "authorization":
+            continue
+        if isinstance(value, str) and value.strip():
+            return True
+    return False
+
+
 def _build_stdio_env(
     config: UpstreamConfig,
     data_dir: str | None = None,
@@ -477,6 +487,7 @@ async def _call_tool_once(
     tool_name: str,
     arguments: dict[str, Any],
     data_dir: str | None,
+    disable_oauth: bool = False,
 ) -> dict[str, Any]:
     """Call upstream once and normalize the tool result."""
     transport = _client_transport(
@@ -484,6 +495,7 @@ async def _call_tool_once(
         data_dir,
         secret=instance.secret_data,
         resolved_user_id=instance.resolved_external_user_id,
+        disable_oauth=disable_oauth,
     )
     async with Client(transport, timeout=30.0) as client:
         result = await client.call_tool(tool_name, arguments)
@@ -545,6 +557,7 @@ def _client_transport(
     *,
     secret: SecretData | None | object = _UNSET,
     resolved_user_id: str | None = None,
+    disable_oauth: bool = False,
 ) -> Any:
     """Build a fastmcp client transport for ``Client``.
 
@@ -558,6 +571,8 @@ def _client_transport(
         resolved_user_id: Pre-resolved external user ID.  When
             provided, used directly instead of re-resolving
             from disk.
+        disable_oauth: When true, skip runtime OAuth auth wiring
+            and use static header auth only.
 
     Returns:
         A fastmcp transport object suitable for ``Client``.
@@ -580,9 +595,11 @@ def _client_transport(
 
     # HTTP transport — merge headers from secret_ref
     headers = _build_http_headers(config, data_dir, secret=secret)
-    oauth_auth = _build_runtime_oauth_auth(
-        config, data_dir, secret=secret
-    )
+    oauth_auth = None
+    if not disable_oauth:
+        oauth_auth = _build_runtime_oauth_auth(
+            config, data_dir, secret=secret
+        )
     if oauth_auth is not None:
         # OAuth auth sets Authorization dynamically; avoid stale header clashes.
         headers = _headers_without_authorization(headers)
@@ -873,17 +890,50 @@ async def call_upstream_tool(
             or not _is_auth_failure_exception(exc)
         ):
             raise
+        auth_failure = exc
 
-        refreshed = await _mark_runtime_oauth_access_token_stale(
-            config=instance.config,
-            data_dir=data_dir,
+    # Restarted sessions can lose OAuth cache state while a valid static
+    # Authorization header still exists in secret storage.
+    has_static_auth = _headers_have_authorization(
+        _build_http_headers(
+            instance.config,
+            data_dir,
+            secret=instance.secret_data,
         )
-        if not refreshed:
-            raise
+    )
 
+    refreshed = await _mark_runtime_oauth_access_token_stale(
+        config=instance.config,
+        data_dir=data_dir,
+    )
+    if refreshed:
+        try:
+            return await _call_tool_once(
+                instance=instance,
+                tool_name=tool_name,
+                arguments=arguments,
+                data_dir=data_dir,
+            )
+        except Exception as retry_exc:
+            if not (
+                has_static_auth and _is_auth_failure_exception(retry_exc)
+            ):
+                raise
+            return await _call_tool_once(
+                instance=instance,
+                tool_name=tool_name,
+                arguments=arguments,
+                data_dir=data_dir,
+                disable_oauth=True,
+            )
+
+    if has_static_auth:
         return await _call_tool_once(
             instance=instance,
             tool_name=tool_name,
             arguments=arguments,
             data_dir=data_dir,
+            disable_oauth=True,
         )
+
+    raise auth_failure

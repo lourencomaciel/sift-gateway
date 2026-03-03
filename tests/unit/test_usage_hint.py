@@ -146,6 +146,7 @@ def test_build_code_query_usage_mcp_mentions_packages(monkeypatch) -> None:
     assert usage["entrypoint_multi"] == "run(artifacts, schemas, params)"
     assert usage["multi_input_shape"] == "dict[artifact_id -> list[dict]]"
     assert "scope=single" in usage["strategy"]
+    assert "scope=all_related" in usage["strategy"]
 
 
 def test_build_code_query_usage_mcp_escapes_root_path_quotes(
