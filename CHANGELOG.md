@@ -2,6 +2,20 @@
 
 ## [Unreleased]
 
+## [0.3.9] - 2026-03-03
+
+### Added
+- Added first-class blob lifecycle operations in the artifact API: `blob_list`, `blob_materialize`, `blob_cleanup`, and `blob_manifest`.
+- Added a static-auth fallback path for upstream resolution when OAuth credential material is unavailable.
+
+### Changed
+- Split response-mode payload budgets between `run` and `query_kind=code` flows for clearer, mode-specific size controls.
+- Hardened pagination diagnostics and runtime provenance reporting to make continuation troubleshooting more actionable.
+
+### Fixed
+- Constrained secret redaction to known credential patterns to reduce false-positive masking in normal response content.
+- Hardened URL-ID redaction behavior to avoid over-redacting non-sensitive identifier-like values.
+
 ## [0.3.6] - 2026-03-03
 
 ### Fixed
