@@ -6,6 +6,8 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 
 _MAX_DISTINCT_VALUES = 1
+_MAX_DISTINCT_TEXT_CHARS = 30
+_TRUNCATED_SUFFIX = " more chars truncated)"
 
 
 def _coerce_observed_count(raw_value: Any) -> int:
@@ -13,6 +15,37 @@ def _coerce_observed_count(raw_value: Any) -> int:
     if isinstance(raw_value, int):
         return raw_value
     return 0
+
+
+def _truncate_schema_text(text: str, *, max_chars: int) -> str:
+    """Return compact string previews in schema payloads."""
+    if _is_truncated_preview(text):
+        return text
+    if len(text) <= max_chars:
+        return text
+    remaining = len(text) - max_chars
+    return f"[{text[:max_chars]}]({remaining} more chars truncated)"
+
+
+def _is_truncated_preview(text: str) -> bool:
+    """Return True when text already matches truncation marker format."""
+    if not text.startswith("[") or not text.endswith(_TRUNCATED_SUFFIX):
+        return False
+    marker_index = text.rfind("](")
+    if marker_index <= 1:
+        return False
+    remaining = text[marker_index + 2 : -len(_TRUNCATED_SUFFIX)]
+    return remaining.isdigit()
+
+
+def _normalize_distinct_value(value: Any) -> Any:
+    """Normalize one distinct value for public schema responses."""
+    if isinstance(value, str):
+        return _truncate_schema_text(
+            value,
+            max_chars=_MAX_DISTINCT_TEXT_CHARS,
+        )
+    return value
 
 
 def _build_field_entry(
@@ -39,7 +72,10 @@ def _build_field_entry(
         entry["example_value"] = None
     distinct_values = field.get("distinct_values")
     if isinstance(distinct_values, list):
-        entry["distinct_values"] = list(distinct_values[:_MAX_DISTINCT_VALUES])
+        entry["distinct_values"] = [
+            _normalize_distinct_value(value)
+            for value in distinct_values[:_MAX_DISTINCT_VALUES]
+        ]
     cardinality = field.get("cardinality")
     if isinstance(cardinality, int):
         entry["cardinality"] = cardinality
