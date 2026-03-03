@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+## [0.3.8] - 2026-03-03
+
+### Added
+- Added `code_query_max_bytes_out` configuration and surfaced both `passthrough_max_bytes` and `code_query_max_bytes_out` in status budget output.
+
+### Changed
+- `sift-gateway run --json` now uses `passthrough_max_bytes` for full-vs-schema response-mode selection.
+- `query_kind=code` now uses `code_query_max_bytes_out` for full-vs-schema response-mode selection.
+- Simplified mode policy: non-paginated responses at or under cap return `full`; over-cap responses return `schema_ref`.
+
 ## [0.3.6] - 2026-03-03
 
 ### Fixed
