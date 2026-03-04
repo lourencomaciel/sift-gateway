@@ -59,8 +59,9 @@ Pagination detection happens before redaction. Persisted payloads are redacted.
 
 ### Optional arguments
 
-- `scope`: `single` (default, anchor artifact(s) only) or `all_related`
-  (pagination-chain related artifacts)
+- `scope`: `single` (default for MCP `artifact(...)`, anchor artifact(s) only)
+  or `all_related` (pagination-chain related artifacts). CLI `sift-gateway code`
+  defaults to `all_related` unless `--scope` is provided.
 - `params`: JSON object passed to `run(..., ..., params)`
 
 ### Runtime entrypoints
@@ -310,6 +311,12 @@ Possible lines:
 ### `sift-gateway code` human output
 
 Summary header plus formatted JSON payload.
+
+### `sift-gateway code` scope default
+
+- CLI default: `--scope all_related`
+- Use `--scope single` for anchor-only analysis
+- MCP `artifact(action="query", query_kind="code", ...)` keeps default `scope=single`
 
 ### `--json` shared keys
 
