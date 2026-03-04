@@ -132,14 +132,20 @@ availability.
 Capture data:
 
 ```bash
-sift-gateway run -- echo '[{"id":1,"name":"a"},{"id":2,"name":"b"}]'
+sift-gateway run --json -- echo '[{"id":1,"name":"a"},{"id":2,"name":"b"}]'
 ```
 
 Run analysis:
 
 ```bash
-sift-gateway code <artifact_id> '$' --code "def run(data, schema, params): return len(data)"
+sift-gateway code --json <artifact_id> '$' --code "def run(data, schema, params): return len(data)"
 ```
+
+For non-trivial payloads, prefer `metadata.usage.root_path` from `run --json`
+instead of guessing the root path.
+
+CLI note: `sift-gateway code` defaults to `--scope all_related` (pagination-chain
+aware). Use `--scope single` for anchor-only analysis.
 
 If pagination is present (`pagination.next.kind=="command"`), continue with:
 
@@ -233,6 +239,9 @@ client registration metadata) and stores the current
 `Authorization: Bearer ...` header in secret storage for inspection.
 At runtime, OAuth-enabled upstreams use the persisted session and refresh
 tokens automatically when possible.
+
+See also: [Upstream registration reference](upstream_registration.md),
+[Deployment guide](deployment.md)
 
 ## Manual configuration
 

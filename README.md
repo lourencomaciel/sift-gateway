@@ -61,26 +61,42 @@ Restart your MCP client. Sift mirrors upstream tools, persists outputs as artifa
 
 `--from` shortcuts: `claude`, `claude-code`, `cursor`, `vscode`, `windsurf`, `zed`, `auto`, or an explicit path.
 
+Full docs: [Quick Start](docs/quickstart.md), [API Contracts](docs/api_contracts.md), [Deployment](docs/deployment.md)
+
 ### CLI agents (OpenClaw, terminal automation)
 
 ```bash
 pipx install sift-gateway
-sift-gateway run -- kubectl get pods -A -o json
+sift-gateway run --json -- kubectl get pods -A -o json
 ```
 
-Use this flow when you need reproducibility and policy controls on command output (not just ad-hoc extraction). Large output is stored and returned as an artifact ID plus `schema_ref` metadata. Example:
+Use this flow when you need reproducibility and policy controls on command output (not just ad-hoc extraction). Command output is captured as an artifact; responses return either `full` inline payload or `schema_ref` metadata.
 
 ```bash
-sift-gateway code <artifact_id> '$.items' --code "def run(data, schema, params): return {'rows': len(data)}"
+sift-gateway code --json <artifact_id> '$.items' --code "def run(data, schema, params): return {'rows': len(data)}"
 ```
+
+`$.items` is Kubernetes-specific. For other payloads, prefer `metadata.usage.root_path` from `run --json`.
 
 Another capture example:
 
 ```bash
-sift-gateway run -- curl -s api.example.com/events
+sift-gateway run --json -- curl -s https://api.example.com/events
 ```
 
 For OpenClaw, see the [OpenClaw Integration Pack](docs/openclaw/README.md).
+
+Full docs: [Quick Start](docs/quickstart.md), [OpenClaw Pack](docs/openclaw/README.md), [API Contracts](docs/api_contracts.md)
+
+### Adding upstreams and OAuth (optional)
+
+```bash
+sift-gateway upstream add --name notion --transport http --url https://mcp.notion.com/mcp
+sift-gateway upstream login --server notion
+sift-gateway upstream auth check --server notion --json
+```
+
+Full docs: [Quick Start](docs/quickstart.md#adding-mcp-servers-after-initial-setup), [Upstream Registration](docs/upstream_registration.md), [Deployment](docs/deployment.md)
 
 ## Example workflow
 
@@ -124,6 +140,8 @@ artifact(
 
 In this example, two calls use about 400 tokens and still leave room for follow-up steps.
 
+Full docs: [Recipes](docs/recipes.md), [API Contracts](docs/api_contracts.md)
+
 ## How it works
 
 Sift runs one processing pipeline for MCP and CLI:
@@ -137,6 +155,8 @@ Sift runs one processing pipeline for MCP and CLI:
 7. Choose response mode: `full` (inline) or `schema_ref` (sample preview or schema fallback).
 8. Return the artifact-centric response.
 
+Full docs: [Architecture](docs/architecture.md), [API Contracts](docs/api_contracts.md)
+
 ### Response mode selection
 
 Sift chooses between inline and reference automatically:
@@ -144,6 +164,8 @@ Sift chooses between inline and reference automatically:
 - If the response has upstream pagination: always `schema_ref`.
 - If the full response exceeds the configured cap (default 8 KB): `schema_ref`.
 - Otherwise: `full` (inline payload).
+
+Full contract details: [docs/api_contracts.md](docs/api_contracts.md#response-mode-selection)
 
 ## Pagination
 
@@ -156,10 +178,12 @@ artifact(action="next_page", artifact_id="art_9b2c...")
 
 CLI:
 ```bash
-sift-gateway run --continue-from art_9b2c... -- gh api repos/org/repo/pulls --after NEXT_CURSOR
+sift-gateway run --json --continue-from art_9b2c... -- gh api repos/org/repo/pulls --after NEXT_CURSOR
 ```
 
 Each page creates a new artifact linked to the previous one through lineage metadata. The agent can run code queries across the full chain.
+
+Full docs: [API Contracts](docs/api_contracts.md#pagination-metadata), [Recipes](docs/recipes.md), [Quick Start](docs/quickstart.md)
 
 ## Code queries
 
@@ -179,11 +203,13 @@ artifact(
 CLI:
 ```bash
 # Function mode
-sift-gateway code art_123 '$.items' --code "def run(data, schema, params): return {'count': len(data)}"
+sift-gateway code --json art_123 '$.items' --code "def run(data, schema, params): return {'count': len(data)}"
 
 # File mode
-sift-gateway code art_123 '$.items' --file ./analysis.py
+sift-gateway code --json --scope single art_123 '$.items' --file ./analysis.py
 ```
+
+CLI default is `--scope all_related` (pagination-chain aware). Use `--scope single` when you want anchor-only analysis.
 
 Multi-artifact query example:
 
@@ -233,6 +259,8 @@ artifact(
 )
 ```
 
+Full docs: [API Contracts](docs/api_contracts.md), [Quick Start](docs/quickstart.md), [Recipes](docs/recipes.md), [Configuration](docs/config.md)
+
 ### Import allowlist
 
 Code queries run with a configurable import allowlist. Default allowed import roots include `math`, `json`, `re`, `collections`, `statistics`, `heapq`, `numpy`, `pandas`, `jmespath`, `datetime`, `itertools`, `functools`, `operator`, `decimal`, `csv`, `io`, `string`, `textwrap`, `copy`, `typing`, `dataclasses`, `enum`, `fractions`, `bisect`, `random`, `base64`, and `urllib.parse`. Third-party modules are usable only when installed in Sift's runtime environment.
@@ -251,6 +279,7 @@ Outbound secret redaction is enabled by default and intentionally conservative:
 only known secret exposure patterns are redacted.
 
 See [SECURITY.md](SECURITY.md) for the full security policy.
+Operational docs: [Deployment](docs/deployment.md), [Configuration](docs/config.md)
 
 ## Configuration
 
@@ -272,6 +301,7 @@ Full reference: [docs/config.md](docs/config.md)
 | [Quick Start](docs/quickstart.md) | Install, init, first artifact |
 | [Recipes](docs/recipes.md) | Practical usage patterns |
 | [OpenClaw Pack](docs/openclaw/README.md) | OpenClaw skill, quickstart, templates |
+| [Upstream Registration](docs/upstream_registration.md) | Upstream add/list/test/auth/login workflows |
 | [API Contracts](docs/api_contracts.md) | MCP + CLI public contract |
 | [Configuration](docs/config.md) | All settings and env vars |
 | [Deployment](docs/deployment.md) | Transport modes, auth, ops |

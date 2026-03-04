@@ -67,6 +67,9 @@ sift-gateway run --json -- echo '[{"id":1,"state":"open"},{"id":2,"state":"close
 sift-gateway code --json <artifact_id> '$' --code "def run(data, schema, params): return len(data)"
 ```
 
+For other payload shapes, use `metadata.usage.root_path` from `run --json` when
+choosing `root_path` for `code --json`.
+
 If `pagination.next.kind=="command"`:
 
 ```bash
@@ -93,6 +96,8 @@ metadata: {"openclaw":{"requires":{"bins":["sift-gateway"]},"install":[{"id":"uv
 - Keep only `artifact_id` and compact findings in prompt context.
 - If `response_mode` is `schema_ref`, use `sample_item` first; if absent, inspect `schemas` before writing code queries.
 - Treat `artifact_id` + lineage metadata as the system of record for follow-up analysis.
+- `sift-gateway code` defaults to `--scope all_related`; pass `--scope single`
+  for anchor-only analysis.
 - If `sift-gateway run` exits non-zero, fix capture first.
 - Continue pagination only when `pagination.next.kind=="command"`.
 
@@ -142,9 +147,15 @@ Cause:
 Fix:
 
 ```bash
-sift-gateway code --json <artifact_id> '$.items' --code "def run(data, schema, params): return len(data)"
+sift-gateway code --json <artifact_id> '$' --code "def run(data, schema, params): return len(data)"
 ```
+
+If `$` is not the correct root for that artifact, use
+`metadata.usage.root_path` from `run --json`.
 
 ## Related docs
 
-- `docs/openclaw/SKILL.md`
+- [OpenClaw skill](SKILL.md)
+- [Quick start guide](../quickstart.md)
+- [API contracts](../api_contracts.md)
+- [Configuration reference](../config.md)
