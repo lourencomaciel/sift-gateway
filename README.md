@@ -48,7 +48,6 @@ These are recurring across MCP client issue trackers and protocol usage in produ
 - Raw outputs scroll away in chat history, so provenance and reproducibility degrade across multi-step runs.
 
 Background and references: [docs/why.md](docs/why.md).
-Protocol references: [MCP pagination utility](https://modelcontextprotocol.io/specification/2025-06-18/basic/utilities/pagination), [MCP tools and security considerations](https://modelcontextprotocol.io/specification/2025-06-18/server/tools).
 
 ## What Sift adds (without changing upstream servers)
 
