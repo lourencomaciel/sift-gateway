@@ -10,6 +10,8 @@
 
 Sift is a drop-in reliability layer for MCP and CLI tool output. It sits between agents and upstream tools, persists full responses as artifacts, and returns either inline payload (`full`) or artifact references (`schema_ref`) with query guidance.
 
+In our benchmark suite, Sift achieved about 3x higher answer reliability (99.0% vs 33.0%) with 95.4% fewer input tokens on the same questions.
+
 You get four guarantees that usually break in long-running agent sessions:
 - Schema-stable follow-up queries over stored data
 - Secret redaction before tool output re-enters model context
