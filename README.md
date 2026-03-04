@@ -7,6 +7,26 @@ Reliability gateway for AI tool output: schema-stable, secret-safe, pagination-c
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
 Sift sits between agents and upstream tools, stores full outputs as artifacts, and returns either inline payload (`full`) or artifact references (`schema_ref`) with query guidance.
+In our benchmark suite, Sift achieved about 3x higher answer reliability (99.0% vs 33.0%) with 95.4% fewer input tokens on the same questions.
+
+## How it works
+
+```
+                           ┌─────────────────────┐
+  MCP tool call ──────────▶│                     │──────────▶ Upstream MCP Server
+  CLI command   ──────────▶│        Sift         │──────────▶ Shell command
+                           │                     │
+                           │   ┌─────────────┐   │
+                           │   │  Artifacts  │   │
+                           │   │  (SQLite)   │   │
+                           │   └─────────────┘   │
+                           └─────────────────────┘
+                                     │
+                                     ▼
+                           Small output? return inline
+                           Large output? return schema reference
+                           Agent queries what it needs via code
+```
 
 ## Why it exists
 
