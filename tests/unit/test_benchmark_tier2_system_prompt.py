@@ -28,6 +28,11 @@ class TestSystemPrompt:
 
     def test_mentions_schema_ref(self) -> None:
         assert "schema" in SYSTEM_PROMPT.lower()
+        assert "response_mode" in SYSTEM_PROMPT
+        assert "sample_item" in SYSTEM_PROMPT
 
     def test_mentions_answer_format(self) -> None:
         assert "ONLY the final answer" in SYSTEM_PROMPT
+
+    def test_does_not_reference_removed_describe_action(self) -> None:
+        assert 'action="describe"' not in SYSTEM_PROMPT

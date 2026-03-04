@@ -195,7 +195,7 @@ Agent Loop (sync)
             ├─ "bench_get_earthquakes" → mock upstream (subprocess via stdio)
             ├─ "bench_get_products"    → mock upstream (subprocess via stdio)
             ├─ ... (12 mirrored dataset tools)
-            └─ "artifact" (action=query/next_page/describe)
+            └─ "artifact" (action=query/next_page)
 ```
 
 **Key difference from Tier 1:** The LLM sees the raw tool schemas and

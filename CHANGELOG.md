@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-03-04
+
+### Changed
+- Updated package metadata description to match the reliability-focused product positioning used across docs.
+
+### Fixed
+- Removed stale `artifact(action="describe")` references from benchmark docs/prompt text to match contract-v1 (`query`, `next_page`, blob actions).
+- Aligned README response-mode selection bullets with runtime behavior (pagination or byte-cap threshold drive `schema_ref`; otherwise `full`).
+- Clarified benchmark runtime docs to reflect `sample_item` / `schemas` schema-ref variants instead of implying schemas-only responses.
+
 ## [0.3.6] - 2026-03-03
 
 ### Fixed
