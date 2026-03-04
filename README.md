@@ -55,6 +55,7 @@ Protocol references: [MCP pagination utility](https://modelcontextprotocol.io/sp
 - Artifact-backed outputs: keep full data out of prompt context while preserving it losslessly.
 - Schema-aware references: `schema_ref` returns query guidance for stable follow-up analysis.
 - Exact structured retrieval: run Python against stored artifacts instead of relying on prompt-sized payloads.
+- Exact structured retrieval via `artifact(action="query", query_kind="code", ...)` (MCP) or `sift-gateway code` (CLI).
 - Explicit pagination contract: continue with `artifact(action="next_page")` or `run --continue-from`.
 - Completion signaling: do not stop until `pagination.retrieval_status == COMPLETE`.
 - Pagination-chain analysis: query one artifact or all related pages (`scope="all_related"`; CLI default).
