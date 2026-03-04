@@ -53,7 +53,7 @@ summary = artifact(
     action="query",
     query_kind="code",
     artifact_id="art_123",
-    root_path="$.result.rows",
+    root_path="$",
     code="""
 def run(data, schema, params):
     floor = float(params.get('min_spend', 0))
@@ -70,6 +70,9 @@ def run(data, schema, params):
 )
 ```
 
+If your row list is nested, use `metadata.queryable_roots` (or
+`metadata.usage.root_path`) from the capture response instead of guessing.
+
 ## Pattern 5: Code query (MCP, multi artifact)
 
 ```python
@@ -78,8 +81,8 @@ joined = artifact(
     query_kind="code",
     artifact_ids=["art_users", "art_orders"],
     root_paths={
-        "art_users": "$.users",
-        "art_orders": "$.orders",
+        "art_users": "$",
+        "art_orders": "$",
     },
     code="""
 def run(artifacts, schemas, params):
