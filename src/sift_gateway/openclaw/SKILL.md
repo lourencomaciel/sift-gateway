@@ -21,7 +21,8 @@ compact reproducible answers without pushing raw payloads back into context.
 - Use pure Python first; do not assume `pandas` is installed.
 - Read `response_mode` and schema metadata before writing query logic.
 - Keep outputs compact (aggregates or top <= 20 rows).
-- Prefer `--scope single`; use pagination-chain expansion (`scope=all_related`) only when cross-artifact analysis is required.
+- CLI default is `--scope all_related`; prefer `--scope single` unless you
+  need pagination-chain expansion.
 
 ## Core flow
 
@@ -55,6 +56,8 @@ sift-gateway code --json <artifact_id> '$' --code "def run(data, schema, params)
 - `payload`: present in `"full"` mode.
 - `schemas`: present in `"schema_ref"` fallback mode when sample preview is not available.
 - `sample_item`: present in `"schema_ref"` when the first item is representative.
+- `metadata.usage.root_path`: recommended root-path hint for follow-up
+  `sift-gateway code --json` calls.
 
 `sift-gateway code --json` returns:
 
