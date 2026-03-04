@@ -45,10 +45,20 @@ Sift addresses those with artifact-backed queries, redaction, and explicit conti
 
 ```bash
 pipx install sift-gateway
+
+# pick your client profile
 sift-gateway init --from claude
+sift-gateway init --from cursor
+sift-gateway init --from vscode
+sift-gateway init --from windsurf
+sift-gateway init --from zed
+
+# or auto-detect from local config
+sift-gateway init --from auto
 ```
 
 Restart your MCP client, then use mirrored tools normally. Sift will persist responses and surface queryable artifacts.
+Supported `--from` shortcuts include: `claude`, `claude-code`, `cursor`, `vscode`, `windsurf`, `zed`, `auto` (or an explicit config path).
 
 ### CLI flow
 
@@ -98,6 +108,26 @@ Advanced/optional:
 - [OpenClaw Pack](docs/openclaw/README.md)
 - [Upstream Registration](docs/upstream_registration.md)
 - [Why Sift Exists](docs/why.md)
+
+## FAQ
+
+- How do I add a new upstream MCP server after setup?
+  [Quick Start: Adding MCP servers after initial setup](docs/quickstart.md#adding-mcp-servers-after-initial-setup)
+
+- How do I authenticate/login to an upstream?
+  [Quick Start: Adding MCP servers after initial setup](docs/quickstart.md#adding-mcp-servers-after-initial-setup) and [Deployment: Authentication Tokens](docs/deployment.md#authentication-tokens)
+
+- How do I pick the right `root_path` for code queries?
+  [Quick Start: Your first artifact (MCP)](docs/quickstart.md#your-first-artifact-mcp) and [API Contracts: Mirrored Response Contract](docs/api_contracts.md#mirrored-response-contract)
+
+- How do I continue pagination safely?
+  [API Contracts: Pagination Metadata](docs/api_contracts.md#pagination-metadata)
+
+- What is the default code-query scope?
+  [API Contracts: `sift-gateway code` scope default](docs/api_contracts.md#sift-gateway-code-scope-default)
+
+- Where do I find error codes and troubleshooting?
+  [Errors](docs/errors.md) and [Quick Start: Troubleshooting](docs/quickstart.md#troubleshooting)
 
 ## Security
 
