@@ -75,11 +75,10 @@ sift-gateway run --json -- kubectl get pods -A -o json
 Use this flow when you need reproducibility and policy controls on command output (not just ad-hoc extraction). Command output is captured as an artifact; responses return either `full` inline payload or `schema_ref` metadata.
 
 ```bash
-sift-gateway code --json <artifact_id> '$.items' --code "def run(data, schema, params): return {'rows': len(data)}"
+sift-gateway code --json <artifact_id> '$' --code "def run(data, schema, params): return {'rows': len(data)}"
 ```
 
-`$.items` is Kubernetes-specific. For other payloads, prefer `metadata.usage.root_path` from `run --json`.
-
+Prefer `$` when the artifact root is already a row list. For nested roots (including Kubernetes payloads), prefer `metadata.usage.root_path` from `run --json`.
 Another capture example:
 
 ```bash
@@ -135,7 +134,7 @@ artifact(
     action="query",
     query_kind="code",
     artifact_id="art_9b2c...",
-    root_path="$.monitors",
+    root_path="$",
     code="def run(data, schema, params): return [m for m in data if m.get('status') == 'Alert']",
 )
 ```
@@ -197,7 +196,7 @@ artifact(
     action="query",
     query_kind="code",
     artifact_id="art_123",
-    root_path="$.items",
+    root_path="$",
     code="def run(data, schema, params): return {'count': len(data)}",
 )
 ```
@@ -205,14 +204,14 @@ artifact(
 CLI:
 ```bash
 # Function mode
-sift-gateway code --json art_123 '$.items' --code "def run(data, schema, params): return {'count': len(data)}"
+sift-gateway code --json art_123 '$' --code "def run(data, schema, params): return {'count': len(data)}"
 
 # File mode
-sift-gateway code --json --scope single art_123 '$.items' --file ./analysis.py
+sift-gateway code --json --scope single art_123 '$' --file ./analysis.py
 ```
 
 CLI default is `--scope all_related` (pagination-chain aware). Use `--scope single` when you want anchor-only analysis.
-
+If the row list is nested, use `metadata.usage.root_path` (or MCP `metadata.queryable_roots`) from the capture response.
 Multi-artifact query example:
 
 ```python
@@ -220,7 +219,7 @@ artifact(
     action="query",
     query_kind="code",
     artifact_ids=["art_users", "art_orders"],
-    root_paths={"art_users": "$.users", "art_orders": "$.orders"},
+    root_paths={"art_users": "$", "art_orders": "$"},
     code="""
 def run(artifacts, schemas, params):
     users = {u["id"]: u["name"] for u in artifacts["art_users"]}
