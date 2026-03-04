@@ -10,6 +10,33 @@ Sift is a drop-in reliability layer for MCP and CLI tool output. It persists ful
 
 Benchmark summary: on 103 factual questions across 12 real JSON datasets, Sift improved accuracy from 33.0% to 99.0% while cutting input tokens by 95.4% (10,757,230 -> 489,655). Full details: [benchmarks/README.md](benchmarks/README.md).
 
+## How it works
+
+```
+                           ┌─────────────────────┐
+  MCP tool call ──────────▶│                     │──────────▶ Upstream MCP server
+  CLI command   ──────────▶│        Sift         │──────────▶ Shell/API command
+                           │                     │
+                           │   ┌─────────────┐   │
+                           │   │  Artifacts  │   │
+                           │   │  (SQLite)   │   │
+                           │   └─────────────┘   │
+                           └─────────────────────┘
+                                     │
+                                     ▼
+                         Small output -> `full` inline
+                         Large output -> `schema_ref`
+                         Agent queries artifacts with code
+```
+
+Flow:
+
+1. Execute upstream tool/command and capture JSON.
+2. Persist full output as an artifact and map schema/root hints.
+3. Return `full` (small) or `schema_ref` (large/paginated).
+4. Continue pages explicitly until `pagination.retrieval_status == COMPLETE`.
+5. Run focused Python queries on one artifact or the full pagination chain.
+
 ## Main MCP pain points
 
 These are recurring across MCP client issue trackers and protocol usage in production:
