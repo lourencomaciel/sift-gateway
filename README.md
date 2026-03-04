@@ -32,7 +32,7 @@ Benchmark summary: on 103 factual questions across 12 real JSON datasets, Sift i
 Flow:
 
 1. Execute upstream tool/command and capture JSON.
-2. Persist full output as an artifact and map schema/root hints.
+2. Persist full output as an artifact in SQLite and deterministically map schema/root hints.
 3. Return `full` (small) or `schema_ref` (large/paginated).
 4. Continue pages explicitly until `pagination.retrieval_status == COMPLETE`.
 5. Run focused Python queries on one artifact or the full pagination chain.
