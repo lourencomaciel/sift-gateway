@@ -294,7 +294,8 @@ directory. Each report includes:
 
 | Metric | Baseline | Sift |
 |--------|----------|------|
-| Accuracy | 39/113 (34.5%) | **108/113 (95.6%)** |
+| Accuracy (all 113) | 39/113 (34.5%) | **108/113 (95.6%)** |
+| Accuracy (103 single-dataset) | 33/103 (32.0%) | **101/103 (98.1%)** |
 | Input tokens | 11,650,434 | 3,708,677 |
 | Output tokens | 49,046 | 34,715 |
 | Avg turns | 1 | 1.96 |
@@ -348,3 +349,18 @@ question types:
 | Accuracy | 6/10 (60.0%) | **7/10 (70.0%)** |
 | Input tokens | 1,142,736 | 873,794 |
 | Output tokens | 8,494 | 7,191 |
+
+By question type:
+
+| Type | Baseline | Sift |
+|------|----------|------|
+| Comparison | 5/5 | 5/5 |
+| Join | 1/5 | 2/5 |
+
+The three join questions that both conditions fail on
+(`cross_laureates_in_landlocked`, `cross_pct_countries_with_laureates`,
+`cross_pop_countries_gt10_laureates`) require matching country names
+between the Nobel Prize API and REST Countries. These datasets use
+inconsistent naming (e.g. "USA" vs "United States", "Scotland" vs
+"United Kingdom"), which defeats naive string matching. This is a
+data-quality challenge rather than a model limitation.
