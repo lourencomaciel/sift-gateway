@@ -43,10 +43,10 @@ Open benchmark, real JSON datasets, reproducible harness.
 
 | Model | Condition | Accuracy | Input Tokens |
 |---|---|---|---|
-| claude-sonnet-4-6 | Baseline (context-stuffed) | 31/103 (30.1%) | 10,757,230 |
-| claude-sonnet-4-6 | **Sift** | **99/103 (96.1%)** | **501,639** |
+| claude-sonnet-4-6 | Baseline (context-stuffed) | 34/103 (33.0%) | 10,757,230 |
+| claude-sonnet-4-6 | **Sift** | **102/103 (99.0%)** | **489,655** |
 
-That is a 66-point accuracy gain with 95.3% fewer input tokens on the same question set. Full details: [benchmarks/README.md](benchmarks/README.md).
+That is a 66-point accuracy gain with 95.4% fewer input tokens on the same question set. Full details: [benchmarks/README.md](benchmarks/README.md).
 
 ## Quick start
 
@@ -285,12 +285,10 @@ The Tier 1 benchmark compares Sift's schema_ref + codegen approach against naive
 
 | Model | Condition | Accuracy | Input Tokens | Token Reduction |
 |---|---|---|---|---|
-| claude-sonnet-4-6 | Baseline | 31/103 (30.1%) | 10,757,230 | — |
-| claude-sonnet-4-6 | **Sift** | **99/103 (96.1%)** | **501,639** | **95.3%** |
-| claude-opus-4-6 | Baseline | 34/103 (33.0%) | 10,757,230 | — |
-| claude-opus-4-6 | **Sift** | **98/103 (95.1%)** | **508,496** | **95.3%** |
+| claude-sonnet-4-6 (2026-03-04) | Baseline | 34/103 (33.0%) | 10,757,230 | — |
+| claude-sonnet-4-6 (2026-03-04) | **Sift** | **102/103 (99.0%)** | **489,655** | **95.4%** |
 
-Sift achieves ~96% accuracy on both models while using ~95% fewer input tokens. The baseline struggles on large and deeply nested datasets (earthquakes, laureates, products) where payloads crowd the context window, while Sift handles them through artifact queries.
+Sift reaches 99.0% accuracy on this suite while using 95.4% fewer input tokens. The baseline struggles on large and deeply nested datasets (earthquakes, laureates, products) where payloads crowd the context window, while Sift handles them through artifact queries.
 
 ```bash
 python benchmarks/tier1/fetch_data.py
