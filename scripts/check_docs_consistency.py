@@ -28,6 +28,8 @@ RECIPES_DOC_PATH = ROOT / "docs" / "recipes.md"
 CONFIG_DOC_PATH = ROOT / "docs" / "config.md"
 ERRORS_DOC_PATH = ROOT / "docs" / "errors.md"
 OBS_DOC_PATH = ROOT / "docs" / "observability.md"
+BENCHMARKS_README_PATH = ROOT / "benchmarks" / "README.md"
+TIER2_PROMPT_PATH = ROOT / "benchmarks" / "tier2" / "system_prompt.py"
 OPENCLAW_DOC_MIRRORS: tuple[tuple[Path, Path], ...] = (
     (
         ROOT / "docs" / "openclaw" / "SKILL.md",
@@ -198,6 +200,7 @@ def _validate_readme(readme: str) -> list[str]:
         "sift-gateway get",
         "sift-gateway query",
         "sift-gateway diff",
+        "schema reference is at least 50% smaller than full",
     ]
     for snippet in forbidden_readme_snippets:
         if _contains_phrase(readme, snippet):
@@ -205,6 +208,48 @@ def _validate_readme(readme: str) -> list[str]:
                 "README.md contains outdated query_kind=search guidance: "
                 f"{snippet}"
             )
+    return failures
+
+
+def _validate_benchmark_contract_docs(
+    benchmarks_readme: str,
+    tier2_prompt: str,
+) -> list[str]:
+    """Validate benchmark docs/prompts against contract-v1 actions."""
+    failures: list[str] = []
+
+    if _contains_phrase(
+        benchmarks_readme,
+        "action=query/next_page/describe",
+    ):
+        failures.append(
+            "benchmarks/README.md contains removed artifact action: describe"
+        )
+
+    prompt_forbidden_snippets = [
+        'action="describe"',
+        'retrieval_status="partial"',
+    ]
+    for snippet in prompt_forbidden_snippets:
+        if _contains_phrase(tier2_prompt, snippet):
+            failures.append(
+                "benchmarks/tier2/system_prompt.py contains outdated phrase: "
+                f"{snippet}"
+            )
+
+    prompt_required_phrases = [
+        "response_mode",
+        "sample_item",
+        "queryable_roots",
+        'pagination.retrieval_status == "PARTIAL"',
+    ]
+    for phrase in prompt_required_phrases:
+        if not _contains_phrase(tier2_prompt, phrase):
+            failures.append(
+                "benchmarks/tier2/system_prompt.py missing required phrase: "
+                f"{phrase}"
+            )
+
     return failures
 
 
@@ -263,11 +308,19 @@ def main() -> int:
     config_doc = _read_text(CONFIG_DOC_PATH)
     errors_doc = _read_text(ERRORS_DOC_PATH)
     observability_doc = _read_text(OBS_DOC_PATH)
+    benchmarks_readme = _read_text(BENCHMARKS_README_PATH)
+    tier2_prompt = _read_text(TIER2_PROMPT_PATH)
 
     failures.extend(_validate_config_doc(config_doc))
     failures.extend(_validate_api_contracts_doc(api_contracts_doc))
     failures.extend(_validate_recipes_doc(recipes_doc))
     failures.extend(_validate_readme(readme))
+    failures.extend(
+        _validate_benchmark_contract_docs(
+            benchmarks_readme,
+            tier2_prompt,
+        )
+    )
     failures.extend(_validate_errors_doc(errors_doc))
     failures.extend(_validate_observability_doc(observability_doc))
     failures.extend(_validate_openclaw_doc_mirrors())

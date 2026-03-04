@@ -331,12 +331,14 @@ def call_mirrored_tool(
     """Call a mirrored dataset tool through the gateway.
 
     The gateway captures the upstream response as an artifact,
-    computes its schema, and returns a ``schema_ref`` response
-    with ``artifact_id`` and ``schemas``.
+    computes schema metadata, and returns either inline payload
+    (``response_mode="full"``) or a schema reference
+    (``response_mode="schema_ref"``).
 
     Returns:
-        Dict with ``artifact_id``, ``schemas`` (or representative
-        sample), ``response_mode``, and metadata.
+        Dict with ``artifact_id``, ``response_mode``, schema
+        metadata (`sample_item` or `schemas`), and pagination/
+        usage metadata.
     """
     tool_name = f"bench_get_{dataset_name}"
     result = runtime.call_tool(
