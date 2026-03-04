@@ -76,12 +76,12 @@ sift-gateway code --json <artifact_id> '$' --code "def run(data, schema, params)
 
 ```bash
 # inline function mode (single artifact signature)
-sift-gateway code --json <artifact_id> '$.items' \
+sift-gateway code --json <artifact_id> '$' \
   --code "def run(data, schema, params): return {'rows': len(data), 'tag': params.get('tag')}" \
   --params '{"tag":"daily"}'
 
 # multi-artifact inline mode (multi-artifact signature)
-sift-gateway code --json --artifact-id art_users --artifact-id art_orders --root-path '$.items' \
+sift-gateway code --json --artifact-id art_users --artifact-id art_orders --root-path '$' \
   --code "def run(artifacts, schemas, params): return {k: len(v) for k, v in artifacts.items()}"
 ```
 
