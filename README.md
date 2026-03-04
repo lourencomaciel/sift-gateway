@@ -1,31 +1,21 @@
 # Sift
 
-**Reliability gateway** - Schema-stable, secret-safe, pagination-complete JSON for AI agents.
+Reliability gateway for AI tool output: schema-stable, secret-safe, pagination-complete JSON.
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![PyPI](https://img.shields.io/pypi/v/sift-gateway.svg)](https://pypi.org/project/sift-gateway/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
----
+Sift is a drop-in reliability layer for MCP and CLI tool output. It persists full payloads as artifacts, returns either inline payload (`full`) or compact references (`schema_ref`), and lets agents query what they need with Python code over stored data.
 
-Sift is a drop-in reliability layer for MCP and CLI tool output. It sits between agents and upstream tools, persists full responses as artifacts, and returns either inline payload (`full`) or artifact references (`schema_ref`) with query guidance.
+Benchmark summary: on 103 factual questions across 12 real JSON datasets, Sift improved accuracy from 33.0% to 99.0% while cutting input tokens by 95.4% (10,757,230 -> 489,655). Full details: [benchmarks/README.md](benchmarks/README.md).
 
-In our benchmark suite, Sift achieved about 3x higher answer reliability (99.0% vs 33.0%) with 95.4% fewer input tokens on the same questions.
-
-You get four guarantees that usually break in long-running agent sessions:
-- Schema-stable follow-up queries over stored data
-- Secret redaction before tool output re-enters model context
-- Explicit pagination continuation and completeness signals
-- Reproducible lineage/audit trail across pages and derived queries
-
-For one-off local extraction, plain `jq` or Python can be enough. Sift is for cases where wrong answers, hidden truncation, and unclear pagination completeness are unacceptable.
-
-Sift works with MCP clients (Claude Desktop, Claude Code, Cursor, VS Code, Windsurf, Zed) and CLI agents (OpenClaw, terminal automation). Same artifact store, same query interface, two entry points.
+## How it works
 
 ```
                            ┌─────────────────────┐
-  MCP tool call ──────────▶│                     │──────────▶ Upstream MCP Server
-  CLI command   ──────────▶│        Sift         │──────────▶ Shell command
+  MCP tool call ──────────▶│                     │──────────▶ Upstream MCP server
+  CLI command   ──────────▶│        Sift         │──────────▶ Shell/API command
                            │                     │
                            │   ┌─────────────┐   │
                            │   │  Artifacts  │   │
@@ -34,303 +24,154 @@ Sift works with MCP clients (Claude Desktop, Claude Code, Cursor, VS Code, Winds
                            └─────────────────────┘
                                      │
                                      ▼
-                           Small output? return inline
-                           Large output? return schema reference
-                           Agent queries what it needs via code
+                         Small output -> `full` inline
+                         Large output -> `schema_ref`
+                         Agent queries artifacts with code
 ```
 
-## Launch proof
+Flow:
 
-Open benchmark, real JSON datasets, reproducible harness.
+1. Execute upstream tool/command and capture JSON.
+2. Persist full output as an artifact in SQLite and deterministically map schema/root hints.
+3. Return `full` (small) or `schema_ref` (large/paginated).
+4. Continue pages explicitly until `pagination.retrieval_status == COMPLETE`.
+5. Run focused Python queries on one artifact or the full pagination chain.
 
-| Model | Condition | Accuracy | Input Tokens |
-|---|---|---|---|
-| claude-sonnet-4-6 | Baseline (context-stuffed) | 34/103 (33.0%) | 10,757,230 |
-| claude-sonnet-4-6 | **Sift** | **102/103 (99.0%)** | **489,655** |
+## Main MCP pain points
 
-That is a 66-point accuracy gain with 95.4% fewer input tokens on the same question set. Full details: [benchmarks/README.md](benchmarks/README.md).
+These are recurring across MCP client issue trackers and protocol usage in production:
 
-## Quick start
+- Large tool definitions and large tool results consume context quickly.
+- Upstream API pagination often sits outside MCP list-cursor flows, so agents can stop early and answer on partial data.
+- Tool output shape differs across servers, which makes follow-up parsing brittle.
+- Tool output is untrusted input and can contain sensitive values that should not re-enter model context.
+- Raw outputs scroll away in chat history, so provenance and reproducibility degrade across multi-step runs.
 
-### MCP agents
+Background and references: [docs/why.md](docs/why.md).
+Protocol references: [MCP pagination utility](https://modelcontextprotocol.io/specification/2025-06-18/basic/utilities/pagination), [MCP tools and security considerations](https://modelcontextprotocol.io/specification/2025-06-18/server/tools).
+
+## What Sift adds (without changing upstream servers)
+
+- Artifact-backed outputs: keep full data out of prompt context while preserving it losslessly.
+- Schema-aware references: `schema_ref` returns query guidance for stable follow-up analysis.
+- Exact structured retrieval: run Python against stored artifacts instead of relying on prompt-sized payloads.
+- Exact structured retrieval via `artifact(action="query", query_kind="code", ...)` (MCP) or `sift-gateway code` (CLI).
+- Explicit pagination contract: continue with `artifact(action="next_page")` or `run --continue-from`.
+- Completion signaling: do not stop until `pagination.retrieval_status == COMPLETE`.
+- Pagination-chain analysis: query one artifact or all related pages (`scope="all_related"`; CLI default).
+- Outbound secret redaction enabled by default before output returns to the model.
+
+## MCP vs CLI positioning
+
+- MCP: Sift is a reliability gateway for mirrored tool calls and artifact-based follow-up queries.
+- CLI/OpenClaw: same artifact contract for command output (`sift-gateway run` + `sift-gateway code`).
+- CLI pitfall: ad-hoc extraction can silently scope analysis to partial data (for example, inspecting only one row).
+- CLI note: for one-off local extraction, plain `jq` can be enough. Sift is for repeatable, pagination-complete, policy-controlled workflows.
+
+## 60-second quickstart
+
+### MCP clients
 
 ```bash
 pipx install sift-gateway
 sift-gateway init --from claude
 ```
 
-Restart your MCP client. Sift mirrors upstream tools, persists outputs as artifacts, and returns either the full payload (for small responses) or a schema reference (for large responses). The agent can query stored artifacts with `artifact(action="query", query_kind="code", ...)` and can materialize linked media/files with `artifact(action="blob_list", ...)` + `artifact(action="blob_materialize", ...)`.
+Restart your MCP client, then use mirrored tools normally.
 
-`--from` shortcuts: `claude`, `claude-code`, `cursor`, `vscode`, `windsurf`, `zed`, `auto`, or an explicit path.
+Supported `--from` shortcuts: `claude`, `claude-code`, `cursor`, `vscode`, `windsurf`, `zed`, `auto`, or an explicit config path.
 
-Full docs: [Quick Start](docs/quickstart.md), [API Contracts](docs/api_contracts.md), [Deployment](docs/deployment.md)
-
-### CLI agents (OpenClaw, terminal automation)
+### CLI flow
 
 ```bash
-pipx install sift-gateway
+# 1) Capture JSON output as an artifact
 sift-gateway run --json -- kubectl get pods -A -o json
-```
 
-Use this flow when you need reproducibility and policy controls on command output (not just ad-hoc extraction). Command output is captured as an artifact; responses return either `full` inline payload or `schema_ref` metadata.
-
-```bash
+# 2) Query artifact data with Python
 sift-gateway code --json <artifact_id> '$' --code "def run(data, schema, params): return {'rows': len(data)}"
 ```
 
-Prefer `$` when the artifact root is already a row list. For nested roots (including Kubernetes payloads), prefer `metadata.usage.root_path` from `run --json`.
-Another capture example:
+Use `$` when rows are at root. If nested, use `metadata.usage.root_path` from `run --json` (or `metadata.queryable_roots` in MCP `schema_ref`).
+
+### Pagination continuation
 
 ```bash
-sift-gateway run --json -- curl -s https://api.example.com/events
+sift-gateway run --json --continue-from <artifact_id> -- <next-command-with-next-params-applied>
 ```
 
-For OpenClaw, see the [OpenClaw Integration Pack](docs/openclaw/README.md).
+Do not claim completion until `pagination.retrieval_status == COMPLETE`.
 
-Full docs: [Quick Start](docs/quickstart.md), [OpenClaw Pack](docs/openclaw/README.md), [API Contracts](docs/api_contracts.md)
+### Python codegen over all pages
 
-### Adding upstreams and OAuth (optional)
+For complex questions, generate Python once and run it over the entire pagination chain:
 
 ```bash
-sift-gateway upstream add --name notion --transport http --url https://mcp.notion.com/mcp
-sift-gateway upstream login --server notion
-sift-gateway upstream auth check --server notion --json
+sift-gateway code --json --scope all_related <artifact_id> '$' --file ./analysis.py
 ```
 
-Full docs: [Quick Start](docs/quickstart.md#adding-mcp-servers-after-initial-setup), [Upstream Registration](docs/upstream_registration.md), [Deployment](docs/deployment.md)
-
-## Example workflow
-
-You ask an agent to check what is failing in prod:
-
-```
-datadog.list_monitors(tag="service:payments")
-```
-
-Without Sift, 70 KB of monitor configs and metadata can go straight into context. That is about 18,000 tokens before the next tool call.
-
-With Sift, the agent gets a schema reference:
-
-```json
-{
-  "response_mode": "schema_ref",
-  "artifact_id": "art_9b2c...",
-  "sample_item": {
-    "name": "Payments monitor",
-    "status": "Alert",
-    "type": "query alert"
-  },
-  "sample_item_source_index": 0,
-  "sample_item_count": 120
-}
-```
-
-If a representative sample is not valid for the result set, `schema_ref` falls back to `schemas`.
-
-The agent can then run a focused query:
-
-```python
-artifact(
-    action="query",
-    query_kind="code",
-    artifact_id="art_9b2c...",
-    root_path="$",
-    code="def run(data, schema, params): return [m for m in data if m.get('status') == 'Alert']",
-)
-```
-
-In this example, two calls use about 400 tokens and still leave room for follow-up steps.
-
-Full docs: [Recipes](docs/recipes.md), [API Contracts](docs/api_contracts.md)
-
-## How it works
-
-Sift runs one processing pipeline for MCP and CLI:
-
-1. Execute the tool call or command.
-2. Parse JSON output.
-3. Detect pagination from the raw response.
-4. Redact sensitive values (enabled by default).
-5. Persist the artifact to SQLite.
-6. Map the schema (field types, sample values, cardinality).
-7. Choose response mode: `full` (inline) or `schema_ref` (sample preview or schema fallback).
-8. Return the artifact-centric response.
-
-Full docs: [Architecture](docs/architecture.md), [API Contracts](docs/api_contracts.md)
-
-### Response mode selection
-
-Sift chooses between inline and reference automatically:
-
-- If the response has upstream pagination: always `schema_ref`.
-- If the full response exceeds the configured cap (default 8 KB): `schema_ref`.
-- Otherwise: `full` (inline payload).
-
-Full contract details: [docs/api_contracts.md](docs/api_contracts.md#response-mode-selection)
-
-## Pagination
-
-When upstream tools or APIs paginate, Sift handles continuation explicitly.
-
-MCP:
-```python
-artifact(action="next_page", artifact_id="art_9b2c...")
-```
-
-CLI:
-```bash
-sift-gateway run --json --continue-from art_9b2c... -- gh api repos/org/repo/pulls --after NEXT_CURSOR
-```
-
-Each page creates a new artifact linked to the previous one through lineage metadata. The agent can run code queries across the full chain.
-
-Full docs: [API Contracts](docs/api_contracts.md#pagination-metadata), [Recipes](docs/recipes.md), [Quick Start](docs/quickstart.md)
-
-## Code queries
-
-Both MCP and CLI agents can analyze stored artifacts with Python.
-
-MCP:
-```python
-artifact(
-    action="query",
-    query_kind="code",
-    artifact_id="art_123",
-    root_path="$",
-    code="def run(data, schema, params): return {'count': len(data)}",
-)
-```
-
-CLI:
-```bash
-# Function mode
-sift-gateway code --json art_123 '$' --code "def run(data, schema, params): return {'count': len(data)}"
-
-# File mode
-sift-gateway code --json --scope single art_123 '$' --file ./analysis.py
-```
-
-CLI default is `--scope all_related` (pagination-chain aware). Use `--scope single` when you want anchor-only analysis.
-If the row list is nested, use `metadata.usage.root_path` (or MCP `metadata.queryable_roots`) from the capture response.
-Multi-artifact query example:
-
-```python
-artifact(
-    action="query",
-    query_kind="code",
-    artifact_ids=["art_users", "art_orders"],
-    root_paths={"art_users": "$", "art_orders": "$"},
-    code="""
-def run(artifacts, schemas, params):
-    users = {u["id"]: u["name"] for u in artifacts["art_users"]}
-    return [{"user": users.get(o["user_id"]), "amount": o["amount"]}
-            for o in artifacts["art_orders"]]
-""",
-)
-```
-
-Blob handoff example (keep bytes out of context):
-
-```python
-# 1) Discover blobs linked to an artifact chain
-artifact(
-    action="blob_list",
-    artifact_id="art_123",
-    scope="all_related",
-)
-
-# 2) Materialize one blob to a local staging path
-artifact(
-    action="blob_materialize",
-    blob_id="bin_abc123...",
-    filename="creative.mp4",
-    if_exists="reuse",
-    materialize_mode="auto",
-)
-
-# 3) Clean staged files when done
-artifact(action="blob_cleanup", older_than_seconds=3600)
-
-# 4) Export shareable blob manifest for later pipelines
-artifact(
-    action="blob_manifest",
-    artifact_id="art_123",
-    scope="all_related",
-    format="csv",
-)
-```
-
-Full docs: [API Contracts](docs/api_contracts.md), [Quick Start](docs/quickstart.md), [Recipes](docs/recipes.md), [Configuration](docs/config.md)
-
-### Import allowlist
-
-Code queries run with a configurable import allowlist. Default allowed import roots include `math`, `json`, `re`, `collections`, `statistics`, `heapq`, `numpy`, `pandas`, `jmespath`, `datetime`, `itertools`, `functools`, `operator`, `decimal`, `csv`, `io`, `string`, `textwrap`, `copy`, `typing`, `dataclasses`, `enum`, `fractions`, `bisect`, `random`, `base64`, and `urllib.parse`. Third-party modules are usable only when installed in Sift's runtime environment.
-
-Install additional packages:
-
-```bash
-sift-gateway install scipy matplotlib
-```
-
-## Security
-
-Code queries use AST validation, an import allowlist, timeout enforcement, and memory limits. This is not a full OS-level sandbox.
-
-Outbound secret redaction is enabled by default and intentionally conservative:
-only known secret exposure patterns are redacted.
-
-See [SECURITY.md](SECURITY.md) for the full security policy.
-Operational docs: [Deployment](docs/deployment.md), [Configuration](docs/config.md)
-
-## Configuration
-
-| Env var | Default | Description |
-|---|---|---|
-| `SIFT_GATEWAY_DATA_DIR` | `.sift-gateway` | Root data directory |
-| `SIFT_GATEWAY_PASSTHROUGH_MAX_BYTES` | `8192` | Inline response cap for mirrored upstream and CLI `run` responses |
-| `SIFT_GATEWAY_CODE_QUERY_MAX_BYTES_OUT` | `200000` | Code-query full-response cap before returning `schema_ref` |
-| `SIFT_GATEWAY_SECRET_REDACTION_ENABLED` | `true` | Redact secrets from tool output |
-| `SIFT_GATEWAY_AUTH_TOKEN` | unset | Required for non-local HTTP binds |
-
-Full reference: [docs/config.md](docs/config.md)
-
-## Documentation
-
-| Doc | Covers |
-|---|---|
-| [Why Sift Exists](docs/why.md) | Research and ecosystem context |
-| [Quick Start](docs/quickstart.md) | Install, init, first artifact |
-| [Recipes](docs/recipes.md) | Practical usage patterns |
-| [OpenClaw Pack](docs/openclaw/README.md) | OpenClaw skill, quickstart, templates |
-| [Upstream Registration](docs/upstream_registration.md) | Upstream add/list/test/auth/login workflows |
-| [API Contracts](docs/api_contracts.md) | MCP + CLI public contract |
-| [Configuration](docs/config.md) | All settings and env vars |
-| [Deployment](docs/deployment.md) | Transport modes, auth, ops |
-| [Errors](docs/errors.md) | Error codes and troubleshooting |
-| [Observability](docs/observability.md) | Structured logging and metrics |
-| [Architecture](docs/architecture.md) | Design and invariants |
+CLI default is `--scope all_related`. Use `--scope single` for anchor-only analysis.
 
 ## Benchmarks
 
-The Tier 1 benchmark compares Sift's schema_ref + codegen approach against naive full-JSON context stuffing across 12 real-world datasets and 103 factual questions.
+Tier 1 result (`claude-sonnet-4-6`):
 
-| Model | Condition | Accuracy | Input Tokens | Token Reduction |
-|---|---|---|---|---|
-| claude-sonnet-4-6 (2026-03-04) | Baseline | 34/103 (33.0%) | 10,757,230 | — |
-| claude-sonnet-4-6 (2026-03-04) | **Sift** | **102/103 (99.0%)** | **489,655** | **95.4%** |
+| Condition | Accuracy | Input Tokens |
+|---|---|---|
+| Baseline (context-stuffed) | 34/103 (33.0%) | 10,757,230 |
+| Sift | 102/103 (99.0%) | 489,655 |
 
-Sift reaches 99.0% accuracy on this suite while using 95.4% fewer input tokens. The baseline struggles on large and deeply nested datasets (earthquakes, laureates, products) where payloads crowd the context window, while Sift handles them through artifact queries.
+That is +66.0 points accuracy with 95.4% fewer input tokens on the same question set.
 
-```bash
-python benchmarks/tier1/fetch_data.py
-python benchmarks/tier1/harness.py --model claude-sonnet-4-6
+Methodology, scripts, and Tier 2 autonomous-agent results: [benchmarks/README.md](benchmarks/README.md).
 
-# or with uv (recommended for clean clones)
-uv run python benchmarks/tier1/fetch_data.py
-uv run python benchmarks/tier1/harness.py --model claude-sonnet-4-6
-```
+## Documentation library
 
-See `benchmarks/tier1/` for the full suite and per-dataset breakdown.
+Start here: [docs/README.md](docs/README.md)
+
+### Getting started
+
+- [Quick Start](docs/quickstart.md)
+- [Installation](docs/quickstart.md#installation)
+- [Your first artifact (CLI)](docs/quickstart.md#your-first-artifact-cli)
+- [Your first artifact (MCP)](docs/quickstart.md#your-first-artifact-mcp)
+- [Adding MCP servers after initial setup](docs/quickstart.md#adding-mcp-servers-after-initial-setup)
+- [Troubleshooting](docs/quickstart.md#troubleshooting)
+
+### Core contracts
+
+- [API Contracts](docs/api_contracts.md)
+- [Mirrored Response Contract (`full` vs `schema_ref`)](docs/api_contracts.md#mirrored-response-contract)
+- [Response Mode Selection](docs/api_contracts.md#response-mode-selection)
+- [Pagination Metadata](docs/api_contracts.md#pagination-metadata)
+- [Code Query Contract](docs/api_contracts.md#artifactactionquery-query_kindcode)
+- [CLI output contract](docs/api_contracts.md#cli-output-contract)
+- [CLI default scope (`all_related`)](docs/api_contracts.md#sift-gateway-code-scope-default)
+
+### Operations and security
+
+- [Deployment Guide](docs/deployment.md)
+- [Authentication tokens](docs/deployment.md#authentication-tokens)
+- [Outbound secret redaction](docs/deployment.md#outbound-secret-redaction)
+- [Configuration Reference](docs/config.md)
+- [Code query runtime](docs/config.md#code-query-runtime)
+- [Error Contract](docs/errors.md)
+- [Security policy](SECURITY.md)
+
+### Patterns and deep dives
+
+- [Recipes](docs/recipes.md)
+- [Pagination chain (CLI)](docs/recipes.md#pattern-2-upstream-pagination-chain-cli)
+- [Pagination chain (MCP)](docs/recipes.md#pattern-3-upstream-pagination-chain-mcp)
+- [Architecture](docs/architecture.md)
+- [Pagination model](docs/architecture.md#5-pagination-model)
+- [Observability](docs/observability.md)
+- [Why Sift exists](docs/why.md)
+- [OpenClaw integration pack](docs/openclaw/README.md)
+- [Upstream registration design](docs/upstream_registration.md)
+
+## Security
+
+See [SECURITY.md](SECURITY.md) for threat model and hardening guidance.
 
 ## Development
 
@@ -338,13 +179,10 @@ See `benchmarks/tier1/` for the full suite and per-dataset breakdown.
 git clone https://github.com/lourencomaciel/sift-gateway.git
 cd sift-gateway
 uv sync --extra dev
-
 uv run python -m pytest tests/unit/ -q
-uv run python -m ruff check src tests
-uv run python -m mypy src
 ```
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for the full development guide.
+Full contributor workflow: [CONTRIBUTING.md](CONTRIBUTING.md)
 
 ## License
 
