@@ -8,13 +8,15 @@
 
 ---
 
-Sift is built for workflows where data correctness matters as much as model quality: enterprise automation, research pipelines, and long-running agent sessions.
+Sift is a drop-in reliability layer for MCP and CLI tool output. It sits between agents and upstream tools, persists full responses as artifacts, and returns either inline payload (`full`) or artifact references (`schema_ref`) with query guidance.
 
-For one-off CLI tasks, plain `jq` or Python can be enough. Sift adds value when you need guarantees: consistent schema handling, secret redaction before data re-enters model context, explicit pagination continuation, and an auditable artifact history.
+You get four guarantees that usually break in long-running agent sessions:
+- Schema-stable follow-up queries over stored data
+- Secret redaction before tool output re-enters model context
+- Explicit pagination continuation and completeness signals
+- Reproducible lineage/audit trail across pages and derived queries
 
-Sift stores tool output as artifacts, infers schema metadata, and returns either inline payload (`full`) or an artifact reference (`schema_ref`). In `schema_ref`, Sift returns either a representative `sample_item` preview or verbose `schemas` fallback.
-
-Keeping large payloads out of prompt context is still a core benefit, but it is one outcome of these guarantees rather than the only goal. See [Why Sift exists](docs/why.md) for research and ecosystem context.
+For one-off local extraction, plain `jq` or Python can be enough. Sift is for cases where wrong answers, hidden truncation, and unclear pagination completeness are unacceptable.
 
 Sift works with MCP clients (Claude Desktop, Claude Code, Cursor, VS Code, Windsurf, Zed) and CLI agents (OpenClaw, terminal automation). Same artifact store, same query interface, two entry points.
 
@@ -34,6 +36,17 @@ Sift works with MCP clients (Claude Desktop, Claude Code, Cursor, VS Code, Winds
                            Large output? return schema reference
                            Agent queries what it needs via code
 ```
+
+## Launch proof
+
+Open benchmark, real JSON datasets, reproducible harness.
+
+| Model | Condition | Accuracy | Input Tokens |
+|---|---|---|---|
+| claude-sonnet-4-6 | Baseline (context-stuffed) | 31/103 (30.1%) | 10,757,230 |
+| claude-sonnet-4-6 | **Sift** | **99/103 (96.1%)** | **501,639** |
+
+That is a 66-point accuracy gain with 95.3% fewer input tokens on the same question set. Full details: [benchmarks/README.md](benchmarks/README.md).
 
 ## Quick start
 
@@ -130,7 +143,6 @@ Sift chooses between inline and reference automatically:
 
 - If the response has upstream pagination: always `schema_ref`.
 - If the full response exceeds the configured cap (default 8 KB): `schema_ref`.
-- If the schema reference is at least 50% smaller than full: `schema_ref`.
 - Otherwise: `full` (inline payload).
 
 ## Pagination
