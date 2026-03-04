@@ -1,30 +1,27 @@
-# Documentation Map
+# Start Here
 
-The documentation set is intentionally small, contract-focused, and centered on
-reliable agent data handling.
+For launch, use this docs path:
 
-## Guides
+1. [quickstart.md](quickstart.md) - install and first successful run/query
+2. [api_contracts.md](api_contracts.md) - canonical behavior and response shapes
+3. [deployment.md](deployment.md) - runtime setup and operations
+4. [config.md](config.md) - env vars and defaults
+5. [errors.md](errors.md) - troubleshooting and error semantics
 
-- [`quickstart.md`](quickstart.md) - install, init, and first run/code flow
-- [`recipes.md`](recipes.md) - practical usage patterns
-- [`upstream_registration.md`](upstream_registration.md) - proposed upstream admin UX and SQLite registry design
-- [`openclaw/README.md`](openclaw/README.md) - OpenClaw reliability workflow
+If you only read two docs before launch, read Quick Start and API Contracts.
 
-## Reference
+## Advanced (Optional)
 
-- [`api_contracts.md`](api_contracts.md) - MCP + CLI public contract
-- [`config.md`](config.md) - configuration keys, defaults, env mappings
-- [`errors.md`](errors.md) - gateway/runtime error taxonomy
-- [`observability.md`](observability.md) - structured events and metrics
-- [`architecture.md`](architecture.md) - implementation architecture
+These are useful, but not required for launch:
 
-## Operations
+- [recipes.md](recipes.md) - implementation patterns and examples
+- [architecture.md](architecture.md) - internals and design invariants
+- [observability.md](observability.md) - logging and metrics details
+- [upstream_registration.md](upstream_registration.md) - upstream admin design and registry model
+- [openclaw/README.md](openclaw/README.md) - OpenClaw integration pack
+- [why.md](why.md) - background and research context
 
-- [`deployment.md`](deployment.md) - transport, auth, runtime ops, tuning, backup
-- [`../SECURITY.md`](../SECURITY.md) - security policy and hardening guidance
-- [`../CONTRIBUTING.md`](../CONTRIBUTING.md) - maintainer workflow and release checks
+## Project-wide docs
 
-## OpenClaw Pack
-
-- [`openclaw/SKILL.md`](openclaw/SKILL.md) - installable skill instructions
-- [`openclaw/README.md`](openclaw/README.md) - quickstart, troubleshooting, templates
+- [../SECURITY.md](../SECURITY.md)
+- [../CONTRIBUTING.md](../CONTRIBUTING.md)
