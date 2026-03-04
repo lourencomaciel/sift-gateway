@@ -134,15 +134,15 @@ directory. Each report includes:
 - Detailed per-question results with gold answers, LLM answers, and
   correctness flags
 
-#### Sonnet 4.6 (2025-02-24)
+#### Sonnet 4.6 (2026-03-04)
 
 | Metric | Baseline | Sift |
 |--------|----------|------|
-| Accuracy | 31/103 (30.1%) | **99/103 (96.1%)** |
-| Input tokens | 10,757,230 | 501,639 |
-| Output tokens | 50,096 | 11,013 |
-| Latency p50 | 5,211 ms | 2,846 ms |
-| Latency p90 | 22,118 ms | 4,687 ms |
+| Accuracy | 34/103 (33.0%) | **102/103 (99.0%)** |
+| Input tokens | 10,757,230 | 489,655 |
+| Output tokens | 47,574 | 12,702 |
+| Latency p50 | 7,730 ms | 7,086 ms |
+| Latency p90 | 24,030 ms | 9,794 ms |
 
 The baseline context-stuffs the raw JSON into the prompt (truncated to
 400 KB / 180K tokens). Large datasets lose most of their data, and the
@@ -157,21 +157,21 @@ Per-dataset breakdown:
 | countries | 6/13 | 13/13 |
 | earthquakes | 4/13 | 13/13 |
 | github_repos | 3/6 | 6/6 |
-| laureates | 1/11 | 10/11 |
+| laureates | 2/11 | 10/11 |
 | openlibrary | 2/6 | 6/6 |
-| photos | 2/5 | 5/5 |
-| pokemon | 3/6 | 6/6 |
+| photos | 3/5 | 5/5 |
+| pokemon | 4/6 | 6/6 |
 | products | 2/15 | 15/15 |
 | users | 1/7 | 7/7 |
-| weather | 2/10 | 7/10 |
+| weather | 2/10 | 10/10 |
 
 By difficulty:
 
 | Difficulty | Baseline | Sift | Retries |
 |-----------|----------|------|---------|
-| Easy | 15/38 | 38/38 | 0 |
-| Medium | 11/40 | 39/40 | 0 |
-| Hard | 5/25 | 22/25 | 8 |
+| Easy | 16/38 | 38/38 | 2 |
+| Medium | 13/40 | 39/40 | 3 |
+| Hard | 5/25 | 25/25 | 7 |
 
 ## Tier 2 — LLM-Driven Autonomous Agent Loop
 
@@ -290,35 +290,35 @@ directory. Each report includes:
 - Token totals and latency percentiles
 - Per-question detailed metrics including tool call sequences
 
-#### Sonnet 4.6 (2025-02-24)
+#### Sonnet 4.6 (2026-03-04)
 
 | Metric | Baseline | Sift |
 |--------|----------|------|
-| Accuracy | 34/103 (33.0%) | **102/103 (99.0%)** |
-| Input tokens | 10,757,230 | 2,886,381 |
-| Output tokens | 47,371 | 35,260 |
-| Avg turns | 1 | 3.16 |
-| Avg tool calls | 0 | 2.16 |
-| Code retry rate | — | 14.2% |
-| Latency p50 | 4,814 ms | 6,288 ms |
-| Latency p90 | 21,506 ms | 9,815 ms |
+| Accuracy | 39/113 (34.5%) | **108/113 (95.6%)** |
+| Input tokens | 11,650,434 | 3,708,677 |
+| Output tokens | 49,046 | 34,715 |
+| Avg turns | 1 | 1.96 |
+| Avg tool calls | 0 | 1.04 |
+| Code retry rate | — | 3.5% |
+| Latency p50 | 7,084 ms | 10,871 ms |
+| Latency p90 | 21,947 ms | 15,611 ms |
 
 The baseline context-stuffs the raw JSON into the prompt (truncated to
 400 KB / 180K tokens). Large datasets lose most of their data, and the
 LLM often emits reasoning text instead of a bare answer.
 
-Per-dataset breakdown:
+Per-dataset breakdown (103 single-dataset questions):
 
 | Dataset | Baseline | Sift |
 |---------|----------|------|
 | airports | 1/6 | 6/6 |
 | comments | 4/5 | 5/5 |
 | countries | 6/13 | 12/13 |
-| earthquakes | 4/13 | 13/13 |
+| earthquakes | 4/13 | 12/13 |
 | github_repos | 3/6 | 6/6 |
 | laureates | 2/11 | 11/11 |
 | openlibrary | 2/6 | 6/6 |
-| photos | 3/5 | 5/5 |
+| photos | 2/5 | 5/5 |
 | pokemon | 3/6 | 6/6 |
 | products | 2/15 | 15/15 |
 | users | 1/7 | 7/7 |
@@ -328,11 +328,11 @@ By difficulty:
 
 | Difficulty | Baseline | Sift |
 |-----------|----------|------|
-| Easy | 15/38 | 38/38 |
-| Medium | 13/40 | 39/40 |
-| Hard | 6/25 | 25/25 |
+| Easy | 15/38 | 37/38 |
+| Medium | 17/45 | 44/45 |
+| Hard | 7/30 | 27/30 |
 
-#### Cross-Dataset Questions — Sonnet 4.6 (2025-02-25)
+#### Cross-Dataset Questions — Sonnet 4.6 (2026-03-04)
 
 10 additional questions that require the agent to access 2+ datasets in a
 single question, testing tool selection and multi-step planning. Two
@@ -345,21 +345,6 @@ question types:
 
 | Metric | Baseline | Sift |
 |--------|----------|------|
-| Accuracy | 6/10 (60.0%) | **8/10 (80.0%)** |
-| Input tokens | 1,142,736 | 916,794 |
-| Output tokens | 6,361 | 14,647 |
-
-By question type:
-
-| Type | Baseline | Sift |
-|------|----------|------|
-| Comparison | 5/5 | 5/5 |
-| Join | 1/5 | 3/5 |
-
-The two join questions that both conditions fail on
-(`cross_pct_countries_with_laureates`, `cross_pop_countries_gt10_laureates`)
-require matching country names between the Nobel Prize API and REST
-Countries. These datasets use inconsistent naming (e.g. "USA" vs "United
-States", "Scotland" vs "United Kingdom"), which defeats naive string
-matching. This is a data-quality challenge rather than a model limitation —
-Opus 4.6 with a 500K-token budget also fails both.
+| Accuracy | 6/10 (60.0%) | **7/10 (70.0%)** |
+| Input tokens | 1,142,736 | 873,794 |
+| Output tokens | 8,494 | 7,191 |
