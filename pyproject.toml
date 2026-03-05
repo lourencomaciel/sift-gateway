@@ -1,6 +1,6 @@
 [project]
 name = "sift-gateway"
-version = "0.4.1"
+version = "0.4.2"
 description = "Reliability gateway for schema-stable, secret-safe, pagination-complete agent JSON."
 readme = "README.md"
 license = "MIT"

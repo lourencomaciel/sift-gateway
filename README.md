@@ -4,11 +4,11 @@ Reliability gateway for AI tool output: schema-stable, secret-safe, pagination-c
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![PyPI](https://img.shields.io/pypi/v/sift-gateway.svg)](https://pypi.org/project/sift-gateway/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://github.com/lourencomaciel/sift-gateway/blob/main/LICENSE)
 
 Sift is a drop-in reliability layer for MCP and CLI tool output. It persists full payloads as artifacts, returns either inline payload (`full`) or compact references (`schema_ref`), and lets agents query what they need with Python code over stored data.
 
-Benchmark summary: on 103 factual questions across 12 real JSON datasets, Sift improved accuracy from 33.0% to 99.0% while cutting input tokens by 95.4% (10,757,230 -> 489,655). Full details: [benchmarks/README.md](benchmarks/README.md).
+Benchmark summary: on 103 factual questions across 12 real JSON datasets, Sift improved accuracy from 33.0% to 99.0% while cutting input tokens by 95.4% (10,757,230 -> 489,655). Full details: [benchmarks/README.md](https://github.com/lourencomaciel/sift-gateway/blob/main/benchmarks/README.md).
 
 ## How it works
 
@@ -47,7 +47,7 @@ These are recurring across MCP client issue trackers and protocol usage in produ
 - Tool output is untrusted input and can contain sensitive values that should not re-enter model context.
 - Raw outputs scroll away in chat history, so provenance and reproducibility degrade across multi-step runs.
 
-Background and references: [docs/why.md](docs/why.md).
+Background and references: [docs/why.md](https://github.com/lourencomaciel/sift-gateway/blob/main/docs/why.md).
 
 ## What Sift adds (without changing upstream servers)
 
@@ -121,56 +121,56 @@ Tier 1 result (`claude-sonnet-4-6`):
 
 That is +66.0 points accuracy with 95.4% fewer input tokens on the same question set.
 
-Methodology, scripts, and Tier 2 autonomous-agent results: [benchmarks/README.md](benchmarks/README.md).
+Methodology, scripts, and Tier 2 autonomous-agent results: [benchmarks/README.md](https://github.com/lourencomaciel/sift-gateway/blob/main/benchmarks/README.md).
 
 ## Documentation library
 
-Start here: [docs/README.md](docs/README.md)
+Start here: [docs/README.md](https://github.com/lourencomaciel/sift-gateway/blob/main/docs/README.md)
 
 ### Getting started
 
-- [Quick Start](docs/quickstart.md)
-- [Installation](docs/quickstart.md#installation)
-- [Your first artifact (CLI)](docs/quickstart.md#your-first-artifact-cli)
-- [Your first artifact (MCP)](docs/quickstart.md#your-first-artifact-mcp)
-- [Adding MCP servers after initial setup](docs/quickstart.md#adding-mcp-servers-after-initial-setup)
-- [Troubleshooting](docs/quickstart.md#troubleshooting)
+- [Quick Start](https://github.com/lourencomaciel/sift-gateway/blob/main/docs/quickstart.md)
+- [Installation](https://github.com/lourencomaciel/sift-gateway/blob/main/docs/quickstart.md#installation)
+- [Your first artifact (CLI)](https://github.com/lourencomaciel/sift-gateway/blob/main/docs/quickstart.md#your-first-artifact-cli)
+- [Your first artifact (MCP)](https://github.com/lourencomaciel/sift-gateway/blob/main/docs/quickstart.md#your-first-artifact-mcp)
+- [Adding MCP servers after initial setup](https://github.com/lourencomaciel/sift-gateway/blob/main/docs/quickstart.md#adding-mcp-servers-after-initial-setup)
+- [Troubleshooting](https://github.com/lourencomaciel/sift-gateway/blob/main/docs/quickstart.md#troubleshooting)
 
 ### Core contracts
 
-- [API Contracts](docs/api_contracts.md)
-- [Mirrored Response Contract (`full` vs `schema_ref`)](docs/api_contracts.md#mirrored-response-contract)
-- [Response Mode Selection](docs/api_contracts.md#response-mode-selection)
-- [Pagination Metadata](docs/api_contracts.md#pagination-metadata)
-- [Code Query Contract](docs/api_contracts.md#artifactactionquery-query_kindcode)
-- [CLI output contract](docs/api_contracts.md#cli-output-contract)
-- [CLI default scope (`all_related`)](docs/api_contracts.md#sift-gateway-code-scope-default)
+- [API Contracts](https://github.com/lourencomaciel/sift-gateway/blob/main/docs/api_contracts.md)
+- [Mirrored Response Contract (`full` vs `schema_ref`)](https://github.com/lourencomaciel/sift-gateway/blob/main/docs/api_contracts.md#mirrored-response-contract)
+- [Response Mode Selection](https://github.com/lourencomaciel/sift-gateway/blob/main/docs/api_contracts.md#response-mode-selection)
+- [Pagination Metadata](https://github.com/lourencomaciel/sift-gateway/blob/main/docs/api_contracts.md#pagination-metadata)
+- [Code Query Contract](https://github.com/lourencomaciel/sift-gateway/blob/main/docs/api_contracts.md#artifactactionquery-query_kindcode)
+- [CLI output contract](https://github.com/lourencomaciel/sift-gateway/blob/main/docs/api_contracts.md#cli-output-contract)
+- [CLI default scope (`all_related`)](https://github.com/lourencomaciel/sift-gateway/blob/main/docs/api_contracts.md#sift-gateway-code-scope-default)
 
 ### Operations and security
 
-- [Deployment Guide](docs/deployment.md)
-- [Authentication tokens](docs/deployment.md#authentication-tokens)
-- [Outbound secret redaction](docs/deployment.md#outbound-secret-redaction)
-- [Configuration Reference](docs/config.md)
-- [Code query runtime](docs/config.md#code-query-runtime)
-- [Error Contract](docs/errors.md)
-- [Security policy](SECURITY.md)
+- [Deployment Guide](https://github.com/lourencomaciel/sift-gateway/blob/main/docs/deployment.md)
+- [Authentication tokens](https://github.com/lourencomaciel/sift-gateway/blob/main/docs/deployment.md#authentication-tokens)
+- [Outbound secret redaction](https://github.com/lourencomaciel/sift-gateway/blob/main/docs/deployment.md#outbound-secret-redaction)
+- [Configuration Reference](https://github.com/lourencomaciel/sift-gateway/blob/main/docs/config.md)
+- [Code query runtime](https://github.com/lourencomaciel/sift-gateway/blob/main/docs/config.md#code-query-runtime)
+- [Error Contract](https://github.com/lourencomaciel/sift-gateway/blob/main/docs/errors.md)
+- [Security policy](https://github.com/lourencomaciel/sift-gateway/blob/main/SECURITY.md)
 
 ### Patterns and deep dives
 
-- [Recipes](docs/recipes.md)
-- [Pagination chain (CLI)](docs/recipes.md#pattern-2-upstream-pagination-chain-cli)
-- [Pagination chain (MCP)](docs/recipes.md#pattern-3-upstream-pagination-chain-mcp)
-- [Architecture](docs/architecture.md)
-- [Pagination model](docs/architecture.md#5-pagination-model)
-- [Observability](docs/observability.md)
-- [Why Sift exists](docs/why.md)
-- [OpenClaw integration pack](docs/openclaw/README.md)
-- [Upstream registration design](docs/upstream_registration.md)
+- [Recipes](https://github.com/lourencomaciel/sift-gateway/blob/main/docs/recipes.md)
+- [Pagination chain (CLI)](https://github.com/lourencomaciel/sift-gateway/blob/main/docs/recipes.md#pattern-2-upstream-pagination-chain-cli)
+- [Pagination chain (MCP)](https://github.com/lourencomaciel/sift-gateway/blob/main/docs/recipes.md#pattern-3-upstream-pagination-chain-mcp)
+- [Architecture](https://github.com/lourencomaciel/sift-gateway/blob/main/docs/architecture.md)
+- [Pagination model](https://github.com/lourencomaciel/sift-gateway/blob/main/docs/architecture.md#5-pagination-model)
+- [Observability](https://github.com/lourencomaciel/sift-gateway/blob/main/docs/observability.md)
+- [Why Sift exists](https://github.com/lourencomaciel/sift-gateway/blob/main/docs/why.md)
+- [OpenClaw integration pack](https://github.com/lourencomaciel/sift-gateway/blob/main/docs/openclaw/README.md)
+- [Upstream registration design](https://github.com/lourencomaciel/sift-gateway/blob/main/docs/upstream_registration.md)
 
 ## Security
 
-See [SECURITY.md](SECURITY.md) for threat model and hardening guidance.
+See [SECURITY.md](https://github.com/lourencomaciel/sift-gateway/blob/main/SECURITY.md) for threat model and hardening guidance.
 
 ## Development
 
@@ -181,8 +181,8 @@ uv sync --extra dev
 uv run python -m pytest tests/unit/ -q
 ```
 
-Full contributor workflow: [CONTRIBUTING.md](CONTRIBUTING.md)
+Full contributor workflow: [CONTRIBUTING.md](https://github.com/lourencomaciel/sift-gateway/blob/main/CONTRIBUTING.md)
 
 ## License
 
-MIT - see [LICENSE](LICENSE).
+MIT - see [LICENSE](https://github.com/lourencomaciel/sift-gateway/blob/main/LICENSE).

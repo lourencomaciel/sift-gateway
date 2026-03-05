@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [0.4.2] - 2026-03-05
+
+### Fixed
+- Converted README documentation links to absolute GitHub URLs so PyPI project-page links resolve correctly instead of redirecting to invalid `pypi.org/project/...` paths.
+
 ## [0.4.1] - 2026-03-05
 
 ### Added
