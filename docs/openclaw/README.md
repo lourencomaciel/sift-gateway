@@ -1,8 +1,8 @@
 # OpenClaw Integration Pack
 
 This pack ships one OpenClaw skill (`context-query-guard`) for Sift Gateway.
-It is designed for large or paginated command output where direct inline output
-or ad hoc shell inspection becomes unreliable.
+It is designed for model-facing CLI output where direct inline output or ad hoc
+shell inspection becomes unreliable.
 
 ## Document roles
 
@@ -16,17 +16,18 @@ The two files are intentionally different. `SKILL.md` optimizes model behavior;
 
 ## CLI usage philosophy
 
-Use Sift by default when CLI output is going to be consumed by the model for
-analysis, transformation, or follow-up querying.
+Use Sift when any of these are true:
+- Output will be consumed by the model (analysis, transformation, or follow-up
+  querying).
+- Pagination exists or may exist (`pagination.next.kind=="command"`).
+- JSON schema/root confidence is low, or rows may be heterogeneous (even for
+  small payloads).
+- You need reproducibility, redaction discipline, or auditability.
 
-Use direct CLI only for quick one-off human inspection when all of these are
-true:
-- output is clearly small
-- schema/root path is obvious
-- there is no expected follow-up model analysis
-
-Use Sift even for small payloads when schema confidence is low (for example
-wrapped lists, multiple candidate roots, or heterogeneous rows).
+Use direct CLI only when all of these are true:
+- Output is clearly small.
+- Schema/root path is obvious.
+- It is a one-off human inspection with no follow-up model reasoning.
 
 ## Why this approach is better than direct first-item inspection
 
