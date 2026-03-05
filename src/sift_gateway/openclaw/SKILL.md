@@ -1,19 +1,20 @@
 ---
-name: context-query-guard
-description: Capture model-facing command output as artifacts and analyze it with compact reproducible code queries.
+name: reliable-tool-context
+description: Build reliable tool context from command output using artifacts and compact reproducible code queries.
 homepage: https://github.com/lourencomaciel/sift-gateway/tree/main/docs/openclaw
-metadata: {"openclaw":{"skillKey":"sift-gateway-context-query-guard","homepage":"https://github.com/lourencomaciel/sift-gateway/tree/main/docs/openclaw","requires":{"bins":["sift-gateway"]},"install":[{"id":"uv","kind":"uv","package":"sift-gateway","bins":["sift-gateway"],"label":"Install Sift Gateway (uv)"}]}}
+metadata: {"openclaw":{"skillKey":"sift-gateway-reliable-tool-context","homepage":"https://github.com/lourencomaciel/sift-gateway/tree/main/docs/openclaw","requires":{"bins":["sift-gateway"]},"install":[{"id":"uv","kind":"uv","package":"sift-gateway","bins":["sift-gateway"],"label":"Install Sift Gateway (uv)"}]}}
 ---
 
-# Context Query Guard
+# Reliable Tool Context
 
-Use this skill whenever command output will be analyzed by the model and
-correctness matters. Capture once, query from artifacts, and return compact
-answers without copying raw payloads into model context.
+Use this skill to build reliable tool context whenever command output will be
+analyzed by the model and correctness matters. Capture once, query from
+artifacts, and return compact answers without copying raw payloads into model
+context.
 
 ## CLI Decision Rule
 
-Use Sift when any of these are true:
+Use Sift to establish reliable tool context when any of these are true:
 - Output will be consumed by the model (analysis, transformation, or follow-up
   querying).
 - Pagination exists or may exist (`pagination.next.kind=="command"`).

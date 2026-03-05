@@ -9,7 +9,7 @@ from sift_gateway.openclaw.cli import cli
 def test_skill_text_loads_packaged_asset() -> None:
     text = skill_text()
     assert text == read_asset("SKILL.md")
-    assert "name: context-query-guard" in text
+    assert "name: reliable-tool-context" in text
     assert "sift-gateway code" in text
 
 
@@ -17,7 +17,7 @@ def test_cli_prints_skill_to_stdout(capsys) -> None:
     exit_code = cli([])
     captured = capsys.readouterr()
     assert exit_code == 0
-    assert "name: context-query-guard" in captured.out
+    assert "name: reliable-tool-context" in captured.out
     assert captured.err == ""
 
 

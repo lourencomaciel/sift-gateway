@@ -1,13 +1,15 @@
 # OpenClaw Integration Pack
 
-This pack ships one OpenClaw skill (`context-query-guard`) for Sift Gateway.
+This pack ships one OpenClaw skill (`reliable-tool-context`) for Sift Gateway.
 It is designed for model-facing CLI output where direct inline output or ad hoc
-shell inspection becomes unreliable.
+shell inspection becomes unreliable. The goal is reliable tool context for
+model decisions.
 
 ## Document roles
 
 - `SKILL.md`: model-facing runtime policy. This is the procedural source of
-  truth for how the model should capture, inspect, and query artifacts.
+  truth for how the model should build reliable tool context from captured
+  artifacts.
 - `README.md`: human-facing explanation of why the skill exists, what behavior
   it enforces, and how to install it.
 
@@ -16,7 +18,7 @@ The two files are intentionally different. `SKILL.md` optimizes model behavior;
 
 ## CLI usage philosophy
 
-Use Sift when any of these are true:
+Use Sift to establish reliable tool context when any of these are true:
 - Output will be consumed by the model (analysis, transformation, or follow-up
   querying).
 - Pagination exists or may exist (`pagination.next.kind=="command"`).
@@ -29,7 +31,7 @@ Use direct CLI only when all of these are true:
 - Schema/root path is obvious.
 - It is a one-off human inspection with no follow-up model reasoning.
 
-## Why this approach is better than direct first-item inspection
+## Why reliable tool context beats direct first-item inspection
 
 Direct shortcuts like `jq '.[0]'` are useful for quick local peeks, but they are
 not reliable as a schema-discovery strategy in production workflows:
@@ -76,8 +78,8 @@ pipx install sift-gateway
 2. Write the packaged skill file:
 
 ```bash
-mkdir -p ~/.openclaw/skills/context-query-guard
-sift-gateway-openclaw-skill --output ~/.openclaw/skills/context-query-guard/SKILL.md
+mkdir -p ~/.openclaw/skills/reliable-tool-context
+sift-gateway-openclaw-skill --output ~/.openclaw/skills/reliable-tool-context/SKILL.md
 ```
 
 3. Ensure OpenClaw loads that directory (or explicitly enable the skill in your
@@ -89,7 +91,7 @@ Optional example:
 {
   skills: {
     entries: {
-      "sift-gateway-context-query-guard": { enabled: true },
+      "sift-gateway-reliable-tool-context": { enabled: true },
     },
   },
 }
