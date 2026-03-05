@@ -111,6 +111,27 @@ For current `run` captures, use `$` as root path for follow-up code queries.
 `docs/openclaw/SKILL.md` is the editable source. Keep
 `src/sift_gateway/openclaw/SKILL.md` mirrored to match packaged output.
 
+## Sync this skill to ClawHub from GitHub
+
+This repository includes `.github/workflows/clawhub-sync.yml` to sync the skill
+on every push to `main` that changes `docs/openclaw/**`.
+
+1. Create a ClawHub API token.
+2. Add repository secret `CLAWHUB_TOKEN` in GitHub:
+   `Settings > Secrets and variables > Actions`.
+3. Push changes to `docs/openclaw/**` on `main`, or run the workflow manually
+   from the Actions tab.
+
+The workflow runs:
+
+```bash
+clawhub login --token "$CLAWHUB_TOKEN" --no-browser
+clawhub sync --all --root docs/openclaw --bump patch --changelog "Automated sync from <repo>@<sha>" --tags latest --no-input
+```
+
+Use `clawhub publish` instead if you want to set version numbers explicitly per
+release.
+
 ## Related docs
 
 - [OpenClaw skill](SKILL.md)
