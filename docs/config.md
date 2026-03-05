@@ -402,7 +402,7 @@ redirect only when the target `state/config.json` exists and is valid.
 | `--path` | `/mcp` | HTTP route path |
 | `--auth-token` | none | Bearer token for non-local HTTP binds |
 | `--data-dir` | auto | Data directory override |
-| `--check` | flag | Validate config/DB/FS/upstreams and exit |
+| `--check` | flag | Validate config/DB/FS and upstream config validity; then exit |
 | `--logs` | flag | Emit structured logs to stderr |
 
 `--auth-token` also reads `SIFT_GATEWAY_AUTH_TOKEN`.

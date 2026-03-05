@@ -33,7 +33,15 @@
       "parameters": {
         "required_status_checks": [
           {
-            "context": "quality",
+            "context": "lint",
+            "integration_id": 15368
+          },
+          {
+            "context": "typecheck",
+            "integration_id": 15368
+          },
+          {
+            "context": "test",
             "integration_id": 15368
           },
           {

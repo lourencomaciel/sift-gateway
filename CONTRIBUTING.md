@@ -101,8 +101,10 @@ Use repository rulesets/branch protection on `main` with:
 - Require at least one approval
 - Require code owner review
 - Require status checks to pass:
-  - `CI / quality`
-  - `Docs Contract / docs-contract`
+  - `lint`
+  - `typecheck`
+  - `test`
+  - `docs-contract`
 - Require conversation resolution before merge
 - Disable force pushes and branch deletion
 
@@ -113,8 +115,10 @@ Recommended setup path (rulesets):
 3. Click **New ruleset** -> **Import a ruleset**.
 4. Upload `.github/rulesets/main-protection.json`.
 5. Confirm required checks include:
-   - `CI / quality`
-   - `Docs Contract / docs-contract`
+   - `lint`
+   - `typecheck`
+   - `test`
+   - `docs-contract`
 6. Save and enable the ruleset.
 
 ## Maintainer Release Workflow

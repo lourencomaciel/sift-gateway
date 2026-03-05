@@ -124,8 +124,8 @@ sift-gateway uninstall scipy
 sift-gateway --check
 ```
 
-This validates config, DB connectivity, filesystem permissions, and upstream
-availability.
+This validates config shape, DB connectivity, filesystem permissions, and
+upstream configuration validity.
 
 ## Your first artifact (CLI)
 
@@ -257,6 +257,7 @@ Validate new upstreams:
 ```bash
 sift-gateway upstream list
 sift-gateway upstream test --server notion
+sift-gateway upstream auth check --server notion
 ```
 
 If Sift is already running, restart Sift (and your MCP client) to load newly

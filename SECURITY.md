@@ -60,15 +60,13 @@ Current controls:
 1. AST guard enforces import/root restrictions.
 2. Runtime executes in a subprocess with timeout and memory constraints.
 3. Import allowlist is explicit and configurable.
-4. Code runtime can be disabled:
-
-```bash
-export SIFT_GATEWAY_CODE_QUERY_ENABLED=false
-```
+4. There is currently no supported runtime flag to disable
+   `query_kind="code"` globally.
 
 Operational guidance:
 
-1. Keep code query disabled unless required.
+1. Restrict who can invoke the `artifact(action="query", query_kind="code")`
+   surface.
 2. For untrusted model-authored code, run Sift inside a container boundary.
 3. Keep optional code dependencies minimal and controlled.
 
