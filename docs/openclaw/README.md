@@ -40,8 +40,8 @@ These points are aligned with current Sift CLI behavior:
   when you want anchor-only analysis.
 - `response_mode="schema_ref"` may provide either a representative
   `sample_item` or a `schemas` list.
-- `metadata.usage.root_path` is the preferred root-path hint for follow-up
-  queries.
+- `run` captures currently use canonical root path `$` for follow-up queries
+  (`metadata.usage.root_path` should match this).
 - Completeness is tied to `pagination.retrieval_status == COMPLETE`.
 
 ## Install
@@ -87,8 +87,8 @@ sift-gateway run --json -- echo '[{"id":1,"state":"open"},{"id":2,"state":"close
 sift-gateway code --json <artifact_id> '$' --code "def run(data, schema, params): return len(data)"
 ```
 
-For non-trivial payloads, follow `metadata.usage.root_path` from the `run`
-response instead of assuming `$`.
+For current `run` captures, use `$` as root path for follow-up code queries.
+`metadata.usage.root_path` is still useful as a compatibility check.
 
 ## Maintainer note
 

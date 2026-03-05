@@ -70,8 +70,9 @@ def run(data, schema, params):
 )
 ```
 
-If your row list is nested, use `metadata.queryable_roots` (or
-`metadata.usage.root_path`) from the capture response instead of guessing.
+With current canonical mapping, start with `root_path="$"` and traverse nested
+lists inside query code as needed. If `metadata.queryable_roots` differs (for
+example on legacy artifacts), prefer that metadata.
 
 ## Pattern 5: Code query (MCP, multi artifact)
 
