@@ -1,6 +1,6 @@
 ---
 name: context-query-guard
-description: Capture large or paginated command output as artifacts and analyze it with compact reproducible code queries.
+description: Capture model-facing command output as artifacts and analyze it with compact reproducible code queries.
 homepage: https://github.com/lourencomaciel/sift-gateway/tree/main/docs/openclaw
 metadata: {"openclaw":{"skillKey":"sift-gateway-context-query-guard","homepage":"https://github.com/lourencomaciel/sift-gateway/tree/main/docs/openclaw","requires":{"bins":["sift-gateway"]},"install":[{"id":"uv","kind":"uv","package":"sift-gateway","bins":["sift-gateway"],"label":"Install Sift Gateway (uv)"}]}}
 ---
@@ -11,17 +11,20 @@ Use this skill whenever command output will be analyzed by the model and
 correctness matters. Capture once, query from artifacts, and return compact
 answers without copying raw payloads into model context.
 
-## Trigger
+## CLI Decision Rule
 
-- API list calls (`gh api`, `curl`, `kubectl ... -o json`)
-- Large logs or tables
-- JSON payloads with uncertain shape/root path or heterogeneous rows (even when
-  small)
-- Follow-up analysis across multiple turns
-- Workflows that need reproducibility, redaction discipline, or auditability
+Use Sift when any of these are true:
+- Output will be consumed by the model (analysis, transformation, or follow-up
+  querying).
+- Pagination exists or may exist (`pagination.next.kind=="command"`).
+- JSON schema/root confidence is low, or rows may be heterogeneous (even for
+  small payloads).
+- You need reproducibility, redaction discipline, or auditability.
 
-Skip only for trivial one-off, human-eyeball checks with clearly small output
-and no follow-up model reasoning.
+Use direct CLI only when all of these are true:
+- Output is clearly small.
+- Schema/root path is obvious.
+- It is a one-off human inspection with no follow-up model reasoning.
 
 ## Required workflow
 
