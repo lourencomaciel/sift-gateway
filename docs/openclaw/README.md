@@ -126,11 +126,14 @@ The workflow runs:
 
 ```bash
 clawhub login --token "$CLAWHUB_TOKEN" --no-browser
-clawhub sync --all --root docs/openclaw --bump patch --changelog "Automated sync from <repo>@<sha>" --tags latest --no-input
+mkdir -p .clawhub-sync/reliable-tool-context
+cp docs/openclaw/SKILL.md .clawhub-sync/reliable-tool-context/SKILL.md
+cp docs/openclaw/README.md .clawhub-sync/reliable-tool-context/README.md
+clawhub sync --all --root .clawhub-sync --bump patch --changelog "Automated sync from <repo>@<sha>" --tags latest --no-input
 ```
 
-Use `clawhub publish` instead if you want to set version numbers explicitly per
-release.
+This staging step guarantees the synced slug is `reliable-tool-context` instead
+of deriving a slug from the repository directory name.
 
 ## Related docs
 

@@ -41,11 +41,18 @@ jobs:
           CLAWHUB_TOKEN: ${{ secrets.CLAWHUB_TOKEN }}
         run: clawhub login --token "${CLAWHUB_TOKEN}" --no-browser
 
+      - name: Prepare skill directory for sync
+        run: |
+          rm -rf .clawhub-sync
+          mkdir -p .clawhub-sync/reliable-tool-context
+          cp docs/openclaw/SKILL.md .clawhub-sync/reliable-tool-context/SKILL.md
+          cp docs/openclaw/README.md .clawhub-sync/reliable-tool-context/README.md
+
       - name: Sync OpenClaw skill
         run: >
           clawhub sync
           --all
-          --root docs/openclaw
+          --root .clawhub-sync
           --bump patch
           --changelog "Automated sync from ${{ github.repository }}@${{ github.sha }}"
           --tags latest
