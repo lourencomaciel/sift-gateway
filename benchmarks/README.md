@@ -88,20 +88,22 @@ and cross-field question types.
 ### File layout
 
 ```
-benchmarks/tier1/
-├── harness.py          # Orchestration: runs both conditions, generates reports
-├── mock_upstream.py    # FastMCP server serving datasets (launched as subprocess)
-├── sift_runtime.py     # MCP client wrapper (gateway + mock upstream integration)
-├── datasets.py         # Dataset definitions (URLs, extraction paths, filenames)
-├── questions.py        # 103 questions with gold-answer functions and tolerances
-├── llm_client.py       # Anthropic + OpenAI API client (zero third-party deps)
-├── evaluate.py         # Answer matching (number/string/boolean/list) and reporting
-├── fetch_data.py       # One-time dataset downloader
-├── code_extract.py     # Extract Python code from LLM responses
-├── code_result.py      # Unwrap code-query execution responses
-├── schema_prompt.py    # Format schema into LLM-ready prompt text
-├── data/               # Downloaded JSON datasets (gitignored)
-└── results/            # Timestamped JSON benchmark reports (gitignored)
+benchmarks/
+├── common/
+│   ├── sift_runtime.py # MCP client wrapper (gateway + mock upstream integration)
+│   ├── datasets.py     # Dataset definitions (URLs, extraction paths, filenames)
+│   ├── questions.py    # 103 questions with gold-answer functions and tolerances
+│   └── llm_client.py   # Anthropic + OpenAI API client (zero third-party deps)
+└── tier1/
+    ├── harness.py      # Orchestration: runs both conditions, generates reports
+    ├── mock_upstream.py # FastMCP server serving datasets (subprocess stdio)
+    ├── evaluate.py     # Tier-1 report shaping
+    ├── fetch_data.py   # One-time dataset downloader
+    ├── code_extract.py # Extract Python code from LLM responses
+    ├── code_result.py  # Unwrap code-query execution responses
+    ├── schema_prompt.py # Format schema into LLM-ready prompt text
+    ├── data/           # Downloaded JSON datasets (gitignored)
+    └── results/        # Timestamped JSON benchmark reports (gitignored)
 ```
 
 ### How it works

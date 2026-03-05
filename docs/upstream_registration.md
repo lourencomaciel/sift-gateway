@@ -36,6 +36,10 @@ sift-gateway upstream inspect --server github --json
 # Probe tools/list connectivity
 sift-gateway upstream test --server github
 sift-gateway upstream test --all
+
+# Probe OAuth session health
+sift-gateway upstream auth check --server github
+sift-gateway upstream auth check --all
 ```
 
 ## 3.2 Write commands

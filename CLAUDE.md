@@ -11,7 +11,7 @@
 - Always run full test suite after changes: tests must stay green
 
 ## CLI
-- `sift-gateway --check` — validate config/DB/FS/upstreams and exit
+- `sift-gateway --check` — validate config/DB/FS and upstream config validity
 - `sift-gateway init --from <file>` — import mcpServers config (SQLite backend)
 - `sift-gateway upstream add <json>` — add upstream to existing config
 - `sift-gateway install <packages...>` / `sift-gateway uninstall <packages...>` — manage code-query packages

@@ -130,7 +130,12 @@ This validates:
 - Configuration file syntax
 - Database connectivity
 - Filesystem permissions
-- Upstream server availability
+- Upstream configuration validity
+
+For live upstream connectivity/auth checks, use:
+
+- `sift-gateway upstream test --server <name>`
+- `sift-gateway upstream auth check --server <name>` (OAuth upstreams)
 
 ### Logging
 
