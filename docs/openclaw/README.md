@@ -1,27 +1,50 @@
 # OpenClaw Integration Pack
 
-This pack provides a CLI-first OpenClaw skill for governed JSON workflows:
-schema-consistent querying, secret-safe outputs, explicit pagination handling,
-and reproducible artifact history.
+This pack ships one OpenClaw skill (`context-query-guard`) for Sift Gateway.
+It is designed for large or paginated command output where direct inline output
+or ad hoc shell inspection becomes unreliable.
 
-## Included assets
+## Document roles
 
-- installable skill file: `docs/openclaw/SKILL.md`
-- packaged mirror: `src/sift_gateway/openclaw/SKILL.md`
-- writer CLI: `sift-gateway-openclaw-skill`
+- `SKILL.md`: model-facing runtime policy. This is the procedural source of
+  truth for how the model should capture, inspect, and query artifacts.
+- `README.md`: human-facing explanation of why the skill exists, what behavior
+  it enforces, and how to install it.
 
-## When to use Sift vs direct CLI
+The two files are intentionally different. `SKILL.md` optimizes model behavior;
+`README.md` optimizes human understanding.
 
-Use direct `jq`/Python for quick one-off local checks.
+## Why this approach is better than direct first-item inspection
 
-Use this pack when you need:
+Direct shortcuts like `jq '.[0]'` are useful for quick local peeks, but they are
+not reliable as a schema-discovery strategy in production workflows:
 
-- repeatable results across runs or operators
-- explicit pagination continuity and completeness checks
-- redaction before output re-enters model context
-- a stored artifact trail for review or audit
+- Many payloads are object-wrapped and not top-level arrays.
+- Some payloads expose multiple list roots, so first-item sampling can pick the
+  wrong collection.
+- Heterogeneous rows can make one row unrepresentative.
+- Manual paging and copied output increase omission and drift risk.
 
-## Quickstart (CLI mode)
+The skill avoids those failure modes by using Sift contracts (`artifact_id`,
+`response_mode`, schema metadata, explicit pagination continuity).
+
+## Sift behavior this pack relies on
+
+These points are aligned with current Sift CLI behavior:
+
+- `sift-gateway run --json -- <command>` captures output and returns an
+  `artifact_id`.
+- `run` responses may include pagination metadata; continue only when
+  `pagination.next.kind == "command"`.
+- `sift-gateway code` defaults to `--scope all_related`; use `--scope single`
+  when you want anchor-only analysis.
+- `response_mode="schema_ref"` may provide either a representative
+  `sample_item` or a `schemas` list.
+- `metadata.usage.root_path` is the preferred root-path hint for follow-up
+  queries.
+- Completeness is tied to `pagination.retrieval_status == COMPLETE`.
+
+## Install
 
 1. Install Sift Gateway:
 
@@ -35,16 +58,17 @@ Alternative:
 pipx install sift-gateway
 ```
 
-2. Install the packaged skill:
+2. Write the packaged skill file:
 
 ```bash
 mkdir -p ~/.openclaw/skills/context-query-guard
 sift-gateway-openclaw-skill --output ~/.openclaw/skills/context-query-guard/SKILL.md
 ```
 
-3. Start a new OpenClaw session (skills in `~/.openclaw/skills` are auto-discovered).
+3. Ensure OpenClaw loads that directory (or explicitly enable the skill in your
+   OpenClaw skill configuration).
 
-Optional: explicitly control this skill in `~/.openclaw/openclaw.json`:
+Optional example:
 
 ```json5
 {
@@ -56,99 +80,20 @@ Optional: explicitly control this skill in `~/.openclaw/openclaw.json`:
 }
 ```
 
-4. Validate:
+## Sanity check
 
 ```bash
 sift-gateway run --json -- echo '[{"id":1,"state":"open"},{"id":2,"state":"closed"}]'
 sift-gateway code --json <artifact_id> '$' --code "def run(data, schema, params): return len(data)"
 ```
 
-For other payload shapes, use `metadata.usage.root_path` from `run --json` when
-choosing `root_path` for `code --json`.
+For non-trivial payloads, follow `metadata.usage.root_path` from the `run`
+response instead of assuming `$`.
 
-If `pagination.next.kind=="command"`:
+## Maintainer note
 
-```bash
-sift-gateway run --json --continue-from <artifact_id> -- <next-command-with-next_params-applied>
-```
-
-5. Add one short profile rule:
-
-```text
-Use `sift-gateway run --json` + `sift-gateway code --json` whenever output may be large, paginated, or requires reproducible and redacted handling.
-```
-
-## Load-time gating metadata
-
-The skill uses OpenClaw metadata gating via `metadata.openclaw.*` and includes
-an install hint for the macOS Skills UI:
-
-```yaml
-metadata: {"openclaw":{"skillKey":"sift-gateway-context-query-guard","homepage":"https://github.com/lourencomaciel/sift-gateway/tree/main/docs/openclaw","requires":{"bins":["sift-gateway"]},"install":[{"id":"uv","kind":"uv","package":"sift-gateway","bins":["sift-gateway"],"label":"Install Sift Gateway (uv)"}]}}
-```
-
-## Operating rules
-
-- Prefer `--json` for all run/code invocations.
-- Keep only `artifact_id` and compact findings in prompt context.
-- If `response_mode` is `schema_ref`, use `sample_item` first; if absent, inspect `schemas` before writing code queries.
-- Treat `artifact_id` + lineage metadata as the system of record for follow-up analysis.
-- `sift-gateway code` defaults to `--scope all_related`; pass `--scope single`
-  for anchor-only analysis.
-- If `sift-gateway run` exits non-zero, fix capture first.
-- Continue pagination only when `pagination.next.kind=="command"`.
-
-## Troubleshooting
-
-### Symptom: context still gets flooded
-
-Cause:
-
-- large commands are still executed directly, bypassing artifact capture.
-
-Fix:
-
-```bash
-sift-gateway run --json -- <large-command>
-```
-
-### Symptom: capture command failed
-
-Cause:
-
-- auth/permissions issue, missing binary, or non-zero upstream exit.
-
-Fix:
-
-- run the command standalone first
-- inspect the `run --json` error payload and retry
-
-### Symptom: pagination stopped early
-
-Cause:
-
-- continuation command was not issued.
-
-Fix:
-
-```bash
-sift-gateway run --json --continue-from <artifact_id> -- <next-command-with-next_params-applied>
-```
-
-### Symptom: code query failed
-
-Cause:
-
-- missing code source, invalid `--params` JSON, or wrong root path.
-
-Fix:
-
-```bash
-sift-gateway code --json <artifact_id> '$' --code "def run(data, schema, params): return len(data)"
-```
-
-If `$` is not the correct root for that artifact, use
-`metadata.usage.root_path` from `run --json`.
+`docs/openclaw/SKILL.md` is the editable source. Keep
+`src/sift_gateway/openclaw/SKILL.md` mirrored to match packaged output.
 
 ## Related docs
 
