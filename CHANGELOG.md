@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-03-05
+
+### Added
+- Added automated ClawHub sync workflow (`.github/workflows/clawhub-sync.yml`) to publish OpenClaw skill updates from GitHub with non-interactive token auth.
+
+### Changed
+- Renamed packaged OpenClaw skill identity to `reliable-tool-context` and aligned metadata key (`sift-gateway-reliable-tool-context`) across source, packaged mirror, docs, and tests.
+- Refined OpenClaw `README.md`/`SKILL.md` guidance around reliable tool context and model-facing CLI usage philosophy.
+
+### Fixed
+- Fixed ClawHub sync slug derivation by staging skill files into `.clawhub-sync/reliable-tool-context` before `clawhub sync`, preventing ownership conflicts on update.
+
 ## [0.4.0] - 2026-03-04
 
 ### Changed
