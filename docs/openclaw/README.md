@@ -42,25 +42,21 @@ mkdir -p ~/.openclaw/skills/context-query-guard
 sift-gateway-openclaw-skill --output ~/.openclaw/skills/context-query-guard/SKILL.md
 ```
 
-3. Register the skill in `~/.openclaw/config.toml`:
+3. Start a new OpenClaw session (skills in `~/.openclaw/skills` are auto-discovered).
 
-```toml
-[skills]
-entries = [
-  { path = "~/.openclaw/skills/context-query-guard/SKILL.md", enabled = true }
-]
+Optional: explicitly control this skill in `~/.openclaw/openclaw.json`:
+
+```json5
+{
+  skills: {
+    entries: {
+      "sift-gateway-context-query-guard": { enabled: true },
+    },
+  },
+}
 ```
 
-Optional if your global policy blocks shell commands:
-
-```toml
-[skills]
-entries = [
-  { path = "~/.openclaw/skills/context-query-guard/SKILL.md", enabled = true, allow_shell_commands = true }
-]
-```
-
-4. Restart OpenClaw (or reload skills), then validate:
+4. Validate:
 
 ```bash
 sift-gateway run --json -- echo '[{"id":1,"state":"open"},{"id":2,"state":"closed"}]'
@@ -84,10 +80,11 @@ Use `sift-gateway run --json` + `sift-gateway code --json` whenever output may b
 
 ## Load-time gating metadata
 
-The skill uses OpenClaw metadata gating via `metadata.openclaw.requires.bins` and includes an install hint for the macOS Skills UI:
+The skill uses OpenClaw metadata gating via `metadata.openclaw.*` and includes
+an install hint for the macOS Skills UI:
 
 ```yaml
-metadata: {"openclaw":{"requires":{"bins":["sift-gateway"]},"install":[{"id":"uv","kind":"uv","package":"sift-gateway","bins":["sift-gateway"],"label":"Install Sift Gateway (uv)"}]}}
+metadata: {"openclaw":{"skillKey":"sift-gateway-context-query-guard","homepage":"https://github.com/lourencomaciel/sift-gateway/tree/main/docs/openclaw","requires":{"bins":["sift-gateway"]},"install":[{"id":"uv","kind":"uv","package":"sift-gateway","bins":["sift-gateway"],"label":"Install Sift Gateway (uv)"}]}}
 ```
 
 ## Operating rules
