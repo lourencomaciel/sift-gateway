@@ -7,76 +7,70 @@ metadata: {"openclaw":{"skillKey":"sift-gateway-context-query-guard","homepage":
 
 # Context Query Guard
 
-Use this skill when output can overflow context or requires reproducible
-analysis. Capture once, then query artifacts with explicit schema/root handling.
+Use this skill whenever command output will be analyzed by the model and
+correctness matters. Capture once, query from artifacts, and return compact
+answers without copying raw payloads into model context.
 
 ## Trigger
 
-Use for:
-
 - API list calls (`gh api`, `curl`, `kubectl ... -o json`)
-- large logs or tables
-- multi-step analysis across turns
-- workflows needing reproducibility, pagination continuity, or auditability
+- Large logs or tables
+- JSON payloads with uncertain shape/root path or heterogeneous rows (even when
+  small)
+- Follow-up analysis across multiple turns
+- Workflows that need reproducibility, redaction discipline, or auditability
 
-Skip for clearly small one-off output with no follow-up.
+Skip only for trivial one-off, human-eyeball checks with clearly small output
+and no follow-up model reasoning.
 
-## Workflow
+## Required workflow
 
-1. Capture output:
+1. Capture output as an artifact:
 
 ```bash
 sift-gateway run --json -- <command>
 ```
 
-2. Read the capture envelope before querying:
-   - `response_mode`
-   - `metadata.usage.root_path`
-   - `sample_item` (when present)
-   - `schemas` (when present)
-   - `pagination.next.kind`
-3. Keep only `artifact_id` plus a short summary in prompt context.
-4. If pagination is partial (`pagination.next.kind=="command"`), continue
-   explicitly:
+2. Keep only `artifact_id` plus a short summary in prompt context.
+3. Handle pagination explicitly only when present. If
+   `pagination.next.kind=="command"`, continue with:
 
 ```bash
 sift-gateway run --json --continue-from <artifact_id> -- <next-command-with-next_params-applied>
 ```
 
-5. Query with explicit root path and compact output:
+4. Query artifacts with explicit root path and compact output:
 
 ```bash
 sift-gateway code --json <artifact_id> '$' --code "def run(data, schema, params): return [{'id': row.get('id'), 'status': row.get('status')} for row in data[:20]]"
 ```
 
-Use `metadata.usage.root_path` from `run --json` when `$` is not correct.
+5. Resolve root path from response hints, not guesswork:
+- Current `run` behavior uses canonical root path `$`; use `$` for follow-up
+  code queries.
+- If `response_mode=="schema_ref"` and `schemas` are present, use schema
+  `root_path` as the source of truth.
+- Treat `sample_item` as a preview row only.
 
-## Schema Discovery Protocol
+## Schema discovery protocol
 
-- Treat `metadata.usage.root_path` as the default root-path source of truth.
-- If `response_mode=="schema_ref"`, use `sample_item` first, then `schemas`.
-- If shape is uncertain, run a compact probe query before analysis.
-
-```bash
-sift-gateway code --json <artifact_id> '$' --code "def run(data, schema, params): keys=set(); [keys.update(r.keys()) for r in data[:20] if isinstance(r, dict)]; return {'rows': len(data), 'sampled': min(len(data), 20), 'keys': sorted(keys)[:50]}"
-```
-
-Never infer schema from first-item `jq` heuristics (for example `.[0]`):
-first rows are often sparse or non-representative, which causes wrong key/root
-assumptions and bad downstream queries.
+- Do not use `jq '.[0]'` (or equivalent "first-item" shortcuts) to infer schema
+  or root path. Many payloads are object-wrapped, have multiple candidate roots,
+  or include heterogeneous rows where first-item heuristics are misleading.
+- In Sift responses, `sample_item` is emitted only when Sift can verify
+  consistent item shape across the resolved list. If `sample_item` is absent,
+  inspect `schemas`; for current `run` captures, schema `root_path` should be
+  `$`.
+- If `sample_item_text_truncated` is true, treat long text fields as truncated
+  previews and confirm details with a focused code query.
 
 ## Guardrails
 
-- Prefer `--scope single` first (`sift-gateway code` defaults to
-  `--scope all_related`).
-- Start with `run(data, schema, params)`; move to multi-artifact only when
-  combining artifacts is required.
-- Use pure Python first; do not assume optional packages are installed.
+- `sift-gateway code` defaults to `--scope all_related`; start with
+  `--scope single` for anchor-only analysis and widen scope only when needed.
+- Start with `run(data, schema, params)`; move to `run(artifacts, schemas,
+  params)` only when cross-artifact joins are required.
+- Use pure Python first; do not assume optional packages are available.
 - Return aggregates or top <= 20 rows; avoid full-record dumps.
 - Never paste raw captured payloads back into context.
-
-## Completion Check
-
-- Do not claim a paginated result is complete while
-  `pagination.next.kind=="command"` remains.
-- If only the anchor artifact was queried, state that scope explicitly.
+- Do not claim completeness until `pagination.retrieval_status == COMPLETE`.

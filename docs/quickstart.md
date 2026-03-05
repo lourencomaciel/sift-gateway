@@ -141,8 +141,7 @@ Run analysis:
 sift-gateway code --json <artifact_id> '$' --code "def run(data, schema, params): return len(data)"
 ```
 
-For non-trivial payloads, prefer `metadata.usage.root_path` from `run --json`
-instead of guessing the root path.
+For current `run` captures, use `$` as the follow-up code-query root path.
 
 CLI note: `sift-gateway code` defaults to `--scope all_related` (pagination-chain
 aware). Use `--scope single` for anchor-only analysis.
@@ -161,8 +160,8 @@ sift-gateway run --continue-from <artifact_id> -- <next-command-with-next-params
    - `response_mode="full"` with inline `payload`, or
    - `response_mode="schema_ref"` with `artifact_id` and either `sample_item`
      preview or `schemas` fallback.
-   - In `schema_ref`, prefer `metadata.queryable_roots` (or `metadata.usage.root_path`)
-     when choosing `root_path` for follow-up code queries.
+   - In `schema_ref`, choose `root_path` from `metadata.queryable_roots`. With
+     current canonical mapping this is `["$"]`.
 4. If pagination is partial, continue with:
 
 ```python
