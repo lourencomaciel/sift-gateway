@@ -203,25 +203,37 @@ artifact(
 
 ## Adding MCP servers after initial setup
 
-After `init`, source config usually contains only the Sift gateway entry. To add
-new upstream servers:
+Preferred workflow: use `upstream add` directly (flag-based mode).
 
-1. Edit source config and add the upstream entry.
-2. Restart Sift.
+### Add stdio upstream
 
-Sift detects the new server, imports it, externalizes secrets, and rewrites
-source config back to gateway-only.
+```bash
+sift-gateway upstream add \
+  --from claude \
+  --name github \
+  --transport stdio \
+  --command npx \
+  --arg -y \
+  --arg @modelcontextprotocol/server-github
+```
 
-You can also add servers directly:
+### Add HTTP upstream
+
+```bash
+sift-gateway upstream add \
+  --from claude \
+  --name notion \
+  --transport http \
+  --url https://mcp.notion.com/mcp
+```
+
+`--from` targets the data-dir pinned by your migrated source config. If you are
+not targeting a migrated source, use `--data-dir /abs/path/to/data-dir`.
+
+Legacy JSON snippet mode is still supported:
 
 ```bash
 sift-gateway upstream add '{"new-server":{"command":"npx","args":["-y","@modelcontextprotocol/server-example"]}}' --from claude
-```
-
-Optional target override:
-
-```bash
-sift-gateway upstream add '<json>' --from claude --data-dir /abs/path/to/data-dir
 ```
 
 For OAuth-enabled HTTP upstreams, run login after `upstream add`:
@@ -239,6 +251,25 @@ client registration metadata) and stores the current
 `Authorization: Bearer ...` header in secret storage for inspection.
 At runtime, OAuth-enabled upstreams use the persisted session and refresh
 tokens automatically when possible.
+
+Validate new upstreams:
+
+```bash
+sift-gateway upstream list
+sift-gateway upstream test --server notion
+```
+
+If Sift is already running, restart Sift (and your MCP client) to load newly
+added upstream definitions.
+
+Alternative source-edit workflow (auto-sync on startup):
+
+1. Edit your original source config and add the upstream entry.
+2. Restart Sift.
+
+On startup (except `--check`), Sift imports new non-gateway servers from the
+source config, externalizes secrets, then rewrites source config back to
+gateway-only.
 
 See also: [Upstream registration reference](upstream_registration.md),
 [Deployment guide](deployment.md)
