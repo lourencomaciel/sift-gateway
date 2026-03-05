@@ -14,6 +14,20 @@ or ad hoc shell inspection becomes unreliable.
 The two files are intentionally different. `SKILL.md` optimizes model behavior;
 `README.md` optimizes human understanding.
 
+## CLI usage philosophy
+
+Use Sift by default when CLI output is going to be consumed by the model for
+analysis, transformation, or follow-up querying.
+
+Use direct CLI only for quick one-off human inspection when all of these are
+true:
+- output is clearly small
+- schema/root path is obvious
+- there is no expected follow-up model analysis
+
+Use Sift even for small payloads when schema confidence is low (for example
+wrapped lists, multiple candidate roots, or heterogeneous rows).
+
 ## Why this approach is better than direct first-item inspection
 
 Direct shortcuts like `jq '.[0]'` are useful for quick local peeks, but they are
@@ -40,8 +54,8 @@ These points are aligned with current Sift CLI behavior:
   when you want anchor-only analysis.
 - `response_mode="schema_ref"` may provide either a representative
   `sample_item` or a `schemas` list.
-- `run` captures currently use canonical root path `$` for follow-up queries
-  (`metadata.usage.root_path` should match this).
+- `run` captures currently use canonical root path `$` for follow-up code
+  queries.
 - Completeness is tied to `pagination.retrieval_status == COMPLETE`.
 
 ## Install
@@ -88,7 +102,6 @@ sift-gateway code --json <artifact_id> '$' --code "def run(data, schema, params)
 ```
 
 For current `run` captures, use `$` as root path for follow-up code queries.
-`metadata.usage.root_path` is still useful as a compatibility check.
 
 ## Maintainer note
 

@@ -142,8 +142,6 @@ sift-gateway code --json <artifact_id> '$' --code "def run(data, schema, params)
 ```
 
 For current `run` captures, use `$` as the follow-up code-query root path.
-`metadata.usage.root_path` should match and can be used as a compatibility
-check.
 
 CLI note: `sift-gateway code` defaults to `--scope all_related` (pagination-chain
 aware). Use `--scope single` for anchor-only analysis.
@@ -162,9 +160,8 @@ sift-gateway run --continue-from <artifact_id> -- <next-command-with-next-params
    - `response_mode="full"` with inline `payload`, or
    - `response_mode="schema_ref"` with `artifact_id` and either `sample_item`
      preview or `schemas` fallback.
-   - In `schema_ref`, check `metadata.queryable_roots` (or
-     `metadata.usage.root_path`) when choosing `root_path` for follow-up code
-     queries. With current canonical mapping this is typically `["$"]`.
+   - In `schema_ref`, choose `root_path` from `metadata.queryable_roots`. With
+     current canonical mapping this is `["$"]`.
 4. If pagination is partial, continue with:
 
 ```python

@@ -71,8 +71,7 @@ def run(data, schema, params):
 ```
 
 With current canonical mapping, start with `root_path="$"` and traverse nested
-lists inside query code as needed. If `metadata.queryable_roots` differs (for
-example on legacy artifacts), prefer that metadata.
+lists inside query code as needed.
 
 ## Pattern 5: Code query (MCP, multi artifact)
 
