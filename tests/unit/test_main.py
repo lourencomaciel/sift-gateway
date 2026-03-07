@@ -803,18 +803,27 @@ def test_run_upstream_set_enabled_prints_json(
 def test_run_upstream_auth_set_prints_json(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:
-    monkeypatch.setattr(
-        "sift_gateway.config.upstream_admin.set_upstream_auth",
-        lambda **_kwargs: {
+    seen: dict[str, object] = {}
+
+    def _fake_set_upstream_auth(**kwargs: object) -> dict[str, object]:
+        seen.update(kwargs)
+        return {
             "server": "gh",
             "transport": "stdio",
             "secret_ref": "gh",
-        },
+        }
+
+    monkeypatch.setattr(
+        "sift_gateway.config.upstream_admin.set_upstream_auth",
+        _fake_set_upstream_auth,
     )
     args = argparse.Namespace(
         server="gh",
         env_pairs=["TOKEN=abc"],
         header_pairs=None,
+        auth_mode=None,
+        auth_scopes=None,
+        preserve_auth_mode=False,
         data_dir=str(tmp_path),
         dry_run=False,
         json=True,
@@ -827,6 +836,305 @@ def test_run_upstream_auth_set_prints_json(
     payload = json.loads(captured.out)
     assert payload["server"] == "gh"
     assert payload["secret_ref"] == "gh"
+    assert seen["oauth"] is None
+    assert seen["merge_oauth"] is False
+    assert seen["clear_oauth"] is True
+
+
+def test_run_upstream_auth_set_replaces_oauth_for_auth_mode_without_scopes(
+    tmp_path: Path, monkeypatch
+) -> None:
+    seen: dict[str, object] = {}
+
+    def _fake_set_upstream_auth(**kwargs: object) -> dict[str, object]:
+        seen.update(kwargs)
+        return {
+            "server": "api",
+            "transport": "http",
+            "secret_ref": "api",
+        }
+
+    monkeypatch.setattr(
+        "sift_gateway.config.upstream_admin.set_upstream_auth",
+        _fake_set_upstream_auth,
+    )
+    args = argparse.Namespace(
+        server="api",
+        env_pairs=None,
+        header_pairs=None,
+        auth_mode="google-adc",
+        auth_scopes=None,
+        preserve_auth_mode=False,
+        data_dir=str(tmp_path),
+        dry_run=False,
+        json=False,
+    )
+
+    exit_code = _run_upstream_auth_set(args)
+
+    assert exit_code == 0
+    assert seen["oauth"] == {"enabled": True, "mode": "google-adc"}
+    assert seen["merge_oauth"] is False
+    assert seen["clear_oauth"] is False
+
+
+def test_run_upstream_auth_set_clears_oauth_for_auxiliary_headers_by_default(
+    tmp_path: Path, monkeypatch
+) -> None:
+    seen: dict[str, object] = {}
+
+    def _fake_set_upstream_auth(**kwargs: object) -> dict[str, object]:
+        seen.update(kwargs)
+        return {
+            "server": "api",
+            "transport": "http",
+            "secret_ref": "api",
+        }
+
+    monkeypatch.setattr(
+        "sift_gateway.config.upstream_admin.set_upstream_auth",
+        _fake_set_upstream_auth,
+    )
+    args = argparse.Namespace(
+        server="api",
+        env_pairs=None,
+        header_pairs=["X-Goog-User-Project=clean-divbrands"],
+        auth_mode=None,
+        auth_scopes=None,
+        preserve_auth_mode=False,
+        data_dir=str(tmp_path),
+        dry_run=False,
+        json=False,
+    )
+
+    exit_code = _run_upstream_auth_set(args)
+
+    assert exit_code == 0
+    assert seen["oauth"] is None
+    assert seen["merge_oauth"] is False
+    assert seen["clear_oauth"] is True
+
+
+def test_run_upstream_auth_set_preserves_auth_mode_when_requested(
+    tmp_path: Path, monkeypatch
+) -> None:
+    seen: dict[str, object] = {}
+
+    def _fake_set_upstream_auth(**kwargs: object) -> dict[str, object]:
+        seen.update(kwargs)
+        return {
+            "server": "api",
+            "transport": "http",
+            "secret_ref": "api",
+        }
+
+    monkeypatch.setattr(
+        "sift_gateway.config.upstream_admin.set_upstream_auth",
+        _fake_set_upstream_auth,
+    )
+    args = argparse.Namespace(
+        server="api",
+        env_pairs=None,
+        header_pairs=["X-Goog-User-Project=clean-divbrands"],
+        auth_mode=None,
+        auth_scopes=None,
+        preserve_auth_mode=True,
+        data_dir=str(tmp_path),
+        dry_run=False,
+        json=False,
+    )
+
+    exit_code = _run_upstream_auth_set(args)
+
+    assert exit_code == 0
+    assert seen["oauth"] is None
+    assert seen["merge_oauth"] is False
+    assert seen["clear_oauth"] is False
+
+
+def test_run_upstream_auth_set_clears_oauth_for_authorization_header(
+    tmp_path: Path, monkeypatch
+) -> None:
+    seen: dict[str, object] = {}
+
+    def _fake_set_upstream_auth(**kwargs: object) -> dict[str, object]:
+        seen.update(kwargs)
+        return {
+            "server": "api",
+            "transport": "http",
+            "secret_ref": "api",
+        }
+
+    monkeypatch.setattr(
+        "sift_gateway.config.upstream_admin.set_upstream_auth",
+        _fake_set_upstream_auth,
+    )
+    args = argparse.Namespace(
+        server="api",
+        env_pairs=None,
+        header_pairs=["Authorization=Bearer tok"],
+        auth_mode=None,
+        auth_scopes=None,
+        preserve_auth_mode=False,
+        data_dir=str(tmp_path),
+        dry_run=False,
+        json=False,
+    )
+
+    exit_code = _run_upstream_auth_set(args)
+
+    assert exit_code == 0
+    assert seen["oauth"] is None
+    assert seen["merge_oauth"] is False
+    assert seen["clear_oauth"] is True
+
+
+def test_run_upstream_auth_set_rejects_preserve_auth_mode_with_authorization(
+    tmp_path: Path,
+) -> None:
+    args = argparse.Namespace(
+        server="api",
+        env_pairs=None,
+        header_pairs=["Authorization=Bearer tok"],
+        auth_mode=None,
+        auth_scopes=None,
+        preserve_auth_mode=True,
+        data_dir=str(tmp_path),
+        dry_run=False,
+        json=False,
+    )
+
+    with pytest.raises(ValueError, match="--preserve-auth-mode"):
+        _run_upstream_auth_set(args)
+
+
+def test_run_upstream_auth_set_rejects_fastmcp_provider(
+    tmp_path: Path,
+) -> None:
+    args = argparse.Namespace(
+        server="api",
+        env_pairs=None,
+        header_pairs=None,
+        auth_mode="fastmcp",
+        auth_scopes=None,
+        preserve_auth_mode=False,
+        data_dir=str(tmp_path),
+        dry_run=False,
+        json=False,
+    )
+
+    with pytest.raises(ValueError, match="upstream login"):
+        _run_upstream_auth_set(args)
+
+
+def test_run_upstream_auth_set_passes_google_adc_scopes(
+    tmp_path: Path, monkeypatch
+) -> None:
+    seen: dict[str, object] = {}
+
+    def _fake_set_upstream_auth(**kwargs: object) -> dict[str, object]:
+        seen.update(kwargs)
+        return {
+            "server": "api",
+            "transport": "http",
+            "secret_ref": "api",
+        }
+
+    monkeypatch.setattr(
+        "sift_gateway.config.upstream_admin.set_upstream_auth",
+        _fake_set_upstream_auth,
+    )
+    args = argparse.Namespace(
+        server="api",
+        env_pairs=None,
+        header_pairs=None,
+        auth_mode="google-adc",
+        auth_scopes=[
+            "https://www.googleapis.com/auth/bigquery",
+            "https://www.googleapis.com/auth/drive.readonly",
+        ],
+        preserve_auth_mode=False,
+        data_dir=str(tmp_path),
+        dry_run=False,
+        json=False,
+    )
+
+    exit_code = _run_upstream_auth_set(args)
+
+    assert exit_code == 0
+    assert seen["oauth"] == {
+        "enabled": True,
+        "mode": "google-adc",
+        "google_scopes": [
+            "https://www.googleapis.com/auth/bigquery",
+            "https://www.googleapis.com/auth/drive.readonly",
+        ],
+    }
+    assert seen["merge_oauth"] is True
+
+
+def test_run_upstream_auth_set_google_adc_without_scope_clears_old_scopes(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    state_dir = tmp_path / "state"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    (state_dir / "config.json").write_text(
+        json.dumps({"mcpServers": {"api": {"url": "https://example.com/mcp"}}}),
+        encoding="utf-8",
+    )
+
+    from sift_gateway.config.upstream_secrets import read_secret, write_secret
+
+    write_secret(
+        tmp_path,
+        "api",
+        transport="http",
+        oauth={
+            "enabled": True,
+            "mode": "google-adc",
+            "google_scopes": ["scope.a"],
+        },
+    )
+    args = argparse.Namespace(
+        server="api",
+        env_pairs=None,
+        header_pairs=None,
+        auth_mode="google-adc",
+        auth_scopes=None,
+        preserve_auth_mode=False,
+        data_dir=str(tmp_path),
+        dry_run=False,
+        json=False,
+    )
+
+    exit_code = _run_upstream_auth_set(args)
+
+    _ = capsys.readouterr()
+    assert exit_code == 0
+    assert read_secret(tmp_path, "api")["oauth"] == {
+        "enabled": True,
+        "mode": "google-adc",
+    }
+
+
+def test_run_upstream_auth_set_rejects_scopes_without_provider(
+    tmp_path: Path,
+) -> None:
+    args = argparse.Namespace(
+        server="api",
+        env_pairs=None,
+        header_pairs=None,
+        auth_mode=None,
+        auth_scopes=["https://www.googleapis.com/auth/bigquery"],
+        preserve_auth_mode=False,
+        data_dir=str(tmp_path),
+        dry_run=False,
+        json=False,
+    )
+
+    with pytest.raises(ValueError, match="--scope requires --auth-mode"):
+        _run_upstream_auth_set(args)
 
 
 def test_run_upstream_auth_check_prints_text_summary(
@@ -922,6 +1230,12 @@ def test_run_upstream_login_prints_json(
         data_dir=str(tmp_path),
         dry_run=False,
         headless=True,
+        oauth_client_id=None,
+        oauth_client_secret=None,
+        oauth_auth_method=None,
+        oauth_registration="preregistered",
+        oauth_scopes=None,
+        oauth_callback_port=46000,
         json=True,
     )
 
@@ -933,6 +1247,8 @@ def test_run_upstream_login_prints_json(
     assert payload["server"] == "api"
     assert payload["login"] == "oauth"
     assert seen["headless"] is True
+    assert seen["oauth_registration"] == "preregistered"
+    assert seen["oauth_callback_port"] == 46000
 
 
 def test_serve_dispatches_upstream_auth_set_command(monkeypatch) -> None:
@@ -1410,6 +1726,97 @@ def test_parse_args_upstream_auth_set(monkeypatch) -> None:
     assert args.header_pairs == ["Authorization=Bearer tok"]
 
 
+def test_parse_args_upstream_auth_set_accepts_auth_mode(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "sift-gateway",
+            "upstream",
+            "auth",
+            "set",
+            "--server",
+            "api",
+            "--auth-mode",
+            "google-adc",
+        ],
+    )
+    args = _parse_args()
+    assert args.command == "upstream"
+    assert args.upstream_command == "auth"
+    assert args.auth_command == "set"
+    assert args.server == "api"
+    assert args.auth_mode == "google-adc"
+
+
+def test_parse_args_upstream_auth_set_accepts_repeatable_scopes(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "sift-gateway",
+            "upstream",
+            "auth",
+            "set",
+            "--server",
+            "api",
+            "--auth-mode",
+            "google-adc",
+            "--scope",
+            "https://www.googleapis.com/auth/bigquery",
+            "--scope",
+            "https://www.googleapis.com/auth/drive.readonly",
+        ],
+    )
+    args = _parse_args()
+    assert args.auth_mode == "google-adc"
+    assert args.auth_scopes == [
+        "https://www.googleapis.com/auth/bigquery",
+        "https://www.googleapis.com/auth/drive.readonly",
+    ]
+
+
+def test_parse_args_upstream_auth_set_accepts_preserve_auth_mode(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "sift-gateway",
+            "upstream",
+            "auth",
+            "set",
+            "--server",
+            "api",
+            "--preserve-auth-mode",
+        ],
+    )
+    args = _parse_args()
+    assert args.preserve_auth_mode is True
+
+
+def test_parse_args_upstream_auth_set_accepts_legacy_oauth_provider_alias(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "sift-gateway",
+            "upstream",
+            "auth",
+            "set",
+            "--server",
+            "api",
+            "--oauth-provider",
+            "google-adc",
+        ],
+    )
+    args = _parse_args()
+    assert args.auth_mode == "google-adc"
+
+
 def test_parse_args_upstream_auth_check(monkeypatch) -> None:
     monkeypatch.setattr(
         "sys.argv",
@@ -1448,6 +1855,28 @@ def test_parse_args_upstream_login(monkeypatch) -> None:
     assert args.headless is False
 
 
+def test_parse_args_upstream_login_accepts_oauth_registration(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "sift-gateway",
+            "upstream",
+            "login",
+            "--server",
+            "api",
+            "--oauth-registration",
+            "preregistered",
+        ],
+    )
+    args = _parse_args()
+    assert args.command == "upstream"
+    assert args.upstream_command == "login"
+    assert args.server == "api"
+    assert args.oauth_registration == "preregistered"
+
+
 def test_parse_args_upstream_login_headless(monkeypatch) -> None:
     monkeypatch.setattr(
         "sys.argv",
@@ -1465,6 +1894,45 @@ def test_parse_args_upstream_login_headless(monkeypatch) -> None:
     assert args.upstream_command == "login"
     assert args.server == "notion"
     assert args.headless is True
+
+
+def test_parse_args_upstream_login_accepts_callback_port(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "sift-gateway",
+            "upstream",
+            "login",
+            "--server",
+            "notion",
+            "--oauth-callback-port",
+            "46000",
+        ],
+    )
+    args = _parse_args()
+    assert args.command == "upstream"
+    assert args.upstream_command == "login"
+    assert args.server == "notion"
+    assert args.oauth_callback_port == 46000
+
+
+def test_parse_args_upstream_login_rejects_private_key_jwt(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "sift-gateway",
+            "upstream",
+            "login",
+            "--server",
+            "notion",
+            "--oauth-auth-method",
+            "private_key_jwt",
+        ],
+    )
+    with pytest.raises(SystemExit):
+        _parse_args()
 
 
 def test_parse_args_global_data_dir_reaches_install(

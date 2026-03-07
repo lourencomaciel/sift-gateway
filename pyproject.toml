@@ -28,6 +28,8 @@ classifiers = [
 dependencies = [
     # MCP framework
     "fastmcp>=2.0.0",
+    # Google Application Default Credentials for google-adc runtime auth
+    "google-auth[requests]>=2.0.0",
     # Persistent OAuth token storage backend used by `upstream login`
     "py-key-value-aio[disk]>=0.3.0",
     # Streaming JSON parser (partial mapping)

@@ -238,18 +238,39 @@ sift-gateway upstream add '{"new-server":{"command":"npx","args":["-y","@modelco
 For OAuth-enabled HTTP upstreams, run login after `upstream add`:
 
 ```bash
-# Interactive browser flow
+# Interactive browser OAuth flow
 sift-gateway upstream login --server notion
 
-# CI/testing (headless) flow
+# CI/testing (headless) OAuth flow
 sift-gateway upstream login --server notion --headless
+
+# Pre-registered OAuth client
+sift-gateway upstream login \
+  --server notion \
+  --oauth-registration preregistered \
+  --oauth-client-id "$NOTION_CLIENT_ID" \
+  --oauth-client-secret "$NOTION_CLIENT_SECRET"
+
+# Google Application Default Credentials with explicit scopes
+sift-gateway upstream auth set \
+  --server bigquery \
+  --auth-mode google-adc \
+  --scope https://www.googleapis.com/auth/bigquery
+
+# Add auxiliary HTTP headers without disabling the runtime auth mode
+sift-gateway upstream auth set \
+  --server bigquery \
+  --preserve-auth-mode \
+  --header "X-Goog-User-Project=$GCP_QUOTA_PROJECT"
 ```
 
-Current behavior: `upstream login` persists an OAuth session cache (tokens +
-client registration metadata) and stores the current
-`Authorization: Bearer ...` header in secret storage for inspection.
-At runtime, OAuth-enabled upstreams use the persisted session and refresh
-tokens automatically when possible.
+Current behavior: `upstream login` persists an interactive OAuth session cache
+(tokens + client registration metadata) and stores the current
+`Authorization: Bearer ...` header in secret storage for inspection. At
+runtime, OAuth-mode upstreams use the persisted session and refresh tokens
+automatically when possible. `--auth-mode google-adc` is separate: it does not
+run browser login or use the gateway OAuth cache, and instead signs requests
+with Google Application Default Credentials at request time.
 
 Validate new upstreams:
 

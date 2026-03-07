@@ -54,7 +54,7 @@ def test_available_code_query_packages_filters_unimportable_roots(
     assert packages == ["jmespath", "numpy"]
 
 
-def test_summarize_code_query_packages_compacts_output(
+def test_summarize_code_query_packages_returns_full_output(
     monkeypatch,
 ) -> None:
     monkeypatch.setattr(
@@ -74,7 +74,7 @@ def test_summarize_code_query_packages_compacts_output(
         ],
         max_items=3,
     )
-    assert summary == "jmespath,matplotlib,numpy,+2"
+    assert summary == "jmespath,matplotlib,numpy,pandas,scipy"
 
 
 def test_summarize_code_query_packages_reports_none_when_no_imports_allowed() -> (

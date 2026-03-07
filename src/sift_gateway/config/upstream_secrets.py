@@ -9,6 +9,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 import contextlib
 import datetime
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -17,10 +18,12 @@ from typing import Any, SupportsFloat
 
 from key_value.aio.protocols import AsyncKeyValue
 
+from sift_gateway.auth.config import normalize_auth_config
 from sift_gateway.constants import STATE_SUBDIR
 
 _SECRETS_SUBDIR = "upstream_secrets"
 _OAUTH_SUBDIR = "upstream_oauth"
+_OAUTH_SERVER_CONFIG_SUBDIR = "server_auth_config"
 _OAUTH_TOKEN_COLLECTION = "mcp-oauth-token"
 _OAUTH_CLIENT_INFO_COLLECTION = "mcp-oauth-client-info"
 _VALID_TRANSPORTS = frozenset({"stdio", "http"})
@@ -178,6 +181,27 @@ async def mark_oauth_access_token_stale(
     return True
 
 
+async def read_oauth_access_token(
+    token_storage: AsyncKeyValue,
+    *,
+    server_url: str,
+) -> str | None:
+    """Read a cached OAuth access token for one MCP server URL."""
+    token_entry = await token_storage.get(
+        key=oauth_token_cache_key(server_url),
+        collection=_OAUTH_TOKEN_COLLECTION,
+    )
+    if not isinstance(token_entry, dict):
+        return None
+
+    raw_access_token = token_entry.get("access_token")
+    if not isinstance(raw_access_token, str):
+        return None
+
+    access_token = raw_access_token.strip()
+    return access_token or None
+
+
 async def clear_oauth_client_registration(
     token_storage: AsyncKeyValue,
     *,
@@ -193,6 +217,23 @@ async def clear_oauth_client_registration(
         key=oauth_client_info_cache_key(server_url),
         collection=_OAUTH_CLIENT_INFO_COLLECTION,
     )
+
+
+async def clear_oauth_session(
+    token_storage: AsyncKeyValue,
+    *,
+    server_url: str,
+) -> bool:
+    """Delete cached OAuth tokens and client registration for one server URL."""
+    token_deleted = await token_storage.delete(
+        key=oauth_token_cache_key(server_url),
+        collection=_OAUTH_TOKEN_COLLECTION,
+    )
+    client_deleted = await token_storage.delete(
+        key=oauth_client_info_cache_key(server_url),
+        collection=_OAUTH_CLIENT_INFO_COLLECTION,
+    )
+    return token_deleted or client_deleted
 
 
 def secret_file_path(data_dir: str | Path, ref: str) -> Path:
@@ -273,6 +314,132 @@ def oauth_cache_dir(data_dir: str | Path, ref: str) -> Path:
     path.mkdir(parents=True, exist_ok=True)
     os.chmod(path, 0o700)
     return path
+
+
+def oauth_server_auth_config_path(
+    data_dir: str | Path,
+    ref: str,
+    server_url: str,
+) -> Path:
+    """Return the per-server auth sidecar path for one secret ref."""
+    normalized_url = server_url.rstrip("/")
+    digest = hashlib.sha256(normalized_url.encode("utf-8")).hexdigest()
+    return (
+        oauth_cache_dir_path(data_dir, ref)
+        / _OAUTH_SERVER_CONFIG_SUBDIR
+        / f"{digest}.json"
+    )
+
+
+def _explicitly_disabled_auth_config(
+    auth_config: dict[str, Any] | None,
+) -> bool:
+    """Return whether one auth sidecar explicitly disables inherited auth."""
+    return (
+        isinstance(auth_config, dict)
+        and isinstance(auth_config.get("enabled"), bool)
+        and not auth_config["enabled"]
+    )
+
+
+def read_oauth_server_auth_config(
+    data_dir: str | Path,
+    ref: str,
+    *,
+    server_url: str,
+) -> dict[str, Any] | None:
+    """Read one server-specific auth sidecar for a shared secret ref."""
+    path = oauth_server_auth_config_path(data_dir, ref, server_url)
+    if not path.is_file():
+        return None
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(raw, dict):
+        return None
+    if _explicitly_disabled_auth_config(raw):
+        return {"enabled": False}
+    normalized = normalize_auth_config(raw)
+    return dict(normalized) if isinstance(normalized, dict) else None
+
+
+def write_oauth_server_auth_config(
+    data_dir: str | Path,
+    ref: str,
+    *,
+    server_url: str,
+    oauth_config: dict[str, Any],
+) -> None:
+    """Persist one server-specific auth sidecar for a shared secret ref."""
+    if _explicitly_disabled_auth_config(oauth_config):
+        persisted: dict[str, Any] | None = {"enabled": False}
+    else:
+        normalized = normalize_auth_config(oauth_config)
+        persisted = dict(normalized) if isinstance(normalized, dict) else None
+    if not isinstance(persisted, dict):
+        return
+    path = oauth_server_auth_config_path(data_dir, ref, server_url)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    os.chmod(path.parent, 0o700)
+    content = json.dumps(persisted, indent=2).encode("utf-8")
+    fd, tmp = tempfile.mkstemp(dir=str(path.parent), suffix=".tmp")
+    try:
+        os.write(fd, content)
+        os.fchmod(fd, 0o600)
+        os.close(fd)
+        fd = -1
+        os.replace(tmp, str(path))
+    except BaseException:
+        if fd >= 0:
+            os.close(fd)
+        with contextlib.suppress(OSError):
+            os.unlink(tmp)
+        raise
+
+
+def delete_oauth_server_auth_config(
+    data_dir: str | Path,
+    ref: str,
+    *,
+    server_url: str,
+) -> None:
+    """Delete one server-specific auth sidecar for a shared secret ref."""
+    path = oauth_server_auth_config_path(data_dir, ref, server_url)
+    with contextlib.suppress(FileNotFoundError):
+        path.unlink()
+    with contextlib.suppress(OSError):
+        path.parent.rmdir()
+
+
+def effective_oauth_server_auth_config(
+    data_dir: str | Path,
+    ref: str | None,
+    *,
+    server_url: str | None,
+    oauth_config: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    """Return the effective auth config for one upstream/server URL."""
+    normalized = normalize_auth_config(oauth_config)
+    if not isinstance(ref, str) or not ref:
+        return normalized if isinstance(normalized, dict) else None
+    if not isinstance(server_url, str) or not server_url:
+        return normalized if isinstance(normalized, dict) else None
+
+    cached = read_oauth_server_auth_config(
+        data_dir,
+        ref,
+        server_url=server_url,
+    )
+    if _explicitly_disabled_auth_config(cached):
+        return None
+    if not isinstance(cached, dict):
+        return normalized if isinstance(normalized, dict) else None
+    if not isinstance(normalized, dict):
+        return cached
+
+    merged = normalize_auth_config({**normalized, **cached})
+    return merged if isinstance(merged, dict) else cached
 
 
 def validate_prefix(prefix: str) -> None:

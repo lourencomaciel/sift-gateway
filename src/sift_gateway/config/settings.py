@@ -299,6 +299,9 @@ class UpstreamConfig(BaseSettings):
         passthrough_allowed: Allow small mirrored-tool responses
             to return raw upstream payloads.
         secret_ref: Reference to an external secret store entry.
+        secret_ref_overrides_merged: Internal marker set when
+            env/header overrides are merged on top of a secret-backed
+            upstream while preserving ``secret_ref`` for runtime auth.
         inherit_parent_env: Inherit parent process env vars.
         external_user_id: Stable user identity for upstream
             auth persistence.  ``"auto"`` generates and persists
@@ -386,6 +389,15 @@ class UpstreamConfig(BaseSettings):
     secret_ref: str | None = Field(
         default=None,
         description="Reference to an external secret store entry",
+    )
+    secret_ref_overrides_merged: bool = Field(
+        default=False,
+        exclude=True,
+        repr=False,
+        description=(
+            "Internal loader marker for rows that merged inline env/header "
+            "overrides on top of secret_ref-backed config."
+        ),
     )
     inherit_parent_env: bool = Field(
         default=False,
@@ -1230,11 +1242,12 @@ def _merge_secret_ref_overrides(
     *,
     data_dir: Path,
 ) -> dict[str, object]:
-    """Inline secret values when env/header overrides target secret_ref rows.
+    """Mark secret-backed rows that also received inline overrides.
 
     Registry-backed rows externalize sensitive values to ``secret_ref``.
-    If env/header overrides are applied on top, validate_no_secret_conflict
-    would otherwise reject the merged shape (inline secrets + secret_ref).
+    Inline env/header overrides are allowed on top of those rows, but
+    ``secret_ref`` must stay intact so runtime auth can still resolve
+    shared OAuth metadata, sidecars, and token storage.
     """
     from sift_gateway.config.upstream_secrets import (
         resolve_secret_ref,
@@ -1243,11 +1256,6 @@ def _merge_secret_ref_overrides(
     raw_upstreams = merged.get("upstreams")
     if not isinstance(raw_upstreams, list):
         return merged
-
-    def _to_str_dict(value: object) -> dict[str, str]:
-        if not isinstance(value, dict):
-            return {}
-        return {str(key): str(item) for key, item in value.items()}
 
     for raw_upstream in raw_upstreams:
         if not isinstance(raw_upstream, dict):
@@ -1264,54 +1272,18 @@ def _merge_secret_ref_overrides(
         )
         if not has_inline_env and not has_inline_headers:
             continue
-
-        secret_data: dict[str, object] = {}
-        secret_resolution_failed = False
         try:
-            loaded_secret = resolve_secret_ref(data_dir, secret_ref)
-        except (FileNotFoundError, json.JSONDecodeError):
-            loaded_secret = None
-            secret_resolution_failed = True
+            resolve_secret_ref(data_dir, secret_ref)
+        except (FileNotFoundError, json.JSONDecodeError, ValueError):
+            continue
         except Exception:
-            loaded_secret = None
-            secret_resolution_failed = True
             _logger.warning(
-                "failed to resolve secret_ref %r: unexpected error",
+                "failed to resolve secret_ref %r while merging overrides",
                 secret_ref,
                 exc_info=True,
             )
-        if isinstance(loaded_secret, dict):
-            secret_data = loaded_secret
-        elif secret_resolution_failed:
-            # Keep secret_ref so downstream conflict checks surface
-            # missing/corrupt secret material instead of silently dropping it.
             continue
-
-        secret_env = _to_str_dict(secret_data.get("env"))
-        secret_headers = _to_str_dict(secret_data.get("headers"))
-
-        if has_inline_env:
-            merged_env = dict(secret_env)
-            if isinstance(inline_env, dict):
-                merged_env.update(_to_str_dict(inline_env))
-            raw_upstream["env"] = merged_env
-        elif secret_env:
-            # Preserve secret-backed env material when another inline channel
-            # (for example, headers) overrides and secret_ref is removed.
-            raw_upstream["env"] = dict(secret_env)
-
-        if has_inline_headers:
-            merged_headers = dict(secret_headers)
-            if isinstance(inline_headers, dict):
-                merged_headers.update(_to_str_dict(inline_headers))
-            raw_upstream["headers"] = merged_headers
-        elif secret_headers:
-            # Preserve secret-backed header material when another inline
-            # channel (for example, env) overrides and secret_ref is removed.
-            raw_upstream["headers"] = dict(secret_headers)
-
-        # Inline values now represent the effective runtime secret material.
-        raw_upstream.pop("secret_ref", None)
+        raw_upstream["secret_ref_overrides_merged"] = True
 
     return merged
 
@@ -1417,6 +1389,8 @@ def load_gateway_config(
     )
 
     for upstream in config.upstreams:
+        if upstream.secret_ref_overrides_merged:
+            continue
         validate_no_secret_conflict(
             upstream.env or None,
             upstream.headers or None,

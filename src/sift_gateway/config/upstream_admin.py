@@ -8,18 +8,64 @@ secret externalization via ``state/upstream_secrets`` files.
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Iterator
 import contextlib
 import json
 import logging
 import os
 from pathlib import Path
 import shutil
+import tempfile
 from typing import Any
-from urllib.parse import parse_qs, urljoin, urlparse
+from urllib.parse import urljoin, urlparse
 
-from sift_gateway.config.mcp_servers import (
-    extract_mcp_servers,
+from sift_gateway.auth.config import (
+    AUTH_MODE_GOOGLE_ADC,
+    AUTH_MODE_OAUTH,
+    OAUTH_REGISTRATION_DYNAMIC,
+    OAUTH_REGISTRATION_PREREGISTERED,
+    OAUTH_STATIC_CLIENT_CALLBACK_PORT,
 )
+from sift_gateway.auth.config import (
+    auth_enabled as _auth_enabled,
+)
+from sift_gateway.auth.config import (
+    auth_mode as _auth_mode,
+)
+from sift_gateway.auth.config import (
+    auth_scope as _auth_scope,
+)
+from sift_gateway.auth.config import (
+    normalize_auth_config as _normalize_oauth_config,
+)
+from sift_gateway.auth.config import (
+    oauth_callback_port as _oauth_config_callback_port,
+)
+from sift_gateway.auth.config import (
+    oauth_login_requires_session_reset as _oauth_login_requires_session_reset,
+)
+from sift_gateway.auth.config import (
+    oauth_registration as _oauth_registration,
+)
+from sift_gateway.auth.config import (
+    uses_oauth_session as _uses_oauth_session,
+)
+from sift_gateway.auth.oauth_login import (
+    oauth_apply_client_config as _oauth_apply_client_config_impl,
+)
+from sift_gateway.auth.oauth_login import (
+    oauth_async_auth_flow_once as _oauth_async_auth_flow_once,
+)
+from sift_gateway.auth.oauth_login import (
+    oauth_client_info_from_config as _oauth_client_info_from_config_impl,
+)
+from sift_gateway.auth.oauth_login import (
+    oauth_login_access_token as _oauth_login_access_token_impl,
+)
+from sift_gateway.auth.oauth_login import (
+    oauth_login_access_token_proactive as _oauth_login_access_token_proactive_impl,
+)
+from sift_gateway.config.mcp_servers import extract_mcp_servers
 from sift_gateway.config.shared import (
     gateway_config_path,
     load_gateway_config_dict,
@@ -41,13 +87,30 @@ from sift_gateway.config.upstream_registry_convert import (
 )
 from sift_gateway.config.upstream_secrets import (
     clear_oauth_client_registration,
+    clear_oauth_session,
     mark_oauth_access_token_stale,
     oauth_cache_dir_path,
     oauth_token_storage,
+    read_oauth_access_token,
     read_secret,
     secret_file_path,
     validate_prefix,
     write_secret,
+)
+from sift_gateway.config.upstream_secrets import (
+    delete_oauth_server_auth_config as _delete_oauth_server_auth_config_impl,
+)
+from sift_gateway.config.upstream_secrets import (
+    effective_oauth_server_auth_config as _effective_oauth_server_auth_config,
+)
+from sift_gateway.config.upstream_secrets import (
+    oauth_server_auth_config_path as _oauth_server_auth_config_path_impl,
+)
+from sift_gateway.config.upstream_secrets import (
+    read_oauth_server_auth_config as _read_oauth_server_auth_config_impl,
+)
+from sift_gateway.config.upstream_secrets import (
+    write_oauth_server_auth_config as _write_oauth_server_auth_config_impl,
 )
 from sift_gateway.constants import DEFAULT_DATA_DIR
 from sift_gateway.mcp.upstream import discover_tools
@@ -245,6 +308,79 @@ def _delete_oauth_cache_dir(
         shutil.rmtree(path)
 
 
+def _oauth_server_config_path(
+    *,
+    data_dir: Path,
+    ref: str,
+    server_url: str,
+) -> Path:
+    """Return the per-server OAuth config path inside one cache directory."""
+    return _oauth_server_auth_config_path_impl(
+        data_dir,
+        ref,
+        server_url,
+    )
+
+
+def _read_oauth_server_auth_config(
+    *,
+    data_dir: Path,
+    ref: str,
+    server_url: str,
+) -> dict[str, Any] | None:
+    """Read per-server OAuth login config for shared secret refs."""
+    return _read_oauth_server_auth_config_impl(
+        data_dir,
+        ref,
+        server_url=server_url,
+    )
+
+
+def _write_oauth_server_auth_config(
+    *,
+    data_dir: Path,
+    ref: str,
+    server_url: str,
+    oauth_config: dict[str, Any],
+) -> None:
+    """Persist per-server OAuth login config for shared secret refs."""
+    _write_oauth_server_auth_config_impl(
+        data_dir,
+        ref,
+        server_url=server_url,
+        oauth_config=oauth_config,
+    )
+
+
+def _delete_oauth_server_auth_config(
+    *,
+    data_dir: Path,
+    ref: str | None,
+    server_url: str | None,
+) -> None:
+    """Delete per-server OAuth login config for one shared secret ref."""
+    if (
+        not isinstance(ref, str)
+        or not ref
+        or not isinstance(server_url, str)
+        or not server_url
+    ):
+        return
+    _delete_oauth_server_auth_config_impl(
+        data_dir,
+        ref,
+        server_url=server_url,
+    )
+
+
+def _shared_oauth_secret_config(
+    oauth_config: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    """Return auth metadata safe to persist in a shared secret file."""
+    normalized = _normalize_oauth_config(oauth_config)
+    return dict(normalized) if isinstance(normalized, dict) else None
+
+
 def _secret_ref_is_still_referenced(
     *,
     data_dir: Path,
@@ -262,6 +398,323 @@ def _secret_ref_is_still_referenced(
         if candidate.removesuffix(".json") == normalized:
             return True
     return False
+
+
+def _secret_ref_is_shared(
+    *,
+    data_dir: Path,
+    ref: str,
+    server: str,
+) -> bool:
+    """Return whether another upstream also uses ``ref``."""
+    normalized = ref.removesuffix(".json")
+    records = load_registry_upstream_records(
+        data_dir,
+        include_disabled=True,
+    )
+    if records:
+        for record in records:
+            prefix = record.get("prefix")
+            if not isinstance(prefix, str) or prefix == server:
+                continue
+            candidate = record.get("secret_ref")
+            if (
+                isinstance(candidate, str)
+                and candidate.removesuffix(".json") == normalized
+            ):
+                return True
+        return False
+
+    raw_config = load_gateway_config_dict(gateway_config_path(data_dir))
+    try:
+        servers = extract_mcp_servers(raw_config)
+    except ValueError:
+        return False
+    for name, entry in servers.items():
+        if name == server or not isinstance(entry, dict):
+            continue
+        gateway = entry.get("_gateway")
+        candidate = (
+            gateway.get("secret_ref") if isinstance(gateway, dict) else None
+        )
+        if (
+            isinstance(candidate, str)
+            and candidate.removesuffix(".json") == normalized
+        ):
+            return True
+    return False
+
+
+def _oauth_server_auth_config_is_still_referenced(
+    *,
+    data_dir: Path,
+    ref: str,
+    server_url: str,
+) -> bool:
+    """Return whether any upstream still uses one shared ref + server URL."""
+    normalized_ref = ref.removesuffix(".json")
+    normalized_url = server_url.rstrip("/")
+    for record in load_registry_upstream_records(
+        data_dir,
+        include_disabled=True,
+    ):
+        candidate_ref = record.get("secret_ref")
+        candidate_url = record.get("url")
+        if (
+            isinstance(candidate_ref, str)
+            and candidate_ref.removesuffix(".json") == normalized_ref
+            and isinstance(candidate_url, str)
+            and candidate_url.rstrip("/") == normalized_url
+        ):
+            return True
+    return False
+
+
+def _records_for_secret_ref(
+    *,
+    data_dir: Path,
+    ref: str,
+) -> list[dict[str, Any]]:
+    """Return registry records that still reference one secret ref."""
+    normalized = ref.removesuffix(".json")
+    return [
+        record
+        for record in load_registry_upstream_records(
+            data_dir,
+            include_disabled=True,
+        )
+        if isinstance(record.get("secret_ref"), str)
+        and record["secret_ref"].removesuffix(".json") == normalized
+    ]
+
+
+def _delete_one_upstream_oauth_state(
+    *,
+    data_dir: Path,
+    ref: str | None,
+    server_url: str | None,
+) -> None:
+    """Delete one server URL's cached OAuth state for a shared secret ref."""
+    if (
+        not isinstance(ref, str)
+        or not ref
+        or not isinstance(server_url, str)
+        or not server_url
+    ):
+        return
+
+    _delete_oauth_server_auth_config(
+        data_dir=data_dir,
+        ref=ref,
+        server_url=server_url,
+    )
+    try:
+        asyncio.run(
+            clear_oauth_session(
+                token_storage=oauth_token_storage(data_dir, ref),
+                server_url=server_url,
+            )
+        )
+    except Exception:
+        _logger.debug(
+            "skipped oauth session cleanup for shared ref %s (%s)",
+            ref,
+            server_url,
+            exc_info=True,
+        )
+
+
+def _effective_oauth_config_for_server(
+    *,
+    data_dir: Path,
+    ref: str | None,
+    server: str | None,
+    server_url: str | None,
+    oauth_config: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    """Return effective OAuth config only while a ref is actively shared."""
+    normalized = _normalize_oauth_config(oauth_config)
+    if (
+        not isinstance(ref, str)
+        or not ref
+        or not isinstance(server, str)
+        or not server
+        or not isinstance(server_url, str)
+        or not server_url
+        or not _secret_ref_is_shared(
+            data_dir=data_dir,
+            ref=ref,
+            server=server,
+        )
+    ):
+        return dict(normalized) if isinstance(normalized, dict) else None
+    return _effective_oauth_server_auth_config(
+        data_dir=data_dir,
+        ref=ref,
+        server_url=server_url,
+        oauth_config=oauth_config,
+    )
+
+
+def _oauth_config_for_inspect(
+    *,
+    data_dir: Path,
+    ref: str | None,
+    server: str | None,
+    server_url: str | None,
+    oauth_config: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    """Return the effective OAuth config for inspect output."""
+    return _effective_oauth_config_for_server(
+        data_dir=data_dir,
+        ref=ref,
+        server=server,
+        server_url=server_url,
+        oauth_config=oauth_config,
+    )
+
+
+def _oauth_inspect_metadata(
+    oauth_config: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    """Return a secret-safe OAuth metadata view for inspect output."""
+    normalized = _normalize_oauth_config(oauth_config)
+    if not isinstance(normalized, dict):
+        return None
+
+    mode = _auth_mode(normalized)
+    metadata: dict[str, Any] = {
+        "enabled": _auth_enabled(normalized),
+        "mode": mode,
+        "token_storage": (
+            normalized.get("token_storage")
+            if isinstance(normalized.get("token_storage"), str)
+            else None
+        ),
+    }
+    if mode == AUTH_MODE_OAUTH:
+        metadata["registration"] = _oauth_registration(normalized)
+        scope = _auth_scope(normalized)
+        if isinstance(scope, str):
+            metadata["scope"] = scope
+        callback_port = _oauth_config_callback_port(normalized)
+        if callback_port is not None:
+            metadata["callback_port"] = callback_port
+        client_id = normalized.get("client_id")
+        if isinstance(client_id, str) and client_id.strip():
+            metadata["client_id"] = client_id.strip()
+        auth_method = normalized.get("token_endpoint_auth_method")
+        if isinstance(auth_method, str) and auth_method.strip():
+            metadata["token_endpoint_auth_method"] = auth_method.strip()
+        metadata_url = normalized.get("client_metadata_url")
+        if isinstance(metadata_url, str) and metadata_url.strip():
+            metadata["client_metadata_url"] = metadata_url.strip()
+    elif mode == AUTH_MODE_GOOGLE_ADC:
+        google_scopes = normalized.get("google_scopes")
+        if isinstance(google_scopes, list):
+            scopes = [
+                str(scope).strip()
+                for scope in google_scopes
+                if str(scope).strip()
+            ]
+            if scopes:
+                metadata["google_scopes"] = scopes
+
+    return metadata
+
+
+def _collapse_unshared_secret_ref_oauth_state(
+    *,
+    data_dir: Path,
+    ref: str | None,
+) -> None:
+    """Move surviving sidecar auth back into the secret when a ref unshares."""
+    if not isinstance(ref, str) or not ref:
+        return
+
+    normalized_ref = ref.removesuffix(".json")
+    records = _records_for_secret_ref(
+        data_dir=data_dir,
+        ref=normalized_ref,
+    )
+    if len(records) != 1:
+        return
+
+    remaining = records[0]
+    if remaining.get("transport") != "http":
+        return
+    server_url = remaining.get("url")
+    if not isinstance(server_url, str) or not server_url:
+        return
+
+    try:
+        secret = read_secret(data_dir, normalized_ref)
+    except Exception:
+        _logger.debug(
+            "skipped oauth sidecar collapse for ref %s",
+            normalized_ref,
+            exc_info=True,
+        )
+        return
+
+    raw_oauth = (
+        secret.get("oauth") if isinstance(secret.get("oauth"), dict) else None
+    )
+    effective_oauth = _effective_oauth_server_auth_config(
+        data_dir=data_dir,
+        ref=normalized_ref,
+        server_url=server_url,
+        oauth_config=raw_oauth,
+    )
+    normalized_secret_oauth = _normalize_oauth_config(raw_oauth)
+    env = secret.get("env") if isinstance(secret.get("env"), dict) else None
+    headers = (
+        dict(secret.get("headers"))
+        if isinstance(secret.get("headers"), dict)
+        else None
+    )
+    if _uses_oauth_session(effective_oauth):
+        try:
+            access_token = asyncio.run(
+                read_oauth_access_token(
+                    oauth_token_storage(data_dir, normalized_ref),
+                    server_url=server_url,
+                )
+            )
+        except Exception:
+            access_token = None
+            _logger.debug(
+                "skipped oauth fallback header snapshot for ref %s",
+                normalized_ref,
+                exc_info=True,
+            )
+        if access_token:
+            if headers is None:
+                headers = {}
+            headers["Authorization"] = f"Bearer {access_token}"
+
+    current_headers = (
+        secret.get("headers")
+        if isinstance(secret.get("headers"), dict)
+        else None
+    )
+    if effective_oauth != normalized_secret_oauth or headers != current_headers:
+        raw_transport: object = secret.get("transport")
+        transport = raw_transport if isinstance(raw_transport, str) else "http"
+        write_secret(
+            data_dir,
+            normalized_ref,
+            transport=transport,
+            env=env,
+            headers=headers,
+            oauth=effective_oauth if effective_oauth else None,
+        )
+
+    _delete_oauth_server_auth_config(
+        data_dir=data_dir,
+        ref=normalized_ref,
+        server_url=server_url,
+    )
 
 
 def list_upstreams(
@@ -330,6 +783,7 @@ def inspect_upstream(
         raise ValueError(msg)
 
     transport = str(record["transport"])
+    server_url = record["url"] if isinstance(record.get("url"), str) else None
     gateway_ext = _extract_gateway_fields(record)
     if not record["enabled"]:
         gateway_ext["enabled"] = False
@@ -353,21 +807,16 @@ def inspect_upstream(
                 else [],
                 "updated_at": secret.get("updated_at"),
             }
-            oauth = secret.get("oauth")
-            if isinstance(oauth, dict):
-                secret_meta["oauth"] = {
-                    "enabled": bool(oauth.get("enabled")),
-                    "provider": (
-                        oauth.get("provider")
-                        if isinstance(oauth.get("provider"), str)
-                        else None
-                    ),
-                    "token_storage": (
-                        oauth.get("token_storage")
-                        if isinstance(oauth.get("token_storage"), str)
-                        else None
-                    ),
-                }
+            oauth = _oauth_config_for_inspect(
+                data_dir=resolved_data_dir,
+                ref=secret_ref.removesuffix(".json"),
+                server=server,
+                server_url=server_url,
+                oauth_config=secret.get("oauth"),
+            )
+            oauth_meta = _oauth_inspect_metadata(oauth)
+            if isinstance(oauth_meta, dict):
+                secret_meta["oauth"] = oauth_meta
         except Exception as exc:
             secret_meta = {"ref": secret_ref, "error": str(exc)}
 
@@ -403,6 +852,7 @@ def remove_upstream(
     secret_ref = (
         record["secret_ref"] if isinstance(record["secret_ref"], str) else None
     )
+    server_url = record["url"] if isinstance(record.get("url"), str) else None
 
     if not dry_run:
         remove_registry_upstream(
@@ -413,6 +863,22 @@ def remove_upstream(
         if (
             isinstance(secret_ref, str)
             and secret_ref
+            and isinstance(server_url, str)
+            and server_url
+            and not _oauth_server_auth_config_is_still_referenced(
+                data_dir=resolved_data_dir,
+                ref=secret_ref,
+                server_url=server_url,
+            )
+        ):
+            _delete_one_upstream_oauth_state(
+                data_dir=resolved_data_dir,
+                ref=secret_ref,
+                server_url=server_url,
+            )
+        if (
+            isinstance(secret_ref, str)
+            and secret_ref
             and not _secret_ref_is_still_referenced(
                 data_dir=resolved_data_dir,
                 ref=secret_ref,
@@ -420,6 +886,11 @@ def remove_upstream(
         ):
             _delete_secret_file(data_dir=resolved_data_dir, ref=secret_ref)
             _delete_oauth_cache_dir(
+                data_dir=resolved_data_dir,
+                ref=secret_ref,
+            )
+        elif isinstance(secret_ref, str) and secret_ref:
+            _collapse_unshared_secret_ref_oauth_state(
                 data_dir=resolved_data_dir,
                 ref=secret_ref,
             )
@@ -475,6 +946,7 @@ def set_upstream_auth(
     env_updates: dict[str, str] | None,
     header_updates: dict[str, str] | None,
     oauth: dict[str, Any] | None = None,
+    merge_oauth: bool = False,
     clear_oauth: bool = True,
     data_dir: Path | None = None,
     dry_run: bool = False,
@@ -482,7 +954,7 @@ def set_upstream_auth(
     """Set upstream auth material and externalize to secret file."""
     updates_env = dict(env_updates or {})
     updates_headers = dict(header_updates or {})
-    if not updates_env and not updates_headers:
+    if not updates_env and not updates_headers and oauth is None:
         msg = "at least one of --env or --header is required"
         raise ValueError(msg)
 
@@ -503,6 +975,9 @@ def set_upstream_auth(
     if transport == "http" and updates_env:
         msg = "--env is only supported for stdio upstreams"
         raise ValueError(msg)
+    if transport != "http" and oauth is not None:
+        msg = "OAuth runtime auth is only supported for http upstreams"
+        raise ValueError(msg)
 
     secret_ref = record["secret_ref"]
     if isinstance(secret_ref, str) and secret_ref:
@@ -510,10 +985,18 @@ def set_upstream_auth(
     else:
         target_ref = server
     validate_prefix(target_ref)
+    server_url = record["url"] if isinstance(record.get("url"), str) else None
+    shared_secret_ref = transport == "http" and _secret_ref_is_shared(
+        data_dir=resolved_data_dir,
+        ref=target_ref,
+        server=server,
+    )
 
     merged_env: dict[str, str] = {}
     merged_headers: dict[str, str] = {}
     merged_oauth: dict[str, Any] | None = None
+    shared_secret_oauth: dict[str, Any] | None = None
+    existing_uses_oauth_session = False
     secret_data: dict[str, Any] | None = None
     if dry_run:
         secret_data = _read_secret_from_file(
@@ -547,31 +1030,114 @@ def set_upstream_auth(
                     for k, v in (secret_data.get("headers") or {}).items()
                 }
             )
-        raw_oauth = secret_data.get("oauth")
-        if isinstance(raw_oauth, dict):
-            merged_oauth = dict(raw_oauth)
+        raw_oauth = (
+            secret_data.get("oauth")
+            if isinstance(secret_data.get("oauth"), dict)
+            else None
+        )
+        shared_secret_oauth = (
+            _shared_oauth_secret_config(raw_oauth)
+            if transport == "http" and shared_secret_ref
+            else None
+        )
+        merged_oauth = (
+            _effective_oauth_server_auth_config(
+                data_dir=resolved_data_dir,
+                ref=target_ref if shared_secret_ref else None,
+                server_url=server_url if shared_secret_ref else None,
+                oauth_config=raw_oauth,
+            )
+            if transport == "http"
+            else _normalize_oauth_config(raw_oauth)
+        )
+        existing_uses_oauth_session = _uses_oauth_session(merged_oauth)
 
     merged_env.update(updates_env)
     merged_headers.update(updates_headers)
     if oauth is not None:
-        merged_oauth = dict(oauth)
+        if merge_oauth and isinstance(merged_oauth, dict):
+            merged_oauth = {**merged_oauth, **oauth}
+        else:
+            merged_oauth = dict(oauth)
     elif clear_oauth:
         merged_oauth = None
+    merged_oauth = _normalize_oauth_config(merged_oauth)
+    merged_auth_mode = _auth_mode(merged_oauth)
+    merged_uses_oauth_session = _uses_oauth_session(merged_oauth)
+    delete_oauth_cache = clear_oauth and not merged_oauth
+
+    if transport == "http" and merged_auth_mode == AUTH_MODE_GOOGLE_ADC:
+        if not shared_secret_ref:
+            merged_headers = {
+                key: value
+                for key, value in merged_headers.items()
+                if key.lower() != "authorization"
+            }
+        delete_oauth_cache = True
+    elif (
+        transport == "http"
+        and existing_uses_oauth_session
+        and not merged_uses_oauth_session
+    ):
+        delete_oauth_cache = True
 
     if not dry_run:
+        if delete_oauth_cache:
+            if shared_secret_ref:
+                _delete_one_upstream_oauth_state(
+                    data_dir=resolved_data_dir,
+                    ref=target_ref,
+                    server_url=server_url,
+                )
+            else:
+                _delete_oauth_cache_dir(
+                    data_dir=resolved_data_dir,
+                    ref=target_ref,
+                )
+
+        desired_sidecar_oauth: dict[str, Any] | None = None
+        if transport == "http" and shared_secret_ref:
+            if isinstance(shared_secret_oauth, dict):
+                if isinstance(merged_oauth, dict):
+                    if merged_oauth != shared_secret_oauth:
+                        desired_sidecar_oauth = dict(merged_oauth)
+                else:
+                    desired_sidecar_oauth = {"enabled": False}
+            elif isinstance(merged_oauth, dict):
+                desired_sidecar_oauth = dict(merged_oauth)
+
+        secret_oauth = (
+            shared_secret_oauth
+            if transport == "http" and shared_secret_ref
+            else (merged_oauth if merged_oauth else None)
+        )
         write_secret(
             resolved_data_dir,
             target_ref,
             transport=transport,
             env=merged_env if merged_env else None,
             headers=merged_headers if merged_headers else None,
-            oauth=merged_oauth if merged_oauth else None,
+            oauth=secret_oauth,
         )
-        if clear_oauth and not merged_oauth:
-            _delete_oauth_cache_dir(
-                data_dir=resolved_data_dir,
-                ref=target_ref,
-            )
+        if (
+            transport == "http"
+            and shared_secret_ref
+            and isinstance(server_url, str)
+            and server_url
+        ):
+            if isinstance(desired_sidecar_oauth, dict):
+                _write_oauth_server_auth_config(
+                    data_dir=resolved_data_dir,
+                    ref=target_ref,
+                    server_url=server_url,
+                    oauth_config=desired_sidecar_oauth,
+                )
+            else:
+                _delete_oauth_server_auth_config(
+                    data_dir=resolved_data_dir,
+                    ref=target_ref,
+                    server_url=server_url,
+                )
         set_registry_upstream_secret_ref(
             data_dir=resolved_data_dir,
             prefix=server,
@@ -644,127 +1210,106 @@ async def _resolve_oauth_callback_url_headless(
     raise RuntimeError(msg)
 
 
+def _oauth_config_provider(oauth_config: dict[str, Any] | None) -> str | None:
+    """Return the normalized auth mode from config."""
+    return _auth_mode(_normalize_oauth_config(oauth_config))
+
+
+def _oauth_config_scope(oauth_config: dict[str, Any] | None) -> str | None:
+    """Return a normalized scope string from stored auth config."""
+    return _auth_scope(_normalize_oauth_config(oauth_config))
+
+
+async def _oauth_apply_client_config(
+    *,
+    oauth: Any,
+    oauth_config: dict[str, Any] | None,
+) -> None:
+    """Apply explicit client config using the legacy upstream-admin signature."""
+    await _oauth_apply_client_config_impl(
+        oauth=oauth,
+        auth_config=oauth_config,
+    )
+
+
+def _oauth_client_info_from_config(
+    *,
+    oauth_config: dict[str, Any] | None,
+    redirect_uris: Any,
+    client_name: str | None,
+) -> Any | None:
+    """Build client info using the legacy upstream-admin signature."""
+    return _oauth_client_info_from_config_impl(
+        auth_config=oauth_config,
+        redirect_uris=redirect_uris,
+        client_name=client_name,
+    )
+
+
+async def _oauth_login_access_token_proactive(
+    *,
+    oauth: Any,
+    url: str,
+    retry_on_stale_client: bool = True,
+) -> str:
+    """Run proactive OAuth login using the legacy upstream-admin hook."""
+    return await _oauth_login_access_token_proactive_impl(
+        oauth=oauth,
+        url=url,
+        retry_on_stale_client=retry_on_stale_client,
+    )
+
+
+@contextlib.contextmanager
+def _preserve_oauth_cache_dir(
+    *,
+    data_dir: Path,
+    ref: str,
+    existed: bool,
+) -> Iterator[None]:
+    """Restore the upstream OAuth cache directory if login fails."""
+    cache_dir = oauth_cache_dir_path(data_dir, ref)
+    with tempfile.TemporaryDirectory() as tmp_dir_str:
+        snapshot_dir = Path(tmp_dir_str) / "oauth-cache"
+        if existed and cache_dir.is_dir():
+            shutil.copytree(cache_dir, snapshot_dir)
+        try:
+            yield
+        except Exception:
+            if cache_dir.exists():
+                shutil.rmtree(cache_dir)
+            if existed and snapshot_dir.is_dir():
+                cache_dir.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copytree(snapshot_dir, cache_dir)
+            raise
+
+
 async def _oauth_login_access_token(
     *,
     url: str,
     headless: bool = False,
     token_storage: Any | None = None,
+    oauth_config: dict[str, Any] | None = None,
 ) -> str:
     """Run OAuth flow for an HTTP upstream and return an access token."""
-    from fastmcp import Client
-    from fastmcp.client.auth import OAuth
-    from fastmcp.client.transports import (
-        ClientTransport,
-        SSETransport,
-        StreamableHttpTransport,
-    )
-    from fastmcp.mcp_config import infer_transport_type_from_url
-
-    def _create_oauth(oauth_url: str) -> OAuth:
-        try:
-            return OAuth(oauth_url, token_storage=token_storage)
-        except TypeError as exc:
-            if "token_storage" in str(exc):
-                msg = (
-                    "OAuth provider does not support configurable token "
-                    "storage in this environment."
-                )
-                raise RuntimeError(msg) from exc
-            raise
-
-    class _HeadlessOAuth(OAuth):
-        """OAuth provider variant that avoids browser interaction."""
-
-        def __init__(
-            self,
-            mcp_url: str,
-            *,
-            token_storage: Any | None = None,
-        ):
-            self._callback_url: str | None = None
-            try:
-                super().__init__(mcp_url, token_storage=token_storage)
-            except TypeError as exc:
-                if "token_storage" in str(exc):
-                    msg = (
-                        "OAuth provider does not support configurable token "
-                        "storage in this environment."
-                    )
-                    raise RuntimeError(msg) from exc
-                raise
-
-        async def redirect_handler(self, authorization_url: str) -> None:
-            self._callback_url = await _resolve_oauth_callback_url_headless(
-                authorization_url=authorization_url,
-                callback_port=self.redirect_port,
-            )
-
-        async def callback_handler(self) -> tuple[str, str | None]:
-            callback_url = self._callback_url
-            if callback_url is None:
-                msg = (
-                    "No authorization response received. OAuth redirect did "
-                    "not start."
-                )
-                raise RuntimeError(msg)
-            params = parse_qs(urlparse(callback_url).query)
-            if "error" in params:
-                error = params.get("error", ["unknown_error"])[0]
-                error_desc = params.get(
-                    "error_description", ["Unknown error"]
-                )[0]
-                msg = f"OAuth authorization failed: {error} - {error_desc}"
-                raise RuntimeError(msg)
-
-            auth_code = params.get("code", [None])[0]
-            if not isinstance(auth_code, str) or not auth_code:
-                msg = "OAuth authorization failed: missing authorization code"
-                raise RuntimeError(msg)
-            state = params.get("state", [None])[0]
-            return auth_code, state if isinstance(state, str) else None
-
     try:
-        oauth = (
-            _HeadlessOAuth(url, token_storage=token_storage)
-            if headless
-            else _create_oauth(url)
+        return await _oauth_login_access_token_impl(
+            url=url,
+            resolve_callback_url_headless=_resolve_oauth_callback_url_headless,
+            auth_flow_once=_oauth_async_auth_flow_once,
+            proactive_access_token=_oauth_login_access_token_proactive,
+            headless=headless,
+            token_storage=token_storage,
+            auth_config=oauth_config,
         )
-    except Exception as exc:
-        rewritten = _oauth_dependency_runtime_error(exc)
-        if rewritten is not None:
-            raise rewritten from exc
-        raise
-    inferred = infer_transport_type_from_url(url)
-    transport: ClientTransport
-    if inferred == "sse":
-        transport = SSETransport(url=url, auth=oauth)
-    else:
-        transport = StreamableHttpTransport(url=url, auth=oauth)
-
-    async with Client(transport, timeout=30.0) as client:
-        await client.list_tools()
-
-    tokens = getattr(oauth, "context", None)
-    current_tokens = (
-        getattr(tokens, "current_tokens", None) if tokens is not None else None
-    )
-    raw_access_token = (
-        getattr(current_tokens, "access_token", None)
-        if current_tokens is not None
-        else None
-    )
-    access_token = (
-        str(raw_access_token).strip()
-        if isinstance(raw_access_token, str)
-        else ""
-    )
-    if not access_token:
+    except TypeError as exc:
+        if "token_storage" not in str(exc):
+            raise
         msg = (
-            "OAuth login completed but no access token was returned by the "
-            "upstream."
+            "OAuth provider does not support configurable token storage in "
+            "this environment."
         )
-        raise RuntimeError(msg)
-    return access_token
+        raise RuntimeError(msg) from exc
 
 
 def login_upstream(
@@ -773,6 +1318,12 @@ def login_upstream(
     data_dir: Path | None = None,
     dry_run: bool = False,
     headless: bool = False,
+    oauth_client_id: str | None = None,
+    oauth_client_secret: str | None = None,
+    oauth_auth_method: str | None = None,
+    oauth_registration: str | None = None,
+    oauth_scopes: list[str] | None = None,
+    oauth_callback_port: int | None = None,
 ) -> dict[str, Any]:
     """Run OAuth login for one HTTP upstream and persist auth header."""
     resolved_data_dir = resolve_upstream_data_dir(data_dir)
@@ -800,18 +1351,234 @@ def login_upstream(
     else:
         target_ref = server
     validate_prefix(target_ref)
-    oauth_meta = {
-        "enabled": True,
-        "provider": "fastmcp",
-        "token_storage": "disk",
-    }
+    shared_secret_ref = _secret_ref_is_shared(
+        data_dir=resolved_data_dir,
+        ref=target_ref,
+        server=server,
+    )
+    existing_oauth: dict[str, Any] = {}
+    existing_oauth_session: dict[str, Any] = {}
+    shared_reusable_oauth: dict[str, Any] = {}
+    try:
+        secret = (
+            _read_secret_from_file(
+                data_dir=resolved_data_dir,
+                ref=target_ref,
+            )
+            if dry_run
+            else read_secret(resolved_data_dir, target_ref)
+        )
+        if isinstance(secret, dict):
+            raw_oauth = secret.get("oauth")
+            if isinstance(raw_oauth, dict):
+                normalized_oauth = _normalize_oauth_config(raw_oauth) or {}
+                shared_reusable_oauth = (
+                    _shared_oauth_secret_config(normalized_oauth) or {}
+                    if shared_secret_ref
+                    else dict(normalized_oauth)
+                )
+                existing_oauth_session = (
+                    dict(shared_reusable_oauth)
+                    if shared_secret_ref
+                    else dict(normalized_oauth)
+                )
+                existing_oauth = (
+                    dict(existing_oauth_session)
+                    if _uses_oauth_session(existing_oauth_session)
+                    else {}
+                )
+    except (FileNotFoundError, json.JSONDecodeError, ValueError):
+        pass
+    except Exception:
+        _logger.warning(
+            "failed to read existing secret %r for oauth login",
+            target_ref,
+            exc_info=True,
+        )
+
+    if shared_secret_ref:
+        cached_oauth = _read_oauth_server_auth_config(
+            data_dir=resolved_data_dir,
+            ref=target_ref,
+            server_url=url,
+        )
+        if isinstance(cached_oauth, dict):
+            existing_oauth_session = {
+                **existing_oauth_session,
+                **cached_oauth,
+            }
+            if _uses_oauth_session(existing_oauth_session):
+                existing_oauth = dict(existing_oauth_session)
+            elif _uses_oauth_session(shared_reusable_oauth):
+                existing_oauth = dict(shared_reusable_oauth)
+
+    oauth_meta = dict(existing_oauth)
+    oauth_meta.update(
+        {
+            "enabled": True,
+            "mode": AUTH_MODE_OAUTH,
+            "registration": OAUTH_REGISTRATION_DYNAMIC,
+            "token_storage": "disk",
+        }
+    )
+    explicit_registration = (
+        oauth_registration.strip()
+        if isinstance(oauth_registration, str) and oauth_registration.strip()
+        else None
+    )
+    if explicit_registration not in {
+        None,
+        OAUTH_REGISTRATION_DYNAMIC,
+        OAUTH_REGISTRATION_PREREGISTERED,
+    }:
+        msg = (
+            "OAuth registration must be one of "
+            f"{OAUTH_REGISTRATION_DYNAMIC!r} or "
+            f"{OAUTH_REGISTRATION_PREREGISTERED!r}."
+        )
+        raise ValueError(msg)
+    explicit_client_id = (
+        oauth_client_id.strip()
+        if isinstance(oauth_client_id, str) and oauth_client_id.strip()
+        else None
+    )
+    explicit_client_secret = (
+        oauth_client_secret.strip()
+        if isinstance(oauth_client_secret, str) and oauth_client_secret.strip()
+        else None
+    )
+    explicit_auth_method = (
+        oauth_auth_method.strip()
+        if isinstance(oauth_auth_method, str) and oauth_auth_method.strip()
+        else None
+    )
+    raw_existing_client_id: object = oauth_meta.get("client_id")
+    existing_client_id = (
+        raw_existing_client_id.strip()
+        if isinstance(raw_existing_client_id, str)
+        and raw_existing_client_id.strip()
+        else None
+    )
+    effective_client_id = (
+        explicit_client_id
+        if explicit_client_id is not None
+        else existing_client_id
+    )
+    if explicit_client_secret is not None and effective_client_id is None:
+        msg = (
+            "--oauth-client-secret requires --oauth-client-id or an existing "
+            "stored client_id"
+        )
+        raise ValueError(msg)
+    if explicit_auth_method is not None and effective_client_id is None:
+        msg = (
+            "--oauth-auth-method requires --oauth-client-id or an existing "
+            "stored client_id"
+        )
+        raise ValueError(msg)
+    if explicit_registration == OAUTH_REGISTRATION_DYNAMIC and (
+        explicit_client_id is not None
+        or explicit_client_secret is not None
+        or explicit_auth_method is not None
+    ):
+        msg = (
+            "--oauth-registration dynamic cannot be combined with "
+            "--oauth-client-id, --oauth-client-secret, or "
+            "--oauth-auth-method"
+        )
+        raise ValueError(msg)
+
+    effective_registration = explicit_registration
+    if effective_registration is None:
+        effective_registration = (
+            OAUTH_REGISTRATION_PREREGISTERED
+            if effective_client_id is not None
+            else OAUTH_REGISTRATION_DYNAMIC
+        )
+    oauth_meta["registration"] = effective_registration
+
+    if effective_registration == OAUTH_REGISTRATION_PREREGISTERED:
+        if effective_client_id is None:
+            msg = (
+                "--oauth-registration preregistered requires "
+                "--oauth-client-id or an existing stored client_id"
+            )
+            raise ValueError(msg)
+        oauth_meta["client_id"] = effective_client_id
+        client_id_changed = (
+            explicit_client_id is not None
+            and explicit_client_id != existing_client_id
+        )
+        if client_id_changed and explicit_client_secret is None:
+            oauth_meta.pop("client_secret", None)
+        if client_id_changed and explicit_auth_method is None:
+            oauth_meta.pop("token_endpoint_auth_method", None)
+        if explicit_client_secret is not None:
+            oauth_meta["client_secret"] = explicit_client_secret
+            if (
+                explicit_auth_method is None
+                and oauth_meta.get("token_endpoint_auth_method") == "none"
+            ):
+                oauth_meta.pop("token_endpoint_auth_method", None)
+        if explicit_auth_method is not None:
+            oauth_meta["token_endpoint_auth_method"] = explicit_auth_method
+            if (
+                explicit_auth_method == "none"
+                and explicit_client_secret is None
+            ):
+                oauth_meta.pop("client_secret", None)
+    else:
+        oauth_meta.pop("client_id", None)
+        oauth_meta.pop("client_secret", None)
+        oauth_meta.pop("token_endpoint_auth_method", None)
+    scopes = [
+        scope.strip()
+        for scope in (oauth_scopes or [])
+        if isinstance(scope, str) and scope.strip()
+    ]
+    if scopes:
+        oauth_meta["scope"] = " ".join(scopes)
+    if oauth_callback_port is not None:
+        oauth_meta["callback_port"] = oauth_callback_port
+    elif (
+        effective_registration == OAUTH_REGISTRATION_PREREGISTERED
+        and isinstance(oauth_meta.get("client_id"), str)
+        and oauth_meta.get("client_id", "").strip()
+        and _oauth_config_callback_port(oauth_meta) is None
+    ):
+        oauth_meta["callback_port"] = OAUTH_STATIC_CLIENT_CALLBACK_PORT
+    callback_port = _oauth_config_callback_port(oauth_meta)
+    if callback_port is not None:
+        oauth_meta["callback_port"] = callback_port
+
+    if (
+        effective_registration == OAUTH_REGISTRATION_PREREGISTERED
+        and isinstance(oauth_meta.get("client_id"), str)
+        and oauth_meta.get("client_id", "").strip()
+    ):
+        if callback_port is None:
+            msg = "OAuth callback port is required for static client login."
+            raise RuntimeError(msg)
+        redirect_uri = f"http://localhost:{callback_port}/callback"
+        _oauth_client_info_from_config(
+            oauth_config=oauth_meta,
+            redirect_uris=[redirect_uri],
+            client_name="FastMCP Client",
+        )
+
+    persisted_oauth_meta = dict(oauth_meta)
+    persisted_headers = (
+        None
+        if shared_secret_ref
+        else {"Authorization": "Bearer __OAUTH_ACCESS_TOKEN__"}
+    )
 
     if dry_run:
         result = set_upstream_auth(
             server=server,
             env_updates=None,
-            header_updates={"Authorization": "Bearer __OAUTH_ACCESS_TOKEN__"},
-            oauth=oauth_meta,
+            header_updates=persisted_headers,
+            oauth=persisted_oauth_meta,
             clear_oauth=False,
             data_dir=resolved_data_dir,
             dry_run=True,
@@ -819,42 +1586,71 @@ def login_upstream(
         result["login"] = "oauth"
         return result
 
+    reset_oauth_session = _oauth_login_requires_session_reset(
+        existing_auth=existing_oauth_session,
+        auth_config=oauth_meta,
+    )
     try:
+        cache_dir = oauth_cache_dir_path(resolved_data_dir, target_ref)
+        had_oauth_cache = cache_dir.exists()
         token_storage = oauth_token_storage(resolved_data_dir, target_ref)
-        try:
-            asyncio.run(
-                clear_oauth_client_registration(
+        preserve_cache = (
+            _preserve_oauth_cache_dir(
+                data_dir=resolved_data_dir,
+                ref=target_ref,
+                existed=had_oauth_cache,
+            )
+            if reset_oauth_session
+            else contextlib.nullcontext()
+        )
+        with preserve_cache:
+            if reset_oauth_session:
+                asyncio.run(
+                    clear_oauth_session(
+                        token_storage=token_storage,
+                        server_url=url,
+                    )
+                )
+            else:
+                try:
+                    asyncio.run(
+                        clear_oauth_client_registration(
+                            token_storage=token_storage,
+                            server_url=url,
+                        )
+                    )
+                except Exception as exc:
+                    _logger.debug(
+                        "skipped oauth client registration reset for %s: %s",
+                        server,
+                        exc,
+                    )
+            access_token = asyncio.run(
+                _oauth_login_access_token(
+                    url=url,
+                    headless=headless,
                     token_storage=token_storage,
-                    server_url=url,
+                    oauth_config=oauth_meta,
                 )
             )
-        except Exception as exc:
-            _logger.debug(
-                "skipped oauth client registration reset for %s: %s",
-                server,
-                exc,
+            result = set_upstream_auth(
+                server=server,
+                env_updates=None,
+                header_updates=(
+                    None
+                    if shared_secret_ref
+                    else {"Authorization": f"Bearer {access_token}"}
+                ),
+                oauth=persisted_oauth_meta,
+                clear_oauth=False,
+                data_dir=resolved_data_dir,
+                dry_run=False,
             )
-        access_token = asyncio.run(
-            _oauth_login_access_token(
-                url=url,
-                headless=headless,
-                token_storage=token_storage,
-            )
-        )
     except Exception as exc:
         rewritten = _oauth_dependency_runtime_error(exc)
         if rewritten is not None:
             raise rewritten from exc
         raise
-    result = set_upstream_auth(
-        server=server,
-        env_updates=None,
-        header_updates={"Authorization": f"Bearer {access_token}"},
-        oauth=oauth_meta,
-        clear_oauth=False,
-        data_dir=resolved_data_dir,
-        dry_run=False,
-    )
     result["login"] = "oauth"
     return result
 
@@ -1105,12 +1901,13 @@ def _upstream_secret_ref(upstream: Any) -> str | None:
 
 
 def _upstream_oauth_enabled(upstream: Any, data_dir: Path) -> bool:
-    """Return whether one HTTP upstream has OAuth runtime auth enabled."""
+    """Return whether one HTTP upstream uses interactive OAuth sessions."""
     if getattr(upstream, "transport", None) != "http":
         return False
+    url = getattr(upstream, "url", None)
     raw_secret_ref = getattr(upstream, "secret_ref", None)
-    has_explicit_secret_ref = (
-        isinstance(raw_secret_ref, str) and bool(raw_secret_ref)
+    has_explicit_secret_ref = isinstance(raw_secret_ref, str) and bool(
+        raw_secret_ref
     )
     secret_ref = _upstream_secret_ref(upstream)
     if not isinstance(secret_ref, str) or not secret_ref:
@@ -1124,13 +1921,20 @@ def _upstream_oauth_enabled(upstream: Any, data_dir: Path) -> bool:
         msg = f"upstream {name!r} secret file {secret_ref!r} not found"
         raise ValueError(msg) from exc
     except Exception as exc:
-        msg = (
-            f"upstream {name!r} has invalid secret file "
-            f"{secret_ref!r}: {exc}"
-        )
+        msg = f"upstream {name!r} has invalid secret file {secret_ref!r}: {exc}"
         raise ValueError(msg) from exc
-    oauth = secret.get("oauth")
-    return isinstance(oauth, dict) and bool(oauth.get("enabled"))
+    oauth = _effective_oauth_config_for_server(
+        data_dir=data_dir,
+        ref=secret_ref,
+        server=name,
+        server_url=url if isinstance(url, str) else None,
+        oauth_config=(
+            secret.get("oauth")
+            if isinstance(secret.get("oauth"), dict)
+            else None
+        ),
+    )
+    return _uses_oauth_session(oauth)
 
 
 async def _probe_one_oauth_upstream(
