@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+## [0.4.3] - 2026-03-07
+
+### Changed
+- Release automation now publishes TestPyPI, PyPI, and a GitHub release automatically when `main` advances to a new package version, while still supporting manual `v*` tag releases.
+
+### Fixed
+- Preserved secret-backed runtime auth when registry override merges keep `secret_ref`, but only after confirming the backing secret actually resolves.
+- Cleared in-memory OAuth client registration and token state before retrying stale dynamic-client authorization failures.
+- Restored single-upstream OAuth fallback bearer headers when a shared `secret_ref` becomes exclusive again.
+
 ## [0.4.2] - 2026-03-05
 
 ### Fixed

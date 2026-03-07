@@ -668,11 +668,8 @@ def _collapse_unshared_secret_ref_oauth_state(
     )
     normalized_secret_oauth = _normalize_oauth_config(raw_oauth)
     env = secret.get("env") if isinstance(secret.get("env"), dict) else None
-    headers = (
-        dict(secret.get("headers"))
-        if isinstance(secret.get("headers"), dict)
-        else None
-    )
+    raw_headers = secret.get("headers")
+    headers = dict(raw_headers) if isinstance(raw_headers, dict) else None
     if _uses_oauth_session(effective_oauth):
         try:
             access_token = asyncio.run(
