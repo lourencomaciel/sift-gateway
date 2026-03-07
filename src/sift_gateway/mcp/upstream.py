@@ -14,7 +14,7 @@ Typical usage example::
 
 from __future__ import annotations
 
-from collections.abc import Generator
+from collections.abc import AsyncGenerator, Generator
 from contextlib import contextmanager
 from dataclasses import dataclass
 import json
@@ -28,17 +28,79 @@ import uuid
 from fastmcp import Client
 from fastmcp.client.transports import StdioTransport
 
+from sift_gateway.auth import google_adc as _google_adc_runtime
+from sift_gateway.auth.config import (
+    AUTH_MODE_GOOGLE_ADC,
+    AUTH_MODE_OAUTH,
+    auth_enabled,
+    auth_mode,
+    auth_scope,
+    google_adc_scopes,
+    normalize_auth_config,
+)
 from sift_gateway.canon.rfc8785 import canonical_bytes
 from sift_gateway.config.settings import UpstreamConfig
 from sift_gateway.util.hashing import sha256_trunc
 
 _USER_IDS_FILENAME = "upstream_user_ids.json"
 SecretData = dict[str, Any]
+_GOOGLE_ADC_CREDENTIALS = _google_adc_runtime._GOOGLE_ADC_CREDENTIALS
+_GOOGLE_ADC_CREDENTIALS_LOCK = _google_adc_runtime._GOOGLE_ADC_CREDENTIALS_LOCK
 
 try:
     import fcntl as _fcntl
 except ImportError:  # Windows
     _fcntl = None  # type: ignore[assignment]
+
+
+def _sync_google_adc_runtime_state() -> None:
+    """Keep legacy upstream module patch points wired to the new auth module."""
+    _google_adc_runtime._GOOGLE_ADC_CREDENTIALS = _GOOGLE_ADC_CREDENTIALS
+    _google_adc_runtime._GOOGLE_ADC_CREDENTIALS_LOCK = (
+        _GOOGLE_ADC_CREDENTIALS_LOCK
+    )
+
+
+def _google_adc_access_token_sync(
+    *, scopes: tuple[str, ...] | None = None
+) -> str:
+    """Backward-compatible wrapper for Google ADC token lookup."""
+    _sync_google_adc_runtime_state()
+    return _google_adc_runtime.google_adc_access_token_sync(scopes=scopes)
+
+
+def _google_adc_authorized_headers_sync(
+    *,
+    method: str,
+    url: str,
+    headers: dict[str, str] | None = None,
+    scopes: tuple[str, ...] | None = None,
+) -> dict[str, str]:
+    """Backward-compatible wrapper for Google ADC header injection."""
+    _sync_google_adc_runtime_state()
+    return _google_adc_runtime.google_adc_authorized_headers_sync(
+        method=method,
+        url=url,
+        headers=headers,
+        scopes=scopes,
+    )
+
+
+async def _google_adc_authorized_headers(
+    *,
+    method: str,
+    url: str,
+    headers: dict[str, str] | None = None,
+    scopes: tuple[str, ...] | None = None,
+) -> dict[str, str]:
+    """Backward-compatible async wrapper for Google ADC header injection."""
+    _sync_google_adc_runtime_state()
+    return await _google_adc_runtime.google_adc_authorized_headers(
+        method=method,
+        url=url,
+        headers=headers,
+        scopes=scopes,
+    )
 
 
 @contextmanager
@@ -267,8 +329,114 @@ def _secret_oauth_enabled(secret: SecretData | None) -> bool:
     """Return whether secret payload enables OAuth runtime auth mode."""
     if not isinstance(secret, dict):
         return False
-    oauth = secret.get("oauth")
-    return isinstance(oauth, dict) and bool(oauth.get("enabled"))
+    return auth_enabled(normalize_auth_config(secret.get("oauth")))
+
+
+def _secret_auth_mode(secret: SecretData | None) -> str | None:
+    """Return the configured auth mode for one secret payload."""
+    if not isinstance(secret, dict):
+        return None
+    return auth_mode(normalize_auth_config(secret.get("oauth")))
+
+
+def _secret_auth_config(secret: SecretData | None) -> dict[str, Any] | None:
+    """Return normalized auth config for one secret payload."""
+    if not isinstance(secret, dict):
+        return None
+    return normalize_auth_config(secret.get("oauth"))
+
+
+def _secret_ref_is_shared(
+    config: UpstreamConfig,
+    data_dir: str | None = None,
+) -> bool:
+    """Return whether another configured upstream reuses this secret ref."""
+    if config.transport != "http":
+        return False
+
+    secret_ref = (config.secret_ref or config.prefix).removesuffix(".json")
+    if not secret_ref:
+        return False
+
+    from sift_gateway.config.mcp_servers import extract_mcp_servers
+    from sift_gateway.config.shared import (
+        gateway_config_path,
+        load_gateway_config_dict,
+    )
+    from sift_gateway.config.upstream_registry import (
+        load_registry_upstream_records,
+    )
+    from sift_gateway.constants import DEFAULT_DATA_DIR
+
+    resolved_dir = Path(data_dir or DEFAULT_DATA_DIR)
+    records = load_registry_upstream_records(
+        resolved_dir,
+        include_disabled=True,
+    )
+    if records:
+        for record in records:
+            prefix = record.get("prefix")
+            if not isinstance(prefix, str) or prefix == config.prefix:
+                continue
+            candidate = record.get("secret_ref")
+            if (
+                isinstance(candidate, str)
+                and candidate.removesuffix(".json") == secret_ref
+            ):
+                return True
+        return False
+
+    raw_config = load_gateway_config_dict(gateway_config_path(resolved_dir))
+    try:
+        servers = extract_mcp_servers(raw_config)
+    except ValueError:
+        return False
+    for name, entry in servers.items():
+        if name == config.prefix or not isinstance(entry, dict):
+            continue
+        gateway = entry.get("_gateway")
+        candidate = (
+            gateway.get("secret_ref") if isinstance(gateway, dict) else None
+        )
+        if (
+            isinstance(candidate, str)
+            and candidate.removesuffix(".json") == secret_ref
+        ):
+            return True
+    return False
+
+
+def _effective_auth_config(
+    config: UpstreamConfig,
+    data_dir: str | None = None,
+    *,
+    secret: SecretData | None | object = _UNSET,
+) -> dict[str, Any] | None:
+    """Return the effective auth config, including per-server sidecars."""
+    if secret is _UNSET:
+        secret = _resolve_secret_data(config, data_dir)
+
+    auth_config = _secret_auth_config(
+        secret if isinstance(secret, dict) else None
+    )
+    if config.transport != "http" or not config.url:
+        return auth_config
+    if not _secret_ref_is_shared(config, data_dir):
+        return auth_config
+
+    from sift_gateway.config.upstream_secrets import (
+        effective_oauth_server_auth_config,
+    )
+    from sift_gateway.constants import DEFAULT_DATA_DIR
+
+    resolved_dir = data_dir or DEFAULT_DATA_DIR
+    secret_ref = config.secret_ref or config.prefix
+    return effective_oauth_server_auth_config(
+        resolved_dir,
+        secret_ref,
+        server_url=config.url,
+        oauth_config=auth_config,
+    )
 
 
 def _headers_without_authorization(
@@ -405,12 +573,40 @@ def _build_runtime_oauth_auth(
     Returns ``None`` when OAuth mode is not enabled in the resolved
     secret payload.
     """
-    if secret is _UNSET:
-        secret = _resolve_secret_data(config, data_dir)
-    if not isinstance(secret, dict) or not _secret_oauth_enabled(secret):
+    auth_config = _effective_auth_config(
+        config,
+        data_dir,
+        secret=secret,
+    )
+    mode = auth_mode(auth_config)
+    if mode is None:
         return None
     if not config.url:
         return None
+
+    if mode == AUTH_MODE_GOOGLE_ADC:
+        import httpx
+
+        scopes = google_adc_scopes(auth_config)
+
+        class _GoogleAdcAuth(httpx.Auth):
+            async def async_auth_flow(
+                self, request: httpx.Request
+            ) -> AsyncGenerator[httpx.Request, httpx.Response]:
+                authorized_headers = await _google_adc_authorized_headers(
+                    method=request.method,
+                    url=str(request.url),
+                    headers=dict(request.headers),
+                    scopes=scopes,
+                )
+                request.headers.update(authorized_headers)
+                yield request
+
+        return _GoogleAdcAuth()
+
+    if mode != AUTH_MODE_OAUTH:
+        msg = f"Unsupported auth mode for upstream {config.prefix!r}: {mode}"
+        raise RuntimeError(msg)
 
     from fastmcp.client.auth import OAuth
 
@@ -597,9 +793,7 @@ def _client_transport(
     headers = _build_http_headers(config, data_dir, secret=secret)
     oauth_auth = None
     if not disable_oauth:
-        oauth_auth = _build_runtime_oauth_auth(
-            config, data_dir, secret=secret
-        )
+        oauth_auth = _build_runtime_oauth_auth(config, data_dir, secret=secret)
     if oauth_auth is not None:
         # OAuth auth sets Authorization dynamically; avoid stale header clashes.
         headers = _headers_without_authorization(headers)
@@ -756,10 +950,20 @@ def compute_auth_fingerprint(
         if secret:
             all_headers.update(secret.get("headers") or {})
         all_headers.update(config.headers)
-        oauth_enabled = _secret_oauth_enabled(secret)
-        if oauth_enabled:
+        auth_config = _effective_auth_config(
+            config,
+            data_dir,
+            secret=secret,
+        )
+        if auth_enabled(auth_config):
             all_headers = _headers_without_authorization(all_headers)
-            auth_values["oauth_enabled"] = "1"
+            auth_values["auth_enabled"] = "1"
+            mode = auth_mode(auth_config)
+            if isinstance(mode, str):
+                auth_values["auth_mode"] = mode
+            scope = auth_scope(auth_config)
+            if isinstance(scope, str):
+                auth_values["auth_scope"] = scope
         for key, val in sorted(all_headers.items()):
             if key not in salt_keys:
                 auth_values[f"header_{key}"] = val
@@ -884,17 +1088,30 @@ async def call_upstream_tool(
             data_dir=data_dir,
         )
     except Exception as exc:
+        auth_config = _effective_auth_config(
+            instance.config,
+            data_dir,
+            secret=instance.secret_data,
+        )
         if (
             instance.config.transport != "http"
-            or not _secret_oauth_enabled(instance.secret_data)
+            or not auth_enabled(auth_config)
             or not _is_auth_failure_exception(exc)
         ):
             raise
         auth_failure = exc
 
+    mode = auth_mode(auth_config)
+    if mode != AUTH_MODE_OAUTH:
+        raise auth_failure
+
     # Restarted sessions can lose OAuth cache state while a valid static
-    # Authorization header still exists in secret storage.
-    has_static_auth = _headers_have_authorization(
+    # Authorization header still exists in secret storage. Shared secret_refs
+    # may carry a sibling upstream's bearer token, so never reuse those as a
+    # static fallback.
+    has_static_auth = not _secret_ref_is_shared(
+        instance.config, data_dir
+    ) and _headers_have_authorization(
         _build_http_headers(
             instance.config,
             data_dir,
@@ -915,9 +1132,7 @@ async def call_upstream_tool(
                 data_dir=data_dir,
             )
         except Exception as retry_exc:
-            if not (
-                has_static_auth and _is_auth_failure_exception(retry_exc)
-            ):
+            if not (has_static_auth and _is_auth_failure_exception(retry_exc)):
                 raise
             return await _call_tool_once(
                 instance=instance,

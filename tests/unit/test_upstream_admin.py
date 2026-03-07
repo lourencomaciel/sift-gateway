@@ -4,16 +4,22 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from pathlib import Path
 from types import SimpleNamespace
 
+from fastmcp.client.auth.oauth import ClientNotFoundError
 import pytest
 
 from sift_gateway.config.upstream_admin import (
     _delete_oauth_cache_dir,
     _delete_secret_file,
     _load_config_server_entry,
+    _oauth_apply_client_config,
+    _oauth_async_auth_flow_once,
     _oauth_login_access_token,
+    _oauth_login_access_token_proactive,
+    _oauth_server_config_path,
     _probe_oauth_upstream_configs,
     _probe_one_oauth_upstream,
     _probe_one_upstream,
@@ -37,6 +43,8 @@ from sift_gateway.config.upstream_admin import (
 )
 from sift_gateway.config.upstream_secrets import (
     oauth_cache_dir_path,
+    oauth_token_cache_key,
+    oauth_token_storage,
     read_secret,
     write_secret,
 )
@@ -91,8 +99,7 @@ def test_load_config_server_entry_returns_none_when_config_missing(
     tmp_path: Path,
 ) -> None:
     assert (
-        _load_config_server_entry(data_dir=tmp_path, server="missing")
-        is None
+        _load_config_server_entry(data_dir=tmp_path, server="missing") is None
     )
 
 
@@ -203,9 +210,7 @@ def test_secret_ref_is_still_referenced_matches_normalized(
     )
 
     assert _secret_ref_is_still_referenced(data_dir=tmp_path, ref="shared")
-    assert not _secret_ref_is_still_referenced(
-        data_dir=tmp_path, ref="other"
-    )
+    assert not _secret_ref_is_still_referenced(data_dir=tmp_path, ref="other")
 
 
 def test_list_upstreams_reads_enabled_and_secret_ref(tmp_path: Path) -> None:
@@ -380,7 +385,8 @@ def test_inspect_upstream_reports_oauth_secret_metadata(
         headers={"Authorization": "Bearer tok"},
         oauth={
             "enabled": True,
-            "provider": "fastmcp",
+            "mode": "oauth",
+            "registration": "dynamic",
             "token_storage": "disk",
         },
     )
@@ -392,8 +398,70 @@ def test_inspect_upstream_reports_oauth_secret_metadata(
     oauth = secret.get("oauth")
     assert isinstance(oauth, dict)
     assert oauth["enabled"] is True
-    assert oauth["provider"] == "fastmcp"
+    assert oauth["mode"] == "oauth"
+    assert oauth["registration"] == "dynamic"
     assert oauth["token_storage"] == "disk"
+
+
+def test_inspect_upstream_merges_shared_server_oauth_metadata(
+    tmp_path: Path,
+) -> None:
+    _write_gateway_config(
+        tmp_path,
+        {
+            "mcpServers": {
+                "api_a": {
+                    "url": "https://a.example.com/mcp",
+                    "_gateway": {"secret_ref": "shared"},
+                },
+                "api_b": {
+                    "url": "https://b.example.com/mcp",
+                    "_gateway": {"secret_ref": "shared"},
+                },
+            }
+        },
+    )
+    write_secret(
+        tmp_path,
+        "shared",
+        transport="http",
+        oauth={
+            "enabled": True,
+            "mode": "oauth",
+            "registration": "dynamic",
+            "token_storage": "disk",
+        },
+    )
+    path = _oauth_server_config_path(
+        data_dir=tmp_path,
+        ref="shared",
+        server_url="https://a.example.com/mcp",
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "enabled": True,
+                "mode": "oauth",
+                "registration": "preregistered",
+                "token_storage": "disk",
+                "client_id": "client-a",
+                "scope": "scope.a",
+                "callback_port": 46000,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    item = inspect_upstream(server="api_a", data_dir=tmp_path)
+    secret = item["secret"]
+    assert isinstance(secret, dict)
+    oauth = secret.get("oauth")
+    assert isinstance(oauth, dict)
+    assert oauth["registration"] == "preregistered"
+    assert oauth["client_id"] == "client-a"
+    assert oauth["scope"] == "scope.a"
+    assert oauth["callback_port"] == 46000
 
 
 def test_remove_upstream_deletes_secret_file(tmp_path: Path) -> None:
@@ -547,6 +615,214 @@ def test_remove_upstream_preserves_shared_secret_file(tmp_path: Path) -> None:
     assert secret["env"] == {"GITHUB_TOKEN": "abc"}
 
 
+def test_remove_upstream_deletes_shared_server_auth_config_for_removed_url(
+    tmp_path: Path,
+) -> None:
+    _write_gateway_config(
+        tmp_path,
+        {
+            "mcpServers": {
+                "api_a": {
+                    "url": "https://a.example.com/mcp",
+                    "_gateway": {"secret_ref": "shared"},
+                },
+                "api_b": {
+                    "url": "https://b.example.com/mcp",
+                    "_gateway": {"secret_ref": "shared"},
+                },
+            }
+        },
+    )
+    write_secret(
+        tmp_path,
+        "shared",
+        transport="http",
+        headers={"Authorization": "Bearer tok"},
+    )
+    path_a = _oauth_server_config_path(
+        data_dir=tmp_path,
+        ref="shared",
+        server_url="https://a.example.com/mcp",
+    )
+    path_b = _oauth_server_config_path(
+        data_dir=tmp_path,
+        ref="shared",
+        server_url="https://b.example.com/mcp",
+    )
+    path_a.parent.mkdir(parents=True, exist_ok=True)
+    path_a.write_text('{"enabled": true, "mode": "oauth"}', encoding="utf-8")
+    path_b.write_text('{"enabled": true, "mode": "oauth"}', encoding="utf-8")
+
+    remove_upstream(server="api_a", data_dir=tmp_path)
+
+    assert not path_a.exists()
+    assert not path_b.exists()
+    assert read_secret(tmp_path, "shared")["headers"] == {
+        "Authorization": "Bearer tok"
+    }
+    assert read_secret(tmp_path, "shared")["oauth"] == {
+        "enabled": True,
+        "mode": "oauth",
+        "registration": "dynamic",
+    }
+
+
+def test_remove_upstream_collapses_shared_server_auth_config_for_same_url(
+    tmp_path: Path,
+) -> None:
+    _write_gateway_config(
+        tmp_path,
+        {
+            "mcpServers": {
+                "api_a": {
+                    "url": "https://shared.example.com/mcp",
+                    "_gateway": {"secret_ref": "shared"},
+                },
+                "api_b": {
+                    "url": "https://shared.example.com/mcp",
+                    "_gateway": {"secret_ref": "shared"},
+                },
+            }
+        },
+    )
+    write_secret(
+        tmp_path,
+        "shared",
+        transport="http",
+        headers={"Authorization": "Bearer tok"},
+    )
+    path = _oauth_server_config_path(
+        data_dir=tmp_path,
+        ref="shared",
+        server_url="https://shared.example.com/mcp",
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text('{"enabled": true, "mode": "oauth"}', encoding="utf-8")
+
+    remove_upstream(server="api_a", data_dir=tmp_path)
+
+    assert not path.exists()
+    assert read_secret(tmp_path, "shared")["headers"] == {
+        "Authorization": "Bearer tok"
+    }
+    assert read_secret(tmp_path, "shared")["oauth"] == {
+        "enabled": True,
+        "mode": "oauth",
+        "registration": "dynamic",
+    }
+
+
+def test_remove_upstream_collapses_remaining_sidecar_when_ref_unshares(
+    tmp_path: Path,
+) -> None:
+    _write_gateway_config(
+        tmp_path,
+        {
+            "mcpServers": {
+                "api_a": {
+                    "url": "https://a.example.com/mcp",
+                    "_gateway": {"secret_ref": "shared"},
+                },
+                "api_b": {
+                    "url": "https://b.example.com/mcp",
+                    "_gateway": {"secret_ref": "shared"},
+                },
+            }
+        },
+    )
+    write_secret(
+        tmp_path,
+        "shared",
+        transport="http",
+        headers={"Authorization": "Bearer tok"},
+    )
+    path_a = _oauth_server_config_path(
+        data_dir=tmp_path,
+        ref="shared",
+        server_url="https://a.example.com/mcp",
+    )
+    path_a.parent.mkdir(parents=True, exist_ok=True)
+    path_a.write_text(
+        '{"enabled": true, "mode": "google-adc"}',
+        encoding="utf-8",
+    )
+
+    remove_upstream(server="api_b", data_dir=tmp_path)
+
+    secret = read_secret(tmp_path, "shared")
+    assert secret["headers"] == {"Authorization": "Bearer tok"}
+    assert secret["oauth"] == {"enabled": True, "mode": "google-adc"}
+    assert not path_a.exists()
+    assert inspect_upstream(server="api_a", data_dir=tmp_path)["secret"][
+        "oauth"
+    ] == {
+        "enabled": True,
+        "mode": "google-adc",
+        "token_storage": None,
+    }
+
+
+def test_remove_upstream_unshares_shared_oauth_and_restores_bearer_fallback(
+    tmp_path: Path,
+) -> None:
+    _write_gateway_config(
+        tmp_path,
+        {
+            "mcpServers": {
+                "api_a": {
+                    "url": "https://a.example.com/mcp",
+                    "_gateway": {"secret_ref": "shared"},
+                },
+                "api_b": {
+                    "url": "https://b.example.com/mcp",
+                    "_gateway": {"secret_ref": "shared"},
+                },
+            }
+        },
+    )
+    write_secret(
+        tmp_path,
+        "shared",
+        transport="http",
+        headers={},
+        oauth={
+            "enabled": True,
+            "mode": "oauth",
+            "registration": "dynamic",
+        },
+    )
+    path_a = _oauth_server_config_path(
+        data_dir=tmp_path,
+        ref="shared",
+        server_url="https://a.example.com/mcp",
+    )
+    path_a.parent.mkdir(parents=True, exist_ok=True)
+    path_a.write_text('{"enabled": true, "mode": "oauth"}', encoding="utf-8")
+    storage = oauth_token_storage(tmp_path, "shared")
+    asyncio.run(
+        storage.put(
+            key=oauth_token_cache_key("https://a.example.com/mcp"),
+            value={
+                "access_token": "tok_a",
+                "refresh_token": "refresh_a",
+            },
+            collection="mcp-oauth-token",
+            ttl=None,
+        )
+    )
+
+    remove_upstream(server="api_b", data_dir=tmp_path)
+
+    secret = read_secret(tmp_path, "shared")
+    assert secret["headers"] == {"Authorization": "Bearer tok_a"}
+    assert secret["oauth"] == {
+        "enabled": True,
+        "mode": "oauth",
+        "registration": "dynamic",
+    }
+    assert not path_a.exists()
+
+
 def test_set_upstream_enabled_roundtrip(tmp_path: Path) -> None:
     _write_gateway_config(
         tmp_path,
@@ -685,6 +961,132 @@ def test_set_upstream_auth_http_clears_oauth_cache(tmp_path: Path) -> None:
     assert not oauth_dir.exists()
 
 
+def test_set_upstream_auth_shared_secret_clears_only_current_oauth_state(
+    tmp_path: Path,
+) -> None:
+    _write_gateway_config(
+        tmp_path,
+        {
+            "mcpServers": {
+                "api_a": {
+                    "url": "https://a.example.com/mcp",
+                    "_gateway": {"secret_ref": "shared"},
+                },
+                "api_b": {
+                    "url": "https://b.example.com/mcp",
+                    "_gateway": {"secret_ref": "shared"},
+                },
+            }
+        },
+    )
+    oauth_dir = oauth_cache_dir_path(tmp_path, "shared")
+    oauth_dir.mkdir(parents=True, exist_ok=True)
+    write_secret(
+        tmp_path,
+        "shared",
+        transport="http",
+        headers={"Authorization": "Bearer old"},
+        oauth={
+            "enabled": True,
+            "provider": "fastmcp",
+            "token_storage": "disk",
+        },
+    )
+    path_a = _oauth_server_config_path(
+        data_dir=tmp_path,
+        ref="shared",
+        server_url="https://a.example.com/mcp",
+    )
+    path_b = _oauth_server_config_path(
+        data_dir=tmp_path,
+        ref="shared",
+        server_url="https://b.example.com/mcp",
+    )
+    path_a.parent.mkdir(parents=True, exist_ok=True)
+    path_a.write_text('{"enabled": true, "mode": "oauth"}', encoding="utf-8")
+    path_b.write_text('{"enabled": true, "mode": "oauth"}', encoding="utf-8")
+
+    set_upstream_auth(
+        server="api_a",
+        env_updates=None,
+        header_updates={"Authorization": "Bearer tok"},
+        data_dir=tmp_path,
+    )
+
+    secret = read_secret(tmp_path, "shared")
+    assert secret["headers"] == {"Authorization": "Bearer tok"}
+    assert secret["oauth"] == {
+        "enabled": True,
+        "mode": "oauth",
+        "registration": "dynamic",
+        "token_storage": "disk",
+    }
+    assert json.loads(path_a.read_text(encoding="utf-8")) == {"enabled": False}
+    assert path_b.exists()
+    assert oauth_dir.exists()
+
+
+def test_set_upstream_auth_shared_secret_preserves_base_oauth_for_siblings(
+    tmp_path: Path,
+) -> None:
+    _write_gateway_config(
+        tmp_path,
+        {
+            "mcpServers": {
+                "api_a": {
+                    "url": "https://a.example.com/mcp",
+                    "_gateway": {"secret_ref": "shared"},
+                },
+                "api_b": {
+                    "url": "https://b.example.com/mcp",
+                    "_gateway": {"secret_ref": "shared"},
+                },
+            }
+        },
+    )
+    write_secret(
+        tmp_path,
+        "shared",
+        transport="http",
+        headers={"Authorization": "Bearer shared"},
+        oauth={
+            "enabled": True,
+            "provider": "fastmcp",
+            "token_storage": "disk",
+        },
+    )
+
+    set_upstream_auth(
+        server="api_a",
+        env_updates=None,
+        header_updates={"Authorization": "Bearer api-a"},
+        data_dir=tmp_path,
+    )
+
+    shared = read_secret(tmp_path, "shared")
+    assert shared["headers"] == {"Authorization": "Bearer api-a"}
+    assert shared["oauth"] == {
+        "enabled": True,
+        "mode": "oauth",
+        "registration": "dynamic",
+        "token_storage": "disk",
+    }
+    path_a = _oauth_server_config_path(
+        data_dir=tmp_path,
+        ref="shared",
+        server_url="https://a.example.com/mcp",
+    )
+    assert json.loads(path_a.read_text(encoding="utf-8")) == {"enabled": False}
+    assert inspect_upstream(server="api_b", data_dir=tmp_path)["secret"][
+        "oauth"
+    ] == {
+        "enabled": True,
+        "mode": "oauth",
+        "token_storage": "disk",
+        "registration": "dynamic",
+    }
+
+
 def test_set_upstream_auth_http_preserves_oauth_when_requested(
     tmp_path: Path,
 ) -> None:
@@ -718,10 +1120,191 @@ def test_set_upstream_auth_http_preserves_oauth_when_requested(
     assert secret["headers"] == {"Authorization": "Bearer new"}
     assert secret["oauth"] == {
         "enabled": True,
-        "provider": "fastmcp",
+        "mode": "oauth",
+        "registration": "dynamic",
         "token_storage": "disk",
     }
     assert oauth_dir.exists()
+
+
+def test_set_upstream_auth_http_allows_oauth_provider_without_header_updates(
+    tmp_path: Path,
+) -> None:
+    _write_gateway_config(
+        tmp_path,
+        {"mcpServers": {"api": {"url": "https://example.com/mcp"}}},
+    )
+    write_secret(
+        tmp_path,
+        "api",
+        transport="http",
+        headers={
+            "Authorization": "Bearer old",
+            "X-Goog-User-Project": "clean-divbrands",
+        },
+    )
+
+    result = set_upstream_auth(
+        server="api",
+        env_updates=None,
+        header_updates=None,
+        oauth={"enabled": True, "mode": "google-adc"},
+        clear_oauth=False,
+        data_dir=tmp_path,
+    )
+
+    assert result["updated_header_keys"] == []
+    assert result["oauth_enabled"] is True
+    secret = read_secret(tmp_path, "api")
+    assert secret["headers"] == {"X-Goog-User-Project": "clean-divbrands"}
+    assert secret["oauth"] == {"enabled": True, "mode": "google-adc"}
+
+
+def test_set_upstream_auth_http_persists_google_adc_scopes(
+    tmp_path: Path,
+) -> None:
+    _write_gateway_config(
+        tmp_path,
+        {"mcpServers": {"api": {"url": "https://example.com/mcp"}}},
+    )
+
+    result = set_upstream_auth(
+        server="api",
+        env_updates=None,
+        header_updates=None,
+        oauth={
+            "enabled": True,
+            "mode": "google-adc",
+            "google_scopes": [
+                "https://www.googleapis.com/auth/bigquery",
+                "https://www.googleapis.com/auth/drive.readonly",
+            ],
+        },
+        clear_oauth=False,
+        data_dir=tmp_path,
+    )
+
+    assert result["oauth_enabled"] is True
+    secret = read_secret(tmp_path, "api")
+    assert secret["oauth"] == {
+        "enabled": True,
+        "mode": "google-adc",
+        "google_scopes": [
+            "https://www.googleapis.com/auth/bigquery",
+            "https://www.googleapis.com/auth/drive.readonly",
+        ],
+    }
+
+
+def test_set_upstream_auth_shared_secret_keeps_google_adc_per_server(
+    tmp_path: Path,
+) -> None:
+    _write_gateway_config(
+        tmp_path,
+        {
+            "mcpServers": {
+                "api_a": {
+                    "url": "https://a.example.com/mcp",
+                    "_gateway": {"secret_ref": "shared"},
+                },
+                "api_b": {
+                    "url": "https://b.example.com/mcp",
+                    "_gateway": {"secret_ref": "shared"},
+                },
+            }
+        },
+    )
+    write_secret(
+        tmp_path,
+        "shared",
+        transport="http",
+        headers={"Authorization": "Bearer shared"},
+    )
+
+    set_upstream_auth(
+        server="api_a",
+        env_updates=None,
+        header_updates=None,
+        oauth={
+            "enabled": True,
+            "mode": "google-adc",
+            "google_scopes": ["scope.a"],
+        },
+        clear_oauth=False,
+        data_dir=tmp_path,
+    )
+
+    shared = read_secret(tmp_path, "shared")
+    assert shared["headers"] == {"Authorization": "Bearer shared"}
+    assert shared["oauth"] is None
+    path_a = _oauth_server_config_path(
+        data_dir=tmp_path,
+        ref="shared",
+        server_url="https://a.example.com/mcp",
+    )
+    assert json.loads(path_a.read_text(encoding="utf-8")) == {
+        "enabled": True,
+        "mode": "google-adc",
+        "google_scopes": ["scope.a"],
+    }
+    item_a = inspect_upstream(server="api_a", data_dir=tmp_path)
+    item_b = inspect_upstream(server="api_b", data_dir=tmp_path)
+    assert item_a["secret"]["oauth"] == {
+        "enabled": True,
+        "mode": "google-adc",
+        "token_storage": None,
+        "google_scopes": ["scope.a"],
+    }
+    assert item_b["secret"].get("oauth") is None
+
+
+def test_set_upstream_auth_http_drops_static_client_metadata_on_provider_switch(
+    tmp_path: Path,
+) -> None:
+    _write_gateway_config(
+        tmp_path,
+        {"mcpServers": {"api": {"url": "https://example.com/mcp"}}},
+    )
+    oauth_dir = oauth_cache_dir_path(tmp_path, "api")
+    oauth_dir.mkdir(parents=True, exist_ok=True)
+    write_secret(
+        tmp_path,
+        "api",
+        transport="http",
+        headers={
+            "Authorization": "Bearer old",
+            "X-Goog-User-Project": "clean-divbrands",
+        },
+        oauth={
+            "enabled": True,
+            "provider": "fastmcp",
+            "token_storage": "disk",
+            "client_id": "client-123",
+            "client_secret": "secret-456",
+            "scope": "scope.a",
+        },
+    )
+
+    result = set_upstream_auth(
+        server="api",
+        env_updates=None,
+        header_updates=None,
+        oauth={"enabled": True, "mode": "google-adc"},
+        merge_oauth=True,
+        clear_oauth=False,
+        data_dir=tmp_path,
+    )
+
+    assert result["oauth_enabled"] is True
+    secret = read_secret(tmp_path, "api")
+    assert secret["headers"] == {
+        "X-Goog-User-Project": "clean-divbrands",
+    }
+    assert secret["oauth"] == {
+        "enabled": True,
+        "mode": "google-adc",
+    }
+    assert not oauth_dir.exists()
 
 
 def test_set_upstream_auth_warns_and_continues_on_secret_read_error(
@@ -844,6 +1427,23 @@ def test_set_upstream_auth_requires_updates(tmp_path: Path) -> None:
             server="gh",
             env_updates=None,
             header_updates=None,
+            data_dir=tmp_path,
+        )
+
+
+def test_set_upstream_auth_rejects_oauth_for_stdio(tmp_path: Path) -> None:
+    _write_gateway_config(
+        tmp_path,
+        {"mcpServers": {"gh": {"command": "gh"}}},
+    )
+
+    with pytest.raises(ValueError, match="only supported for http"):
+        set_upstream_auth(
+            server="gh",
+            env_updates=None,
+            header_updates=None,
+            oauth={"enabled": True, "mode": "google-adc"},
+            clear_oauth=False,
             data_dir=tmp_path,
         )
 
@@ -1033,7 +1633,9 @@ def test_resolve_oauth_callback_url_headless_rejects_too_many_redirects(
         async def get(self, url: str, *, follow_redirects: bool):
             _ = url
             assert follow_redirects is False
-            return SimpleNamespace(status_code=302, headers={"location": "/loop"})
+            return SimpleNamespace(
+                status_code=302, headers={"location": "/loop"}
+            )
 
     monkeypatch.setattr("httpx.AsyncClient", _FakeAsyncClient)
 
@@ -1053,8 +1655,16 @@ def _patch_oauth_runtime(
     inferred_transport: str = "streamable-http",
 ) -> None:
     class _FakeOAuthBase:
-        def __init__(self, _mcp_url: str, *, token_storage=None) -> None:
-            self.redirect_port = 45789
+        def __init__(
+            self,
+            _mcp_url: str,
+            *,
+            token_storage=None,
+            callback_port=None,
+        ) -> None:
+            self.redirect_port = (
+                callback_port if callback_port is not None else 45789
+            )
             self.token_storage = token_storage
             self.context = SimpleNamespace(
                 current_tokens=SimpleNamespace(access_token=None)
@@ -1082,7 +1692,9 @@ def _patch_oauth_runtime(
             return []
 
     monkeypatch.setattr("fastmcp.client.auth.OAuth", _FakeOAuthBase)
-    monkeypatch.setattr("fastmcp.client.transports.SSETransport", _FakeTransport)
+    monkeypatch.setattr(
+        "fastmcp.client.transports.SSETransport", _FakeTransport
+    )
     monkeypatch.setattr(
         "fastmcp.client.transports.StreamableHttpTransport", _FakeTransport
     )
@@ -1200,8 +1812,14 @@ def test_oauth_login_access_token_uses_sse_transport_when_inferred(
     )
 
     class _OAuthWithToken:
-        def __init__(self, _mcp_url: str, *, token_storage=None) -> None:
-            _ = token_storage
+        def __init__(
+            self,
+            _mcp_url: str,
+            *,
+            token_storage=None,
+            callback_port=None,
+        ) -> None:
+            _ = (token_storage, callback_port)
             self.context = SimpleNamespace(
                 current_tokens=SimpleNamespace(access_token="tok_sse")
             )
@@ -1215,7 +1833,7 @@ def test_oauth_login_access_token_uses_sse_transport_when_inferred(
     assert seen["called"] is True
 
 
-def test_oauth_login_access_token_rejects_missing_access_token(
+def test_oauth_login_access_token_uses_proactive_fallback_when_list_tools_is_public(
     monkeypatch,
 ) -> None:
     class _FakeOAuth:
@@ -1242,7 +1860,93 @@ def test_oauth_login_access_token_rejects_missing_access_token(
             return []
 
     monkeypatch.setattr("fastmcp.client.auth.OAuth", _FakeOAuth)
-    monkeypatch.setattr("fastmcp.client.transports.SSETransport", _FakeTransport)
+    monkeypatch.setattr(
+        "fastmcp.client.transports.SSETransport", _FakeTransport
+    )
+    monkeypatch.setattr(
+        "fastmcp.client.transports.StreamableHttpTransport", _FakeTransport
+    )
+    monkeypatch.setattr(
+        "fastmcp.mcp_config.infer_transport_type_from_url",
+        lambda _url: "streamable-http",
+    )
+    monkeypatch.setattr("fastmcp.Client", _FakeClient)
+    seen: dict[str, object] = {}
+
+    async def _fake_proactive(*, oauth, url: str) -> str:
+        seen["oauth"] = oauth
+        seen["url"] = url
+        return "tok_proactive"
+
+    monkeypatch.setattr(
+        "sift_gateway.config.upstream_admin._oauth_login_access_token_proactive",
+        _fake_proactive,
+    )
+
+    token = asyncio.run(
+        _oauth_login_access_token(url="https://example.com/mcp")
+    )
+    assert token == "tok_proactive"
+    assert seen["url"] == "https://example.com/mcp"
+
+
+def test_oauth_login_access_token_reuses_cached_token_when_list_tools_is_public(
+    monkeypatch,
+) -> None:
+    seen: dict[str, int] = {"initialize_calls": 0, "httpx_calls": 0}
+
+    class _FakeOAuth:
+        def __init__(self, *_args, **_kwargs) -> None:
+            self.context = SimpleNamespace(
+                current_tokens=SimpleNamespace(access_token=None),
+                client_metadata=SimpleNamespace(scope=None),
+                is_token_valid=lambda: True,
+                can_refresh_token=lambda: False,
+            )
+            self._initialized = False
+
+        async def _initialize(self) -> None:
+            seen["initialize_calls"] += 1
+            self._initialized = True
+            self.context.current_tokens = SimpleNamespace(
+                access_token="tok_cached"
+            )
+
+        @property
+        def httpx_client_factory(self):
+            class _UnexpectedClient:
+                async def __aenter__(self):
+                    seen["httpx_calls"] += 1
+                    raise AssertionError(
+                        "proactive flow should reuse cached token"
+                    )
+
+                async def __aexit__(self, _exc_type, _exc, _tb) -> bool:
+                    return False
+
+            return _UnexpectedClient
+
+    class _FakeTransport:
+        def __init__(self, *_args, **_kwargs) -> None:
+            pass
+
+    class _FakeClient:
+        def __init__(self, _transport, timeout: float = 30.0) -> None:
+            _ = timeout
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, _exc_type, _exc, _tb) -> bool:
+            return False
+
+        async def list_tools(self) -> list[object]:
+            return []
+
+    monkeypatch.setattr("fastmcp.client.auth.OAuth", _FakeOAuth)
+    monkeypatch.setattr(
+        "fastmcp.client.transports.SSETransport", _FakeTransport
+    )
     monkeypatch.setattr(
         "fastmcp.client.transports.StreamableHttpTransport", _FakeTransport
     )
@@ -1252,10 +1956,576 @@ def test_oauth_login_access_token_rejects_missing_access_token(
     )
     monkeypatch.setattr("fastmcp.Client", _FakeClient)
 
-    with pytest.raises(RuntimeError, match="no access token"):
-        asyncio.run(
-            _oauth_login_access_token(url="https://example.com/mcp")
+    token = asyncio.run(
+        _oauth_login_access_token(url="https://example.com/mcp")
+    )
+
+    assert token == "tok_cached"
+    assert seen["initialize_calls"] == 1
+    assert seen["httpx_calls"] == 0
+
+
+def test_oauth_login_access_token_ignores_stale_cached_token_when_list_tools_is_public(
+    monkeypatch,
+) -> None:
+    seen: dict[str, int] = {"proactive_calls": 0}
+
+    class _FakeOAuth:
+        def __init__(self, *_args, **_kwargs) -> None:
+            self.context = SimpleNamespace(
+                current_tokens=SimpleNamespace(access_token="tok_stale"),
+                client_metadata=SimpleNamespace(scope=None),
+                is_token_valid=lambda: False,
+                can_refresh_token=lambda: False,
+            )
+
+    class _FakeTransport:
+        def __init__(self, *_args, **_kwargs) -> None:
+            pass
+
+    class _FakeClient:
+        def __init__(self, _transport, timeout: float = 30.0) -> None:
+            _ = timeout
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, _exc_type, _exc, _tb) -> bool:
+            return False
+
+        async def list_tools(self) -> list[object]:
+            return []
+
+    async def _fake_proactive(*, oauth, url: str) -> str:
+        _ = oauth
+        seen["proactive_calls"] += 1
+        assert url == "https://example.com/mcp"
+        return "tok_fresh"
+
+    monkeypatch.setattr("fastmcp.client.auth.OAuth", _FakeOAuth)
+    monkeypatch.setattr(
+        "fastmcp.client.transports.SSETransport", _FakeTransport
+    )
+    monkeypatch.setattr(
+        "fastmcp.client.transports.StreamableHttpTransport", _FakeTransport
+    )
+    monkeypatch.setattr(
+        "fastmcp.mcp_config.infer_transport_type_from_url",
+        lambda _url: "streamable-http",
+    )
+    monkeypatch.setattr("fastmcp.Client", _FakeClient)
+    monkeypatch.setattr(
+        "sift_gateway.config.upstream_admin._oauth_login_access_token_proactive",
+        _fake_proactive,
+    )
+
+    token = asyncio.run(
+        _oauth_login_access_token(url="https://example.com/mcp")
+    )
+
+    assert token == "tok_fresh"
+    assert seen["proactive_calls"] == 1
+
+
+def test_oauth_login_access_token_proactive_retries_stale_client_registration(
+    monkeypatch,
+) -> None:
+    seen: dict[str, int | bool] = {
+        "initialize_calls": 0,
+        "authorization_calls": 0,
+        "clear_calls": 0,
+    }
+
+    class _FakeStorage:
+        async def set_client_info(self, client_info) -> None:
+            _ = client_info
+
+    class _FakeTokenStorageAdapter:
+        async def clear(self) -> None:
+            seen["clear_calls"] += 1
+
+    class _FakeOAuth:
+        def __init__(self, *_args, **_kwargs) -> None:
+            self.context = SimpleNamespace(
+                current_tokens=None,
+                client_metadata=SimpleNamespace(
+                    scope=None,
+                    redirect_uris=["http://localhost:45789/callback"],
+                ),
+                is_token_valid=lambda: False,
+                can_refresh_token=lambda: False,
+                protected_resource_metadata=None,
+                oauth_metadata=None,
+                auth_server_url=None,
+                client_info=None,
+                client_metadata_url=None,
+                storage=_FakeStorage(),
+                server_url="https://example.com/mcp",
+                get_authorization_base_url=lambda _url: (
+                    "https://auth.example.test"
+                ),
+            )
+            self._initialized = False
+            self._static_client_info = None
+            self.token_storage_adapter = _FakeTokenStorageAdapter()
+            self.httpx_client_factory = _FakeHttpxClient
+
+        async def _initialize(self) -> None:
+            seen["initialize_calls"] += 1
+            self._initialized = True
+            if seen["clear_calls"]:
+                self.context.client_info = None
+            else:
+                self.context.client_info = SimpleNamespace(client_id="stale")
+
+        async def _perform_authorization(self):
+            seen["authorization_calls"] += 1
+            if seen["authorization_calls"] == 1:
+                raise ClientNotFoundError("client missing")
+            return object()
+
+        async def _handle_token_response(self, response) -> None:
+            _ = response
+            self.context.current_tokens = SimpleNamespace(
+                access_token="tok_retried"
+            )
+
+    class _FakeHttpxClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, _exc_type, _exc, _tb) -> bool:
+            return False
+
+        async def send(self, request):
+            _ = request
+            return object()
+
+    monkeypatch.setattr(
+        "mcp.client.auth.utils.build_protected_resource_metadata_discovery_urls",
+        lambda *_args, **_kwargs: [],
+    )
+    monkeypatch.setattr(
+        "mcp.client.auth.utils.build_oauth_authorization_server_metadata_discovery_urls",
+        lambda *_args, **_kwargs: [],
+    )
+    monkeypatch.setattr(
+        "mcp.client.auth.utils.get_client_metadata_scopes",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        "mcp.client.auth.utils.should_use_client_metadata_url",
+        lambda *_args, **_kwargs: False,
+    )
+    monkeypatch.setattr(
+        "mcp.client.auth.utils.create_client_registration_request",
+        lambda *_args, **_kwargs: object(),
+    )
+
+    async def _fake_handle_registration_response(_response):
+        return SimpleNamespace(client_id="fresh-client")
+
+    monkeypatch.setattr(
+        "mcp.client.auth.utils.handle_registration_response",
+        _fake_handle_registration_response,
+    )
+
+    token = asyncio.run(
+        _oauth_login_access_token_proactive(
+            oauth=_FakeOAuth(),
+            url="https://example.com/mcp",
         )
+    )
+
+    assert token == "tok_retried"
+    assert seen["clear_calls"] == 1
+    assert seen["initialize_calls"] == 2
+    assert seen["authorization_calls"] == 2
+
+
+def test_oauth_apply_client_config_sets_client_info_and_scope() -> None:
+    seen: dict[str, object] = {}
+
+    class _FakeStorage:
+        async def set_client_info(self, client_info) -> None:
+            seen["client_info"] = client_info
+
+    oauth = SimpleNamespace(
+        context=SimpleNamespace(
+            client_metadata=SimpleNamespace(
+                redirect_uris=["http://localhost:45789/callback"],
+                client_name="FastMCP Client",
+                scope=None,
+            ),
+            storage=_FakeStorage(),
+            client_info=None,
+        )
+    )
+
+    asyncio.run(
+        _oauth_apply_client_config(
+            oauth=oauth,
+            oauth_config={
+                "client_id": "client-123",
+                "client_secret": "secret-456",
+                "scope": "scope.a scope.b",
+            },
+        )
+    )
+
+    client_info = oauth.context.client_info
+    assert client_info is not None
+    assert client_info.client_id == "client-123"
+    assert client_info.client_secret == "secret-456"
+    assert client_info.token_endpoint_auth_method == "client_secret_post"
+    assert oauth.context.client_metadata.scope == "scope.a scope.b"
+    assert oauth._static_client_info is client_info
+    stored = seen["client_info"]
+    assert getattr(stored, "client_id", None) == "client-123"
+
+
+def test_oauth_apply_client_config_rejects_private_key_jwt() -> None:
+    oauth = SimpleNamespace(
+        context=SimpleNamespace(
+            client_metadata=SimpleNamespace(
+                redirect_uris=["http://localhost:45789/callback"],
+                client_name="FastMCP Client",
+                scope=None,
+            ),
+            storage=None,
+            client_info=None,
+        )
+    )
+
+    with pytest.raises(
+        RuntimeError, match="Unsupported OAuth token auth method"
+    ):
+        asyncio.run(
+            _oauth_apply_client_config(
+                oauth=oauth,
+                oauth_config={
+                    "client_id": "client-123",
+                    "token_endpoint_auth_method": "private_key_jwt",
+                },
+            )
+        )
+
+
+def test_oauth_apply_client_config_rejects_secret_auth_without_secret() -> None:
+    oauth = SimpleNamespace(
+        context=SimpleNamespace(
+            client_metadata=SimpleNamespace(
+                redirect_uris=["http://localhost:45789/callback"],
+                client_name="FastMCP Client",
+                scope=None,
+            ),
+            storage=None,
+            client_info=None,
+        )
+    )
+
+    with pytest.raises(RuntimeError, match="requires a client_secret"):
+        asyncio.run(
+            _oauth_apply_client_config(
+                oauth=oauth,
+                oauth_config={
+                    "client_id": "client-123",
+                    "token_endpoint_auth_method": "client_secret_basic",
+                },
+            )
+        )
+
+
+def test_oauth_apply_client_config_rejects_secret_with_none_auth_method() -> (
+    None
+):
+    oauth = SimpleNamespace(
+        context=SimpleNamespace(
+            client_metadata=SimpleNamespace(
+                redirect_uris=["http://localhost:45789/callback"],
+                client_name="FastMCP Client",
+                scope=None,
+            ),
+            storage=None,
+            client_info=None,
+        )
+    )
+
+    with pytest.raises(
+        RuntimeError,
+        match="cannot be used with a client_secret",
+    ):
+        asyncio.run(
+            _oauth_apply_client_config(
+                oauth=oauth,
+                oauth_config={
+                    "client_id": "client-123",
+                    "client_secret": "secret-456",
+                    "token_endpoint_auth_method": "none",
+                },
+            )
+        )
+
+
+def test_oauth_async_auth_flow_once_preserves_explicit_scope_on_401(
+    monkeypatch,
+) -> None:
+    import httpx
+
+    class _FakeStorage:
+        async def set_client_info(self, client_info) -> None:
+            _ = client_info
+
+    seen: dict[str, object] = {}
+    context = SimpleNamespace(
+        lock=asyncio.Lock(),
+        protocol_version=None,
+        is_token_valid=lambda: False,
+        can_refresh_token=lambda: False,
+        protected_resource_metadata=None,
+        oauth_metadata=None,
+        auth_server_url=None,
+        client_metadata=SimpleNamespace(
+            scope="scope.explicit",
+            redirect_uris=["http://localhost:45789/callback"],
+        ),
+        client_info=SimpleNamespace(client_id="client-123"),
+        client_metadata_url=None,
+        storage=_FakeStorage(),
+        server_url="https://example.com/mcp",
+        get_authorization_base_url=lambda _url: "https://auth.example.test",
+    )
+
+    class _FakeOAuth:
+        _initialized = True
+
+        def __init__(self) -> None:
+            self.context = context
+
+        async def _perform_authorization(self):
+            seen["scope"] = self.context.client_metadata.scope
+            return httpx.Request("POST", "https://auth.example.test/token")
+
+        async def _handle_token_response(self, response) -> None:
+            _ = response
+
+        def _add_auth_header(self, request) -> None:
+            request.headers["Authorization"] = "Bearer tok"
+
+    monkeypatch.setattr(
+        "mcp.client.auth.utils.build_protected_resource_metadata_discovery_urls",
+        lambda *_args, **_kwargs: ["https://example.com/meta"],
+    )
+    monkeypatch.setattr(
+        "mcp.client.auth.utils.build_oauth_authorization_server_metadata_discovery_urls",
+        lambda *_args, **_kwargs: [],
+    )
+    monkeypatch.setattr(
+        "mcp.client.auth.utils.create_oauth_metadata_request",
+        lambda url: httpx.Request("GET", url),
+    )
+
+    async def _fake_handle_protected_resource_response(_response):
+        return SimpleNamespace(
+            authorization_servers=["https://auth.example.test"]
+        )
+
+    monkeypatch.setattr(
+        "mcp.client.auth.utils.handle_protected_resource_response",
+        _fake_handle_protected_resource_response,
+    )
+
+    oauth = _FakeOAuth()
+    request = httpx.Request("POST", "https://example.com/mcp")
+
+    async def _run_flow() -> httpx.Request:
+        flow = _oauth_async_auth_flow_once(
+            oauth=oauth,
+            request=request,
+            explicit_scope="scope.explicit",
+        )
+        initial_request = await flow.asend(None)
+        assert initial_request.url == request.url
+
+        unauthorized = httpx.Response(
+            401,
+            request=initial_request,
+            headers={"WWW-Authenticate": 'Bearer scope="scope.server"'},
+        )
+        discovery_request = await flow.asend(unauthorized)
+        assert discovery_request.url == "https://example.com/meta"
+
+        return await flow.asend(httpx.Response(200, request=discovery_request))
+
+    token_request = asyncio.run(_run_flow())
+    assert str(token_request.url) == "https://auth.example.test/token"
+    assert seen["scope"] == "scope.explicit"
+
+
+def test_oauth_login_access_token_proactive_preserves_explicit_scope(
+    monkeypatch,
+) -> None:
+    class _FakeStorage:
+        async def set_client_info(self, client_info) -> None:
+            _ = client_info
+
+    class _FakeHttpxClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb) -> bool:
+            _ = (exc_type, exc, tb)
+            return False
+
+        async def send(self, request):
+            _ = request
+            return object()
+
+    class _FakeOAuth:
+        def __init__(self) -> None:
+            self.context = SimpleNamespace(
+                client_metadata=SimpleNamespace(
+                    scope="scope.explicit",
+                    redirect_uris=["http://localhost:45789/callback"],
+                ),
+                protected_resource_metadata="prm",
+                oauth_metadata="asm",
+                auth_server_url=None,
+                client_info=object(),
+                client_metadata_url=None,
+                storage=_FakeStorage(),
+                server_url="https://example.com/mcp",
+                get_authorization_base_url=lambda _url: "https://example.com",
+            )
+            self.httpx_client_factory = _FakeHttpxClient
+            self._initialized = True
+
+        async def _perform_authorization(self):
+            return object()
+
+        async def _handle_token_response(self, response) -> None:
+            _ = response
+            self.context.current_tokens = SimpleNamespace(access_token="tok")
+
+    monkeypatch.setattr(
+        "mcp.client.auth.utils.build_protected_resource_metadata_discovery_urls",
+        lambda *_args, **_kwargs: [],
+    )
+    monkeypatch.setattr(
+        "mcp.client.auth.utils.build_oauth_authorization_server_metadata_discovery_urls",
+        lambda *_args, **_kwargs: [],
+    )
+    monkeypatch.setattr(
+        "mcp.client.auth.utils.get_client_metadata_scopes",
+        lambda *_args, **_kwargs: "scope.server",
+    )
+
+    oauth = _FakeOAuth()
+
+    token = asyncio.run(
+        _oauth_login_access_token_proactive(
+            oauth=oauth,
+            url="https://example.com/mcp",
+        )
+    )
+
+    assert token == "tok"
+    assert oauth.context.client_metadata.scope == "scope.explicit"
+
+
+def test_oauth_login_access_token_static_client_not_found_does_not_retry(
+    monkeypatch,
+) -> None:
+    import httpx
+
+    seen: dict[str, object] = {"cleared": False}
+
+    class _FakeTokenStorageAdapter:
+        async def clear(self) -> None:
+            seen["cleared"] = True
+
+    class _FakeOAuthBase:
+        def __init__(
+            self,
+            _mcp_url: str,
+            *,
+            token_storage=None,
+            callback_port=None,
+        ) -> None:
+            _ = (token_storage, callback_port)
+            self.redirect_port = callback_port or 45789
+            self.token_storage_adapter = _FakeTokenStorageAdapter()
+            self.context = SimpleNamespace(
+                client_metadata=SimpleNamespace(
+                    redirect_uris=["http://localhost:45789/callback"],
+                    client_name="FastMCP Client",
+                    scope=None,
+                ),
+                storage=None,
+                client_info=None,
+            )
+
+    class _FakeTransport:
+        def __init__(self, *, url: str, auth, headers=None) -> None:
+            _ = (url, headers)
+            self.auth = auth
+
+    class _FakeClient:
+        def __init__(self, transport, timeout: float = 30.0) -> None:
+            _ = timeout
+            self.transport = transport
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, _exc_type, _exc, _tb) -> bool:
+            return False
+
+        async def list_tools(self) -> list[object]:
+            flow = self.transport.auth.async_auth_flow(
+                httpx.Request("GET", "https://example.com/mcp")
+            )
+            await flow.asend(None)
+            return []
+
+    async def _fake_auth_flow_once(*, oauth, request, explicit_scope):
+        _ = (oauth, request, explicit_scope)
+        if False:
+            yield request
+        raise ClientNotFoundError("client missing")
+
+    monkeypatch.setattr("fastmcp.client.auth.OAuth", _FakeOAuthBase)
+    monkeypatch.setattr(
+        "fastmcp.client.transports.SSETransport", _FakeTransport
+    )
+    monkeypatch.setattr(
+        "fastmcp.client.transports.StreamableHttpTransport", _FakeTransport
+    )
+    monkeypatch.setattr(
+        "fastmcp.mcp_config.infer_transport_type_from_url",
+        lambda _url: "streamable-http",
+    )
+    monkeypatch.setattr("fastmcp.Client", _FakeClient)
+    monkeypatch.setattr(
+        "sift_gateway.config.upstream_admin._oauth_async_auth_flow_once",
+        _fake_auth_flow_once,
+    )
+
+    with pytest.raises(
+        ClientNotFoundError,
+        match="rejected the static client credentials",
+    ):
+        asyncio.run(
+            _oauth_login_access_token(
+                url="https://example.com/mcp",
+                oauth_config={
+                    "client_id": "bad-client",
+                    "callback_port": 45789,
+                },
+            )
+        )
+
+    assert seen["cleared"] is False
 
 
 def test_login_upstream_http_persists_authorization_header(
@@ -1271,10 +2541,12 @@ def test_login_upstream_http_persists_authorization_header(
         url: str,
         headless: bool = False,
         token_storage: object | None = None,
+        oauth_config: dict[str, object] | None = None,
     ) -> str:
         assert url == "https://example.com/mcp"
         assert headless is False
         assert token_storage is not None
+        assert oauth_config is not None
         return "tok_123"
 
     monkeypatch.setattr(
@@ -1292,7 +2564,8 @@ def test_login_upstream_http_persists_authorization_header(
     assert secret["headers"] == {"Authorization": "Bearer tok_123"}
     assert secret["oauth"] == {
         "enabled": True,
-        "provider": "fastmcp",
+        "mode": "oauth",
+        "registration": "dynamic",
         "token_storage": "disk",
     }
     assert oauth_cache_dir_path(tmp_path, "api").exists()
@@ -1331,8 +2604,9 @@ def test_login_upstream_clears_cached_client_registration(
         url: str,
         headless: bool = False,
         token_storage: object | None = None,
+        oauth_config: dict[str, object] | None = None,
     ) -> str:
-        _ = (url, headless)
+        _ = (url, headless, oauth_config)
         seen["oauth_token_storage"] = token_storage
         return "tok_123"
 
@@ -1349,6 +2623,1172 @@ def test_login_upstream_clears_cached_client_registration(
     assert seen["token_storage"] is storage
     assert seen["server_url"] == "https://example.com/mcp"
     assert seen["oauth_token_storage"] is storage
+
+
+def test_login_upstream_persists_preconfigured_oauth_client_metadata(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _write_gateway_config(
+        tmp_path,
+        {"mcpServers": {"api": {"url": "https://example.com/mcp"}}},
+    )
+    seen: dict[str, object] = {}
+
+    async def _fake_oauth(
+        *,
+        url: str,
+        headless: bool = False,
+        token_storage: object | None = None,
+        oauth_config: dict[str, object] | None = None,
+    ) -> str:
+        _ = (url, headless, token_storage)
+        seen["oauth_config"] = oauth_config
+        return "tok_cfg"
+
+    monkeypatch.setattr(
+        "sift_gateway.config.upstream_admin._oauth_login_access_token",
+        _fake_oauth,
+    )
+
+    login_upstream(
+        server="api",
+        data_dir=tmp_path,
+        oauth_client_id="google-client-id",
+        oauth_client_secret="google-client-secret",
+        oauth_scopes=["scope.a", "scope.b"],
+    )
+
+    oauth_config = seen["oauth_config"]
+    assert oauth_config == {
+        "enabled": True,
+        "mode": "oauth",
+        "registration": "preregistered",
+        "token_storage": "disk",
+        "client_id": "google-client-id",
+        "client_secret": "google-client-secret",
+        "scope": "scope.a scope.b",
+        "callback_port": 45789,
+    }
+    secret = read_secret(tmp_path, "api")
+    assert secret["oauth"]["client_id"] == "google-client-id"
+    assert secret["oauth"]["client_secret"] == "google-client-secret"
+    assert secret["oauth"]["scope"] == "scope.a scope.b"
+    assert secret["oauth"]["callback_port"] == 45789
+
+
+def test_login_upstream_reuses_existing_static_client_metadata(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _write_gateway_config(
+        tmp_path,
+        {"mcpServers": {"api": {"url": "https://example.com/mcp"}}},
+    )
+    write_secret(
+        tmp_path,
+        "api",
+        transport="http",
+        headers={"Authorization": "Bearer old"},
+        oauth={
+            "enabled": True,
+            "provider": "fastmcp",
+            "token_storage": "disk",
+            "client_id": "client-123",
+            "client_secret": "secret-456",
+            "scope": "scope.a",
+            "callback_port": 46000,
+        },
+    )
+    seen: dict[str, object] = {}
+
+    async def _fake_oauth(
+        *,
+        url: str,
+        headless: bool = False,
+        token_storage: object | None = None,
+        oauth_config: dict[str, object] | None = None,
+    ) -> str:
+        _ = (url, headless, token_storage)
+        seen["oauth_config"] = oauth_config
+        return "tok_cfg"
+
+    monkeypatch.setattr(
+        "sift_gateway.config.upstream_admin._oauth_login_access_token",
+        _fake_oauth,
+    )
+
+    login_upstream(server="api", data_dir=tmp_path)
+
+    assert seen["oauth_config"] == {
+        "enabled": True,
+        "mode": "oauth",
+        "registration": "preregistered",
+        "token_storage": "disk",
+        "client_id": "client-123",
+        "client_secret": "secret-456",
+        "scope": "scope.a",
+        "callback_port": 46000,
+    }
+
+
+def test_login_upstream_shared_secret_ref_preserves_shared_oauth_metadata(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _write_gateway_config(
+        tmp_path,
+        {
+            "mcpServers": {
+                "api_a": {
+                    "url": "https://a.example.com/mcp",
+                    "_gateway": {"secret_ref": "shared"},
+                },
+                "api_b": {
+                    "url": "https://b.example.com/mcp",
+                    "_gateway": {"secret_ref": "shared"},
+                },
+            }
+        },
+    )
+    write_secret(
+        tmp_path,
+        "shared",
+        transport="http",
+        headers={"Authorization": "Bearer old"},
+        oauth={
+            "enabled": True,
+            "provider": "fastmcp",
+            "token_storage": "disk",
+            "client_id": "client-a",
+            "client_secret": "secret-a",
+            "scope": "scope.a",
+            "callback_port": 46000,
+        },
+    )
+    seen: dict[str, object] = {}
+
+    async def _fake_oauth(
+        *,
+        url: str,
+        headless: bool = False,
+        token_storage: object | None = None,
+        oauth_config: dict[str, object] | None = None,
+    ) -> str:
+        _ = (url, headless, token_storage)
+        seen["oauth_config"] = oauth_config
+        return "tok_shared"
+
+    monkeypatch.setattr(
+        "sift_gateway.config.upstream_admin._oauth_login_access_token",
+        _fake_oauth,
+    )
+
+    login_upstream(server="api_b", data_dir=tmp_path)
+
+    assert seen["oauth_config"] == {
+        "enabled": True,
+        "mode": "oauth",
+        "registration": "preregistered",
+        "token_storage": "disk",
+        "client_id": "client-a",
+        "client_secret": "secret-a",
+        "scope": "scope.a",
+        "callback_port": 46000,
+    }
+    secret = read_secret(tmp_path, "shared")
+    assert secret["headers"] == {"Authorization": "Bearer old"}
+    assert secret["oauth"] == {
+        "enabled": True,
+        "mode": "oauth",
+        "registration": "preregistered",
+        "token_storage": "disk",
+        "client_id": "client-a",
+        "client_secret": "secret-a",
+        "scope": "scope.a",
+        "callback_port": 46000,
+    }
+    assert inspect_upstream(server="api_b", data_dir=tmp_path)["secret"][
+        "oauth"
+    ] == {
+        "enabled": True,
+        "mode": "oauth",
+        "token_storage": "disk",
+        "registration": "preregistered",
+        "client_id": "client-a",
+        "scope": "scope.a",
+        "callback_port": 46000,
+    }
+
+
+def test_login_upstream_shared_secret_ref_reuses_cached_server_metadata(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _write_gateway_config(
+        tmp_path,
+        {
+            "mcpServers": {
+                "api_a": {
+                    "url": "https://a.example.com/mcp",
+                    "_gateway": {"secret_ref": "shared"},
+                },
+                "api_b": {
+                    "url": "https://b.example.com/mcp",
+                    "_gateway": {"secret_ref": "shared"},
+                },
+            }
+        },
+    )
+    seen: dict[str, object] = {"oauth_configs": []}
+
+    async def _fake_oauth(
+        *,
+        url: str,
+        headless: bool = False,
+        token_storage: object | None = None,
+        oauth_config: dict[str, object] | None = None,
+    ) -> str:
+        _ = (url, headless, token_storage)
+        oauth_configs = seen["oauth_configs"]
+        assert isinstance(oauth_configs, list)
+        oauth_configs.append(oauth_config)
+        return f"tok_{len(oauth_configs)}"
+
+    monkeypatch.setattr(
+        "sift_gateway.config.upstream_admin._oauth_login_access_token",
+        _fake_oauth,
+    )
+
+    login_upstream(
+        server="api_a",
+        data_dir=tmp_path,
+        oauth_client_id="client-a",
+        oauth_client_secret="secret-a",
+        oauth_scopes=["scope.a"],
+    )
+    login_upstream(server="api_a", data_dir=tmp_path)
+
+    oauth_configs = seen["oauth_configs"]
+    assert isinstance(oauth_configs, list)
+    expected = {
+        "enabled": True,
+        "mode": "oauth",
+        "registration": "preregistered",
+        "token_storage": "disk",
+        "client_id": "client-a",
+        "client_secret": "secret-a",
+        "scope": "scope.a",
+        "callback_port": 45789,
+    }
+    assert oauth_configs == [expected, expected]
+    secret = read_secret(tmp_path, "shared")
+    assert secret["headers"] is None
+    assert secret["oauth"] is None
+    assert inspect_upstream(server="api_a", data_dir=tmp_path)["secret"][
+        "oauth"
+    ] == {
+        "enabled": True,
+        "mode": "oauth",
+        "registration": "preregistered",
+        "token_storage": "disk",
+        "client_id": "client-a",
+        "scope": "scope.a",
+        "callback_port": 45789,
+    }
+
+
+def test_login_upstream_shared_secret_disable_sidecar_keeps_shared_client_metadata(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _write_gateway_config(
+        tmp_path,
+        {
+            "mcpServers": {
+                "api_a": {
+                    "url": "https://a.example.com/mcp",
+                    "_gateway": {"secret_ref": "shared"},
+                },
+                "api_b": {
+                    "url": "https://b.example.com/mcp",
+                    "_gateway": {"secret_ref": "shared"},
+                },
+            }
+        },
+    )
+    write_secret(
+        tmp_path,
+        "shared",
+        transport="http",
+        headers={"Authorization": "Bearer old"},
+        oauth={
+            "enabled": True,
+            "provider": "fastmcp",
+            "token_storage": "disk",
+            "client_id": "client-a",
+            "client_secret": "secret-a",
+            "scope": "scope.a",
+            "callback_port": 46000,
+        },
+    )
+    path_b = _oauth_server_config_path(
+        data_dir=tmp_path,
+        ref="shared",
+        server_url="https://b.example.com/mcp",
+    )
+    path_b.parent.mkdir(parents=True, exist_ok=True)
+    path_b.write_text('{"enabled": false}', encoding="utf-8")
+    seen: dict[str, object] = {}
+
+    async def _fake_oauth(
+        *,
+        url: str,
+        headless: bool = False,
+        token_storage: object | None = None,
+        oauth_config: dict[str, object] | None = None,
+    ) -> str:
+        _ = (url, headless, token_storage)
+        seen["oauth_config"] = oauth_config
+        return "tok_reenabled"
+
+    monkeypatch.setattr(
+        "sift_gateway.config.upstream_admin._oauth_login_access_token",
+        _fake_oauth,
+    )
+
+    login_upstream(server="api_b", data_dir=tmp_path)
+
+    assert seen["oauth_config"] == {
+        "enabled": True,
+        "mode": "oauth",
+        "registration": "preregistered",
+        "token_storage": "disk",
+        "client_id": "client-a",
+        "client_secret": "secret-a",
+        "scope": "scope.a",
+        "callback_port": 46000,
+    }
+
+
+@pytest.mark.parametrize(
+    ("sidecar_oauth", "expected_oauth_config"),
+    [
+        (
+            None,
+            {
+                "enabled": True,
+                "mode": "oauth",
+                "registration": "preregistered",
+                "token_storage": "disk",
+                "client_id": "client-a",
+                "client_secret": "secret-a",
+                "scope": "scope.a",
+                "callback_port": 46000,
+            },
+        ),
+        (
+            {"enabled": False},
+            {
+                "enabled": True,
+                "mode": "oauth",
+                "registration": "preregistered",
+                "token_storage": "disk",
+                "client_id": "client-a",
+                "client_secret": "secret-a",
+                "scope": "scope.a",
+                "callback_port": 46000,
+            },
+        ),
+        (
+            {
+                "enabled": True,
+                "mode": "oauth",
+                "registration": "preregistered",
+                "token_storage": "disk",
+                "client_id": "client-b",
+                "client_secret": "secret-b",
+                "scope": "scope.b",
+                "callback_port": 47000,
+            },
+            {
+                "enabled": True,
+                "mode": "oauth",
+                "registration": "preregistered",
+                "token_storage": "disk",
+                "client_id": "client-b",
+                "client_secret": "secret-b",
+                "scope": "scope.b",
+                "callback_port": 47000,
+            },
+        ),
+    ],
+)
+def test_login_upstream_shared_secret_seed_matrix(
+    tmp_path: Path,
+    monkeypatch,
+    sidecar_oauth: dict[str, object] | None,
+    expected_oauth_config: dict[str, object],
+) -> None:
+    _write_gateway_config(
+        tmp_path,
+        {
+            "mcpServers": {
+                "api_a": {
+                    "url": "https://a.example.com/mcp",
+                    "_gateway": {"secret_ref": "shared"},
+                },
+                "api_b": {
+                    "url": "https://b.example.com/mcp",
+                    "_gateway": {"secret_ref": "shared"},
+                },
+            }
+        },
+    )
+    write_secret(
+        tmp_path,
+        "shared",
+        transport="http",
+        headers={"Authorization": "Bearer old"},
+        oauth={
+            "enabled": True,
+            "provider": "fastmcp",
+            "token_storage": "disk",
+            "client_id": "client-a",
+            "client_secret": "secret-a",
+            "scope": "scope.a",
+            "callback_port": 46000,
+        },
+    )
+    if sidecar_oauth is not None:
+        path_b = _oauth_server_config_path(
+            data_dir=tmp_path,
+            ref="shared",
+            server_url="https://b.example.com/mcp",
+        )
+        path_b.parent.mkdir(parents=True, exist_ok=True)
+        path_b.write_text(
+            json.dumps(sidecar_oauth),
+            encoding="utf-8",
+        )
+    seen: dict[str, object] = {}
+
+    async def _fake_oauth(
+        *,
+        url: str,
+        headless: bool = False,
+        token_storage: object | None = None,
+        oauth_config: dict[str, object] | None = None,
+    ) -> str:
+        _ = (url, headless, token_storage)
+        seen["oauth_config"] = oauth_config
+        return "tok_matrix"
+
+    monkeypatch.setattr(
+        "sift_gateway.config.upstream_admin._oauth_login_access_token",
+        _fake_oauth,
+    )
+
+    login_upstream(server="api_b", data_dir=tmp_path)
+
+    assert seen["oauth_config"] == expected_oauth_config
+
+
+def test_login_upstream_ignores_stale_static_client_metadata_from_google_adc(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _write_gateway_config(
+        tmp_path,
+        {"mcpServers": {"api": {"url": "https://example.com/mcp"}}},
+    )
+    write_secret(
+        tmp_path,
+        "api",
+        transport="http",
+        headers={"Authorization": "Bearer old"},
+        oauth={
+            "enabled": True,
+            "provider": "google-adc",
+            "token_storage": "disk",
+            "client_id": "stale-client",
+            "client_secret": "stale-secret",
+            "scope": "scope.a",
+            "callback_port": 46000,
+            "google_scopes": [
+                "https://www.googleapis.com/auth/bigquery",
+            ],
+        },
+    )
+    seen: dict[str, object] = {}
+
+    async def _fake_oauth(
+        *,
+        url: str,
+        headless: bool = False,
+        token_storage: object | None = None,
+        oauth_config: dict[str, object] | None = None,
+    ) -> str:
+        _ = (url, headless, token_storage)
+        seen["oauth_config"] = oauth_config
+        return "tok_cfg"
+
+    monkeypatch.setattr(
+        "sift_gateway.config.upstream_admin._oauth_login_access_token",
+        _fake_oauth,
+    )
+
+    login_upstream(server="api", data_dir=tmp_path)
+
+    assert seen["oauth_config"] == {
+        "enabled": True,
+        "mode": "oauth",
+        "registration": "dynamic",
+        "token_storage": "disk",
+    }
+
+
+def test_login_upstream_provider_change_clears_cached_oauth_session(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _write_gateway_config(
+        tmp_path,
+        {"mcpServers": {"api": {"url": "https://example.com/mcp"}}},
+    )
+    write_secret(
+        tmp_path,
+        "api",
+        transport="http",
+        headers={"Authorization": "Bearer old"},
+        oauth={"enabled": True, "provider": "google-adc"},
+    )
+    seen: dict[str, object] = {}
+
+    class _FakeStorage:
+        pass
+
+    storage = _FakeStorage()
+
+    monkeypatch.setattr(
+        "sift_gateway.config.upstream_admin.oauth_token_storage",
+        lambda _data_dir, _ref: storage,
+    )
+    monkeypatch.setattr(
+        "sift_gateway.config.upstream_admin.clear_oauth_client_registration",
+        lambda **_kwargs: (_ for _ in ()).throw(
+            AssertionError("client-registration clear should not be used")
+        ),
+    )
+
+    async def _fake_clear_session(
+        *,
+        token_storage: object,
+        server_url: str,
+    ) -> bool:
+        seen["token_storage"] = token_storage
+        seen["server_url"] = server_url
+        return True
+
+    async def _fake_oauth(
+        *,
+        url: str,
+        headless: bool = False,
+        token_storage: object | None = None,
+        oauth_config: dict[str, object] | None = None,
+    ) -> str:
+        _ = (url, headless)
+        seen["oauth_token_storage"] = token_storage
+        seen["oauth_config"] = oauth_config
+        return "tok_cfg"
+
+    monkeypatch.setattr(
+        "sift_gateway.config.upstream_admin.clear_oauth_session",
+        _fake_clear_session,
+    )
+    monkeypatch.setattr(
+        "sift_gateway.config.upstream_admin._oauth_login_access_token",
+        _fake_oauth,
+    )
+
+    login_upstream(server="api", data_dir=tmp_path)
+
+    assert seen["token_storage"] is storage
+    assert seen["oauth_token_storage"] is storage
+    assert seen["server_url"] == "https://example.com/mcp"
+    assert seen["oauth_config"] == {
+        "enabled": True,
+        "mode": "oauth",
+        "registration": "dynamic",
+        "token_storage": "disk",
+    }
+
+
+def test_login_upstream_replacing_client_id_clears_stale_secret_metadata(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _write_gateway_config(
+        tmp_path,
+        {"mcpServers": {"api": {"url": "https://example.com/mcp"}}},
+    )
+    write_secret(
+        tmp_path,
+        "api",
+        transport="http",
+        headers={"Authorization": "Bearer old"},
+        oauth={
+            "enabled": True,
+            "provider": "fastmcp",
+            "token_storage": "disk",
+            "client_id": "old-client",
+            "client_secret": "old-secret",
+            "token_endpoint_auth_method": "client_secret_basic",
+            "scope": "scope.a",
+            "callback_port": 46000,
+        },
+    )
+    seen: dict[str, object] = {}
+    seen_clear: dict[str, object] = {}
+
+    async def _fake_oauth(
+        *,
+        url: str,
+        headless: bool = False,
+        token_storage: object | None = None,
+        oauth_config: dict[str, object] | None = None,
+    ) -> str:
+        _ = (url, headless, token_storage)
+        seen["oauth_config"] = oauth_config
+        return "tok_cfg"
+
+    monkeypatch.setattr(
+        "sift_gateway.config.upstream_admin._oauth_login_access_token",
+        _fake_oauth,
+    )
+    monkeypatch.setattr(
+        "sift_gateway.config.upstream_admin.clear_oauth_client_registration",
+        lambda **_kwargs: (_ for _ in ()).throw(
+            AssertionError("client-registration clear should not be used")
+        ),
+    )
+
+    async def _fake_clear_session(
+        *,
+        token_storage: object,
+        server_url: str,
+    ) -> bool:
+        seen_clear["token_storage"] = token_storage
+        seen_clear["server_url"] = server_url
+        return True
+
+    monkeypatch.setattr(
+        "sift_gateway.config.upstream_admin.clear_oauth_session",
+        _fake_clear_session,
+    )
+
+    login_upstream(
+        server="api",
+        data_dir=tmp_path,
+        oauth_client_id="new-client",
+    )
+
+    assert seen["oauth_config"] == {
+        "enabled": True,
+        "mode": "oauth",
+        "registration": "preregistered",
+        "token_storage": "disk",
+        "client_id": "new-client",
+        "scope": "scope.a",
+        "callback_port": 46000,
+    }
+    assert seen_clear["server_url"] == "https://example.com/mcp"
+
+
+def test_login_upstream_same_client_id_preserves_confidential_client_metadata(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _write_gateway_config(
+        tmp_path,
+        {"mcpServers": {"api": {"url": "https://example.com/mcp"}}},
+    )
+    write_secret(
+        tmp_path,
+        "api",
+        transport="http",
+        headers={"Authorization": "Bearer old"},
+        oauth={
+            "enabled": True,
+            "provider": "fastmcp",
+            "token_storage": "disk",
+            "client_id": "client-123",
+            "client_secret": "secret-456",
+            "token_endpoint_auth_method": "client_secret_basic",
+            "scope": "scope.a",
+            "callback_port": 46000,
+        },
+    )
+    seen: dict[str, object] = {}
+    seen_clear: dict[str, object] = {}
+
+    async def _fake_oauth(
+        *,
+        url: str,
+        headless: bool = False,
+        token_storage: object | None = None,
+        oauth_config: dict[str, object] | None = None,
+    ) -> str:
+        _ = (url, headless, token_storage)
+        seen["oauth_config"] = oauth_config
+        return "tok_cfg"
+
+    async def _fake_clear_session(
+        *,
+        token_storage: object,
+        server_url: str,
+    ) -> bool:
+        seen_clear["token_storage"] = token_storage
+        seen_clear["server_url"] = server_url
+        return True
+
+    monkeypatch.setattr(
+        "sift_gateway.config.upstream_admin._oauth_login_access_token",
+        _fake_oauth,
+    )
+    monkeypatch.setattr(
+        "sift_gateway.config.upstream_admin.clear_oauth_client_registration",
+        lambda **_kwargs: (_ for _ in ()).throw(
+            AssertionError("client-registration clear should not be used")
+        ),
+    )
+    monkeypatch.setattr(
+        "sift_gateway.config.upstream_admin.clear_oauth_session",
+        _fake_clear_session,
+    )
+
+    login_upstream(
+        server="api",
+        data_dir=tmp_path,
+        oauth_client_id="client-123",
+        oauth_scopes=["scope.b"],
+    )
+
+    assert seen["oauth_config"] == {
+        "enabled": True,
+        "mode": "oauth",
+        "registration": "preregistered",
+        "token_storage": "disk",
+        "client_id": "client-123",
+        "client_secret": "secret-456",
+        "token_endpoint_auth_method": "client_secret_basic",
+        "scope": "scope.b",
+        "callback_port": 46000,
+    }
+    assert seen_clear["server_url"] == "https://example.com/mcp"
+    assert read_secret(tmp_path, "api")["oauth"] == {
+        "enabled": True,
+        "mode": "oauth",
+        "registration": "preregistered",
+        "token_storage": "disk",
+        "client_id": "client-123",
+        "client_secret": "secret-456",
+        "token_endpoint_auth_method": "client_secret_basic",
+        "scope": "scope.b",
+        "callback_port": 46000,
+    }
+
+
+def test_login_upstream_adding_client_secret_resets_none_auth_method(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _write_gateway_config(
+        tmp_path,
+        {"mcpServers": {"api": {"url": "https://example.com/mcp"}}},
+    )
+    write_secret(
+        tmp_path,
+        "api",
+        transport="http",
+        headers={"Authorization": "Bearer old"},
+        oauth={
+            "enabled": True,
+            "provider": "fastmcp",
+            "token_storage": "disk",
+            "client_id": "client-123",
+            "token_endpoint_auth_method": "none",
+            "scope": "scope.a",
+            "callback_port": 46000,
+        },
+    )
+    seen: dict[str, object] = {}
+
+    async def _fake_oauth(
+        *,
+        url: str,
+        headless: bool = False,
+        token_storage: object | None = None,
+        oauth_config: dict[str, object] | None = None,
+    ) -> str:
+        _ = (url, headless, token_storage)
+        seen["oauth_config"] = oauth_config
+        return "tok_cfg"
+
+    monkeypatch.setattr(
+        "sift_gateway.config.upstream_admin._oauth_login_access_token",
+        _fake_oauth,
+    )
+
+    login_upstream(
+        server="api",
+        data_dir=tmp_path,
+        oauth_client_secret="secret-456",
+    )
+
+    assert seen["oauth_config"] == {
+        "enabled": True,
+        "mode": "oauth",
+        "registration": "preregistered",
+        "token_storage": "disk",
+        "client_id": "client-123",
+        "client_secret": "secret-456",
+        "scope": "scope.a",
+        "callback_port": 46000,
+    }
+    assert read_secret(tmp_path, "api")["oauth"] == {
+        "enabled": True,
+        "mode": "oauth",
+        "registration": "preregistered",
+        "token_storage": "disk",
+        "client_id": "client-123",
+        "client_secret": "secret-456",
+        "scope": "scope.a",
+        "callback_port": 46000,
+    }
+
+
+def test_login_upstream_explicit_dynamic_registration_clears_static_metadata(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _write_gateway_config(
+        tmp_path,
+        {"mcpServers": {"api": {"url": "https://example.com/mcp"}}},
+    )
+    write_secret(
+        tmp_path,
+        "api",
+        transport="http",
+        headers={"Authorization": "Bearer old"},
+        oauth={
+            "enabled": True,
+            "provider": "fastmcp",
+            "token_storage": "disk",
+            "client_id": "old-client",
+            "client_secret": "old-secret",
+            "token_endpoint_auth_method": "client_secret_basic",
+            "scope": "scope.a",
+            "callback_port": 46000,
+        },
+    )
+    seen: dict[str, object] = {}
+    seen_clear: dict[str, object] = {}
+
+    async def _fake_oauth(
+        *,
+        url: str,
+        headless: bool = False,
+        token_storage: object | None = None,
+        oauth_config: dict[str, object] | None = None,
+    ) -> str:
+        _ = (url, headless, token_storage)
+        seen["oauth_config"] = oauth_config
+        return "tok_dyn"
+
+    async def _fake_clear_session(
+        *,
+        token_storage: object,
+        server_url: str,
+    ) -> bool:
+        seen_clear["token_storage"] = token_storage
+        seen_clear["server_url"] = server_url
+        return True
+
+    monkeypatch.setattr(
+        "sift_gateway.config.upstream_admin._oauth_login_access_token",
+        _fake_oauth,
+    )
+    monkeypatch.setattr(
+        "sift_gateway.config.upstream_admin.clear_oauth_client_registration",
+        lambda **_kwargs: (_ for _ in ()).throw(
+            AssertionError("client-registration clear should not be used")
+        ),
+    )
+    monkeypatch.setattr(
+        "sift_gateway.config.upstream_admin.clear_oauth_session",
+        _fake_clear_session,
+    )
+
+    login_upstream(
+        server="api",
+        data_dir=tmp_path,
+        oauth_registration="dynamic",
+    )
+
+    assert seen["oauth_config"] == {
+        "enabled": True,
+        "mode": "oauth",
+        "registration": "dynamic",
+        "token_storage": "disk",
+        "scope": "scope.a",
+        "callback_port": 46000,
+    }
+    assert seen_clear["server_url"] == "https://example.com/mcp"
+    secret = read_secret(tmp_path, "api")
+    assert secret["oauth"] == {
+        "enabled": True,
+        "mode": "oauth",
+        "registration": "dynamic",
+        "token_storage": "disk",
+        "scope": "scope.a",
+        "callback_port": 46000,
+    }
+
+
+def test_login_upstream_scope_override_clears_cached_oauth_session(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _write_gateway_config(
+        tmp_path,
+        {"mcpServers": {"api": {"url": "https://example.com/mcp"}}},
+    )
+    write_secret(
+        tmp_path,
+        "api",
+        transport="http",
+        headers={"Authorization": "Bearer old"},
+        oauth={
+            "enabled": True,
+            "provider": "fastmcp",
+            "token_storage": "disk",
+            "scope": "scope.a",
+        },
+    )
+    seen: dict[str, object] = {}
+
+    async def _fake_oauth(
+        *,
+        url: str,
+        headless: bool = False,
+        token_storage: object | None = None,
+        oauth_config: dict[str, object] | None = None,
+    ) -> str:
+        _ = (url, headless, token_storage, oauth_config)
+        return "tok_cfg"
+
+    async def _fake_clear_session(
+        *,
+        token_storage: object,
+        server_url: str,
+    ) -> bool:
+        seen["token_storage"] = token_storage
+        seen["server_url"] = server_url
+        return True
+
+    monkeypatch.setattr(
+        "sift_gateway.config.upstream_admin._oauth_login_access_token",
+        _fake_oauth,
+    )
+    monkeypatch.setattr(
+        "sift_gateway.config.upstream_admin.clear_oauth_client_registration",
+        lambda **_kwargs: (_ for _ in ()).throw(
+            AssertionError("client-registration clear should not be used")
+        ),
+    )
+    monkeypatch.setattr(
+        "sift_gateway.config.upstream_admin.clear_oauth_session",
+        _fake_clear_session,
+    )
+
+    login_upstream(
+        server="api",
+        data_dir=tmp_path,
+        oauth_scopes=["scope.b"],
+    )
+
+    assert seen["server_url"] == "https://example.com/mcp"
+
+
+def test_login_upstream_shared_secret_scope_override_clears_cached_session(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _write_gateway_config(
+        tmp_path,
+        {
+            "mcpServers": {
+                "api_a": {
+                    "url": "https://a.example.com/mcp",
+                    "_gateway": {"secret_ref": "shared"},
+                },
+                "api_b": {
+                    "url": "https://b.example.com/mcp",
+                    "_gateway": {"secret_ref": "shared"},
+                },
+            }
+        },
+    )
+    write_secret(
+        tmp_path,
+        "shared",
+        transport="http",
+        headers={"Authorization": "Bearer old"},
+        oauth={
+            "enabled": True,
+            "provider": "fastmcp",
+            "token_storage": "disk",
+            "scope": "scope.a",
+        },
+    )
+    seen: dict[str, object] = {}
+
+    async def _fake_oauth(
+        *,
+        url: str,
+        headless: bool = False,
+        token_storage: object | None = None,
+        oauth_config: dict[str, object] | None = None,
+    ) -> str:
+        _ = (url, headless, token_storage, oauth_config)
+        return "tok_cfg"
+
+    async def _fake_clear_session(
+        *,
+        token_storage: object,
+        server_url: str,
+    ) -> bool:
+        seen["token_storage"] = token_storage
+        seen["server_url"] = server_url
+        return True
+
+    monkeypatch.setattr(
+        "sift_gateway.config.upstream_admin._oauth_login_access_token",
+        _fake_oauth,
+    )
+    monkeypatch.setattr(
+        "sift_gateway.config.upstream_admin.clear_oauth_client_registration",
+        lambda **_kwargs: (_ for _ in ()).throw(
+            AssertionError("client-registration clear should not be used")
+        ),
+    )
+    monkeypatch.setattr(
+        "sift_gateway.config.upstream_admin.clear_oauth_session",
+        _fake_clear_session,
+    )
+
+    login_upstream(
+        server="api_a",
+        data_dir=tmp_path,
+        oauth_scopes=["scope.b"],
+    )
+
+    assert seen["server_url"] == "https://a.example.com/mcp"
+
+
+def test_login_upstream_failed_session_reset_restores_oauth_cache(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _write_gateway_config(
+        tmp_path,
+        {"mcpServers": {"api": {"url": "https://example.com/mcp"}}},
+    )
+    write_secret(
+        tmp_path,
+        "api",
+        transport="http",
+        headers={"Authorization": "Bearer old"},
+        oauth={
+            "enabled": True,
+            "provider": "fastmcp",
+            "token_storage": "disk",
+            "scope": "scope.a",
+        },
+    )
+    cache_dir = oauth_cache_dir_path(tmp_path, "api")
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    marker = cache_dir / "marker.txt"
+    marker.write_text("original", encoding="utf-8")
+
+    async def _fake_oauth(
+        *,
+        url: str,
+        headless: bool = False,
+        token_storage: object | None = None,
+        oauth_config: dict[str, object] | None = None,
+    ) -> str:
+        _ = (url, headless, token_storage, oauth_config)
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        (cache_dir / "new.txt").write_text("new", encoding="utf-8")
+        raise RuntimeError("login failed")
+
+    monkeypatch.setattr(
+        "sift_gateway.config.upstream_admin._oauth_login_access_token",
+        _fake_oauth,
+    )
+
+    with pytest.raises(RuntimeError, match="login failed"):
+        login_upstream(
+            server="api",
+            data_dir=tmp_path,
+            oauth_scopes=["scope.b"],
+        )
+
+    assert marker.read_text(encoding="utf-8") == "original"
+    assert not (cache_dir / "new.txt").exists()
+    assert read_secret(tmp_path, "api")["oauth"] == {
+        "enabled": True,
+        "provider": "fastmcp",
+        "token_storage": "disk",
+        "scope": "scope.a",
+    }
+
+
+def test_login_upstream_rejects_secret_auth_method_without_secret(
+    tmp_path: Path,
+) -> None:
+    _write_gateway_config(
+        tmp_path,
+        {"mcpServers": {"api": {"url": "https://example.com/mcp"}}},
+    )
+
+    with pytest.raises(RuntimeError, match="requires a client_secret"):
+        login_upstream(
+            server="api",
+            data_dir=tmp_path,
+            oauth_client_id="client-123",
+            oauth_auth_method="client_secret_basic",
+        )
+
+
+def test_login_upstream_rejects_client_secret_without_client_id(
+    tmp_path: Path,
+) -> None:
+    _write_gateway_config(
+        tmp_path,
+        {"mcpServers": {"api": {"url": "https://example.com/mcp"}}},
+    )
+
+    with pytest.raises(ValueError, match="--oauth-client-secret requires"):
+        login_upstream(
+            server="api",
+            data_dir=tmp_path,
+            oauth_client_secret="secret-456",
+        )
+
+
+def test_login_upstream_rejects_auth_method_without_client_id(
+    tmp_path: Path,
+) -> None:
+    _write_gateway_config(
+        tmp_path,
+        {"mcpServers": {"api": {"url": "https://example.com/mcp"}}},
+    )
+
+    with pytest.raises(ValueError, match="--oauth-auth-method requires"):
+        login_upstream(
+            server="api",
+            data_dir=tmp_path,
+            oauth_auth_method="client_secret_basic",
+        )
 
 
 def test_login_upstream_rejects_non_http_transport(tmp_path: Path) -> None:
@@ -1401,8 +3841,9 @@ def test_login_upstream_normalizes_secret_ref_suffix(
         url: str,
         headless: bool = False,
         token_storage: object | None = None,
+        oauth_config: dict[str, object] | None = None,
     ) -> str:
-        _ = headless
+        _ = (headless, oauth_config)
         assert url == "https://example.com/mcp"
         assert token_storage is not None
         return "tok_shared"
@@ -1419,7 +3860,7 @@ def test_login_upstream_normalizes_secret_ref_suffix(
 
 
 def test_login_upstream_dry_run_skips_oauth(
-    tmp_path: Path, monkeypatch
+    tmp_path: Path, monkeypatch, caplog
 ) -> None:
     _write_gateway_config(
         tmp_path,
@@ -1431,10 +3872,11 @@ def test_login_upstream_dry_run_skips_oauth(
         url: str,
         headless: bool = False,
         token_storage: object | None = None,
+        oauth_config: dict[str, object] | None = None,
     ) -> str:
         raise AssertionError(
             "oauth helper should not run in dry-run: "
-            f"{url} {headless} {token_storage}"
+            f"{url} {headless} {token_storage} {oauth_config}"
         )
 
     monkeypatch.setattr(
@@ -1442,13 +3884,35 @@ def test_login_upstream_dry_run_skips_oauth(
         _fail_oauth,
     )
 
-    result = login_upstream(server="api", data_dir=tmp_path, dry_run=True)
+    with caplog.at_level(logging.WARNING):
+        result = login_upstream(
+            server="api",
+            data_dir=tmp_path,
+            dry_run=True,
+        )
+
     assert result["server"] == "api"
     assert result["dry_run"] is True
     assert result["updated_header_keys"] == ["Authorization"]
     assert result["oauth_enabled"] is True
     assert result["login"] == "oauth"
     assert not (tmp_path / "state" / "upstream_secrets").exists()
+    assert "failed to read existing secret" not in caplog.text
+
+
+def test_login_upstream_dry_run_validates_callback_port(tmp_path: Path) -> None:
+    _write_gateway_config(
+        tmp_path,
+        {"mcpServers": {"api": {"url": "https://example.com/mcp"}}},
+    )
+
+    with pytest.raises(RuntimeError, match="between 1 and 65535"):
+        login_upstream(
+            server="api",
+            data_dir=tmp_path,
+            dry_run=True,
+            oauth_callback_port=70000,
+        )
 
 
 def test_login_upstream_headless_passes_flag(
@@ -1465,10 +3929,12 @@ def test_login_upstream_headless_passes_flag(
         url: str,
         headless: bool = False,
         token_storage: object | None = None,
+        oauth_config: dict[str, object] | None = None,
     ) -> str:
         seen["url"] = url
         seen["headless"] = headless
         seen["has_token_storage"] = token_storage is not None
+        seen["oauth_config"] = oauth_config
         return "tok_456"
 
     monkeypatch.setattr(
@@ -1481,6 +3947,7 @@ def test_login_upstream_headless_passes_flag(
     assert seen["url"] == "https://example.com/mcp"
     assert seen["headless"] is True
     assert seen["has_token_storage"] is True
+    assert seen["oauth_config"] is not None
 
 
 def test_login_upstream_rewrites_oauth_dependency_error(
@@ -1496,8 +3963,9 @@ def test_login_upstream_rewrites_oauth_dependency_error(
         url: str,
         headless: bool = False,
         token_storage: object | None = None,
+        oauth_config: dict[str, object] | None = None,
     ) -> str:
-        _ = (url, headless, token_storage)
+        _ = (url, headless, token_storage, oauth_config)
         msg = "DiskStore requires py-key-value-aio[disk]"
         raise RuntimeError(msg)
 
@@ -1853,8 +4321,9 @@ def test_probe_upstreams_all_scope_passes_all_active(
     assert seen["data_dir"] == tmp_path
 
 
-def test_normalize_input_servers_non_strict_wrapped_invalid_returns_empty(
-) -> None:
+def test_normalize_input_servers_non_strict_wrapped_invalid_returns_empty() -> (
+    None
+):
     assert normalize_input_servers({"mcpServers": []}, strict=False) == {}
 
 
@@ -1882,14 +4351,12 @@ def test_normalize_input_servers_strict_wrapped_uses_extracted_map(
     assert normalized == {"x": {"command": "echo"}, "y": "keep-as-is"}
 
 
-def test_normalize_input_servers_strict_unwrapped_returns_input(
-) -> None:
+def test_normalize_input_servers_strict_unwrapped_returns_input() -> None:
     raw = {"x": {"command": "echo"}}
     assert normalize_input_servers(raw, strict=True) is raw
 
 
-def test_normalize_input_servers_non_strict_unwrapped_filters_invalid(
-) -> None:
+def test_normalize_input_servers_non_strict_unwrapped_filters_invalid() -> None:
     normalized = normalize_input_servers(
         {
             "good": {"command": "echo"},
@@ -1901,7 +4368,9 @@ def test_normalize_input_servers_non_strict_unwrapped_filters_invalid(
     assert normalized == {"good": {"command": "echo"}}
 
 
-def test_reconcile_after_add_noop_when_added_names_empty(tmp_path: Path) -> None:
+def test_reconcile_after_add_noop_when_added_names_empty(
+    tmp_path: Path,
+) -> None:
     warnings: list[str] = []
     reconcile_after_add(
         data_dir=tmp_path,
@@ -2142,7 +4611,9 @@ def test_probe_one_upstream_error_payload(tmp_path: Path, monkeypatch) -> None:
     }
 
 
-def test_probe_one_upstream_success_payload(tmp_path: Path, monkeypatch) -> None:
+def test_probe_one_upstream_success_payload(
+    tmp_path: Path, monkeypatch
+) -> None:
     upstream = SimpleNamespace(prefix="api")
 
     async def _fake_discover_tools(*_args, **_kwargs):

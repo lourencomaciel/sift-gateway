@@ -1,12 +1,19 @@
 from __future__ import annotations
 
 import asyncio
+import json
+from pathlib import Path
+import sys
+from types import ModuleType
 from typing import ClassVar
 
 import pytest
 
 from sift_gateway.config.settings import UpstreamConfig
-from sift_gateway.config.upstream_secrets import write_secret
+from sift_gateway.config.upstream_secrets import (
+    oauth_server_auth_config_path,
+    write_secret,
+)
 from sift_gateway.mcp.upstream import (
     UpstreamInstance,
     _atomic_json_write,
@@ -14,8 +21,11 @@ from sift_gateway.mcp.upstream import (
     _build_stdio_env,
     _client_result_content,
     _client_transport,
+    _effective_auth_config,
     _effective_external_user_id,
     _file_lock,
+    _google_adc_access_token_sync,
+    _google_adc_authorized_headers_sync,
     call_upstream_tool,
     compute_auth_fingerprint,
     compute_upstream_instance_id,
@@ -47,6 +57,15 @@ def _http_config(**overrides) -> UpstreamConfig:
     }
     defaults.update(overrides)
     return UpstreamConfig(**defaults)
+
+
+def _write_gateway_config(data_dir: Path, payload: dict[str, object]) -> None:
+    state_dir = data_dir / "state"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    (state_dir / "config.json").write_text(
+        json.dumps(payload),
+        encoding="utf-8",
+    )
 
 
 # ---- determinism ----
@@ -237,13 +256,14 @@ def test_atomic_json_write_cleans_tmp_file_on_write_error(
 
 
 def test_effective_external_user_id_returns_none_for_malformed_flag() -> None:
-    assert _effective_external_user_id(["--external-user-id"], "resolved") is None
+    assert (
+        _effective_external_user_id(["--external-user-id"], "resolved") is None
+    )
 
 
 def test_effective_external_user_id_returns_none_for_empty_equals() -> None:
     assert (
-        _effective_external_user_id(["--external-user-id="], "resolved")
-        is None
+        _effective_external_user_id(["--external-user-id="], "resolved") is None
     )
 
 
@@ -403,7 +423,9 @@ async def test_call_upstream_tool_retries_once_after_oauth_auth_failure(
             _ = (exc_type, exc, tb)
             return False
 
-        async def call_tool(self, name: str, arguments: dict) -> _FakeCallResult:
+        async def call_tool(
+            self, name: str, arguments: dict
+        ) -> _FakeCallResult:
             _ = (name, arguments)
             call_count = int(seen["call_count"])
             seen["call_count"] = call_count + 1
@@ -457,7 +479,9 @@ async def test_call_upstream_tool_no_retry_when_no_refresh_capability(
             _ = (exc_type, exc, tb)
             return False
 
-        async def call_tool(self, name: str, arguments: dict) -> _FakeCallResult:
+        async def call_tool(
+            self, name: str, arguments: dict
+        ) -> _FakeCallResult:
             _ = (name, arguments)
             seen["call_count"] += 1
             raise RuntimeError("401 unauthorized")
@@ -486,6 +510,110 @@ async def test_call_upstream_tool_no_retry_when_no_refresh_capability(
         await call_upstream_tool(instance, "tool_a", {"x": 1})
 
     assert seen["call_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_call_upstream_tool_google_adc_does_not_fallback_to_static_auth(
+    monkeypatch,
+) -> None:
+    seen: dict[str, int] = {"call_count": 0}
+
+    class _FailClient:
+        def __init__(self, transport, timeout: float | None = None) -> None:
+            _ = (transport, timeout)
+
+        async def __aenter__(self) -> _FailClient:
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb) -> bool:
+            _ = (exc_type, exc, tb)
+            return False
+
+        async def call_tool(
+            self, name: str, arguments: dict
+        ) -> _FakeCallResult:
+            _ = (name, arguments)
+            seen["call_count"] += 1
+            raise RuntimeError("401 unauthorized")
+
+    monkeypatch.setattr("sift_gateway.mcp.upstream.Client", _FailClient)
+    monkeypatch.setattr(
+        "sift_gateway.mcp.upstream._client_transport",
+        lambda *_args, **_kwargs: object(),
+    )
+
+    cfg = _http_config(headers={"Authorization": "Bearer static-token"})
+    instance = UpstreamInstance(
+        config=cfg,
+        instance_id="inst1",
+        tools=[],
+        secret_data={
+            "headers": {"Authorization": "Bearer static-token"},
+            "oauth": {"enabled": True, "provider": "google-adc"},
+        },
+    )
+    with pytest.raises(RuntimeError, match="401 unauthorized"):
+        await call_upstream_tool(instance, "tool_a", {"x": 1})
+
+    assert seen["call_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_call_upstream_tool_shared_secret_oauth_skips_static_fallback(
+    monkeypatch,
+) -> None:
+    seen: dict[str, object] = {
+        "disable_oauth_calls": [],
+        "stale_calls": 0,
+    }
+
+    async def _call_once(
+        *,
+        instance: UpstreamInstance,
+        tool_name: str,
+        arguments: dict[str, object],
+        data_dir: str | None,
+        disable_oauth: bool = False,
+    ) -> dict[str, object]:
+        _ = (instance, tool_name, arguments, data_dir)
+        calls = seen["disable_oauth_calls"]
+        assert isinstance(calls, list)
+        calls.append(disable_oauth)
+        raise RuntimeError("401 unauthorized")
+
+    async def _mark_stale(**_kwargs) -> bool:
+        stale_calls = int(seen["stale_calls"])
+        seen["stale_calls"] = stale_calls + 1
+        return False
+
+    monkeypatch.setattr("sift_gateway.mcp.upstream._call_tool_once", _call_once)
+    monkeypatch.setattr(
+        "sift_gateway.mcp.upstream._mark_runtime_oauth_access_token_stale",
+        _mark_stale,
+    )
+    monkeypatch.setattr(
+        "sift_gateway.mcp.upstream._effective_auth_config",
+        lambda *_args, **_kwargs: {"enabled": True, "mode": "oauth"},
+    )
+    monkeypatch.setattr(
+        "sift_gateway.mcp.upstream._secret_ref_is_shared",
+        lambda *_args, **_kwargs: True,
+    )
+
+    cfg = _http_config(secret_ref="shared")
+    instance = UpstreamInstance(
+        config=cfg,
+        instance_id="inst1",
+        tools=[],
+        secret_data={
+            "headers": {"Authorization": "Bearer sibling-token"},
+        },
+    )
+    with pytest.raises(RuntimeError, match="401 unauthorized"):
+        await call_upstream_tool(instance, "tool_a", {"x": 1})
+
+    assert seen["stale_calls"] == 1
+    assert seen["disable_oauth_calls"] == [False]
 
 
 @pytest.mark.asyncio
@@ -1132,6 +1260,632 @@ def test_build_runtime_oauth_auth_redirect_handler_is_non_interactive(
     assert auth is not None
     with pytest.raises(RuntimeError, match="requires interactive login"):
         asyncio.run(auth.redirect_handler("https://auth.example.test/start"))
+
+
+@pytest.mark.asyncio
+async def test_build_runtime_oauth_auth_google_adc_injects_authorized_headers(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    cfg = _http_config(
+        prefix="bigquery",
+        url="https://bigquery.googleapis.com/mcp",
+        secret_ref="bigquery",
+    )
+    write_secret(
+        tmp_path,
+        "bigquery",
+        transport="http",
+        headers={"Authorization": "Bearer stale-token"},
+        oauth={"enabled": True, "provider": "google-adc"},
+    )
+
+    async def _fake_authorized_headers(*, method, url, headers, scopes):
+        _ = (method, url, headers, scopes)
+        return {
+            "Authorization": "Bearer fresh-adc-token",
+            "x-goog-user-project": "quota-project",
+        }
+
+    monkeypatch.setattr(
+        "sift_gateway.mcp.upstream._google_adc_authorized_headers",
+        _fake_authorized_headers,
+    )
+
+    from sift_gateway.mcp.upstream import _build_runtime_oauth_auth
+
+    auth = _build_runtime_oauth_auth(cfg, str(tmp_path))
+    assert auth is not None
+
+    import httpx
+
+    request = httpx.Request("GET", cfg.url)
+    flow = auth.async_auth_flow(request)
+    prepared = await flow.asend(None)
+    assert prepared.headers["Authorization"] == "Bearer fresh-adc-token"
+    assert prepared.headers["x-goog-user-project"] == "quota-project"
+    with pytest.raises(StopAsyncIteration):
+        await flow.asend(httpx.Response(200, request=prepared))
+
+
+def test_client_transport_uses_shared_server_auth_sidecar_for_google_adc(
+    tmp_path,
+) -> None:
+    _write_gateway_config(
+        tmp_path,
+        {
+            "mcpServers": {
+                "bigquery": {
+                    "url": "https://bigquery.googleapis.com/mcp",
+                    "_gateway": {"secret_ref": "shared"},
+                },
+                "bigquery_backup": {
+                    "url": "https://bigquery-backup.googleapis.com/mcp",
+                    "_gateway": {"secret_ref": "shared"},
+                },
+            }
+        },
+    )
+    cfg = _http_config(
+        prefix="bigquery",
+        url="https://bigquery.googleapis.com/mcp",
+        secret_ref="shared",
+    )
+    write_secret(
+        tmp_path,
+        "shared",
+        transport="http",
+        headers={"Authorization": "Bearer shared-token"},
+    )
+    sidecar = oauth_server_auth_config_path(
+        tmp_path,
+        "shared",
+        "https://bigquery.googleapis.com/mcp",
+    )
+    sidecar.parent.mkdir(parents=True, exist_ok=True)
+    sidecar.write_text(
+        '{"enabled": true, "mode": "google-adc", "google_scopes": ["scope.a"]}',
+        encoding="utf-8",
+    )
+
+    transport = _client_transport(cfg, str(tmp_path))
+
+    from fastmcp.client.transports import StreamableHttpTransport
+
+    assert isinstance(transport, StreamableHttpTransport)
+    assert transport.auth is not None
+    assert "Authorization" not in transport.headers
+
+
+def test_effective_auth_config_ignores_sidecar_when_ref_is_not_shared(
+    tmp_path,
+) -> None:
+    _write_gateway_config(
+        tmp_path,
+        {
+            "mcpServers": {
+                "api_a": {
+                    "url": "https://a.example.com/mcp",
+                    "_gateway": {"secret_ref": "shared"},
+                }
+            }
+        },
+    )
+    cfg = _http_config(
+        prefix="api_a",
+        url="https://a.example.com/mcp",
+        headers={},
+        secret_ref="shared",
+    )
+    write_secret(
+        tmp_path,
+        "shared",
+        transport="http",
+        oauth={
+            "enabled": True,
+            "provider": "fastmcp",
+            "token_storage": "disk",
+        },
+    )
+    sidecar = oauth_server_auth_config_path(
+        tmp_path,
+        "shared",
+        "https://a.example.com/mcp",
+    )
+    sidecar.parent.mkdir(parents=True, exist_ok=True)
+    sidecar.write_text(
+        '{"enabled": true, "mode": "google-adc"}',
+        encoding="utf-8",
+    )
+
+    assert _effective_auth_config(cfg, str(tmp_path)) == {
+        "enabled": True,
+        "mode": "oauth",
+        "registration": "dynamic",
+        "token_storage": "disk",
+    }
+
+
+@pytest.mark.parametrize(
+    ("shared_ref", "sidecar_oauth", "expected_oauth"),
+    [
+        (
+            True,
+            None,
+            {
+                "enabled": True,
+                "mode": "oauth",
+                "registration": "dynamic",
+                "token_storage": "disk",
+            },
+        ),
+        (
+            True,
+            {"enabled": True, "mode": "google-adc"},
+            {"enabled": True, "mode": "google-adc"},
+        ),
+        (
+            True,
+            {"enabled": False},
+            None,
+        ),
+        (
+            False,
+            {"enabled": True, "mode": "google-adc"},
+            {
+                "enabled": True,
+                "mode": "oauth",
+                "registration": "dynamic",
+                "token_storage": "disk",
+            },
+        ),
+        (
+            False,
+            {"enabled": False},
+            {
+                "enabled": True,
+                "mode": "oauth",
+                "registration": "dynamic",
+                "token_storage": "disk",
+            },
+        ),
+    ],
+)
+def test_effective_auth_config_matrix_for_shared_ref_sidecars(
+    tmp_path,
+    shared_ref: bool,
+    sidecar_oauth: dict[str, object] | None,
+    expected_oauth: dict[str, object] | None,
+) -> None:
+    mcp_servers: dict[str, object] = {
+        "api_a": {
+            "url": "https://a.example.com/mcp",
+            "_gateway": {"secret_ref": "shared"},
+        }
+    }
+    if shared_ref:
+        mcp_servers["api_b"] = {
+            "url": "https://b.example.com/mcp",
+            "_gateway": {"secret_ref": "shared"},
+        }
+    _write_gateway_config(
+        tmp_path,
+        {"mcpServers": mcp_servers},
+    )
+    cfg = _http_config(
+        prefix="api_a",
+        url="https://a.example.com/mcp",
+        headers={},
+        secret_ref="shared",
+    )
+    write_secret(
+        tmp_path,
+        "shared",
+        transport="http",
+        oauth={
+            "enabled": True,
+            "provider": "fastmcp",
+            "token_storage": "disk",
+        },
+    )
+    if sidecar_oauth is not None:
+        sidecar = oauth_server_auth_config_path(
+            tmp_path,
+            "shared",
+            "https://a.example.com/mcp",
+        )
+        sidecar.parent.mkdir(parents=True, exist_ok=True)
+        sidecar.write_text(
+            json.dumps(sidecar_oauth),
+            encoding="utf-8",
+        )
+
+    assert _effective_auth_config(cfg, str(tmp_path)) == expected_oauth
+
+
+def test_google_adc_access_token_sync_uses_google_auth_default(
+    monkeypatch,
+) -> None:
+    seen: dict[str, object] = {}
+    monkeypatch.setattr(
+        "sift_gateway.mcp.upstream._GOOGLE_ADC_CREDENTIALS",
+        {},
+    )
+
+    class _FakeCredentials:
+        token = ""
+        valid = False
+
+        def refresh(self, request) -> None:
+            seen["request"] = request
+            self.token = "fresh-adc-token"
+            self.valid = True
+
+    class _FakeRequest:
+        pass
+
+    google_mod = ModuleType("google")
+    auth_mod = ModuleType("google.auth")
+    exceptions_mod = ModuleType("google.auth.exceptions")
+    transport_mod = ModuleType("google.auth.transport")
+    requests_mod = ModuleType("google.auth.transport.requests")
+
+    class _DefaultCredentialsError(Exception):
+        pass
+
+    class _RefreshError(Exception):
+        pass
+
+    def _fake_default(*, scopes):
+        seen["scopes"] = scopes
+        return _FakeCredentials(), "demo-project"
+
+    auth_mod.default = _fake_default
+    exceptions_mod.DefaultCredentialsError = _DefaultCredentialsError
+    exceptions_mod.RefreshError = _RefreshError
+    requests_mod.Request = _FakeRequest
+    transport_mod.requests = requests_mod
+    auth_mod.exceptions = exceptions_mod
+    auth_mod.transport = transport_mod
+    google_mod.auth = auth_mod
+
+    monkeypatch.setitem(sys.modules, "google", google_mod)
+    monkeypatch.setitem(sys.modules, "google.auth", auth_mod)
+    monkeypatch.setitem(
+        sys.modules,
+        "google.auth.exceptions",
+        exceptions_mod,
+    )
+    monkeypatch.setitem(sys.modules, "google.auth.transport", transport_mod)
+    monkeypatch.setitem(
+        sys.modules,
+        "google.auth.transport.requests",
+        requests_mod,
+    )
+
+    token = _google_adc_access_token_sync()
+
+    assert token == "fresh-adc-token"
+    assert seen["scopes"] == ["https://www.googleapis.com/auth/cloud-platform"]
+    assert isinstance(seen["request"], _FakeRequest)
+
+
+def test_google_adc_authorized_headers_sync_uses_before_request(
+    monkeypatch,
+) -> None:
+    seen: dict[str, object] = {}
+    monkeypatch.setattr(
+        "sift_gateway.mcp.upstream._GOOGLE_ADC_CREDENTIALS",
+        {},
+    )
+
+    class _FakeCredentials:
+        def before_request(self, request, method, url, headers) -> None:
+            seen["request"] = request
+            seen["method"] = method
+            seen["url"] = url
+            seen["headers_before"] = dict(headers)
+            headers["Authorization"] = "Bearer fresh-adc-token"
+            headers["x-goog-user-project"] = "quota-project"
+
+    class _FakeRequest:
+        pass
+
+    google_mod = ModuleType("google")
+    auth_mod = ModuleType("google.auth")
+    exceptions_mod = ModuleType("google.auth.exceptions")
+    transport_mod = ModuleType("google.auth.transport")
+    requests_mod = ModuleType("google.auth.transport.requests")
+
+    class _DefaultCredentialsError(Exception):
+        pass
+
+    class _RefreshError(Exception):
+        pass
+
+    def _fake_default(*, scopes):
+        seen["scopes"] = scopes
+        return _FakeCredentials(), "demo-project"
+
+    auth_mod.default = _fake_default
+    exceptions_mod.DefaultCredentialsError = _DefaultCredentialsError
+    exceptions_mod.RefreshError = _RefreshError
+    requests_mod.Request = _FakeRequest
+    transport_mod.requests = requests_mod
+    auth_mod.exceptions = exceptions_mod
+    auth_mod.transport = transport_mod
+    google_mod.auth = auth_mod
+
+    monkeypatch.setitem(sys.modules, "google", google_mod)
+    monkeypatch.setitem(sys.modules, "google.auth", auth_mod)
+    monkeypatch.setitem(
+        sys.modules,
+        "google.auth.exceptions",
+        exceptions_mod,
+    )
+    monkeypatch.setitem(sys.modules, "google.auth.transport", transport_mod)
+    monkeypatch.setitem(
+        sys.modules,
+        "google.auth.transport.requests",
+        requests_mod,
+    )
+
+    headers = _google_adc_authorized_headers_sync(
+        method="POST",
+        url="https://bigquery.googleapis.com/mcp",
+        headers={"X-Trace": "abc"},
+    )
+
+    assert headers["Authorization"] == "Bearer fresh-adc-token"
+    assert headers["x-goog-user-project"] == "quota-project"
+    assert headers["X-Trace"] == "abc"
+    assert seen["scopes"] == ["https://www.googleapis.com/auth/cloud-platform"]
+    assert isinstance(seen["request"], _FakeRequest)
+    assert seen["method"] == "POST"
+    assert seen["url"] == "https://bigquery.googleapis.com/mcp"
+    assert seen["headers_before"] == {"X-Trace": "abc"}
+
+
+def test_google_adc_access_token_sync_reuses_cached_valid_credentials(
+    monkeypatch,
+) -> None:
+    seen: dict[str, int] = {"default_calls": 0, "refresh_calls": 0}
+    monkeypatch.setattr(
+        "sift_gateway.mcp.upstream._GOOGLE_ADC_CREDENTIALS",
+        {},
+    )
+
+    class _FakeCredentials:
+        token = ""
+        valid = False
+
+        def refresh(self, request) -> None:
+            _ = request
+            seen["refresh_calls"] += 1
+            self.token = "fresh-adc-token"
+            self.valid = True
+
+    google_mod = ModuleType("google")
+    auth_mod = ModuleType("google.auth")
+    exceptions_mod = ModuleType("google.auth.exceptions")
+    transport_mod = ModuleType("google.auth.transport")
+    requests_mod = ModuleType("google.auth.transport.requests")
+
+    class _DefaultCredentialsError(Exception):
+        pass
+
+    class _RefreshError(Exception):
+        pass
+
+    def _fake_default(*, scopes):
+        _ = scopes
+        seen["default_calls"] += 1
+        return _FakeCredentials(), "demo-project"
+
+    auth_mod.default = _fake_default
+    exceptions_mod.DefaultCredentialsError = _DefaultCredentialsError
+    exceptions_mod.RefreshError = _RefreshError
+    requests_mod.Request = object
+    transport_mod.requests = requests_mod
+    auth_mod.exceptions = exceptions_mod
+    auth_mod.transport = transport_mod
+    google_mod.auth = auth_mod
+
+    monkeypatch.setitem(sys.modules, "google", google_mod)
+    monkeypatch.setitem(sys.modules, "google.auth", auth_mod)
+    monkeypatch.setitem(
+        sys.modules,
+        "google.auth.exceptions",
+        exceptions_mod,
+    )
+    monkeypatch.setitem(sys.modules, "google.auth.transport", transport_mod)
+    monkeypatch.setitem(
+        sys.modules,
+        "google.auth.transport.requests",
+        requests_mod,
+    )
+
+    token_a = _google_adc_access_token_sync()
+    token_b = _google_adc_access_token_sync()
+
+    assert token_a == "fresh-adc-token"
+    assert token_b == "fresh-adc-token"
+    assert seen["default_calls"] == 1
+    assert seen["refresh_calls"] == 1
+
+
+def test_google_adc_access_token_sync_caches_credentials_per_scope_set(
+    monkeypatch,
+) -> None:
+    seen: dict[str, object] = {"default_scopes": []}
+    monkeypatch.setattr(
+        "sift_gateway.mcp.upstream._GOOGLE_ADC_CREDENTIALS",
+        {},
+    )
+
+    class _FakeCredentials:
+        def __init__(self, token: str) -> None:
+            self.token = token
+            self.valid = True
+
+        def refresh(self, request) -> None:
+            _ = request
+            raise AssertionError("refresh should not run for valid credentials")
+
+    google_mod = ModuleType("google")
+    auth_mod = ModuleType("google.auth")
+    exceptions_mod = ModuleType("google.auth.exceptions")
+    transport_mod = ModuleType("google.auth.transport")
+    requests_mod = ModuleType("google.auth.transport.requests")
+
+    class _DefaultCredentialsError(Exception):
+        pass
+
+    class _RefreshError(Exception):
+        pass
+
+    def _fake_default(*, scopes):
+        default_scopes = seen["default_scopes"]
+        assert isinstance(default_scopes, list)
+        default_scopes.append(tuple(scopes))
+        return _FakeCredentials(
+            token="token-for-" + ",".join(scopes)
+        ), "demo-project"
+
+    auth_mod.default = _fake_default
+    exceptions_mod.DefaultCredentialsError = _DefaultCredentialsError
+    exceptions_mod.RefreshError = _RefreshError
+    requests_mod.Request = object
+    transport_mod.requests = requests_mod
+    auth_mod.exceptions = exceptions_mod
+    auth_mod.transport = transport_mod
+    google_mod.auth = auth_mod
+
+    monkeypatch.setitem(sys.modules, "google", google_mod)
+    monkeypatch.setitem(sys.modules, "google.auth", auth_mod)
+    monkeypatch.setitem(
+        sys.modules,
+        "google.auth.exceptions",
+        exceptions_mod,
+    )
+    monkeypatch.setitem(sys.modules, "google.auth.transport", transport_mod)
+    monkeypatch.setitem(
+        sys.modules,
+        "google.auth.transport.requests",
+        requests_mod,
+    )
+
+    bigquery_token = _google_adc_access_token_sync(
+        scopes=("https://www.googleapis.com/auth/bigquery",)
+    )
+    drive_token = _google_adc_access_token_sync(
+        scopes=("https://www.googleapis.com/auth/drive.readonly",)
+    )
+    bigquery_token_repeat = _google_adc_access_token_sync(
+        scopes=("https://www.googleapis.com/auth/bigquery",)
+    )
+
+    assert (
+        bigquery_token == "token-for-https://www.googleapis.com/auth/bigquery"
+    )
+    assert (
+        drive_token
+        == "token-for-https://www.googleapis.com/auth/drive.readonly"
+    )
+    assert bigquery_token_repeat == bigquery_token
+    assert seen["default_scopes"] == [
+        ("https://www.googleapis.com/auth/bigquery",),
+        ("https://www.googleapis.com/auth/drive.readonly",),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_build_runtime_oauth_auth_google_adc_passes_configured_scopes(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    cfg = _http_config(
+        prefix="drive",
+        url="https://workspace.example.test/mcp",
+        secret_ref="drive",
+    )
+    write_secret(
+        tmp_path,
+        "drive",
+        transport="http",
+        oauth={
+            "enabled": True,
+            "provider": "google-adc",
+            "google_scopes": [
+                "https://www.googleapis.com/auth/drive.readonly",
+                "https://www.googleapis.com/auth/drive.metadata.readonly",
+            ],
+        },
+    )
+    seen: dict[str, object] = {}
+
+    async def _fake_google_adc_authorized_headers(
+        *, method, url, headers, scopes
+    ) -> dict[str, str]:
+        _ = (method, url, headers)
+        seen["scopes"] = scopes
+        return {"Authorization": "Bearer fresh-adc-token"}
+
+    monkeypatch.setattr(
+        "sift_gateway.mcp.upstream._google_adc_authorized_headers",
+        _fake_google_adc_authorized_headers,
+    )
+
+    from sift_gateway.mcp.upstream import _build_runtime_oauth_auth
+
+    auth = _build_runtime_oauth_auth(cfg, str(tmp_path))
+    assert auth is not None
+
+    import httpx
+
+    request = httpx.Request("GET", cfg.url)
+    flow = auth.async_auth_flow(request)
+    prepared = await flow.asend(None)
+    assert prepared.headers["Authorization"] == "Bearer fresh-adc-token"
+    assert seen["scopes"] == (
+        "https://www.googleapis.com/auth/drive.readonly",
+        "https://www.googleapis.com/auth/drive.metadata.readonly",
+    )
+    with pytest.raises(StopAsyncIteration):
+        await flow.asend(httpx.Response(200, request=prepared))
+
+
+def test_http_transport_google_adc_mode_strips_authorization_header(
+    tmp_path,
+) -> None:
+    cfg = _http_config(
+        prefix="bigquery",
+        url="https://bigquery.googleapis.com/mcp",
+        headers={"Authorization": "Bearer inline", "X-Org": "acme"},
+        secret_ref="bigquery",
+    )
+    write_secret(
+        tmp_path,
+        "bigquery",
+        transport="http",
+        headers={
+            "Authorization": "Bearer stale-token",
+            "X-Goog-User-Project": "clean-divbrands",
+        },
+        oauth={"enabled": True, "provider": "google-adc"},
+    )
+
+    from sift_gateway.mcp.upstream import _client_transport
+
+    transport = _client_transport(cfg, str(tmp_path))
+
+    from fastmcp.client.transports import StreamableHttpTransport
+
+    assert isinstance(transport, StreamableHttpTransport)
+    assert transport.auth is not None
+    assert "Authorization" not in transport.headers
+    assert transport.headers["X-Org"] == "acme"
+    assert transport.headers["X-Goog-User-Project"] == "clean-divbrands"
 
 
 def test_http_transport_oauth_mode_uses_sse_transport(

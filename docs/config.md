@@ -263,6 +263,7 @@ Upstream fields:
 | `auto_paginate_timeout_seconds` | float | null | Per-upstream override for gateway auto-pagination timeout |
 | `passthrough_allowed` | bool | `true` | Legacy compatibility flag (retained in config schema; not part of v1 public contract) |
 | `secret_ref` | str | null | Reference to upstream secret file |
+| `secret_ref_overrides_merged` | bool | `false` | Internal loader marker for registry rows that merged inline env/header overrides on top of a resolvable `secret_ref`; not intended for manual configuration |
 | `inherit_parent_env` | bool | `false` | Inherit full parent env for stdio |
 | `external_user_id` | str | null | Stable user identity for upstream auth persistence (`auto` generates UUID) |
 

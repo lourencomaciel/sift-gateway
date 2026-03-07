@@ -310,6 +310,45 @@ def _add_upstream_subcommand(
         action="store_true",
         help="Run OAuth login without opening a browser (CI/testing)",
     )
+    login_parser.add_argument(
+        "--oauth-client-id",
+        default=None,
+        help="Use a pre-registered OAuth client ID",
+    )
+    login_parser.add_argument(
+        "--oauth-client-secret",
+        default=None,
+        help="Use a pre-registered OAuth client secret",
+    )
+    login_parser.add_argument(
+        "--oauth-auth-method",
+        choices=[
+            "none",
+            "client_secret_post",
+            "client_secret_basic",
+        ],
+        default=None,
+        help="Token endpoint auth method for the pre-registered client",
+    )
+    login_parser.add_argument(
+        "--oauth-registration",
+        choices=["dynamic", "preregistered"],
+        default=None,
+        help="OAuth client registration strategy override",
+    )
+    login_parser.add_argument(
+        "--oauth-scope",
+        dest="oauth_scopes",
+        action="append",
+        default=None,
+        help="Repeatable OAuth scope override",
+    )
+    login_parser.add_argument(
+        "--oauth-callback-port",
+        type=int,
+        default=None,
+        help="Fixed localhost callback port for OAuth login",
+    )
     _add_upstream_common_flags(login_parser, dry_run_flag=True)
 
     auth_parser = upstream_sub.add_parser(
@@ -340,6 +379,30 @@ def _add_upstream_subcommand(
         action="append",
         default=None,
         help="Repeatable KEY=VALUE header entry (http only)",
+    )
+    auth_set_parser.add_argument(
+        "--auth-mode",
+        "--oauth-provider",
+        dest="auth_mode",
+        choices=["google-adc"],
+        default=None,
+        help="Enable a runtime auth mode for an HTTP upstream",
+    )
+    auth_set_parser.add_argument(
+        "--scope",
+        "--oauth-scope",
+        dest="auth_scopes",
+        action="append",
+        default=None,
+        help="Repeatable scope for auth-mode based runtime auth",
+    )
+    auth_set_parser.add_argument(
+        "--preserve-auth-mode",
+        action="store_true",
+        help=(
+            "Keep the existing runtime auth mode enabled while updating "
+            "auxiliary HTTP headers"
+        ),
     )
     _add_upstream_common_flags(auth_set_parser, dry_run_flag=True)
 
@@ -964,10 +1027,56 @@ def _run_upstream_auth_set(args: argparse.Namespace) -> int:
         getattr(args, "header_pairs", None),
         option_name="--header",
     )
+    auth_mode = getattr(
+        args,
+        "auth_mode",
+        getattr(args, "oauth_provider", None),
+    )
+    auth_scopes = getattr(
+        args,
+        "auth_scopes",
+        getattr(args, "oauth_scopes", None),
+    )
+    oauth = None
+    clear_oauth = True
+    preserve_auth_mode = bool(getattr(args, "preserve_auth_mode", False))
+    updates_authorization_header = any(
+        key.lower() == "authorization" for key in header_updates
+    )
+    scopes = [
+        scope.strip()
+        for scope in (auth_scopes or [])
+        if isinstance(scope, str) and scope.strip()
+    ]
+    if scopes and not auth_mode:
+        msg = "--scope requires --auth-mode"
+        raise ValueError(msg)
+    if isinstance(auth_mode, str) and auth_mode:
+        if auth_mode in {"oauth", "fastmcp"}:
+            msg = (
+                "Use `sift-gateway upstream login --server ...` to enable "
+                "interactive OAuth login."
+            )
+            raise ValueError(msg)
+        oauth = {"enabled": True, "mode": auth_mode}
+        if scopes:
+            oauth["google_scopes"] = scopes
+        clear_oauth = False
+    elif preserve_auth_mode:
+        if updates_authorization_header:
+            msg = (
+                "--preserve-auth-mode cannot be combined with an "
+                "Authorization header override"
+            )
+            raise ValueError(msg)
+        clear_oauth = False
     result = set_upstream_auth(
         server=args.server,
         env_updates=env_updates,
         header_updates=header_updates,
+        oauth=oauth,
+        merge_oauth=bool(isinstance(oauth, dict) and "google_scopes" in oauth),
+        clear_oauth=clear_oauth,
         data_dir=data_dir,
         dry_run=args.dry_run,
     )
@@ -995,6 +1104,12 @@ def _run_upstream_login(args: argparse.Namespace) -> int:
         data_dir=data_dir,
         dry_run=args.dry_run,
         headless=bool(getattr(args, "headless", False)),
+        oauth_client_id=getattr(args, "oauth_client_id", None),
+        oauth_client_secret=getattr(args, "oauth_client_secret", None),
+        oauth_auth_method=getattr(args, "oauth_auth_method", None),
+        oauth_registration=getattr(args, "oauth_registration", None),
+        oauth_scopes=getattr(args, "oauth_scopes", None),
+        oauth_callback_port=getattr(args, "oauth_callback_port", None),
     )
 
     if getattr(args, "json", False):

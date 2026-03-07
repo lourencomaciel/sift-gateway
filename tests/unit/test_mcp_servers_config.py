@@ -13,6 +13,11 @@ from sift_gateway.config.mcp_servers import (
     to_upstream_configs,
 )
 from sift_gateway.config.settings import load_gateway_config
+from sift_gateway.config.upstream_secrets import (
+    oauth_server_auth_config_path,
+    write_secret,
+)
+from sift_gateway.mcp.upstream import _effective_auth_config
 
 # ---------------------------------------------------------------------------
 # extract_mcp_servers
@@ -469,11 +474,9 @@ class TestLoadGatewayConfigMcpServers:
         )
         merged = load_gateway_config(data_dir_override=str(tmp_path))
         gh = merged.upstreams[0]
-        assert gh.env == {
-            "BASE_TOKEN": "from-file",
-            "OVERRIDE_TOKEN": "from-env",
-        }
-        assert gh.secret_ref is None
+        assert gh.env == {"OVERRIDE_TOKEN": "from-env"}
+        assert gh.secret_ref == "gh"
+        assert gh.secret_ref_overrides_merged is True
 
     def test_registry_http_secret_ref_rows_keep_headers_on_env_override(
         self, tmp_path: Path, monkeypatch
@@ -505,8 +508,9 @@ class TestLoadGatewayConfigMcpServers:
         merged = load_gateway_config(data_dir_override=str(tmp_path))
         api = merged.upstreams[0]
         assert api.env == {"OVERRIDE_TOKEN": "from-env"}
-        assert api.headers == {"Authorization": "Bearer from-file"}
-        assert api.secret_ref is None
+        assert api.headers == {}
+        assert api.secret_ref == "api"
+        assert api.secret_ref_overrides_merged is True
 
     def test_registry_stdio_secret_ref_rows_keep_env_on_header_override(
         self, tmp_path: Path, monkeypatch
@@ -537,9 +541,10 @@ class TestLoadGatewayConfigMcpServers:
         )
         merged = load_gateway_config(data_dir_override=str(tmp_path))
         gh = merged.upstreams[0]
-        assert gh.env == {"BASE_TOKEN": "from-file"}
+        assert gh.env == {}
         assert gh.headers == {"X_TRACE": "1"}
-        assert gh.secret_ref is None
+        assert gh.secret_ref == "gh"
+        assert gh.secret_ref_overrides_merged is True
 
     def test_registry_secret_ref_override_requires_resolvable_secret(
         self, tmp_path: Path, monkeypatch
@@ -571,6 +576,75 @@ class TestLoadGatewayConfigMcpServers:
             ),
         ):
             load_gateway_config(data_dir_override=str(tmp_path))
+
+    def test_registry_shared_secret_ref_override_keeps_runtime_auth(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        from sift_gateway.config.upstream_registry import (
+            replace_registry_from_mcp_servers,
+        )
+
+        state_dir = tmp_path / "state"
+        state_dir.mkdir(parents=True)
+        (state_dir / "config.json").write_text(
+            json.dumps(
+                {
+                    "mcpServers": {
+                        "api_a": {"url": "https://a.example.com/mcp"},
+                        "api_b": {"url": "https://b.example.com/mcp"},
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        replace_registry_from_mcp_servers(
+            data_dir=tmp_path,
+            servers={
+                "api_a": {
+                    "url": "https://a.example.com/mcp",
+                    "_gateway": {"secret_ref": "shared"},
+                },
+                "api_b": {
+                    "url": "https://b.example.com/mcp",
+                    "_gateway": {"secret_ref": "shared"},
+                },
+            },
+            source_kind="manual",
+        )
+        write_secret(
+            tmp_path,
+            "shared",
+            transport="http",
+            oauth={
+                "enabled": True,
+                "provider": "fastmcp",
+                "token_storage": "disk",
+            },
+        )
+        sidecar = oauth_server_auth_config_path(
+            tmp_path,
+            "shared",
+            "https://a.example.com/mcp",
+        )
+        sidecar.parent.mkdir(parents=True, exist_ok=True)
+        sidecar.write_text(
+            '{"enabled": true, "mode": "google-adc"}',
+            encoding="utf-8",
+        )
+
+        monkeypatch.setenv(
+            "SIFT_GATEWAY_UPSTREAMS__0__HEADERS__X_TRACE",
+            "1",
+        )
+        merged = load_gateway_config(data_dir_override=str(tmp_path))
+        api_a = next(item for item in merged.upstreams if item.prefix == "api_a")
+        assert api_a.headers == {"X_TRACE": "1"}
+        assert api_a.secret_ref == "shared"
+        assert api_a.secret_ref_overrides_merged is True
+        assert _effective_auth_config(api_a, str(tmp_path)) == {
+            "enabled": True,
+            "mode": "google-adc",
+        }
 
     def test_legacy_upstreams_raises_migration_error(
         self, tmp_path: Path

@@ -16,7 +16,8 @@ for Sift while preserving Sift's core guarantees
 
 1. No change to artifact/query contracts (`artifact(...)`, `run`, `code`).
 2. No change to response-mode logic (`full` vs `schema_ref`).
-3. No requirement to implement provider-specific OAuth UX in phase 1.
+3. No requirement to implement provider-specific login shortcuts beyond
+   `auth mode + registration` in phase 1.
 
 ## 3. CLI Surface
 
@@ -69,11 +70,30 @@ sift-gateway upstream auth set \
   --server github \
   --env "GITHUB_TOKEN=$GITHUB_TOKEN"
 
-# Run OAuth login for HTTP upstreams and persist Authorization header
+# Run interactive OAuth login for HTTP upstreams and persist Authorization header
 sift-gateway upstream login --server notion
 
 # CI/testing mode (no browser popup)
 sift-gateway upstream login --server notion --headless
+
+# Pre-registered OAuth client
+sift-gateway upstream login \
+  --server notion \
+  --oauth-registration preregistered \
+  --oauth-client-id "$NOTION_CLIENT_ID" \
+  --oauth-client-secret "$NOTION_CLIENT_SECRET"
+
+# Google ADC runtime auth with per-upstream scopes
+sift-gateway upstream auth set \
+  --server bigquery \
+  --auth-mode google-adc \
+  --scope https://www.googleapis.com/auth/bigquery
+
+# Keep Google ADC/OAuth enabled while updating auxiliary headers
+sift-gateway upstream auth set \
+  --server bigquery \
+  --preserve-auth-mode \
+  --header "X-Goog-User-Project=$GCP_QUOTA_PROJECT"
 
 # Remove upstream
 sift-gateway upstream remove --server notion
@@ -207,7 +227,7 @@ Write strategy for mutating commands:
 1. `upstream_runtime_state` and `upstream_admin_events` tables.
 2. Alias/script generator (`upstream script --install`).
 3. Interactive add mode (`upstream add --interactive`).
-4. OAuth lifecycle UX enhancements (re-login UX, provider-specific helpers).
+4. OAuth lifecycle UX enhancements (re-login UX, richer registration helpers).
 
 ## 8. Acceptance Criteria
 

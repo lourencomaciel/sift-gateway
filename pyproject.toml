@@ -1,6 +1,6 @@
 [project]
 name = "sift-gateway"
-version = "0.4.2"
+version = "0.4.3"
 description = "Reliability gateway for schema-stable, secret-safe, pagination-complete agent JSON."
 readme = "README.md"
 license = "MIT"
@@ -28,6 +28,8 @@ classifiers = [
 dependencies = [
     # MCP framework
     "fastmcp>=2.0.0",
+    # Google Application Default Credentials for google-adc runtime auth
+    "google-auth[requests]>=2.0.0",
     # Persistent OAuth token storage backend used by `upstream login`
     "py-key-value-aio[disk]>=0.3.0",
     # Streaming JSON parser (partial mapping)

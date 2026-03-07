@@ -10,16 +10,21 @@ import pytest
 
 from sift_gateway.config.upstream_secrets import (
     clear_oauth_client_registration,
+    clear_oauth_session,
+    effective_oauth_server_auth_config,
     mark_oauth_access_token_stale,
     oauth_cache_dir,
     oauth_cache_dir_path,
     oauth_client_info_cache_key,
+    oauth_server_auth_config_path,
     oauth_token_cache_key,
     oauth_token_storage,
+    read_oauth_server_auth_config,
     read_secret,
     resolve_secret_ref,
     secrets_dir,
     validate_no_secret_conflict,
+    write_oauth_server_auth_config,
     write_secret,
 )
 
@@ -317,6 +322,88 @@ class TestOauthCacheDir:
         assert seen["key"] == "https://api.example.test/mcp/client_info"
         assert seen["collection"] == "mcp-oauth-client-info"
 
+    def test_clear_oauth_session_deletes_token_and_client_info_keys(
+        self,
+    ) -> None:
+        seen: dict[str, object] = {"calls": []}
+
+        class _FakeStore:
+            async def delete(
+                self,
+                key: str,
+                *,
+                collection: str | None = None,
+            ) -> bool:
+                calls = seen["calls"]
+                assert isinstance(calls, list)
+                calls.append((key, collection))
+                return True
+
+        deleted = asyncio.run(
+            clear_oauth_session(
+                _FakeStore(),  # type: ignore[arg-type]
+                server_url="https://api.example.test/mcp",
+            )
+        )
+        assert deleted is True
+        assert seen["calls"] == [
+            (
+                "https://api.example.test/mcp/tokens",
+                "mcp-oauth-token",
+            ),
+            (
+                "https://api.example.test/mcp/client_info",
+                "mcp-oauth-client-info",
+            ),
+        ]
+
+    def test_write_oauth_server_auth_config_persists_explicit_disable(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        write_oauth_server_auth_config(
+            tmp_path,
+            "shared",
+            server_url="https://api.example.test/mcp",
+            oauth_config={"enabled": False},
+        )
+
+        path = oauth_server_auth_config_path(
+            tmp_path,
+            "shared",
+            "https://api.example.test/mcp",
+        )
+        assert path.is_file()
+        assert read_oauth_server_auth_config(
+            tmp_path,
+            "shared",
+            server_url="https://api.example.test/mcp",
+        ) == {"enabled": False}
+
+    def test_effective_oauth_server_auth_config_respects_disable_override(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        write_oauth_server_auth_config(
+            tmp_path,
+            "shared",
+            server_url="https://api.example.test/mcp",
+            oauth_config={"enabled": False},
+        )
+
+        effective = effective_oauth_server_auth_config(
+            tmp_path,
+            "shared",
+            server_url="https://api.example.test/mcp",
+            oauth_config={
+                "enabled": True,
+                "provider": "fastmcp",
+                "token_storage": "disk",
+            },
+        )
+
+        assert effective is None
+
 
 class TestWriteAndReadRoundtrip:
     def test_write_and_read_roundtrip_stdio(self, tmp_path: Path) -> None:
@@ -362,7 +449,8 @@ class TestWriteAndReadRoundtrip:
             headers={"Authorization": "Bearer tok_abc"},
             oauth={
                 "enabled": True,
-                "provider": "fastmcp",
+                "mode": "oauth",
+                "registration": "dynamic",
                 "token_storage": "disk",
             },
         )
@@ -371,7 +459,8 @@ class TestWriteAndReadRoundtrip:
         data = read_secret(tmp_path, "myapi")
         assert data["oauth"] == {
             "enabled": True,
-            "provider": "fastmcp",
+            "mode": "oauth",
+            "registration": "dynamic",
             "token_storage": "disk",
         }
 

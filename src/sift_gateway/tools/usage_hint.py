@@ -20,7 +20,6 @@ PAGINATION_COMPLETENESS_RULE = (
     "Do not claim completeness until pagination.retrieval_status == COMPLETE."
 )
 _DEFAULT_HINT_ROOT_PATH = "$"
-_MAX_PACKAGE_HINT_ITEMS = 4
 UsageInterface = Literal["cli", "mcp"]
 
 
@@ -68,11 +67,14 @@ def available_code_query_packages(
 def summarize_code_query_packages(
     *,
     configured_roots: Sequence[str] | None,
-    max_items: int = _MAX_PACKAGE_HINT_ITEMS,
+    max_items: int = 4,
 ) -> str:
-    """Summarize available code-query package roots in a compact form."""
-    if max_items < 1:
-        max_items = 1
+    """Return available code-query package roots as a comma-separated list.
+
+    ``max_items`` is retained for backwards compatibility but package hints are
+    no longer truncated.
+    """
+    _ = max_items
     roots = allowed_import_roots(configured_roots=configured_roots)
     if not roots:
         return "none"
@@ -86,11 +88,7 @@ def summarize_code_query_packages(
         if any(root in stdlib_roots for root in roots):
             return "stdlib-only"
         return "none"
-    shown = packages[:max_items]
-    hidden_count = len(packages) - len(shown)
-    if hidden_count > 0:
-        return f"{','.join(shown)},+{hidden_count}"
-    return ",".join(shown)
+    return ",".join(packages)
 
 
 def schema_primary_root_path(
