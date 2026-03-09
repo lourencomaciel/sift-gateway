@@ -8,10 +8,10 @@ from sift_gateway.envelope.responses import gateway_error
 from sift_gateway.mcp.server import (
     _BUILTIN_TOOL_SCHEMAS,
     _builtin_tool_description,
-    _mcp_safe_name,
     _mirrored_tool_full_description,
     _mirrored_tool_list_description,
 )
+from sift_gateway.mcp.server_helpers import mcp_safe_name as _mcp_safe_name
 from sift_gateway.tools.tool_inspect import build_tool_inspect_response
 
 if TYPE_CHECKING:
