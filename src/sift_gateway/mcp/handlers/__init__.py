@@ -5,9 +5,11 @@ from sift_gateway.mcp.handlers.artifact_consolidated import (
 )
 from sift_gateway.mcp.handlers.mirrored_tool import handle_mirrored_tool
 from sift_gateway.mcp.handlers.status import handle_status
+from sift_gateway.mcp.handlers.tool_inspect import handle_inspect_tool
 
 __all__ = [
     "handle_artifact",
+    "handle_inspect_tool",
     "handle_mirrored_tool",
     "handle_status",
 ]

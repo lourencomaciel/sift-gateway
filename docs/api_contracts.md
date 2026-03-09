@@ -8,6 +8,7 @@ Public workflows are intentionally narrow:
 
 1. Capture data:
    - MCP: mirrored upstream tool calls
+   - MCP: `gateway.inspect_tool` for full tool docs behind compact `tools/list`
    - CLI: `sift-gateway run -- <command>`
 2. Continue upstream pagination:
    - MCP: `artifact(action="next_page", artifact_id=...)`
@@ -29,6 +30,28 @@ Mirrored tool calls and `artifact(...)` calls must include
 `_gateway_context.session_id`.
 
 If missing, the gateway returns `INVALID_ARGUMENT`.
+
+`gateway.inspect_tool` does not require `_gateway_context.session_id`.
+
+## `gateway.inspect_tool`
+
+### Required arguments
+
+- `tool_name`
+
+### Optional arguments
+
+- `include_input_schema` (`true` by default)
+- `max_description_chars`
+
+### Behavior
+
+- accepts either the MCP-safe tool name from `tools/list` or the qualified
+  internal name
+- returns the full description stored by the gateway
+- returns the compact description currently shown in `tools/list`
+- optionally returns the tool's input schema
+- reports whether the `tools/list` description was compacted
 
 ## Processing Pipeline
 
