@@ -127,6 +127,7 @@ from sift_gateway.obs.metrics import GatewayMetrics, get_metrics
 from sift_gateway.security.redaction import (
     ResponseSecretRedactor,
 )
+from sift_gateway.tools.tool_inspect import compact_tool_description_for_list
 from sift_gateway.tools.usage_hint import (
     PAGINATION_COMPLETENESS_RULE,
     summarize_code_query_packages,
@@ -139,6 +140,10 @@ _GENERIC_ARGS_SCHEMA: dict[str, Any] = {
 }
 _BUILTIN_TOOL_DESCRIPTIONS: dict[str, str] = {
     "gateway.status": "Gateway health and configuration snapshot.",
+    "gateway.inspect_tool": (
+        "Inspect one registered tool and return its full description, "
+        "tools/list description, and optional input schema."
+    ),
 }
 _BUILTIN_TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
     "gateway.status": {
@@ -274,8 +279,7 @@ _BUILTIN_TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
             "blob_id": {
                 "type": "string",
                 "description": (
-                    "[action=blob_materialize] Blob identifier "
-                    "(e.g. bin_...)."
+                    "[action=blob_materialize] Blob identifier (e.g. bin_...)."
                 ),
             },
             "binary_hash": {
@@ -381,7 +385,72 @@ _BUILTIN_TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
         "required": ["action"],
         "additionalProperties": True,
     },
+    "gateway.inspect_tool": {
+        "type": "object",
+        "properties": {
+            "tool_name": {
+                "type": "string",
+                "description": (
+                    "Tool name to inspect. Accepts either the MCP-safe "
+                    "name from tools/list (for example demo_echo) or the "
+                    "qualified name (for example demo.echo)."
+                ),
+            },
+            "include_input_schema": {
+                "type": "boolean",
+                "description": (
+                    "When true, include the tool's input schema in the "
+                    "response. Defaults to true."
+                ),
+            },
+            "max_description_chars": {
+                "type": "integer",
+                "description": (
+                    "Optional maximum characters to return from the full "
+                    "description. Omit for the complete stored description."
+                ),
+            },
+        },
+        "required": ["tool_name"],
+        "additionalProperties": False,
+    },
 }
+
+
+def _builtin_tool_description(server: GatewayServer, tool_name: str) -> str:
+    """Return the full description text for one built-in tool."""
+    description = _BUILTIN_TOOL_DESCRIPTIONS.get(tool_name, "Gateway tool")
+    if tool_name == "artifact":
+        return _artifact_tool_description(
+            code_query_package_summary=summarize_code_query_packages(
+                configured_roots=server.config.code_query_allowed_import_roots,
+            ),
+        )
+    return description
+
+
+def _mirrored_tool_full_description(mirrored: MirroredTool) -> str:
+    """Return the canonical full description for one mirrored tool."""
+    description = (
+        mirrored.upstream_tool.description
+        or f"Mirrored upstream tool {mirrored.original_name}"
+    ).strip()
+    return description or f"Mirrored upstream tool {mirrored.original_name}"
+
+
+def _mirrored_tool_list_description(
+    qualified_name: str,
+    mirrored: MirroredTool,
+) -> tuple[str, bool]:
+    """Return the compact description shown in ``tools/list``."""
+    compacted, was_compacted = compact_tool_description_for_list(
+        _mirrored_tool_full_description(mirrored),
+        inspect_tool_name=_mcp_safe_name("gateway.inspect_tool"),
+        safe_tool_name=_mcp_safe_name(qualified_name),
+    )
+    if not compacted.endswith("."):
+        compacted = f"{compacted}."
+    return f"{compacted} {PAGINATION_COMPLETENESS_RULE}", was_compacted
 
 
 @dataclass
@@ -1099,6 +1168,7 @@ class GatewayServer:
         """
         return {
             "gateway.status": self.handle_status,
+            "gateway.inspect_tool": self.handle_inspect_tool,
             "artifact": self.handle_artifact,
         }
 
@@ -1150,21 +1220,10 @@ class GatewayServer:
                 safe_name=safe_name,
                 qualified_name=tool_name,
             )
-            description = _BUILTIN_TOOL_DESCRIPTIONS.get(
-                tool_name, "Gateway tool"
-            )
-            if tool_name == "artifact":
-                description = _artifact_tool_description(
-                    code_query_package_summary=summarize_code_query_packages(
-                        configured_roots=(
-                            self.config.code_query_allowed_import_roots
-                        ),
-                    ),
-                )
             app.add_tool(
                 RuntimeTool(
                     name=safe_name,
-                    description=description,
+                    description=_builtin_tool_description(self, tool_name),
                     parameters=dict(schema),
                     handler=handler,
                     response_sanitizer=self._sanitize_tool_result,
@@ -1173,16 +1232,11 @@ class GatewayServer:
 
         mirrored_handlers = self.register_mirrored_tools()
         for tool_name, mirrored in self.mirrored_tools.items():
-            mirrored_description = (
-                mirrored.upstream_tool.description
-                or f"Mirrored upstream tool {mirrored.original_name}"
-            )
-            if not mirrored_description.endswith("."):
-                mirrored_description = f"{mirrored_description}."
-            mirrored_description = (
-                f"{mirrored_description} {PAGINATION_COMPLETENESS_RULE}"
-            )
             safe_name = _mcp_safe_name(tool_name)
+            mirrored_description, _ = _mirrored_tool_list_description(
+                tool_name,
+                mirrored,
+            )
             _assert_unique_safe_tool_name(
                 safe_name_to_qualified,
                 safe_name=safe_name,
@@ -1237,6 +1291,16 @@ class GatewayServer:
         """
         from sift_gateway.mcp.handlers.status import (
             handle_status as _handle,
+        )
+
+        return await _handle(self, arguments)
+
+    async def handle_inspect_tool(
+        self, arguments: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Handle the ``gateway.inspect_tool`` tool call."""
+        from sift_gateway.mcp.handlers.tool_inspect import (
+            handle_inspect_tool as _handle,
         )
 
         return await _handle(self, arguments)

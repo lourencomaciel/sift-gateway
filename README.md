@@ -52,6 +52,7 @@ Background and references: [docs/why.md](https://github.com/lourencomaciel/sift-
 ## What Sift adds (without changing upstream servers)
 
 - Artifact-backed outputs: keep full data out of prompt context while preserving it losslessly.
+- Tool inspection helper: keep mirrored `tools/list` descriptions compact and pull full docs with `gateway.inspect_tool`.
 - Schema-aware references: `schema_ref` returns query guidance for stable follow-up analysis.
 - Exact structured retrieval: run Python against stored artifacts instead of relying on prompt-sized payloads.
 - Exact structured retrieval via `artifact(action="query", query_kind="code", ...)` (MCP) or `sift-gateway code` (CLI).

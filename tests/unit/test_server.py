@@ -64,6 +64,34 @@ def _upstream(prefix: str = "demo") -> UpstreamInstance:
     )
 
 
+def _upstream_with_description(
+    *,
+    description: str,
+    prefix: str = "demo",
+) -> UpstreamInstance:
+    config = UpstreamConfig(
+        prefix=prefix,
+        transport="stdio",
+        command="/usr/bin/printf",
+    )
+    return UpstreamInstance(
+        config=config,
+        instance_id=f"inst_{prefix}",
+        tools=[
+            UpstreamToolSchema(
+                name="echo",
+                description=description,
+                input_schema={
+                    "type": "object",
+                    "properties": {"message": {"type": "string"}},
+                    "required": ["message"],
+                },
+                schema_hash="schema_echo",
+            )
+        ],
+    )
+
+
 def _upstream_with_pagination(
     prefix: str = "demo",
 ) -> UpstreamInstance:
@@ -319,6 +347,7 @@ def test_register_tools_returns_callable_handlers(tmp_path: Path) -> None:
     server = _server(tmp_path)
     tools = server.register_tools()
     assert "gateway.status" in tools
+    assert "gateway.inspect_tool" in tools
     assert "artifact" in tools
     for handler in tools.values():
         assert callable(handler)
@@ -709,6 +738,7 @@ def test_build_fastmcp_app_includes_mirrored_tools(tmp_path: Path) -> None:
     tools = asyncio.run(app.get_tools())
     tool_names = set(tools.keys())
     assert "gateway_status" in tool_names
+    assert "gateway_inspect_tool" in tool_names
     assert "demo_echo" in tool_names
     assert "retrieval_status == COMPLETE" in tools["demo_echo"].description
     assert "retrieval_status == COMPLETE" in tools["artifact"].description
@@ -745,6 +775,114 @@ def test_build_fastmcp_app_includes_mirrored_tools(tmp_path: Path) -> None:
         "Third-party imports depend on installed packages" in code_description
     )
     assert "pandas, numpy by default" not in code_description
+
+
+def test_build_fastmcp_app_compacts_long_mirrored_descriptions(
+    tmp_path: Path,
+) -> None:
+    long_description = " ".join(f"field_{idx}" for idx in range(300))
+    server = GatewayServer(
+        config=GatewayConfig(data_dir=tmp_path, passthrough_max_bytes=0),
+        upstreams=[_upstream_with_description(description=long_description)],
+    )
+
+    app = server.build_fastmcp_app()
+    tools = asyncio.run(app.get_tools())
+
+    description = tools["demo_echo"].description
+    assert "gateway_inspect_tool" in description
+    assert '`tool_name="demo_echo"`' in description
+    assert "retrieval_status == COMPLETE" in description
+    assert len(description) < len(long_description)
+
+
+def test_handle_inspect_tool_returns_full_mirrored_description(
+    tmp_path: Path,
+) -> None:
+    long_description = " ".join(f"field_{idx}" for idx in range(300))
+    server = GatewayServer(
+        config=GatewayConfig(data_dir=tmp_path, passthrough_max_bytes=0),
+        upstreams=[_upstream_with_description(description=long_description)],
+    )
+
+    response = asyncio.run(
+        server.handle_inspect_tool({"tool_name": "demo_echo"})
+    )
+
+    assert response["type"] == "gateway_tool_inspect"
+    assert response["name"] == "demo_echo"
+    assert response["qualified_name"] == "demo.echo"
+    assert response["source_kind"] == "mirrored"
+    assert response["description"] == long_description
+    assert response["metadata"]["description_compacted_in_tools_list"] is True
+    assert "gateway_inspect_tool" in response["tools_list_description"]
+    assert '`tool_name="demo_echo"`' in response["tools_list_description"]
+    assert response["input_schema"]["required"] == ["message"]
+
+
+def test_handle_inspect_tool_accepts_qualified_name_and_can_skip_schema(
+    tmp_path: Path,
+) -> None:
+    server = _server_with_upstream(tmp_path)
+
+    response = asyncio.run(
+        server.handle_inspect_tool(
+            {
+                "tool_name": "demo.echo",
+                "include_input_schema": False,
+            }
+        )
+    )
+
+    assert response["qualified_name"] == "demo.echo"
+    assert response["name"] == "demo_echo"
+    assert response["metadata"]["input_schema_included"] is False
+    assert "input_schema" not in response
+
+
+def test_handle_inspect_tool_supports_builtins_and_description_truncation(
+    tmp_path: Path,
+) -> None:
+    server = _server_with_upstream(tmp_path)
+
+    response = asyncio.run(
+        server.handle_inspect_tool(
+            {
+                "tool_name": "artifact",
+                "max_description_chars": 40,
+            }
+        )
+    )
+
+    assert response["type"] == "gateway_tool_inspect"
+    assert response["source_kind"] == "builtin"
+    assert response["name"] == "artifact"
+    assert response["metadata"]["description_truncated"] is True
+    assert len(response["description"]) <= 40
+
+
+def test_handle_inspect_tool_validates_arguments(tmp_path: Path) -> None:
+    server = _server_with_upstream(tmp_path)
+
+    missing = asyncio.run(server.handle_inspect_tool({}))
+    invalid = asyncio.run(
+        server.handle_inspect_tool(
+            {"tool_name": "demo_echo", "max_description_chars": 0}
+        )
+    )
+    invalid_bool = asyncio.run(
+        server.handle_inspect_tool(
+            {"tool_name": "demo_echo", "max_description_chars": True}
+        )
+    )
+    unknown = asyncio.run(
+        server.handle_inspect_tool({"tool_name": "missing_tool"})
+    )
+
+    assert missing["code"] == "INVALID_ARGUMENT"
+    assert invalid["code"] == "INVALID_ARGUMENT"
+    assert invalid_bool["code"] == "INVALID_ARGUMENT"
+    assert unknown["code"] == "NOT_FOUND"
 
 
 def test_build_fastmcp_app_artifact_description_uses_configured_packages(
