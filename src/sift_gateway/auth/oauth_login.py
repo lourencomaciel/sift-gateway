@@ -13,6 +13,7 @@ from sift_gateway.auth.config import (
     auth_scope,
     oauth_callback_port,
 )
+from sift_gateway.mcp.timeouts import UPSTREAM_DISCOVERY_TIMEOUT_SECONDS
 
 TokenEndpointAuthMethod = Literal[
     "none",
@@ -625,7 +626,9 @@ async def oauth_login_access_token(
     else:
         transport = StreamableHttpTransport(url=url, auth=oauth)
 
-    async with Client(transport, timeout=30.0) as client:
+    async with Client(
+        transport, timeout=UPSTREAM_DISCOVERY_TIMEOUT_SECONDS
+    ) as client:
         await client.list_tools()
 
     access_token = oauth_context_access_token(oauth)

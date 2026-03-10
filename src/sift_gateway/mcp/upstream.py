@@ -40,6 +40,10 @@ from sift_gateway.auth.config import (
 )
 from sift_gateway.canon.rfc8785 import canonical_bytes
 from sift_gateway.config.settings import UpstreamConfig
+from sift_gateway.mcp.timeouts import (
+    UPSTREAM_DISCOVERY_TIMEOUT_SECONDS,
+    UPSTREAM_TOOL_CALL_TIMEOUT_SECONDS,
+)
 from sift_gateway.util.hashing import sha256_trunc
 
 _USER_IDS_FILENAME = "upstream_user_ids.json"
@@ -693,8 +697,14 @@ async def _call_tool_once(
         resolved_user_id=instance.resolved_external_user_id,
         disable_oauth=disable_oauth,
     )
-    async with Client(transport, timeout=30.0) as client:
-        result = await client.call_tool(tool_name, arguments)
+    async with Client(
+        transport, timeout=UPSTREAM_DISCOVERY_TIMEOUT_SECONDS
+    ) as client:
+        result = await client.call_tool(
+            tool_name,
+            arguments,
+            timeout=UPSTREAM_TOOL_CALL_TIMEOUT_SECONDS,
+        )
 
     normalized_content = _client_result_content(result)
     structured = getattr(result, "structured_content", None)
@@ -994,7 +1004,9 @@ async def discover_tools(
     transport = _client_transport(
         config, data_dir, resolved_user_id=resolved_user_id
     )
-    async with Client(transport, timeout=30.0) as client:
+    async with Client(
+        transport, timeout=UPSTREAM_DISCOVERY_TIMEOUT_SECONDS
+    ) as client:
         tools = await client.list_tools()
 
     discovered: list[UpstreamToolSchema] = []
