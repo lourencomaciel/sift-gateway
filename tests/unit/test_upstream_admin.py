@@ -1836,6 +1836,8 @@ def test_oauth_login_access_token_uses_sse_transport_when_inferred(
 def test_oauth_login_access_token_uses_proactive_fallback_when_list_tools_is_public(
     monkeypatch,
 ) -> None:
+    seen: dict[str, object] = {}
+
     class _FakeOAuth:
         def __init__(self, *_args, **_kwargs) -> None:
             self.context = SimpleNamespace(
@@ -1848,7 +1850,7 @@ def test_oauth_login_access_token_uses_proactive_fallback_when_list_tools_is_pub
 
     class _FakeClient:
         def __init__(self, _transport, timeout: float = 30.0) -> None:
-            _ = timeout
+            seen["timeout"] = timeout
 
         async def __aenter__(self):
             return self
@@ -1871,7 +1873,6 @@ def test_oauth_login_access_token_uses_proactive_fallback_when_list_tools_is_pub
         lambda _url: "streamable-http",
     )
     monkeypatch.setattr("fastmcp.Client", _FakeClient)
-    seen: dict[str, object] = {}
 
     async def _fake_proactive(*, oauth, url: str) -> str:
         seen["oauth"] = oauth
@@ -1888,6 +1889,7 @@ def test_oauth_login_access_token_uses_proactive_fallback_when_list_tools_is_pub
     )
     assert token == "tok_proactive"
     assert seen["url"] == "https://example.com/mcp"
+    assert seen["timeout"] == 30.0
 
 
 def test_oauth_login_access_token_reuses_cached_token_when_list_tools_is_public(

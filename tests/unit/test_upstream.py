@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 import asyncio
+from http import HTTPStatus
 import json
 from pathlib import Path
+import socket
 import sys
 from types import ModuleType
 from typing import ClassVar
 
+from mcp import McpError
+from mcp.types import ErrorData
 import pytest
 
 from sift_gateway.config.settings import UpstreamConfig
@@ -34,6 +38,7 @@ from sift_gateway.mcp.upstream import (
     discover_tools,
     resolve_external_user_id,
 )
+from sift_gateway.mcp.upstream_errors import classify_upstream_exception
 
 
 def _stdio_config(**overrides) -> UpstreamConfig:
@@ -139,6 +144,47 @@ def test_secret_header_excluded_from_instance_id() -> None:
         _http_config(headers={"Authorization": "Bearer B", "X-Org": "acme"})
     )
     assert id1 == id2
+
+
+def test_classify_upstream_exception_maps_mcp_wrapped_request_timeout() -> None:
+    exc = McpError(
+        ErrorData(
+            code=HTTPStatus.REQUEST_TIMEOUT,
+            message="Timed out while waiting for response to CallToolRequest.",
+        )
+    )
+    assert classify_upstream_exception(exc) == "UPSTREAM_TIMEOUT"
+
+
+def _raise_runtime_timeout() -> None:
+    try:
+        raise TimeoutError("tool call exceeded deadline")
+    except TimeoutError as inner:
+        raise RuntimeError("Failed to initialize server session") from inner
+
+
+def test_classify_upstream_exception_follows_timeout_cause_chain() -> None:
+    with pytest.raises(RuntimeError) as exc_info:
+        _raise_runtime_timeout()
+
+    assert classify_upstream_exception(exc_info.value) == "UPSTREAM_TIMEOUT"
+
+
+def _raise_runtime_timeout_while_handling_dns() -> None:
+    try:
+        raise socket.gaierror("dns resolution failed")
+    except socket.gaierror:
+        try:
+            raise TimeoutError("tool call exceeded deadline")
+        except TimeoutError as inner:
+            raise RuntimeError("Failed to initialize server session") from inner
+
+
+def test_classify_upstream_exception_ignores_suppressed_context() -> None:
+    with pytest.raises(RuntimeError) as exc_info:
+        _raise_runtime_timeout_while_handling_dns()
+
+    assert classify_upstream_exception(exc_info.value) == "UPSTREAM_TIMEOUT"
 
 
 # ---- semantic salt included ----
@@ -333,6 +379,7 @@ class _FakeClient:
         self.transport = transport
         self.timeout = timeout
         self.calls: list[tuple[str, dict]] = []
+        self.call_timeouts: list[float | None] = []
         _FakeClient.instances.append(self)
 
     async def __aenter__(self) -> _FakeClient:
@@ -344,8 +391,15 @@ class _FakeClient:
     async def list_tools(self) -> list[_FakeTool]:
         return list(_FakeClient.tools)
 
-    async def call_tool(self, name: str, arguments: dict) -> _FakeCallResult:
+    async def call_tool(
+        self,
+        name: str,
+        arguments: dict,
+        *,
+        timeout: float | None = None,
+    ) -> _FakeCallResult:
         self.calls.append((name, dict(arguments)))
+        self.call_timeouts.append(timeout)
         return _FakeCallResult()
 
 
@@ -380,6 +434,7 @@ async def test_discover_tools_fetches_and_hashes_tool_schemas(
     assert isinstance(created.transport, StdioTransport)
     assert created.transport.command == cfg.command
     assert created.transport.args == cfg.args
+    assert created.timeout == 30.0
 
 
 @pytest.mark.asyncio
@@ -403,7 +458,9 @@ async def test_call_upstream_tool_normalizes_result(monkeypatch) -> None:
 
     assert isinstance(created.transport, StreamableHttpTransport)
     assert created.transport.url == cfg.url
+    assert created.timeout == 30.0
     assert created.calls == [("tool_a", {"x": 1})]
+    assert created.call_timeouts == [300.0]
 
 
 @pytest.mark.asyncio
@@ -424,9 +481,13 @@ async def test_call_upstream_tool_retries_once_after_oauth_auth_failure(
             return False
 
         async def call_tool(
-            self, name: str, arguments: dict
+            self,
+            name: str,
+            arguments: dict,
+            *,
+            timeout: float | None = None,
         ) -> _FakeCallResult:
-            _ = (name, arguments)
+            _ = (name, arguments, timeout)
             call_count = int(seen["call_count"])
             seen["call_count"] = call_count + 1
             if call_count == 0:
@@ -480,9 +541,13 @@ async def test_call_upstream_tool_no_retry_when_no_refresh_capability(
             return False
 
         async def call_tool(
-            self, name: str, arguments: dict
+            self,
+            name: str,
+            arguments: dict,
+            *,
+            timeout: float | None = None,
         ) -> _FakeCallResult:
-            _ = (name, arguments)
+            _ = (name, arguments, timeout)
             seen["call_count"] += 1
             raise RuntimeError("401 unauthorized")
 
@@ -530,9 +595,13 @@ async def test_call_upstream_tool_google_adc_does_not_fallback_to_static_auth(
             return False
 
         async def call_tool(
-            self, name: str, arguments: dict
+            self,
+            name: str,
+            arguments: dict,
+            *,
+            timeout: float | None = None,
         ) -> _FakeCallResult:
-            _ = (name, arguments)
+            _ = (name, arguments, timeout)
             seen["call_count"] += 1
             raise RuntimeError("401 unauthorized")
 
