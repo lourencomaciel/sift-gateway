@@ -20,6 +20,7 @@ from sift_gateway.canon import (
     compress_bytes,
     decompress_bytes,
 )
+from sift_gateway.canon.rfc8785 import coerce_floats
 from sift_gateway.canon.decimal_json import loads_decimal
 from sift_gateway.config.settings import (
     CanonicalEncoding,
@@ -89,12 +90,11 @@ def _compute_content_sizes(
             has_binary_refs = True
             binary_bytes_total += part.get("byte_count", 0)
         else:
-            # Use canonical_bytes to handle Decimal values safely
-            json_bytes += len(canonical_bytes(part))
+            # Canonical size checks must tolerate upstream float values.
+            json_bytes += len(canonical_bytes(coerce_floats(part)))
 
     if json_bytes == 0 and not has_binary_refs:
-        # Use canonical_bytes to handle Decimal values safely
-        json_bytes = len(canonical_bytes(envelope_dict))
+        json_bytes = len(canonical_bytes(coerce_floats(envelope_dict)))
 
     return json_bytes, binary_bytes_total, has_binary_refs
 
@@ -156,8 +156,8 @@ def prepare_payload(
     Raises:
         ValueError: If compression integrity check fails.
     """
-    # 1. Canonicalize
-    uncompressed = canonical_bytes(envelope_dict)
+    # 1. Canonicalize with float normalization for upstream JSON payloads.
+    uncompressed = canonical_bytes(coerce_floats(envelope_dict))
 
     # 2. Hash uncompressed canonical bytes
     p_hash = payload_hash_full(uncompressed)

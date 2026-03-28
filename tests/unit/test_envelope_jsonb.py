@@ -45,3 +45,29 @@ def test_envelope_jsonb_minimal_for_large() -> None:
     assert payload is not None
     assert "content_summary" in payload
     assert payload["content_summary"]["part_count"] == 1
+
+
+def test_envelope_jsonb_minimal_for_large_accepts_float_values() -> None:
+    envelope = Envelope(
+        upstream_instance_id="up_1",
+        upstream_prefix="google_ads",
+        tool="campaign_report",
+        status="ok",
+        content=[
+            JsonContentPart(
+                value={
+                    "result": [
+                        {"metrics": {"conversions": 1.25, "spend": 12.5}}
+                    ]
+                }
+            )
+        ],
+        meta={"warnings": []},
+    )
+
+    payload = envelope_to_jsonb(
+        envelope, mode="minimal_for_large", minimize_threshold_bytes=20
+    )
+
+    assert payload is not None
+    assert payload["content_summary"]["part_count"] == 1

@@ -4,7 +4,7 @@ from decimal import Decimal
 
 import pytest
 
-from sift_gateway.canon.rfc8785 import canonical_text
+from sift_gateway.canon.rfc8785 import canonical_text, coerce_floats
 
 
 def test_canonical_orders_keys_and_removes_whitespace() -> None:
@@ -37,3 +37,13 @@ def test_canonical_sorts_keys_by_utf16_code_units() -> None:
 def test_canonical_rejects_python_float() -> None:
     with pytest.raises(TypeError, match="float value not allowed"):
         canonical_text({"v": 1.2})
+
+
+def test_coerce_floats_preserves_invalid_key_types() -> None:
+    coerced = coerce_floats({1: 1.25, "ok": [2.5]})
+
+    assert 1 in coerced
+    assert isinstance(coerced[1], Decimal)
+    assert isinstance(coerced["ok"][0], Decimal)
+    with pytest.raises(TypeError, match="JSON object keys must be strings"):
+        canonical_text(coerced)

@@ -190,9 +190,11 @@ def canonical_text(value: Any) -> str:
 def coerce_floats(value: Any) -> Any:
     """Recursively convert float values to Decimal.
 
-    Walk dicts and lists depth-first, replacing any ``float``
-    value with its ``Decimal`` equivalent so that
-    ``canonical_bytes`` accepts the result.
+    Walk dicts, lists, and tuples depth-first, replacing any
+    ``float`` value with its ``Decimal`` equivalent while
+    preserving existing keys and container types. This keeps
+    malformed JSON-like inputs invalid so canonicalization can
+    still reject them.
 
     Args:
         value: JSON-compatible Python value.
@@ -203,9 +205,11 @@ def coerce_floats(value: Any) -> Any:
     if isinstance(value, float):
         return Decimal(str(value))
     if isinstance(value, dict):
-        return {str(key): coerce_floats(item) for key, item in value.items()}
-    if isinstance(value, (list, tuple)):
+        return {key: coerce_floats(item) for key, item in value.items()}
+    if isinstance(value, list):
         return [coerce_floats(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(coerce_floats(item) for item in value)
     return value
 
 

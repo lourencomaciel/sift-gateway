@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from sift_gateway.canon.rfc8785 import canonical_bytes
+from sift_gateway.canon.rfc8785 import canonical_bytes, coerce_floats
 from sift_gateway.envelope.model import Envelope
 
 
@@ -23,7 +23,7 @@ def envelope_to_jsonb(
         return payload
 
     if mode == "minimal_for_large":
-        raw_len = len(canonical_bytes(payload))
+        raw_len = len(canonical_bytes(coerce_floats(payload)))
         if raw_len <= minimize_threshold_bytes:
             return payload
         return {
