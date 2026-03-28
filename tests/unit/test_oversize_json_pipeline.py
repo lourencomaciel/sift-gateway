@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from decimal import Decimal
 
-from sift_gateway.canon.rfc8785 import canonical_bytes
+from sift_gateway.canon.rfc8785 import canonical_bytes, coerce_floats
 from sift_gateway.envelope.model import (
     BinaryRefContentPart,
     Envelope,
@@ -109,6 +109,36 @@ def test_oversize_preserves_blob_content_integrity(tmp_path) -> None:
         stored_bytes = f.read()
     assert stored_bytes == expected_canonical
     assert sha256_hex(stored_bytes) == expected_hash
+
+
+def test_oversize_accepts_float_values_in_json_parts(tmp_path) -> None:
+    """Float-bearing JSON parts are canonicalized without raising."""
+    store = BlobStore(tmp_path / "blobs" / "bin")
+    big_value = {
+        "result": [
+            {
+                "metrics": {
+                    "conversions": 1.25,
+                    "conversions_value": 42.75,
+                }
+            }
+        ]
+    }
+    envelope = _make_envelope([JsonContentPart(value=big_value)])
+
+    expected_canonical = canonical_bytes(coerce_floats(big_value))
+
+    result = replace_oversized_json_parts(
+        envelope,
+        max_json_part_parse_bytes=20,
+        blob_store=store,
+    )
+
+    ref_part = result.content[0]
+    assert isinstance(ref_part, BinaryRefContentPart)
+    with store.open_stream(ref_part.binary_hash) as f:
+        stored_bytes = f.read()
+    assert stored_bytes == expected_canonical
 
 
 def test_under_threshold_json_part_kept(tmp_path) -> None:

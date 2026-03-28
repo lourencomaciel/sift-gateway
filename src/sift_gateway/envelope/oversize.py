@@ -12,7 +12,7 @@ from __future__ import annotations
 from dataclasses import replace
 from typing import Any
 
-from sift_gateway.canon.rfc8785 import canonical_bytes
+from sift_gateway.canon.rfc8785 import canonical_bytes, coerce_floats
 from sift_gateway.envelope.model import (
     BinaryRefContentPart,
     ContentPart,
@@ -56,7 +56,9 @@ def replace_oversized_json_parts(
 
     for idx, part in enumerate(envelope.content):
         if isinstance(part, JsonContentPart):
-            encoded = canonical_bytes(part.value)
+            # Upstream JSON payloads may contain Python floats; normalize them
+            # to Decimal-compatible values before canonicalizing for storage.
+            encoded = canonical_bytes(coerce_floats(part.value))
             if len(encoded) > max_json_part_parse_bytes:
                 blob_ref = blob_store.put_bytes(
                     encoded, mime="application/json"

@@ -136,6 +136,14 @@ def test_prepare_payload_hash_integrity() -> None:
     assert result.payload_hash == hashlib.sha256(uncompressed).hexdigest()
 
 
+def test_prepare_payload_rejects_non_string_keys_even_with_floats() -> None:
+    env = _sample_envelope()
+    env["content"][0]["value"] = {1: 1.25, "1": 2.5}
+
+    with pytest.raises(TypeError, match="JSON object keys must be strings"):
+        prepare_payload(env)
+
+
 # ---- JSONB modes ----
 
 
