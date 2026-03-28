@@ -20,8 +20,8 @@ from sift_gateway.canon import (
     compress_bytes,
     decompress_bytes,
 )
-from sift_gateway.canon.rfc8785 import coerce_floats
 from sift_gateway.canon.decimal_json import loads_decimal
+from sift_gateway.canon.rfc8785 import coerce_floats
 from sift_gateway.config.settings import (
     CanonicalEncoding,
     EnvelopeJsonbMode,
