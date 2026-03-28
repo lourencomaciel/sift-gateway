@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+## [0.4.4] - 2026-03-29
+
+### Added
+- Added gateway inspect tooling to expose compact tool documentation through the MCP surface and CLI-backed handlers.
+
+### Fixed
+- Improved upstream timeout handling with shared timeout helpers, clearer upstream timeout error mapping, and broader timeout-path coverage.
+- Normalized upstream Python float values before envelope canonicalization so JSONB sizing, oversized JSON replacement, and payload storage paths accept float-bearing payloads while still rejecting invalid non-string keys.
+
 ## [0.4.3] - 2026-03-07
 
 ### Changed
