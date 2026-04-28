@@ -1,3 +1,5 @@
+[![MseeP.ai Security Assessment Badge](https://mseep.net/pr/lourencomaciel-sift-gateway-badge.png)](https://mseep.ai/app/lourencomaciel-sift-gateway)
+
 # Sift
 
 Reliability gateway for AI tool output: schema-stable, secret-safe, pagination-complete JSON.
