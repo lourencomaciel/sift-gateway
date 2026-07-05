@@ -8,6 +8,7 @@ import sqlite3
 import pytest
 
 from sift_gateway.query.filters import (
+    MAX_IN_FILTER_VALUES,
     Filter,
     FilterGroup,
     FilterNot,
@@ -114,6 +115,17 @@ class TestCompileIn:
         sql, params = compile_filter(Filter(path="$.x", op="in", value=[99]))
         assert sql == "json_extract(record, ?) IN (?)"
         assert params == ["$.x", 99]
+
+    def test_in_accepts_max_values(self) -> None:
+        values = list(range(MAX_IN_FILTER_VALUES))
+        sql, params = compile_filter(Filter(path="$.id", op="in", value=values))
+        assert sql.count("?") == MAX_IN_FILTER_VALUES + 1
+        assert params == ["$.id", *values]
+
+    def test_in_rejects_more_than_max_values(self) -> None:
+        values = list(range(MAX_IN_FILTER_VALUES + 1))
+        with pytest.raises(ValueError, match="at most 500 values"):
+            compile_filter(Filter(path="$.id", op="in", value=values))
 
 
 class TestCompileContains:

@@ -34,6 +34,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from sift_gateway.constants import (
     CONFIG_FILENAME,
     DEFAULT_DATA_DIR,
+    MAX_PRUNE_BATCH_SIZE,
     STATE_SUBDIR,
 )
 
@@ -553,7 +554,7 @@ class GatewayConfig(BaseSettings):
 
     # --------------- Quota enforcement (§16.3) ---------------
     quota_enforcement_enabled: bool = Field(True)
-    quota_prune_batch_size: int = Field(100, ge=1)
+    quota_prune_batch_size: int = Field(100, ge=1, le=MAX_PRUNE_BATCH_SIZE)
     quota_max_prune_rounds: int = Field(5, ge=1)
     quota_hard_delete_grace_seconds: int = Field(0, ge=0)
 

@@ -21,6 +21,7 @@ from sift_gateway.cursor.sample_set_hash import (
     assert_sample_set_hash_binding,
     compute_sample_set_hash,
 )
+from sift_gateway.db.protocols import sqlite_in_clause
 from sift_gateway.envelope.responses import gateway_error
 from sift_gateway.pagination.contract import build_retrieval_pagination_meta
 from sift_gateway.query.filters import (
@@ -429,22 +430,26 @@ def _count_select_rows(
     filter_params: list[Any],
 ) -> int:
     """Count matching rows without projection deduplication."""
-    total_count = 0
-    for aid, _, _, _ in candidate_rows:
-        count_sql = (
-            "SELECT COUNT(*)"
-            " FROM artifact_records"
-            " WHERE workspace_id = ?"
-            " AND artifact_id = ?"
-            " AND root_path = ?"
-        )
-        count_params: list[Any] = [WORKSPACE_ID, aid, root_path]
-        if filter_sql:
-            count_sql += f" AND ({filter_sql})"
-            count_params.extend(filter_params)
-        count_row = connection.execute(count_sql, count_params).fetchone()
-        total_count += count_row[0] if count_row else 0
-    return total_count
+    artifact_ids = [aid for aid, _, _, _ in candidate_rows]
+    if not artifact_ids:
+        return 0
+    artifact_predicate, artifact_params = sqlite_in_clause(
+        "artifact_id",
+        artifact_ids,
+    )
+    count_sql = (
+        "SELECT COUNT(*)"
+        " FROM artifact_records"
+        " WHERE workspace_id = ?"
+        f" AND {artifact_predicate}"
+        " AND root_path = ?"
+    )
+    count_params: list[Any] = [WORKSPACE_ID, *artifact_params, root_path]
+    if filter_sql:
+        count_sql += f" AND ({filter_sql})"
+        count_params.extend(filter_params)
+    count_row = connection.execute(count_sql, count_params).fetchone()
+    return count_row[0] if count_row else 0
 
 
 def _count_select_distinct_rows(
@@ -458,31 +463,38 @@ def _count_select_distinct_rows(
     filter_params: list[Any],
 ) -> int:
     """Count unique projected values across candidate rows."""
+    artifact_ids = [aid for aid, _, _, _ in candidate_rows]
+    if not artifact_ids:
+        return 0
+    artifact_predicate, artifact_params = sqlite_in_clause(
+        "artifact_id",
+        artifact_ids,
+    )
+    proj_sql = (
+        f"SELECT {select_sql_expr}"
+        " FROM artifact_records"
+        " WHERE workspace_id = ?"
+        f" AND {artifact_predicate}"
+        " AND root_path = ?"
+    )
+    proj_params: list[Any] = [
+        *select_sql_params,
+        WORKSPACE_ID,
+        *artifact_params,
+        root_path,
+    ]
+    if filter_sql:
+        proj_sql += f" AND ({filter_sql})"
+        proj_params.extend(filter_params)
+
     seen: set[str] = set()
     total_count = 0
-    for aid, _, _, _ in candidate_rows:
-        proj_sql = (
-            f"SELECT {select_sql_expr}"
-            " FROM artifact_records"
-            " WHERE workspace_id = ?"
-            " AND artifact_id = ?"
-            " AND root_path = ?"
-        )
-        proj_params: list[Any] = [
-            *select_sql_params,
-            WORKSPACE_ID,
-            aid,
-            root_path,
-        ]
-        if filter_sql:
-            proj_sql += f" AND ({filter_sql})"
-            proj_params.extend(filter_params)
-        for d_row in connection.execute(proj_sql, proj_params).fetchall():
-            key = _distinct_key(d_row[0])
-            if key in seen:
-                continue
-            seen.add(key)
-            total_count += 1
+    for d_row in connection.execute(proj_sql, proj_params).fetchall():
+        key = _distinct_key(d_row[0])
+        if key in seen:
+            continue
+        seen.add(key)
+        total_count += 1
     return total_count
 
 

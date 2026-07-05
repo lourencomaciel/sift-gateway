@@ -16,7 +16,7 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
-from sift_gateway.constants import WORKSPACE_ID
+from sift_gateway.constants import MAX_PRUNE_BATCH_SIZE, WORKSPACE_ID
 from sift_gateway.db.protocols import (
     ConnectionLike,
     increment_metric,
@@ -160,7 +160,21 @@ def soft_delete_lru_params(
     Returns:
         Parameter tuple for the LRU soft-delete query.
     """
+    batch_size = _validate_prune_batch_size(batch_size)
     return (WORKSPACE_ID, WORKSPACE_ID, batch_size)
+
+
+def _validate_prune_batch_size(prune_batch_size: int) -> int:
+    """Validate quota prune batch sizing before DB work starts."""
+    if (
+        not isinstance(prune_batch_size, int)
+        or isinstance(prune_batch_size, bool)
+        or prune_batch_size < 1
+        or prune_batch_size > MAX_PRUNE_BATCH_SIZE
+    ):
+        msg = f"prune_batch_size must be between 1 and {MAX_PRUNE_BATCH_SIZE}"
+        raise ValueError(msg)
+    return prune_batch_size
 
 
 # ---------------------------------------------------------------------------
@@ -361,6 +375,7 @@ def enforce_quota(
         A QuotaEnforcementResult with before/after usage and
         prune statistics.
     """
+    prune_batch_size = _validate_prune_batch_size(prune_batch_size)
     log = logger or get_logger(component="jobs.quota")
     increment_metric(metrics, "quota_checks")
 

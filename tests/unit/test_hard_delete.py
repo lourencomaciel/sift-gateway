@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from sift_gateway.constants import WORKSPACE_ID
+from sift_gateway.constants import MAX_PRUNE_BATCH_SIZE, WORKSPACE_ID
 from sift_gateway.jobs.hard_delete import (
     DELETE_ARTIFACTS_BATCH_SQL,
     DELETE_BLOBS_BATCH_SQL,
@@ -108,6 +108,42 @@ def test_hard_delete_candidates_params_default_batch_size() -> None:
     ts = "2025-06-15T12:00:00Z"
     params = hard_delete_candidates_params(ts)
     assert params == (WORKSPACE_ID, ts, 50)
+
+
+def test_hard_delete_candidates_params_accepts_max_batch_size() -> None:
+    ts = "2025-06-15T12:00:00Z"
+    params = hard_delete_candidates_params(
+        ts,
+        batch_size=MAX_PRUNE_BATCH_SIZE,
+    )
+    assert params == (WORKSPACE_ID, ts, MAX_PRUNE_BATCH_SIZE)
+
+
+@pytest.mark.parametrize("batch_size", [0, MAX_PRUNE_BATCH_SIZE + 1])
+def test_hard_delete_candidates_params_rejects_invalid_batch_size(
+    batch_size: int,
+) -> None:
+    with pytest.raises(ValueError, match="between 1 and 1000"):
+        hard_delete_candidates_params(
+            "2025-06-15T12:00:00Z",
+            batch_size=batch_size,
+        )
+
+
+def test_run_hard_delete_batch_rejects_invalid_batch_size_before_db_work() -> (
+    None
+):
+    connection = _FakeConnection()
+
+    with pytest.raises(ValueError, match="between 1 and 1000"):
+        run_hard_delete_batch(
+            connection,
+            grace_period_timestamp="2025-01-01T00:00:00Z",
+            batch_size=MAX_PRUNE_BATCH_SIZE + 1,
+        )
+
+    assert connection.executed == []
+    assert connection.committed is False
 
 
 def test_run_hard_delete_batch_removes_records_and_fs_blobs(tmp_path) -> None:

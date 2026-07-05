@@ -17,6 +17,7 @@ from typing import Any
 from sift_gateway.constants import (
     BLOBS_PAYLOAD_SUBDIR,
     DEFAULT_DATA_DIR,
+    MAX_PRUNE_BATCH_SIZE,
     WORKSPACE_ID,
 )
 from sift_gateway.db.protocols import (
@@ -119,6 +120,19 @@ def _delete_batch_statement(
     )
 
 
+def _validate_hard_delete_batch_size(batch_size: int) -> int:
+    """Validate hard-delete batch sizing before building DB statements."""
+    if (
+        not isinstance(batch_size, int)
+        or isinstance(batch_size, bool)
+        or batch_size < 1
+        or batch_size > MAX_PRUNE_BATCH_SIZE
+    ):
+        msg = f"batch_size must be between 1 and {MAX_PRUNE_BATCH_SIZE}"
+        raise ValueError(msg)
+    return batch_size
+
+
 def hard_delete_candidates_params(
     grace_period_timestamp: str,
     batch_size: int = 50,
@@ -133,6 +147,7 @@ def hard_delete_candidates_params(
     Returns:
         Parameter tuple for the hard-delete candidate query.
     """
+    batch_size = _validate_hard_delete_batch_size(batch_size)
     return (WORKSPACE_ID, grace_period_timestamp, batch_size)
 
 
@@ -207,6 +222,7 @@ def run_hard_delete_batch(
         A HardDeleteResult summarizing deletions and reclaimed
         bytes.
     """
+    batch_size = _validate_hard_delete_batch_size(batch_size)
     log = logger or get_logger(component="jobs.hard_delete")
     resolved_payloads_root = _resolve_payloads_root(payloads_root)
     try:

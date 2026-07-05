@@ -49,6 +49,8 @@ _ALL_OPS = frozenset(
     ]
 )
 
+MAX_IN_FILTER_VALUES = 500
+
 
 # ── Data model ───────────────────────────────────────────────────
 
@@ -183,6 +185,9 @@ def _compile_in_predicate(
     """Compile IN list membership."""
     if not isinstance(values, (list, tuple)):
         msg = "'in' operator requires a list value"
+        raise ValueError(msg)
+    if len(values) > MAX_IN_FILTER_VALUES:
+        msg = f"'in' operator supports at most {MAX_IN_FILTER_VALUES} values"
         raise ValueError(msg)
     if not values:
         return "0", []

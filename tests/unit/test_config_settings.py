@@ -14,6 +14,7 @@ from sift_gateway.config.settings import (
     _SparseList,
     load_gateway_config,
 )
+from sift_gateway.constants import MAX_PRUNE_BATCH_SIZE
 
 
 def test_gateway_config_derived_paths(tmp_path: Path) -> None:
@@ -81,6 +82,24 @@ def test_passthrough_max_bytes_rejects_negative(
 ) -> None:
     with pytest.raises(ValidationError):
         GatewayConfig(data_dir=tmp_path, passthrough_max_bytes=-1)
+
+
+def test_quota_prune_batch_size_accepts_max(tmp_path: Path) -> None:
+    config = GatewayConfig(
+        data_dir=tmp_path,
+        quota_prune_batch_size=MAX_PRUNE_BATCH_SIZE,
+    )
+    assert config.quota_prune_batch_size == MAX_PRUNE_BATCH_SIZE
+
+
+def test_quota_prune_batch_size_rejects_above_max(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(ValidationError):
+        GatewayConfig(
+            data_dir=tmp_path,
+            quota_prune_batch_size=MAX_PRUNE_BATCH_SIZE + 1,
+        )
 
 
 def test_secret_redaction_defaults(tmp_path: Path) -> None:

@@ -7,7 +7,7 @@ from decimal import Decimal
 
 import pytest
 
-from sift_gateway.constants import WORKSPACE_ID
+from sift_gateway.constants import MAX_PRUNE_BATCH_SIZE, WORKSPACE_ID
 from sift_gateway.jobs.hard_delete import (
     FIND_HARD_DELETE_CANDIDATES_SQL,
     FIND_UNREFERENCED_BLOBS_SQL,
@@ -147,6 +147,19 @@ def test_soft_delete_lru_params_default_batch() -> None:
 def test_soft_delete_lru_params_custom_batch() -> None:
     params = soft_delete_lru_params(batch_size=50)
     assert params == (WORKSPACE_ID, WORKSPACE_ID, 50)
+
+
+def test_soft_delete_lru_params_accepts_max_batch() -> None:
+    params = soft_delete_lru_params(batch_size=MAX_PRUNE_BATCH_SIZE)
+    assert params == (WORKSPACE_ID, WORKSPACE_ID, MAX_PRUNE_BATCH_SIZE)
+
+
+@pytest.mark.parametrize("batch_size", [0, MAX_PRUNE_BATCH_SIZE + 1])
+def test_soft_delete_lru_params_rejects_invalid_batch(
+    batch_size: int,
+) -> None:
+    with pytest.raises(ValueError, match="between 1 and 1000"):
+        soft_delete_lru_params(batch_size=batch_size)
 
 
 # ---------------------------------------------------------------------------
@@ -350,6 +363,21 @@ def test_enforce_quota_no_breach_returns_immediately() -> None:
     assert counter_value(metrics.quota_checks) == 1
     assert counter_value(metrics.quota_breaches) == 0
     assert counter_value(metrics.quota_prune_triggered) == 0
+
+
+def test_enforce_quota_rejects_invalid_prune_batch_before_db_work() -> None:
+    conn = _FakeConnection(usage_row=(600, 800, 700))
+
+    with pytest.raises(ValueError, match="between 1 and 1000"):
+        enforce_quota(
+            conn,
+            max_binary_blob_bytes=500,
+            max_payload_total_bytes=500,
+            max_total_storage_bytes=500,
+            prune_batch_size=MAX_PRUNE_BATCH_SIZE + 1,
+        )
+
+    assert conn.executed == []
 
 
 # ---------------------------------------------------------------------------

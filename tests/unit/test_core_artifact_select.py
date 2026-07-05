@@ -5,7 +5,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from sift_gateway.core.artifact_select import execute_artifact_select
+from sift_gateway.constants import WORKSPACE_ID
+from sift_gateway.core.artifact_select import (
+    _count_select_distinct_rows,
+    _count_select_rows,
+    execute_artifact_select,
+)
 
 
 class _FakeCursor:
@@ -28,11 +33,13 @@ class _FakeCursor:
 class _SeqConnection:
     def __init__(self, cursors: list[_FakeCursor]) -> None:
         self._cursors = cursors
+        self.executed: list[tuple[str, tuple[Any, ...] | list[Any]]] = []
         self.committed = False
 
     def execute(
         self, _sql: str, _params: tuple[Any, ...] | list[Any]
     ) -> _FakeCursor:
+        self.executed.append((_sql, _params))
         if not self._cursors:
             return _FakeCursor()
         return self._cursors.pop(0)
@@ -310,3 +317,70 @@ def test_execute_artifact_select_count_only_persists_count_derived() -> None:
     assert result["count"] == 3
     assert result["derived_artifact_id"] == "art_derived"
     assert runtime.persisted_calls[0]["result_data"] == {"count": 3}
+
+
+def test_count_select_rows_uses_single_in_query() -> None:
+    conn = _SeqConnection([_FakeCursor(one=(7,))])
+
+    count = _count_select_rows(
+        connection=conn,
+        candidate_rows=[
+            ("art_1", {}, {}, {}),
+            ("art_2", {}, {}, {}),
+        ],
+        root_path="$.items",
+        filter_sql="json_extract(record, ?) = ?",
+        filter_params=["$.status", "active"],
+    )
+
+    assert count == 7
+    assert len(conn.executed) == 1
+    sql, params = conn.executed[0]
+    assert "artifact_id IN (?, ?)" in sql
+    assert params == [
+        WORKSPACE_ID,
+        "art_1",
+        "art_2",
+        "$.items",
+        "$.status",
+        "active",
+    ]
+
+
+def test_count_select_distinct_rows_uses_single_in_query() -> None:
+    conn = _SeqConnection(
+        [
+            _FakeCursor(
+                all_rows=[
+                    ('{"b":2,"a":1}',),
+                    ('{"a":1,"b":2}',),
+                    ("alpha",),
+                ]
+            )
+        ]
+    )
+
+    count = _count_select_distinct_rows(
+        connection=conn,
+        candidate_rows=[
+            ("art_1", {}, {}, {}),
+            ("art_2", {}, {}, {}),
+        ],
+        root_path="$.items",
+        select_sql_expr="json_extract(record, ?)",
+        select_sql_params=["$.name"],
+        filter_sql=None,
+        filter_params=[],
+    )
+
+    assert count == 2
+    assert len(conn.executed) == 1
+    sql, params = conn.executed[0]
+    assert "artifact_id IN (?, ?)" in sql
+    assert params == [
+        "$.name",
+        WORKSPACE_ID,
+        "art_1",
+        "art_2",
+        "$.items",
+    ]
