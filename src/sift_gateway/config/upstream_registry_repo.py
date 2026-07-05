@@ -91,8 +91,8 @@ def upsert_payload(conn: Any, payload: dict[str, Any]) -> None:
             source_kind,
             source_ref
         ) VALUES (
-            %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-            %s, %s, %s, %s, %s, %s, %s, %s, %s
+            ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+            ?, ?, ?, ?, ?, ?, ?, ?, ?
         )
         ON CONFLICT (workspace_id, prefix)
         DO UPDATE SET
@@ -144,7 +144,7 @@ def load_registry_upstream_records(
         sql = (
             "SELECT "
             + ", ".join(_UPSTREAM_REGISTRY_COLUMNS)
-            + " FROM upstream_registry WHERE workspace_id = %s"
+            + " FROM upstream_registry WHERE workspace_id = ?"
         )
         params: tuple[Any, ...] = (WORKSPACE_ID,)
         if not include_disabled:
@@ -172,7 +172,7 @@ def get_registry_upstream_record(
                 "SELECT "
                 + ", ".join(_UPSTREAM_REGISTRY_COLUMNS)
                 + " FROM upstream_registry "
-                + "WHERE workspace_id = %s AND prefix = %s"
+                + "WHERE workspace_id = ? AND prefix = ?"
             ),
             (WORKSPACE_ID, prefix),
         ).fetchall()
@@ -194,7 +194,7 @@ def remove_registry_upstream(
         cursor = conn.execute(
             (
                 "DELETE FROM upstream_registry "
-                "WHERE workspace_id = %s AND prefix = %s"
+                "WHERE workspace_id = ? AND prefix = ?"
             ),
             (WORKSPACE_ID, prefix),
         )
@@ -216,8 +216,8 @@ def set_registry_upstream_enabled(
         cursor = conn.execute(
             (
                 "UPDATE upstream_registry "
-                "SET enabled = %s, updated_at = datetime('now') "
-                "WHERE workspace_id = %s AND prefix = %s"
+                "SET enabled = ?, updated_at = datetime('now') "
+                "WHERE workspace_id = ? AND prefix = ?"
             ),
             (int(enabled), WORKSPACE_ID, prefix),
         )
@@ -240,8 +240,8 @@ def set_registry_upstream_secret_ref(
         cursor = conn.execute(
             (
                 "UPDATE upstream_registry "
-                "SET secret_ref = %s, updated_at = datetime('now') "
-                "WHERE workspace_id = %s AND prefix = %s"
+                "SET secret_ref = ?, updated_at = datetime('now') "
+                "WHERE workspace_id = ? AND prefix = ?"
             ),
             (secret_ref, WORKSPACE_ID, prefix),
         )

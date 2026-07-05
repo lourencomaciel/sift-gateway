@@ -19,7 +19,11 @@ from sift_gateway.constants import (
     DEFAULT_DATA_DIR,
     WORKSPACE_ID,
 )
-from sift_gateway.db.protocols import increment_metric, safe_rollback
+from sift_gateway.db.protocols import (
+    increment_metric,
+    safe_rollback,
+    sqlite_in_clause,
+)
 from sift_gateway.obs.logging import LogEvents, get_logger
 
 
@@ -47,25 +51,24 @@ class HardDeleteResult:
 FIND_HARD_DELETE_CANDIDATES_SQL = """
 SELECT artifact_id, payload_hash_full
 FROM artifacts
-WHERE workspace_id = %s
+WHERE workspace_id = ?
   AND deleted_at IS NOT NULL
-  AND deleted_at < %s
+  AND deleted_at < ?
 ORDER BY deleted_at ASC
-LIMIT %s
-FOR UPDATE SKIP LOCKED
+LIMIT ?
 """
 
 # Step 2: Delete artifacts (cascades to roots, refs, samples)
 DELETE_ARTIFACTS_BATCH_SQL = """
 DELETE FROM artifacts
-WHERE workspace_id = %s AND artifact_id = ANY(%s)
+WHERE workspace_id = ? AND {artifact_id_predicate}
 """
 
 # Step 3: Find unreferenced payloads
 FIND_UNREFERENCED_PAYLOADS_SQL = """
 SELECT pb.payload_hash_full, pb.payload_total_bytes, pb.payload_fs_path
 FROM payload_blobs pb
-WHERE pb.workspace_id = %s
+WHERE pb.workspace_id = ?
   AND NOT EXISTS (
     SELECT 1 FROM artifacts a
     WHERE a.workspace_id = pb.workspace_id
@@ -76,14 +79,14 @@ WHERE pb.workspace_id = %s
 # Step 4: Delete unreferenced payloads (cascades binary_refs, aliases)
 DELETE_PAYLOADS_BATCH_SQL = """
 DELETE FROM payload_blobs
-WHERE workspace_id = %s AND payload_hash_full = ANY(%s)
+WHERE workspace_id = ? AND {payload_hash_predicate}
 """
 
 # Step 5: Find unreferenced binary blobs
 FIND_UNREFERENCED_BLOBS_SQL = """
 SELECT bb.binary_hash, bb.blob_id, bb.fs_path, bb.byte_count
 FROM binary_blobs bb
-WHERE bb.workspace_id = %s
+WHERE bb.workspace_id = ?
   AND NOT EXISTS (
     SELECT 1 FROM payload_binary_refs pbr
     WHERE pbr.workspace_id = bb.workspace_id
@@ -94,8 +97,26 @@ WHERE bb.workspace_id = %s
 # Step 6: Delete binary blob DB rows
 DELETE_BLOBS_BATCH_SQL = """
 DELETE FROM binary_blobs
-WHERE workspace_id = %s AND binary_hash = ANY(%s)
+WHERE workspace_id = ? AND {binary_hash_predicate}
 """
+
+
+def _delete_batch_statement(
+    sql_template: str,
+    *,
+    predicate_key: str,
+    trusted_column_sql: str,
+    values: list[str],
+) -> tuple[str, tuple[object, ...]]:
+    """Build a batch delete statement using a trusted SQLite IN predicate."""
+    predicate_sql, predicate_params = sqlite_in_clause(
+        trusted_column_sql,
+        values,
+    )
+    return (
+        sql_template.format(**{predicate_key: predicate_sql}),
+        (WORKSPACE_ID, *predicate_params),
+    )
 
 
 def hard_delete_candidates_params(
@@ -168,10 +189,6 @@ def run_hard_delete_batch(
 ) -> HardDeleteResult:
     """Run one hard-delete batch and clean up orphaned storage.
 
-    SQL uses Postgres-style syntax (``%s``, ``= ANY()``,
-    ``FOR UPDATE SKIP LOCKED``) which the SQLite connection
-    proxy rewrites transparently.
-
     Args:
         connection: Database connection for the transaction.
         grace_period_timestamp: ISO timestamp cutoff; only
@@ -207,9 +224,15 @@ def run_hard_delete_batch(
             if len(row) >= 1 and isinstance(row[0], str)
         ]
         if artifact_ids:
-            connection.execute(
+            sql, params = _delete_batch_statement(
                 DELETE_ARTIFACTS_BATCH_SQL,
-                (WORKSPACE_ID, artifact_ids),
+                predicate_key="artifact_id_predicate",
+                trusted_column_sql="artifact_id",
+                values=artifact_ids,
+            )
+            connection.execute(
+                sql,
+                params,
             )
         artifacts_deleted = len(artifact_ids)
 
@@ -239,9 +262,15 @@ def run_hard_delete_batch(
                     ).resolve(strict=False)
                 payload_paths_to_remove.append(str(payload_path))
         if payload_hashes:
-            connection.execute(
+            sql, params = _delete_batch_statement(
                 DELETE_PAYLOADS_BATCH_SQL,
-                (WORKSPACE_ID, payload_hashes),
+                predicate_key="payload_hash_predicate",
+                trusted_column_sql="payload_hash_full",
+                values=payload_hashes,
+            )
+            connection.execute(
+                sql,
+                params,
             )
         payloads_deleted = len(payload_hashes)
 
@@ -267,9 +296,15 @@ def run_hard_delete_batch(
             if remove_fs_blobs and isinstance(fs_path, str):
                 fs_paths_to_remove.append(fs_path)
         if blob_hashes:
-            connection.execute(
+            sql, params = _delete_batch_statement(
                 DELETE_BLOBS_BATCH_SQL,
-                (WORKSPACE_ID, blob_hashes),
+                predicate_key="binary_hash_predicate",
+                trusted_column_sql="binary_hash",
+                values=blob_hashes,
+            )
+            connection.execute(
+                sql,
+                params,
             )
         binary_blobs_deleted = len(blob_hashes)
 

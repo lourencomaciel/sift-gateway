@@ -221,7 +221,7 @@ def apply_migrations(
             for stmt in _split_sql_statements(migration.sql):
                 connection.execute(stmt)
             connection.execute(
-                "INSERT INTO schema_migrations (migration_name) VALUES (%s)",
+                "INSERT INTO schema_migrations (migration_name) VALUES (?)",
                 (migration.name,),
             )
         except Exception:

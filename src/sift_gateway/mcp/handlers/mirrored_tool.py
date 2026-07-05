@@ -210,11 +210,11 @@ _logger = get_logger(component="mcp.handlers")
 _FETCH_PREVIOUS_PAGE_SQL = """
 SELECT artifact_id, payload_hash_full
 FROM artifacts
-WHERE workspace_id = %s
-  AND session_id = %s
-  AND source_tool = %s
+WHERE workspace_id = ?
+  AND session_id = ?
+  AND source_tool = ?
   AND deleted_at IS NULL
-  AND created_seq < %s
+  AND created_seq < ?
 ORDER BY created_seq DESC
 LIMIT 1
 """
@@ -222,8 +222,8 @@ LIMIT 1
 _FETCH_SCHEMA_ROOT_SIGNATURES_SQL = """
 SELECT root_path, dataset_hash, observed_records
 FROM artifact_schema_roots
-WHERE workspace_id = %s
-  AND artifact_id = %s
+WHERE workspace_id = ?
+  AND artifact_id = ?
 """
 
 _FETCH_ARTIFACT_ENVELOPE_SQL = """
@@ -234,8 +234,8 @@ SELECT pb.envelope,
 FROM artifacts a
 JOIN payload_blobs pb ON pb.workspace_id = a.workspace_id
     AND pb.payload_hash_full = a.payload_hash_full
-WHERE a.workspace_id = %s
-  AND a.artifact_id = %s
+WHERE a.workspace_id = ?
+  AND a.artifact_id = ?
 """
 
 _COLLECTION_HASH_ROOT_PATHS: tuple[str, ...] = (

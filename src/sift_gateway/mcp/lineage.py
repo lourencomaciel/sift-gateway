@@ -54,7 +54,7 @@ visible AS (
     SELECT a.artifact_id, a.parent_artifact_id, a.chain_seq,
            a.created_seq, a.generation, a.map_kind, a.map_status
     FROM artifacts a
-    WHERE a.workspace_id = %s
+    WHERE a.workspace_id = ?
       AND a.deleted_at IS NULL
 ),
 edges AS (
@@ -75,7 +75,7 @@ edges AS (
 related(artifact_id) AS (
     SELECT v.artifact_id
     FROM visible v
-    WHERE v.artifact_id = %s
+    WHERE v.artifact_id = ?
     UNION
     SELECT e.dst
     FROM related r

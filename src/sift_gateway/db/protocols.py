@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Any, Protocol
 
 
@@ -48,3 +49,14 @@ def increment_metric(metrics: Any | None, attr: str, amount: int = 1) -> None:
     inc = getattr(counter, "inc", None)
     if callable(inc):
         inc(amount)
+
+
+def sqlite_in_clause(
+    trusted_column_sql: str,
+    values: Sequence[object],
+) -> tuple[str, tuple[object, ...]]:
+    """Build a parameterized SQLite ``IN`` predicate for trusted SQL columns."""
+    if not values:
+        return "0", ()
+    placeholders = ", ".join("?" for _ in values)
+    return f"{trusted_column_sql} IN ({placeholders})", tuple(values)

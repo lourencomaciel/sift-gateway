@@ -223,10 +223,7 @@ def upsert_registry_from_mcp_servers(
         existing_prefixes: set[str] = set()
         if merge_missing:
             rows = conn.execute(
-                (
-                    "SELECT prefix FROM upstream_registry "
-                    "WHERE workspace_id = %s"
-                ),
+                ("SELECT prefix FROM upstream_registry WHERE workspace_id = ?"),
                 (WORKSPACE_ID,),
             ).fetchall()
             existing_prefixes = {
@@ -277,7 +274,7 @@ def replace_registry_from_mcp_servers(
     ] = []
     with connect_migrated(data_dir) as conn:
         conn.execute(
-            "DELETE FROM upstream_registry WHERE workspace_id = %s",
+            "DELETE FROM upstream_registry WHERE workspace_id = ?",
             (WORKSPACE_ID,),
         )
         changed = 0

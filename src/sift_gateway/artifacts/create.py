@@ -341,16 +341,16 @@ INSERT INTO artifacts (
     kind, derivation,
     index_status, error_summary
 ) VALUES (
-    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-    %s, %s, %s, %s, %s, %s, %s, %s, %s
+    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+    ?, ?, ?, ?, ?, ?, ?, ?, ?
 )
 RETURNING created_seq
 """
 
 INSERT_PAYLOAD_BINARY_REF_SQL = """
 INSERT INTO payload_binary_refs (workspace_id, payload_hash_full, binary_hash)
-VALUES (%s, %s, %s)
+VALUES (?, ?, ?)
 ON CONFLICT (workspace_id, payload_hash_full, binary_hash) DO NOTHING
 """
 
@@ -358,7 +358,7 @@ INSERT_BINARY_BLOB_SQL = """
 INSERT INTO binary_blobs (
     workspace_id, binary_hash, blob_id, byte_count,
     mime, fs_path, probe_head_hash, probe_tail_hash, probe_bytes
-) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT (workspace_id, binary_hash) DO NOTHING
 """
 

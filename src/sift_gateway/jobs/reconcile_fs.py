@@ -42,13 +42,13 @@ class ReconcileResult:
 FETCH_ALL_BLOB_PATHS_SQL = """
 SELECT binary_hash, fs_path, byte_count
 FROM binary_blobs
-WHERE workspace_id = %s
+WHERE workspace_id = ?
 """
 
 FETCH_ALL_PAYLOAD_PATHS_SQL = """
 SELECT payload_hash_full, payload_fs_path
 FROM payload_blobs
-WHERE workspace_id = %s
+WHERE workspace_id = ?
 """
 
 

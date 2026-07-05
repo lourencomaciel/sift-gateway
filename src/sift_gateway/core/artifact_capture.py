@@ -38,16 +38,16 @@ _VALID_CAPTURE_KINDS = {
 _FETCH_MAP_STATUS_SQL = """
 SELECT map_status
 FROM artifacts
-WHERE workspace_id = %s
-  AND artifact_id = %s
+WHERE workspace_id = ?
+  AND artifact_id = ?
 """
 
 _SOFT_DELETE_SQL = """
 UPDATE artifacts
-SET deleted_at = NOW(),
+SET deleted_at = datetime('now'),
     generation = generation + 1
-WHERE workspace_id = %s
-  AND artifact_id = %s
+WHERE workspace_id = ?
+  AND artifact_id = ?
   AND deleted_at IS NULL
 """
 

@@ -63,8 +63,9 @@ SELECT a.artifact_id, a.payload_hash_full, a.deleted_at,
 FROM artifacts a
 JOIN payload_blobs pb ON pb.workspace_id = a.workspace_id
     AND pb.payload_hash_full = a.payload_hash_full
-WHERE a.workspace_id = %s AND a.artifact_id = %s
+WHERE a.workspace_id = ? AND a.artifact_id = ?
 """
+
 
 def is_sampled_only(artifact_row: dict[str, Any]) -> bool:
     """Return ``True`` if the artifact uses partial mapping.

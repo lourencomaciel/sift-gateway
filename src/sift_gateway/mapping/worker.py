@@ -76,25 +76,25 @@ class WorkerContext:
 # SQL for conditional mapping update (race-safe)
 CONDITIONAL_MAP_UPDATE_SQL = """
 UPDATE artifacts
-SET map_kind = %s,
-    map_status = %s,
-    mapped_part_index = %s,
-    mapper_version = %s,
-    map_budget_fingerprint = %s,
-    map_backend_id = %s,
-    prng_version = %s,
-    map_error = %s
-WHERE workspace_id = %s
-  AND artifact_id = %s
+SET map_kind = ?,
+    map_status = ?,
+    mapped_part_index = ?,
+    mapper_version = ?,
+    map_budget_fingerprint = ?,
+    map_backend_id = ?,
+    prng_version = ?,
+    map_error = ?
+WHERE workspace_id = ?
+  AND artifact_id = ?
   AND deleted_at IS NULL
   AND map_status IN ('pending', 'stale')
-  AND generation = %s
+  AND generation = ?
 """
 
 
 DELETE_ROOTS_SQL = """
 DELETE FROM artifact_roots
-WHERE workspace_id = %s AND artifact_id = %s
+WHERE workspace_id = ? AND artifact_id = ?
 """
 
 
@@ -105,7 +105,7 @@ INSERT INTO artifact_roots (
     count_estimate, inventory_coverage, root_summary,
     root_score, root_shape, fields_top, examples, recipes,
     sample_indices
-) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT (workspace_id, artifact_id, root_key)
 DO UPDATE SET
     root_path = EXCLUDED.root_path,
@@ -124,7 +124,7 @@ INSERT_SAMPLE_SQL = """
 INSERT INTO artifact_samples (
     workspace_id, artifact_id, root_key, root_path,
     sample_index, record, record_bytes, record_hash
-) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT (workspace_id, artifact_id, root_key, sample_index)
 DO UPDATE SET
     record = EXCLUDED.record,
@@ -135,19 +135,19 @@ DO UPDATE SET
 # SQL for cleaning old samples before rewrite
 DELETE_SAMPLES_SQL = """
 DELETE FROM artifact_samples
-WHERE workspace_id = %s AND artifact_id = %s AND root_key = %s
+WHERE workspace_id = ? AND artifact_id = ? AND root_key = ?
 """
 
 
 DELETE_RECORDS_SQL = """
 DELETE FROM artifact_records
-WHERE workspace_id = %s AND artifact_id = %s
+WHERE workspace_id = ? AND artifact_id = ?
 """
 
 INSERT_RECORD_SQL = """
 INSERT INTO artifact_records (
     workspace_id, artifact_id, root_path, idx, record
-) VALUES (%s, %s, %s, %s, %s)
+) VALUES (?, ?, ?, ?, ?)
 ON CONFLICT (workspace_id, artifact_id, root_path, idx)
 DO UPDATE SET record = EXCLUDED.record
 """
@@ -155,7 +155,7 @@ DO UPDATE SET record = EXCLUDED.record
 
 DELETE_SCHEMA_ROOTS_SQL = """
 DELETE FROM artifact_schema_roots
-WHERE workspace_id = %s AND artifact_id = %s
+WHERE workspace_id = ? AND artifact_id = ?
 """
 
 
@@ -165,7 +165,7 @@ INSERT INTO artifact_schema_roots (
     schema_version, schema_hash, mode, completeness,
     observed_records, dataset_hash, traversal_contract_version,
     map_budget_fingerprint
-) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT (workspace_id, artifact_id, root_key)
 DO UPDATE SET
     root_path = EXCLUDED.root_path,
@@ -185,7 +185,7 @@ INSERT INTO artifact_schema_fields (
     workspace_id, artifact_id, root_key, field_path,
     types, nullable, required, observed_count, example_value,
     distinct_values, cardinality
-) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT (workspace_id, artifact_id, root_key, field_path)
 DO UPDATE SET
     types = EXCLUDED.types,
@@ -199,8 +199,8 @@ DO UPDATE SET
 
 UPDATE_ARTIFACTS_FTS_SQL = """
 UPDATE artifacts_fts
-SET field_names = %s, sample_values = %s
-WHERE artifact_id = %s
+SET field_names = ?, sample_values = ?
+WHERE artifact_id = ?
 """
 
 _FTS_TEXT_MAX_CHARS = 8_192

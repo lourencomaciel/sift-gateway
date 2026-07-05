@@ -102,8 +102,8 @@ _CLI_UPSTREAM_INSTANCE_ID = "cli_local"
 _FETCH_CLI_CONTINUE_PARENT_SQL = """
 SELECT artifact_id, deleted_at, capture_kind, chain_seq
 FROM artifacts
-WHERE workspace_id = %s
-  AND artifact_id = %s
+WHERE workspace_id = ?
+  AND artifact_id = ?
 """
 
 _CLI_CONTINUE_PARENT_COLUMNS = [

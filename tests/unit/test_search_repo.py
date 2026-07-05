@@ -17,7 +17,7 @@ def test_search_artifacts_fts_sql_is_workspace_scoped_without_artifact_refs() ->
     sql = SEARCH_ARTIFACTS_FTS_SQL.lower()
     assert "from artifacts_fts" in sql
     assert "join artifacts a" in sql
-    assert "a.workspace_id = %s" in sql
+    assert "a.workspace_id = ?" in sql
     assert "artifact_refs" not in sql
     assert "bm25(artifacts_fts)" in sql
 
@@ -33,8 +33,8 @@ def test_search_artifacts_fts_params() -> None:
 
 def test_list_artifacts_sql_supports_kind_filter() -> None:
     sql = LIST_ARTIFACTS_SQL.lower()
-    assert "a.kind = %s" in sql
-    assert "limit %s offset %s" in sql
+    assert "a.kind = ?" in sql
+    assert "limit ? offset ?" in sql
 
 
 def test_list_artifacts_params() -> None:
@@ -57,8 +57,8 @@ def test_list_artifacts_params() -> None:
 def test_list_derived_sql_and_params() -> None:
     sql = LIST_DERIVED_SQL.lower()
     assert "from artifact_lineage_edges" in sql
-    assert "le.parent_artifact_id = %s" in sql
-    assert "a.kind = %s" in sql
+    assert "le.parent_artifact_id = ?" in sql
+    assert "a.kind = ?" in sql
 
     params = list_derived_params(
         parent_artifact_id="art_parent",

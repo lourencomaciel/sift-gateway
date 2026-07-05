@@ -65,14 +65,15 @@ class _FakeConnection:
         self.rolled_back = True
 
 
-def test_find_hard_delete_candidates_uses_skip_locked() -> None:
-    assert "SKIP LOCKED" in FIND_HARD_DELETE_CANDIDATES_SQL
+def test_find_hard_delete_candidates_uses_sqlite_limit_only() -> None:
+    assert "SKIP LOCKED" not in FIND_HARD_DELETE_CANDIDATES_SQL
 
 
 def test_delete_artifact_sql_structure() -> None:
     assert "DELETE FROM artifacts" in DELETE_ARTIFACTS_BATCH_SQL
-    assert "workspace_id = %s" in DELETE_ARTIFACTS_BATCH_SQL
-    assert "ANY(%s)" in DELETE_ARTIFACTS_BATCH_SQL
+    assert "workspace_id = ?" in DELETE_ARTIFACTS_BATCH_SQL
+    assert "{artifact_id_predicate}" in DELETE_ARTIFACTS_BATCH_SQL
+    assert "ANY" not in DELETE_ARTIFACTS_BATCH_SQL
 
 
 def test_find_unreferenced_payloads_uses_not_exists() -> None:
@@ -85,14 +86,16 @@ def test_find_unreferenced_blobs_uses_not_exists() -> None:
 
 def test_delete_payload_sql_structure() -> None:
     assert "DELETE FROM payload_blobs" in DELETE_PAYLOADS_BATCH_SQL
-    assert "workspace_id = %s" in DELETE_PAYLOADS_BATCH_SQL
-    assert "ANY(%s)" in DELETE_PAYLOADS_BATCH_SQL
+    assert "workspace_id = ?" in DELETE_PAYLOADS_BATCH_SQL
+    assert "{payload_hash_predicate}" in DELETE_PAYLOADS_BATCH_SQL
+    assert "ANY" not in DELETE_PAYLOADS_BATCH_SQL
 
 
 def test_delete_blob_sql_structure() -> None:
     assert "DELETE FROM binary_blobs" in DELETE_BLOBS_BATCH_SQL
-    assert "workspace_id = %s" in DELETE_BLOBS_BATCH_SQL
-    assert "ANY(%s)" in DELETE_BLOBS_BATCH_SQL
+    assert "workspace_id = ?" in DELETE_BLOBS_BATCH_SQL
+    assert "{binary_hash_predicate}" in DELETE_BLOBS_BATCH_SQL
+    assert "ANY" not in DELETE_BLOBS_BATCH_SQL
 
 
 def test_hard_delete_candidates_params_returns_correct_tuple() -> None:

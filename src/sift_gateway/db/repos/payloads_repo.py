@@ -17,7 +17,7 @@ INSERT INTO payload_blobs (
     payload_total_bytes,
     contains_binary_refs
 ) VALUES (
-    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
 )
 ON CONFLICT (workspace_id, payload_hash_full) DO NOTHING
 """

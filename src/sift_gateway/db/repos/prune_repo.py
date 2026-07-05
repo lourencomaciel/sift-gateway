@@ -6,12 +6,12 @@ from sift_gateway.constants import WORKSPACE_ID
 
 SOFT_DELETE_EXPIRED_SQL = """
 UPDATE artifacts
-SET deleted_at = NOW(),
+SET deleted_at = datetime('now'),
     generation = generation + 1
-WHERE workspace_id = %s
+WHERE workspace_id = ?
   AND deleted_at IS NULL
   AND expires_at IS NOT NULL
-  AND expires_at <= NOW()
+  AND expires_at <= datetime('now')
 """
 
 

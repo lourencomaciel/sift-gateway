@@ -6,15 +6,15 @@ from sift_gateway.constants import WORKSPACE_ID
 
 UPDATE_MAP_STATUS_SQL = """
 UPDATE artifacts
-SET map_kind = %s,
-    map_status = %s,
-    mapper_version = %s,
-    map_budget_fingerprint = %s,
-    map_backend_id = %s,
-    prng_version = %s,
-    map_error = %s
-WHERE workspace_id = %s
-  AND artifact_id = %s
+SET map_kind = ?,
+    map_status = ?,
+    mapper_version = ?,
+    map_budget_fingerprint = ?,
+    map_backend_id = ?,
+    prng_version = ?,
+    map_error = ?
+WHERE workspace_id = ?
+  AND artifact_id = ?
 """
 
 

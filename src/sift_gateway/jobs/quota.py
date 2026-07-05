@@ -113,11 +113,11 @@ class QuotaEnforcementResult:
 STORAGE_USAGE_SQL = """
 SELECT
     COALESCE((SELECT SUM(byte_count)
-        FROM binary_blobs WHERE workspace_id = %s), 0),
+        FROM binary_blobs WHERE workspace_id = ?), 0),
     COALESCE((SELECT SUM(payload_total_bytes)
-        FROM payload_blobs WHERE workspace_id = %s), 0),
+        FROM payload_blobs WHERE workspace_id = ?), 0),
     COALESCE((SELECT SUM(payload_json_bytes)
-        FROM payload_blobs WHERE workspace_id = %s), 0)
+        FROM payload_blobs WHERE workspace_id = ?), 0)
 """
 
 SOFT_DELETE_LRU_FOR_QUOTA_SQL = """

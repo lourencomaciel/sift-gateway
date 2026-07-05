@@ -50,7 +50,7 @@ SELECT a.artifact_id, a.map_kind, a.map_status, a.mapper_version,
        a.map_budget_fingerprint, a.map_backend_id, a.prng_version,
        a.mapped_part_index, a.deleted_at, a.generation
 FROM artifacts a
-WHERE a.workspace_id = %s AND a.artifact_id = %s
+WHERE a.workspace_id = ? AND a.artifact_id = ?
 """
 
 FETCH_ROOTS_SQL = """
@@ -58,7 +58,7 @@ SELECT root_key, root_path, count_estimate, inventory_coverage,
        root_summary, root_score, root_shape, fields_top,
        sample_indices
 FROM artifact_roots
-WHERE workspace_id = %s AND artifact_id = %s
+WHERE workspace_id = ? AND artifact_id = ?
 ORDER BY root_score DESC
 """
 
@@ -67,7 +67,7 @@ SELECT root_key, root_path, schema_version, schema_hash,
        mode, completeness, observed_records, dataset_hash,
        traversal_contract_version, map_budget_fingerprint
 FROM artifact_schema_roots
-WHERE workspace_id = %s AND artifact_id = %s
+WHERE workspace_id = ? AND artifact_id = ?
 ORDER BY observed_records DESC, root_path ASC
 """
 

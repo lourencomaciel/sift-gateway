@@ -899,9 +899,9 @@ class GatewayServer:
             execute(
                 """
                 UPDATE artifacts
-                SET last_referenced_at = NOW()
-                WHERE workspace_id = %s
-                  AND artifact_id = %s
+                SET last_referenced_at = datetime('now')
+                WHERE workspace_id = ?
+                  AND artifact_id = ?
                   AND deleted_at IS NULL
                 """,
                 (WORKSPACE_ID, artifact_id),
@@ -910,9 +910,9 @@ class GatewayServer:
             execute(
                 """
                 UPDATE artifacts
-                SET last_referenced_at = %s
-                WHERE workspace_id = %s
-                  AND artifact_id = %s
+                SET last_referenced_at = ?
+                WHERE workspace_id = ?
+                  AND artifact_id = ?
                   AND deleted_at IS NULL
                 """,
                 (now, WORKSPACE_ID, artifact_id),

@@ -15,6 +15,7 @@ import time
 from typing import TYPE_CHECKING, Any
 
 from sift_gateway.constants import WORKSPACE_ID
+from sift_gateway.db.protocols import sqlite_in_clause
 from sift_gateway.envelope.responses import gateway_error
 from sift_gateway.fs.blob_store import normalize_mime
 from sift_gateway.mcp.async_db import run_sync_db
@@ -62,25 +63,25 @@ JOIN payload_binary_refs pbr
 JOIN binary_blobs bb
   ON bb.workspace_id = pbr.workspace_id
  AND bb.binary_hash = pbr.binary_hash
-WHERE a.workspace_id = %s
+WHERE a.workspace_id = ?
   AND a.deleted_at IS NULL
-  AND a.artifact_id = ANY(%s)
+  AND {artifact_id_predicate}
 ORDER BY a.created_seq DESC, a.artifact_id ASC, bb.binary_hash ASC
 """
 
 _FETCH_BLOB_BY_ID_SQL = """
 SELECT blob_id, binary_hash, mime, byte_count, fs_path
 FROM binary_blobs
-WHERE workspace_id = %s
-  AND blob_id = %s
+WHERE workspace_id = ?
+  AND blob_id = ?
 LIMIT 1
 """
 
 _FETCH_BLOB_BY_HASH_SQL = """
 SELECT blob_id, binary_hash, mime, byte_count, fs_path
 FROM binary_blobs
-WHERE workspace_id = %s
-  AND binary_hash = %s
+WHERE workspace_id = ?
+  AND binary_hash = ?
 LIMIT 1
 """
 
@@ -823,9 +824,15 @@ def _collect_blob_list_payload(
             return None, "", [], 0, False, resolve_err
         assert artifact_ids is not None
 
+        predicate_sql, predicate_params = sqlite_in_clause(
+            "a.artifact_id",
+            artifact_ids,
+        )
         rows = connection.execute(
-            _LIST_BLOBS_FOR_ARTIFACTS_SQL,
-            (WORKSPACE_ID, artifact_ids),
+            _LIST_BLOBS_FOR_ARTIFACTS_SQL.format(
+                artifact_id_predicate=predicate_sql,
+            ),
+            (WORKSPACE_ID, *predicate_params),
         ).fetchall()
         mapped_rows = [
             mapped

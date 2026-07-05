@@ -11,7 +11,7 @@ INSERT INTO sessions (
     workspace_id, session_id, created_at, last_seen_at,
     last_runtime_pid, last_runtime_instance_uuid
 )
-VALUES (%s, %s, NOW(), NOW(), %s, %s)
+VALUES (?, ?, datetime('now'), datetime('now'), ?, ?)
 ON CONFLICT (workspace_id, session_id)
 DO UPDATE SET
     last_seen_at = EXCLUDED.last_seen_at,

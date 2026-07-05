@@ -36,7 +36,9 @@ def _build_server(tmp_path: Path) -> tuple[GatewayServer, SqliteBackend]:
     with backend.connection() as connection:
         apply_migrations(connection, _migrations_dir())
     blob_store = BlobStore(config.blobs_bin_dir)
-    server = GatewayServer(config=config, db_pool=backend, blob_store=blob_store)
+    server = GatewayServer(
+        config=config, db_pool=backend, blob_store=blob_store
+    )
     return server, backend
 
 
@@ -52,7 +54,7 @@ def _seed_blob_for_two_artifacts(
         connection.execute(
             """
             INSERT INTO sessions (workspace_id, session_id)
-            VALUES (%s, %s)
+            VALUES (?, ?)
             """,
             (WORKSPACE_ID, "sess_1"),
         )
@@ -61,7 +63,7 @@ def _seed_blob_for_two_artifacts(
             INSERT INTO binary_blobs (
                 workspace_id, binary_hash, blob_id, byte_count,
                 mime, fs_path, probe_head_hash, probe_tail_hash, probe_bytes
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 WORKSPACE_ID,
@@ -83,7 +85,7 @@ def _seed_blob_for_two_artifacts(
                 canonicalizer_version, payload_json_bytes,
                 payload_binary_bytes_total, payload_total_bytes,
                 contains_binary_refs
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 WORKSPACE_ID,
@@ -102,7 +104,7 @@ def _seed_blob_for_two_artifacts(
             """
             INSERT INTO payload_binary_refs (
                 workspace_id, payload_hash_full, binary_hash
-            ) VALUES (%s, %s, %s)
+            ) VALUES (?, ?, ?)
             """,
             (WORKSPACE_ID, payload_hash, blob_ref.binary_hash),
         )
@@ -114,7 +116,7 @@ def _seed_blob_for_two_artifacts(
                 canonicalizer_version, payload_json_bytes,
                 payload_binary_bytes_total, payload_total_bytes,
                 mapper_version, parent_artifact_id, chain_seq
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 WORKSPACE_ID,
@@ -141,7 +143,7 @@ def _seed_blob_for_two_artifacts(
                 canonicalizer_version, payload_json_bytes,
                 payload_binary_bytes_total, payload_total_bytes,
                 mapper_version, parent_artifact_id, chain_seq
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 WORKSPACE_ID,

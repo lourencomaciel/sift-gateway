@@ -291,14 +291,14 @@ FETCH_ROOT_SQL = """
 SELECT root_key, root_path, count_estimate, root_shape,
        fields_top, sample_indices, root_summary
 FROM artifact_roots
-WHERE workspace_id = %s AND artifact_id = %s AND root_path = %s
+WHERE workspace_id = ? AND artifact_id = ? AND root_path = ?
 """
 
 # SQL for fetching samples for a root
 FETCH_SAMPLES_SQL = """
 SELECT sample_index, record, record_bytes, record_hash
 FROM artifact_samples
-WHERE workspace_id = %s AND artifact_id = %s AND root_key = %s
+WHERE workspace_id = ? AND artifact_id = ? AND root_key = ?
 ORDER BY sample_index ASC
 """
 

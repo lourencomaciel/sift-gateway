@@ -334,8 +334,8 @@ class GatewayArtifactQueryRuntime:
                     UPDATE artifacts
                     SET deleted_at = datetime('now'),
                         generation = generation + 1
-                    WHERE workspace_id = %s
-                      AND artifact_id = %s
+                    WHERE workspace_id = ?
+                      AND artifact_id = ?
                       AND deleted_at IS NULL
                     """,
                     (WORKSPACE_ID, artifact_id),
@@ -409,7 +409,7 @@ class GatewayArtifactQueryRuntime:
                     """
                     SELECT map_status
                     FROM artifacts
-                    WHERE workspace_id = %s AND artifact_id = %s
+                    WHERE workspace_id = ? AND artifact_id = ?
                     """,
                     (WORKSPACE_ID, created.handle.artifact_id),
                 ).fetchone()
@@ -512,7 +512,7 @@ class GatewayArtifactQueryRuntime:
                     """
                     SELECT map_status
                     FROM artifacts
-                    WHERE workspace_id = %s AND artifact_id = %s
+                    WHERE workspace_id = ? AND artifact_id = ?
                     """,
                     (WORKSPACE_ID, created.handle.artifact_id),
                 ).fetchone()

@@ -33,8 +33,8 @@ __all__ = [
 VISIBLE_ARTIFACT_SQL = """
 SELECT 1
 FROM artifacts
-WHERE workspace_id = %s
-  AND artifact_id = %s
+WHERE workspace_id = ?
+  AND artifact_id = ?
 LIMIT 1
 """
 
@@ -42,7 +42,7 @@ FETCH_ARTIFACT_META_SQL = """
 SELECT artifact_id, map_kind, map_status, index_status,
        deleted_at, generation, map_budget_fingerprint
 FROM artifacts
-WHERE workspace_id = %s AND artifact_id = %s
+WHERE workspace_id = ? AND artifact_id = ?
 """
 
 # ---------------------------------------------------------------------------

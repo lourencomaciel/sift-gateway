@@ -37,7 +37,7 @@ SELECT a.artifact_id, a.deleted_at, a.payload_hash_full,
 FROM artifacts a
 JOIN payload_blobs pb ON pb.workspace_id = a.workspace_id
     AND pb.payload_hash_full = a.payload_hash_full
-WHERE a.workspace_id = %s AND a.artifact_id = %s
+WHERE a.workspace_id = ? AND a.artifact_id = ?
 """
 
 
@@ -97,7 +97,8 @@ def _diagnose_missing_pagination_state(
 
     has_more_detected = (
         assessment.has_more
-        or assessment.partial_reason == UPSTREAM_PARTIAL_REASON_NEXT_TOKEN_MISSING
+        or assessment.partial_reason
+        == UPSTREAM_PARTIAL_REASON_NEXT_TOKEN_MISSING
     )
     return {
         "queryable_json_found": True,

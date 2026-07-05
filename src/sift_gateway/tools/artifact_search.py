@@ -281,13 +281,13 @@ def _collect_simple_equality_conditions(
     conditions: list[str] = []
     params: list[Any] = []
     simple_eq_filters: tuple[tuple[str, str], ...] = (
-        ("source_tool", "a.source_tool = %s"),
-        ("kind", "a.kind = %s"),
-        ("upstream_instance_id", "a.upstream_instance_id = %s"),
-        ("request_key", "a.request_key = %s"),
-        ("capture_kind", _CAPTURE_KIND_EXPR + " = %s"),
-        ("capture_key", _CAPTURE_KEY_EXPR + " = %s"),
-        ("payload_hash_full", "a.payload_hash_full = %s"),
+        ("source_tool", "a.source_tool = ?"),
+        ("kind", "a.kind = ?"),
+        ("upstream_instance_id", "a.upstream_instance_id = ?"),
+        ("request_key", "a.request_key = ?"),
+        ("capture_kind", _CAPTURE_KIND_EXPR + " = ?"),
+        ("capture_key", _CAPTURE_KEY_EXPR + " = ?"),
+        ("payload_hash_full", "a.payload_hash_full = ?"),
     )
     for key, sql_fragment in simple_eq_filters:
         value = filters.get(key)
@@ -305,8 +305,8 @@ def _collect_range_and_time_conditions(
     conditions: list[str] = []
     params: list[Any] = []
     range_filters: tuple[tuple[str, str], ...] = (
-        ("created_seq_min", "a.created_seq >= %s"),
-        ("created_seq_max", "a.created_seq <= %s"),
+        ("created_seq_min", "a.created_seq >= ?"),
+        ("created_seq_max", "a.created_seq <= ?"),
     )
     for key, sql_fragment in range_filters:
         value = filters.get(key)
@@ -315,8 +315,8 @@ def _collect_range_and_time_conditions(
         conditions.append(sql_fragment)
         params.append(value)
     timestamp_filters: tuple[tuple[str, str], ...] = (
-        ("created_at_after", "a.created_at >= %s"),
-        ("created_at_before", "a.created_at <= %s"),
+        ("created_at_after", "a.created_at >= ?"),
+        ("created_at_before", "a.created_at <= ?"),
     )
     for key, sql_fragment in timestamp_filters:
         value = filters.get(key)
@@ -343,7 +343,7 @@ def _collect_search_filter_conditions(
 
     source_tool_prefix = filters.get("source_tool_prefix")
     if source_tool_prefix:
-        conditions.append("a.source_tool LIKE %s")
+        conditions.append("a.source_tool LIKE ?")
         params.append(_escaped_source_tool_prefix(str(source_tool_prefix)))
 
     eq_conditions, eq_params = _collect_simple_equality_conditions(filters)
@@ -354,12 +354,12 @@ def _collect_search_filter_conditions(
     if parent_artifact_id:
         conditions.append(
             "("
-            "a.parent_artifact_id = %s "
+            "a.parent_artifact_id = ? "
             "OR EXISTS ("
             "SELECT 1 FROM artifact_lineage_edges ale "
             "WHERE ale.workspace_id = a.workspace_id "
             "AND ale.child_artifact_id = a.artifact_id "
-            "AND ale.parent_artifact_id = %s"
+            "AND ale.parent_artifact_id = ?"
             ")"
             ")"
         )
@@ -372,7 +372,7 @@ def _collect_search_filter_conditions(
             " WHERE pb.workspace_id = a.workspace_id"
             " AND pb.payload_hash_full"
             " = a.payload_hash_full"
-            " AND pb.contains_binary_refs = %s)"
+            " AND pb.contains_binary_refs = ?)"
         )
         params.append(has_binary_refs)
 
@@ -427,8 +427,8 @@ def build_search_query(
     FROM artifacts_fts fts
     JOIN artifacts a
       ON a.artifact_id = fts.artifact_id
-     AND a.workspace_id = %s
-    WHERE artifacts_fts MATCH %s
+     AND a.workspace_id = ?
+    WHERE artifacts_fts MATCH ?
     """
         )
         params.append(query)
@@ -450,7 +450,7 @@ def build_search_query(
            a.map_kind, a.map_status,
            a.chain_seq, a.kind
     FROM artifacts a
-    WHERE a.workspace_id = %s
+    WHERE a.workspace_id = ?
     """
         )
 
@@ -481,11 +481,11 @@ def build_search_query(
             else " ORDER BY a.last_referenced_at DESC"
         )
 
-    base += " LIMIT %s"
+    base += " LIMIT ?"
     # fetch one extra for pagination detection
     params.append(limit + 1)
     if offset > 0:
-        base += " OFFSET %s"
+        base += " OFFSET ?"
         params.append(offset)
 
     return base, params

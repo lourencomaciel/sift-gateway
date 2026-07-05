@@ -26,7 +26,7 @@ from sift_gateway.util.hashing import sha256_hex
 FETCH_PARENT_METADATA_SQL = """
 SELECT session_id, upstream_instance_id, source_tool, upstream_tool_schema_hash
 FROM artifacts
-WHERE workspace_id = %s AND artifact_id = %s
+WHERE workspace_id = ? AND artifact_id = ?
 """
 
 

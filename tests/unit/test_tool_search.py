@@ -68,7 +68,7 @@ def test_validate_search_args_rejects_unknown_filter_key() -> None:
 def test_build_search_query_base() -> None:
     sql, params = build_search_query({}, "created_seq_desc", 50)
     assert "FROM artifacts a" in sql
-    assert "a.workspace_id = %s" in sql
+    assert "a.workspace_id = ?" in sql
     assert "artifact_refs" not in sql
     assert "a.deleted_at IS NULL" in sql
     assert "ORDER BY a.created_seq DESC" in sql
@@ -96,11 +96,11 @@ def test_build_search_query_applies_filters() -> None:
         "created_seq_desc",
         25,
     )
-    assert "a.source_tool = %s" in sql
-    assert "a.upstream_instance_id = %s" in sql
-    assert "a.request_key = %s" in sql
-    assert "a.payload_hash_full = %s" in sql
-    assert "a.parent_artifact_id = %s" in sql
+    assert "a.source_tool = ?" in sql
+    assert "a.upstream_instance_id = ?" in sql
+    assert "a.request_key = ?" in sql
+    assert "a.payload_hash_full = ?" in sql
+    assert "a.parent_artifact_id = ?" in sql
     assert "artifact_lineage_edges ale" in sql
     assert "a.error_summary IS NOT NULL" in sql
     assert "github.search" in params
@@ -120,7 +120,7 @@ def test_build_search_query_applies_capture_filters() -> None:
         25,
     )
     assert "COALESCE(a.capture_kind" in sql
-    assert "COALESCE(a.capture_key, a.request_key) = %s" in sql
+    assert "COALESCE(a.capture_key, a.request_key) = ?" in sql
     assert "mcp_tool" in params
     assert "ck_1" in params
 
@@ -137,5 +137,5 @@ def test_build_search_query_order_by_chain_seq() -> None:
 
 def test_build_search_query_offset() -> None:
     sql, params = build_search_query({}, "created_seq_desc", 5, offset=20)
-    assert "OFFSET %s" in sql
+    assert "OFFSET ?" in sql
     assert params[-1] == 20

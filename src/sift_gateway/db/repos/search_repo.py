@@ -25,11 +25,11 @@ SELECT a.artifact_id, a.created_seq, a.created_at,
 FROM artifacts_fts fts
 JOIN artifacts a
   ON a.artifact_id = fts.artifact_id
- AND a.workspace_id = %s
-WHERE artifacts_fts MATCH %s
+ AND a.workspace_id = ?
+WHERE artifacts_fts MATCH ?
   AND a.deleted_at IS NULL
 ORDER BY bm25(artifacts_fts), a.created_seq DESC
-LIMIT %s OFFSET %s
+LIMIT ? OFFSET ?
 """
 
 LIST_ARTIFACTS_SQL = """
@@ -49,11 +49,11 @@ SELECT a.artifact_id, a.created_seq, a.created_at,
        a.map_kind, a.map_status,
        a.chain_seq, a.kind
 FROM artifacts a
-WHERE a.workspace_id = %s
-  AND (%s = 1 OR a.deleted_at IS NULL)
-  AND (%s IS NULL OR a.kind = %s)
+WHERE a.workspace_id = ?
+  AND (? = 1 OR a.deleted_at IS NULL)
+  AND (? IS NULL OR a.kind = ?)
 ORDER BY a.created_seq DESC
-LIMIT %s OFFSET %s
+LIMIT ? OFFSET ?
 """
 
 LIST_DERIVED_SQL = """
@@ -63,12 +63,12 @@ FROM artifact_lineage_edges le
 JOIN artifacts a
   ON a.workspace_id = le.workspace_id
  AND a.artifact_id = le.child_artifact_id
-WHERE le.workspace_id = %s
-  AND le.parent_artifact_id = %s
+WHERE le.workspace_id = ?
+  AND le.parent_artifact_id = ?
   AND a.deleted_at IS NULL
-  AND (%s IS NULL OR a.kind = %s)
+  AND (? IS NULL OR a.kind = ?)
 ORDER BY a.created_seq DESC
-LIMIT %s OFFSET %s
+LIMIT ? OFFSET ?
 """
 
 

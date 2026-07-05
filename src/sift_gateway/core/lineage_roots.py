@@ -32,7 +32,7 @@ _FETCH_ARTIFACT_META_SQL = """
 SELECT artifact_id, map_kind, map_status, index_status,
        deleted_at, generation, map_budget_fingerprint
 FROM artifacts
-WHERE workspace_id = %s AND artifact_id = %s
+WHERE workspace_id = ? AND artifact_id = ?
 """
 
 _SELECT_ROOT_COLUMNS = [
@@ -61,7 +61,7 @@ _SCHEMA_ROOT_COLUMNS = [
 _FETCH_ARTIFACT_ROOT_PATHS_SQL = """
 SELECT root_path
 FROM artifact_roots
-WHERE workspace_id = %s AND artifact_id = %s
+WHERE workspace_id = ? AND artifact_id = ?
 ORDER BY root_path ASC
 """
 

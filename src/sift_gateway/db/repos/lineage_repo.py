@@ -10,7 +10,7 @@ INSERT_LINEAGE_EDGE_SQL = """
 INSERT INTO artifact_lineage_edges (
     workspace_id, child_artifact_id, parent_artifact_id, ord
 ) VALUES (
-    %s, %s, %s, %s
+    ?, ?, ?, ?
 )
 ON CONFLICT (workspace_id, child_artifact_id, parent_artifact_id)
 DO UPDATE SET ord = excluded.ord

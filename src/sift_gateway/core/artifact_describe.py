@@ -98,8 +98,8 @@ FROM artifacts a
 JOIN payload_blobs pb
   ON pb.workspace_id = a.workspace_id
  AND pb.payload_hash_full = a.payload_hash_full
-WHERE a.workspace_id = %s
-  AND a.artifact_id = %s
+WHERE a.workspace_id = ?
+  AND a.artifact_id = ?
 """
 
 
@@ -462,7 +462,8 @@ def _describe_pagination_meta(
         return None
     has_more_signal_detected = (
         assessment.has_more
-        or assessment.partial_reason == UPSTREAM_PARTIAL_REASON_NEXT_TOKEN_MISSING
+        or assessment.partial_reason
+        == UPSTREAM_PARTIAL_REASON_NEXT_TOKEN_MISSING
     )
     meta = build_upstream_pagination_meta(
         artifact_id=anchor_artifact_id,
