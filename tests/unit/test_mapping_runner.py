@@ -531,7 +531,9 @@ def test_schema_distinct_values_handle_float_values(tmp_path: Path) -> None:
     by_path = {schema.root_path: schema for schema in result.schemas}
     item_schema = by_path["$"]
     spend_field = next(
-        field for field in item_schema.fields if field.path == "$.items[*].spend"
+        field
+        for field in item_schema.fields
+        if field.path == "$.items[*].spend"
     )
     assert spend_field.distinct_values is not None
     assert spend_field.distinct_values == [12.5]
@@ -615,7 +617,9 @@ def test_partial_mapping_collapses_to_canonical_root_without_idx_collisions(
     assert len(set(sample_indices)) == len(sample_indices)
 
 
-def test_collapse_partial_to_canonical_root_preserves_source_index_signal() -> None:
+def test_collapse_partial_to_canonical_root_preserves_source_index_signal() -> (
+    None
+):
     roots = [
         RootInventory(
             root_key="a",
@@ -680,8 +684,9 @@ def test_collapse_partial_to_canonical_root_preserves_source_index_signal() -> N
     assert len(set(canonical_indices)) == len(canonical_indices)
 
 
-def test_collapse_partial_to_canonical_root_preserves_single_root_metadata(
-) -> None:
+def test_collapse_partial_to_canonical_root_preserves_single_root_metadata() -> (
+    None
+):
     source_root = RootInventory(
         root_key="$",
         root_path="$",

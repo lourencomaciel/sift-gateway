@@ -19,9 +19,7 @@ import time
 def _clean_env() -> dict[str, str]:
     """Return a copy of ``os.environ`` without ``SIFT_GATEWAY_*`` vars."""
     return {
-        k: v
-        for k, v in os.environ.items()
-        if not k.startswith("SIFT_GATEWAY_")
+        k: v for k, v in os.environ.items() if not k.startswith("SIFT_GATEWAY_")
     }
 
 
@@ -155,9 +153,7 @@ def test_upstream_lifecycle(tmp_path: Path) -> None:
     assert "No upstreams configured." in proc.stdout
 
     # 2. snippet-based add (stdio)
-    snippet = json.dumps(
-        {"my-mcp": {"command": "echo", "args": ["hi"]}}
-    )
+    snippet = json.dumps({"my-mcp": {"command": "echo", "args": ["hi"]}})
     proc = _run_cli(data_dir, "upstream", "add", snippet)
     assert proc.returncode == 0, proc.stderr
 
@@ -207,9 +203,7 @@ def test_upstream_lifecycle(tmp_path: Path) -> None:
     assert detail["args"] == ["hi"]
 
     # 6. disable
-    proc = _run_cli(
-        data_dir, "upstream", "disable", "--server", "my-mcp"
-    )
+    proc = _run_cli(data_dir, "upstream", "disable", "--server", "my-mcp")
     assert proc.returncode == 0, proc.stderr
 
     # 7. list --json shows disabled
@@ -220,9 +214,7 @@ def test_upstream_lifecycle(tmp_path: Path) -> None:
     assert disabled_row["enabled"] is False
 
     # 8. enable
-    proc = _run_cli(
-        data_dir, "upstream", "enable", "--server", "my-mcp"
-    )
+    proc = _run_cli(data_dir, "upstream", "enable", "--server", "my-mcp")
     assert proc.returncode == 0, proc.stderr
 
     # verify re-enabled
@@ -281,9 +273,7 @@ def test_upstream_lifecycle(tmp_path: Path) -> None:
     assert len(rows) == 2, "dry-run should not remove anything"
 
     # 12. actual remove
-    proc = _run_cli(
-        data_dir, "upstream", "remove", "--server", "my-mcp"
-    )
+    proc = _run_cli(data_dir, "upstream", "remove", "--server", "my-mcp")
     assert proc.returncode == 0, proc.stderr
 
     # 13. list confirms only 1 upstream remains
@@ -387,9 +377,7 @@ def test_upstream_login_runtime_ignores_stale_auth_header(
         )
         assert proc.returncode == 0, proc.stderr
 
-        secret_path = (
-            data_dir / "state" / "upstream_secrets" / "oauth-api.json"
-        )
+        secret_path = data_dir / "state" / "upstream_secrets" / "oauth-api.json"
         payload = json.loads(secret_path.read_text(encoding="utf-8"))
         headers = payload.get("headers")
         assert isinstance(headers, dict)

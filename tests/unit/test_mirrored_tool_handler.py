@@ -359,7 +359,9 @@ def test_detect_duplicate_page_warning_discovery_mode_after_cursor() -> None:
     assert warning["match_method"] == "payload_hash"
 
 
-def test_detect_duplicate_page_warning_discovery_mode_skips_without_cursor() -> None:
+def test_detect_duplicate_page_warning_discovery_mode_skips_without_cursor() -> (
+    None
+):
     conn = MagicMock()
     warning = _detect_duplicate_page_warning(
         connection=conn,

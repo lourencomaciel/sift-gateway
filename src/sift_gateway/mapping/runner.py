@@ -817,7 +817,9 @@ def _collapse_partial_to_canonical_root(
                         merged_counts.get(str(type_name), 0) + raw_count
                     )
 
-        summary = root.root_summary if isinstance(root.root_summary, dict) else None
+        summary = (
+            root.root_summary if isinstance(root.root_summary, dict) else None
+        )
         seen_added = False
         if summary is not None:
             seen_raw = summary.get("elements_seen")
@@ -830,9 +832,11 @@ def _collapse_partial_to_canonical_root(
             if isinstance(skipped_raw, int) and skipped_raw >= 0:
                 skipped_oversize_total += skipped_raw
 
-        if not seen_added and isinstance(
-            root.sampled_prefix_len, int
-        ) and root.sampled_prefix_len >= 0:
+        if (
+            not seen_added
+            and isinstance(root.sampled_prefix_len, int)
+            and root.sampled_prefix_len >= 0
+        ):
             elements_seen_total += root.sampled_prefix_len
 
         path_stats = root.path_stats
@@ -878,9 +882,7 @@ def _collapse_partial_to_canonical_root(
         count_estimate_sum if count_estimate_complete else None
     )
     canonical_fields_top: dict[str, Any] | None = (
-        dict(sorted(merged_fields_top.items()))
-        if merged_fields_top
-        else None
+        dict(sorted(merged_fields_top.items())) if merged_fields_top else None
     )
 
     inventory_coverage: float | None = None
@@ -899,7 +901,8 @@ def _collapse_partial_to_canonical_root(
             observed_count_raw = merged.get("observed_count")
             observed_count = (
                 int(observed_count_raw)
-                if isinstance(observed_count_raw, int) and observed_count_raw >= 0
+                if isinstance(observed_count_raw, int)
+                and observed_count_raw >= 0
                 else 0
             )
             canonical_path_stats[path] = {

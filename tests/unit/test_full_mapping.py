@@ -118,9 +118,7 @@ def test_nested_json_string_is_resolved_inside_root_payload() -> None:
         {"id": "1", "name": "A", "status": "ACTIVE"},
         {"id": "2", "name": "B", "status": "PAUSED"},
     ]
-    data = {
-        "result": json.dumps({"data": campaigns, "paging": {"after": "x"}})
-    }
+    data = {"result": json.dumps({"data": campaigns, "paging": {"after": "x"}})}
     roots = run_full_mapping(data, max_roots=3)
 
     fields_top = roots[0].fields_top
@@ -136,4 +134,3 @@ def test_non_json_string_remains_string() -> None:
     assert fields_top is not None
     assert fields_top["status"] == {"string": 1}
     assert fields_top["message"] == {"string": 1}
-

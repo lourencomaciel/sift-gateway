@@ -301,7 +301,11 @@ async def stdio_server_compat(
                         await read_stream_writer.send(SessionMessage(message))
 
                 # EOF fallback for line-mode clients that omit trailing newline.
-                if not timed_out and mode_state.value == "line" and buffer.strip():
+                if (
+                    not timed_out
+                    and mode_state.value == "line"
+                    and buffer.strip()
+                ):
                     try:
                         message = types.JSONRPCMessage.model_validate_json(
                             buffer

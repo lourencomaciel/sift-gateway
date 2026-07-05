@@ -593,6 +593,5 @@ class TestSessionRuntimeProvenanceMigration:
 
     def test_adds_runtime_instance_uuid_column(self) -> None:
         assert (
-            "alter table sessions add column "
-            "last_runtime_instance_uuid text"
+            "alter table sessions add column last_runtime_instance_uuid text"
         ) in self.sql

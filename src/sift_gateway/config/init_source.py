@@ -27,6 +27,7 @@ _SOURCE_SHORTCUT_ALIASES: dict[str, str] = {
     "code": "vscode",
 }
 
+
 def resolve_source_arg(
     source_arg: str | Path,
     *,

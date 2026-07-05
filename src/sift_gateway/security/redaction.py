@@ -88,7 +88,9 @@ class ResponseSecretRedactor:
             updated_items.append(updated_item)
         return (updated_items if changed else values), total
 
-    def _redact_dict(self, values: dict[str, Any]) -> tuple[dict[str, Any], int]:
+    def _redact_dict(
+        self, values: dict[str, Any]
+    ) -> tuple[dict[str, Any], int]:
         total = 0
         changed = False
         updated_map: dict[str, Any] = {}

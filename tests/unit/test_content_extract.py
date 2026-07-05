@@ -70,7 +70,9 @@ def test_queryable_json_from_part_supports_mapping_shape() -> None:
     assert encoding == "parsed_text_json"
 
 
-def test_first_queryable_json_from_payload_handles_invalid_content_shape() -> None:
+def test_first_queryable_json_from_payload_handles_invalid_content_shape() -> (
+    None
+):
     assert first_queryable_json_from_payload({"content": "not-a-list"}) is None
 
 

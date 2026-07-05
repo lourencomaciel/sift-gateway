@@ -67,7 +67,9 @@ def test_compute_related_set_hash_is_order_independent() -> None:
     assert compute_related_set_hash(rows_a) == compute_related_set_hash(rows_b)
 
 
-def test_build_lineage_root_catalog_marks_compatibility_by_shape_and_mode() -> None:
+def test_build_lineage_root_catalog_marks_compatibility_by_shape_and_mode() -> (
+    None
+):
     entries = [
         {
             "artifact_id": "art_1",

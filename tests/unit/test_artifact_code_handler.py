@@ -459,9 +459,7 @@ def test_code_query_all_related_allows_mixed_schema_mode_with_warning(
             _SeqCursor(one=_schema_root_row("rk_1", schema_mode="exact")),
             _SeqCursor(one=_meta_row("art_2")),
             _SeqCursor(one=_root_row("rk_2", root_shape="array")),
-            _SeqCursor(
-                one=_schema_root_row("rk_2", schema_mode="sampled")
-            ),
+            _SeqCursor(one=_schema_root_row("rk_2", schema_mode="sampled")),
             _SeqCursor(all_rows=[_schema_field_row()]),
             _SeqCursor(
                 one=_artifact_row(

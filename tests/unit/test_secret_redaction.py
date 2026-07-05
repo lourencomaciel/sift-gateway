@@ -48,8 +48,7 @@ def test_redact_payload_nested_values() -> None:
     assert isinstance(result, RedactionResult)
     assert result.redacted_count == 4
     assert result.payload["top"] == (
-        "https://api.example.test/items"
-        "?access_token=[REDACTED_SECRET]"
+        "https://api.example.test/items?access_token=[REDACTED_SECRET]"
     )
     assert result.payload["nested"]["auth"] == (
         "Authorization: Bearer [REDACTED_SECRET]"
@@ -117,8 +116,7 @@ def test_redact_payload_does_not_redact_generic_token_query_param() -> None:
     redactor = _redactor()
     payload = {
         "next": (
-            "https://api.example.test/items"
-            "?token=PAGE_TOKEN_ABC123&limit=100"
+            "https://api.example.test/items?token=PAGE_TOKEN_ABC123&limit=100"
         )
     }
 
@@ -159,7 +157,9 @@ def test_redact_payload_redacts_bearer_header() -> None:
     assert result.payload["header"] == "Authorization: Bearer [REDACTED_SECRET]"
 
 
-def test_redact_payload_embedded_json_string_redacts_known_query_tokens() -> None:
+def test_redact_payload_embedded_json_string_redacts_known_query_tokens() -> (
+    None
+):
     redactor = _redactor()
     payload = {
         "result": json.dumps(
@@ -184,7 +184,9 @@ def test_redact_payload_embedded_json_string_redacts_known_query_tokens() -> Non
     )
 
 
-def test_redact_payload_invalid_embedded_json_falls_back_to_plain_string() -> None:
+def test_redact_payload_invalid_embedded_json_falls_back_to_plain_string() -> (
+    None
+):
     redactor = _redactor()
     payload = {
         "result": "{not_valid_json",
@@ -202,8 +204,7 @@ def test_redact_payload_preserves_binary_ref_blob_uri_and_id() -> None:
         "type": "binary_ref",
         "blob_id": "bin_42b7d9ae99ee75a488d474c30fb0a61c",
         "binary_hash": (
-            "42b7d9ae99ee75a488d474c30fb0a61c"
-            "3b224d89ccb42026f051c64083cfe36f"
+            "42b7d9ae99ee75a488d474c30fb0a61c3b224d89ccb42026f051c64083cfe36f"
         ),
         "mime": "image/jpeg",
         "byte_count": 225585,

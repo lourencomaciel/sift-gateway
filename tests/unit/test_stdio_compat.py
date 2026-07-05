@@ -347,9 +347,7 @@ def test_in_flight_tracker_keeps_directions_separate() -> None:
 
 
 async def test_stdio_idle_timeout_waits_for_active_request(monkeypatch) -> None:
-    request = (
-        b'{"jsonrpc":"2.0","id":99,"method":"tools/list","params":{}}\n'
-    )
+    request = b'{"jsonrpc":"2.0","id":99,"method":"tools/list","params":{}}\n'
     response = types.JSONRPCMessage.model_validate(
         {"jsonrpc": "2.0", "id": 99, "result": {}}
     )

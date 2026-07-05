@@ -40,7 +40,9 @@ def test_build_schema_payload_truncates_long_distinct_strings() -> None:
     ]
 
 
-def test_build_schema_payload_preserves_pre_truncated_distinct_strings() -> None:
+def test_build_schema_payload_preserves_pre_truncated_distinct_strings() -> (
+    None
+):
     schema_root = {
         "schema_version": "schema_v1",
         "schema_hash": "sha256:test",

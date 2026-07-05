@@ -151,10 +151,7 @@ async def _handle_blob_materialize(
     if not has_blob_id and not has_binary_hash:
         return gateway_error(
             "INVALID_ARGUMENT",
-            (
-                "blob_id or binary_hash is required for "
-                "action=blob_materialize"
-            ),
+            ("blob_id or binary_hash is required for action=blob_materialize"),
         )
     from sift_gateway.mcp.handlers.artifact_blob import (
         handle_artifact_blob_materialize,

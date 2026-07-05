@@ -1169,10 +1169,14 @@ def _detect_non_advancing_cursor_rejection(
         _evaluate_path(json_value, "$.result.pagination.next"),
     )
     for next_candidate in next_candidates:
-        if isinstance(next_candidate, str) and _looks_like_url(next_candidate) and (
-            _looks_non_advancing_next_url(
-                url_value=next_candidate,
-                original_args=original_args,
+        if (
+            isinstance(next_candidate, str)
+            and _looks_like_url(next_candidate)
+            and (
+                _looks_non_advancing_next_url(
+                    url_value=next_candidate,
+                    original_args=original_args,
+                )
             )
         ):
             return _REJECTED_REASON_NON_ADVANCING_CURSOR

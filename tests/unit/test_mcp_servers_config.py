@@ -637,7 +637,9 @@ class TestLoadGatewayConfigMcpServers:
             "1",
         )
         merged = load_gateway_config(data_dir_override=str(tmp_path))
-        api_a = next(item for item in merged.upstreams if item.prefix == "api_a")
+        api_a = next(
+            item for item in merged.upstreams if item.prefix == "api_a"
+        )
         assert api_a.headers == {"X_TRACE": "1"}
         assert api_a.secret_ref == "shared"
         assert api_a.secret_ref_overrides_merged is True

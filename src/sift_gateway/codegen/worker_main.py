@@ -60,9 +60,12 @@ def _safe_import(
     if level != 0:
         raise ImportError("relative imports are not allowed")
     root = name.split(".", 1)[0]
-    if root not in _ALLOWED_IMPORT_ROOTS and not _is_allowed_transitive_stdlib_import(
-        name=name,
-        globals_dict=globals,
+    if (
+        root not in _ALLOWED_IMPORT_ROOTS
+        and not _is_allowed_transitive_stdlib_import(
+            name=name,
+            globals_dict=globals,
+        )
     ):
         raise ImportError(f"import not allowed: {name}")
     if root == "urllib" and name not in _ALLOWED_URLLIB_MODULES:
