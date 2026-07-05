@@ -24,6 +24,9 @@ jobs:
       - name: Install dependencies
         run: uv sync --extra dev
 
+      - name: Format check
+        run: uv run python -m ruff format --check src tests
+
       - name: Lint
         run: uv run python -m ruff check src tests
 
@@ -64,5 +67,5 @@ jobs:
       - name: Install dependencies
         run: uv sync --extra dev
 
-      - name: Unit tests
-        run: uv run python -m pytest tests/unit/ -q
+      - name: Unit and integration tests with coverage
+        run: uv run python -m pytest tests/unit/ tests/integration/ --cov=sift_gateway --cov-report=term-missing -q
