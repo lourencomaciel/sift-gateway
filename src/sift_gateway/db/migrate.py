@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from sift_gateway.db.protocols import ConnectionLike
+from sift_gateway.db.protocols import ConnectionLike, safe_rollback
 
 
 @dataclass(frozen=True)
@@ -212,17 +212,22 @@ def apply_migrations(
     for migration in load_migrations(migrations_dir):
         if migration.name in applied:
             continue
-        # Split multi-statement SQL and execute each statement
-        # individually.  We avoid SQLite's executescript() because
-        # it implicitly commits before running, breaking atomicity
-        # for multi-statement migrations.
-        for stmt in _split_sql_statements(migration.sql):
-            connection.execute(stmt)
-        connection.execute(
-            "INSERT INTO schema_migrations (migration_name) VALUES (%s)",
-            (migration.name,),
-        )
+        connection.execute("BEGIN")
+        try:
+            # Split multi-statement SQL and execute each statement
+            # individually.  We avoid SQLite's executescript() because
+            # it implicitly commits before running, breaking atomicity
+            # for multi-statement migrations.
+            for stmt in _split_sql_statements(migration.sql):
+                connection.execute(stmt)
+            connection.execute(
+                "INSERT INTO schema_migrations (migration_name) VALUES (%s)",
+                (migration.name,),
+            )
+        except Exception:
+            safe_rollback(connection)
+            raise
+        connection.commit()
         newly_applied.append(migration.name)
 
-    connection.commit()
     return newly_applied

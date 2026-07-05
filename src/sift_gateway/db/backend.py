@@ -214,6 +214,7 @@ class SqliteBackend:
             check_same_thread=False,
         )
         self._conn.execute("PRAGMA journal_mode = WAL")
+        self._conn.execute("PRAGMA synchronous = NORMAL")
         self._conn.execute(f"PRAGMA busy_timeout = {self._busy_timeout_ms}")
         self._conn.execute("PRAGMA foreign_keys = ON")
 

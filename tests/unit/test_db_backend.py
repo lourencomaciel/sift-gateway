@@ -23,6 +23,11 @@ class TestSqliteBackend:
             mode = conn.execute("PRAGMA journal_mode").fetchone()[0]
             assert mode == "wal"
 
+    def test_synchronous_normal_enabled(self, backend: SqliteBackend):
+        with backend.connection() as conn:
+            synchronous = conn.execute("PRAGMA synchronous").fetchone()[0]
+            assert synchronous == 1
+
     def test_foreign_keys_enabled(self, backend: SqliteBackend):
         with backend.connection() as conn:
             fk = conn.execute("PRAGMA foreign_keys").fetchone()[0]

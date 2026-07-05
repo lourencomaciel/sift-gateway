@@ -2,10 +2,12 @@ from __future__ import annotations
 
 from pathlib import Path
 import re
+import sqlite3
 from typing import ClassVar
 
 import pytest
 
+from sift_gateway.db.backend import SqliteBackend
 from sift_gateway.db.migrate import apply_migrations, list_migrations
 
 # ---------------------------------------------------------------------------
@@ -36,6 +38,7 @@ class _FakeConnection:
         self.applied: set[str] = set()
         self.queries: list[str] = []
         self.commit_calls = 0
+        self.rollback_calls = 0
 
     def execute(self, query: str, params=None):
         self.queries.append(query)
@@ -52,6 +55,9 @@ class _FakeConnection:
 
     def commit(self):
         self.commit_calls += 1
+
+    def rollback(self):
+        self.rollback_calls += 1
 
 
 def test_list_migrations_includes_sql_files() -> None:
@@ -71,7 +77,56 @@ def test_apply_migrations_idempotent() -> None:
 
     assert "001_init.sql" in first
     assert second == []
-    assert connection.commit_calls == 2
+    assert connection.commit_calls == len(first)
+    assert connection.rollback_calls == 0
+
+
+def test_apply_migrations_wraps_each_pending_migration_in_transaction() -> None:
+    connection = _FakeConnection()
+    migrations_dir = Path("src/sift_gateway/db/migrations_sqlite").resolve()
+
+    applied = apply_migrations(connection, migrations_dir)
+
+    assert connection.queries.count("BEGIN") == len(applied)
+    assert connection.commit_calls == len(applied)
+    assert connection.rollback_calls == 0
+
+
+def test_apply_migrations_rolls_back_failed_migration(tmp_path: Path) -> None:
+    migrations_dir = tmp_path / "migrations"
+    migrations_dir.mkdir()
+    (migrations_dir / "001_init.sql").write_text(
+        """
+        CREATE TABLE created_before_failure (
+            id INTEGER PRIMARY KEY
+        );
+        INSERT INTO missing_table VALUES (1);
+        """,
+        encoding="utf-8",
+    )
+    backend = SqliteBackend(db_path=tmp_path / "failed.db")
+    try:
+        with backend.connection() as connection:
+            with pytest.raises(sqlite3.OperationalError, match="missing_table"):
+                apply_migrations(connection, migrations_dir)
+            table_row = connection.execute(
+                """
+                SELECT name FROM sqlite_master
+                WHERE type = 'table' AND name = ?
+                """,
+                ("created_before_failure",),
+            ).fetchone()
+            migration_row = connection.execute(
+                """
+                SELECT migration_name FROM schema_migrations
+                WHERE migration_name = ?
+                """,
+                ("001_init.sql",),
+            ).fetchone()
+        assert table_row is None
+        assert migration_row is None
+    finally:
+        backend.close()
 
 
 def test_list_migrations_fails_when_directory_has_no_sql(
