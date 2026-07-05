@@ -12,6 +12,7 @@ from sift_gateway.lifecycle import CheckResult
 from sift_gateway.main import (
     _extract_logs_flag,
     _parse_args,
+    _resolve_stdio_idle_timeout,
     _run_upstream_add,
     _run_upstream_auth_check,
     _run_upstream_auth_set,
@@ -379,6 +380,59 @@ def test_serve_runs_bootstrap_and_closes_pool(
     assert pool.closed is True
     assert app.called is True
     assert app.kwargs == {"show_banner": False}
+
+
+def test_serve_stdio_transport_passes_idle_timeout(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    config = GatewayConfig(data_dir=tmp_path)
+    report = CheckResult(fs_ok=True, db_ok=True, upstream_ok=True, details=[])
+    pool = _FakePool()
+    app = _FakeApp()
+    server = _FakeServer(app)
+    seen: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        "sift_gateway.main._parse_args",
+        lambda: argparse.Namespace(
+            command=None,
+            check=False,
+            data_dir=None,
+            transport="stdio",
+            host="127.0.0.1",
+            port=8080,
+            path="/mcp",
+            auth_token=None,
+            stdio_idle_timeout=7.0,
+        ),
+    )
+    monkeypatch.setattr(
+        "sift_gateway.main.load_gateway_config",
+        lambda **_kwargs: config,
+    )
+    monkeypatch.setattr(
+        "sift_gateway.main.run_startup_check", lambda _config: report
+    )
+    monkeypatch.setattr(
+        "sift_gateway.app.build_app",
+        lambda *, config, startup_report: (server, pool),
+    )
+
+    def _fake_run_stdio(**kwargs: object) -> None:
+        seen.update(kwargs)
+
+    monkeypatch.setattr(
+        "sift_gateway.mcp.stdio_compat.run_fastmcp_stdio_compat",
+        lambda _app, **kwargs: _fake_run_stdio(**kwargs),
+    )
+
+    exit_code = serve()
+
+    assert exit_code == 0
+    assert pool.closed is True
+    assert seen["show_banner"] is False
+    assert seen["idle_timeout_seconds"] == 7.0
 
 
 def test_serve_dispatches_init_command(
@@ -1530,6 +1584,30 @@ def test_parse_args_transport_default_is_stdio(
     monkeypatch.setattr("sys.argv", ["sift-gateway"])
     args = _parse_args()
     assert args.transport == "stdio"
+    assert args.stdio_idle_timeout is None
+
+
+def test_parse_args_stdio_idle_timeout_accepts_seconds(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "sys.argv",
+        ["sift-gateway", "--stdio-idle-timeout", "12.5"],
+    )
+    args = _parse_args()
+    assert args.stdio_idle_timeout == 12.5
+
+
+def test_resolve_stdio_idle_timeout_uses_default(monkeypatch) -> None:
+    monkeypatch.delenv("SIFT_GATEWAY_STDIO_IDLE_TIMEOUT_SECONDS", raising=False)
+    assert _resolve_stdio_idle_timeout() == 1800.0
+
+
+def test_resolve_stdio_idle_timeout_can_disable() -> None:
+    assert _resolve_stdio_idle_timeout(0) is None
+
+
+def test_resolve_stdio_idle_timeout_reads_env(monkeypatch) -> None:
+    monkeypatch.setenv("SIFT_GATEWAY_STDIO_IDLE_TIMEOUT_SECONDS", "42")
+    assert _resolve_stdio_idle_timeout() == 42.0
 
 
 def test_parse_args_version_prints_package_version(

@@ -12,17 +12,30 @@ import sys
 import time
 from typing import Any
 
+import anyio
+from mcp.shared.message import SessionMessage
+import mcp.types as types
+import pytest
+
 from sift_gateway.mcp.stdio_compat import (
     _detect_mode,
+    _InFlightTracker,
     _ModeState,
     _parse_next_message,
+    _read_stdin_chunk,
+    stdio_server_compat,
 )
 
 
 class _ServerSession:
     """Manage a sift-gateway stdio subprocess for protocol tests."""
 
-    def __init__(self, tmp_path: Path) -> None:
+    def __init__(
+        self,
+        tmp_path: Path,
+        *,
+        extra_args: list[str] | None = None,
+    ) -> None:
         env = dict(os.environ)
         src_dir = Path(__file__).resolve().parents[2] / "src"
         existing = env.get("PYTHONPATH")
@@ -33,6 +46,7 @@ class _ServerSession:
             sys.executable,
             "-c",
             "from sift_gateway.main import cli; cli()",
+            *(extra_args or []),
             "--data-dir",
             str(tmp_path),
         ]
@@ -166,6 +180,15 @@ class _ServerSession:
                     return chunk.decode("utf-8", errors="replace")
         return "<no-stderr>"
 
+    def wait(self, timeout: float) -> int:
+        """Wait for subprocess exit and return its code."""
+        try:
+            return self._process.wait(timeout=timeout)
+        except subprocess.TimeoutExpired as exc:
+            raise AssertionError(
+                f"server did not exit: {self._stderr()}"
+            ) from exc
+
 
 def _initialize_payload(message_id: int = 1) -> dict[str, Any]:
     return {
@@ -272,6 +295,97 @@ def test_stdio_keeps_newline_json_compatibility(tmp_path: Path) -> None:
         assert isinstance(resources_response["result"]["resources"], list)
     finally:
         session.close()
+
+
+def test_stdio_idle_timeout_exits_without_input(tmp_path: Path) -> None:
+    session = _ServerSession(
+        tmp_path,
+        extra_args=["--stdio-idle-timeout", "0.2"],
+    )
+    try:
+        assert session.wait(timeout=5.0) == 0
+    finally:
+        session.close()
+
+
+def test_read_stdin_chunk_returns_none_after_timeout(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "sift_gateway.mcp.stdio_compat.select.select",
+        lambda *_args: ([], [], []),
+    )
+    assert _read_stdin_chunk(timeout_seconds=0.1) is None
+
+
+def test_in_flight_tracker_keeps_directions_separate() -> None:
+    tracker = _InFlightTracker()
+    client_request = types.JSONRPCMessage.model_validate(
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/list",
+            "params": {},
+        }
+    )
+    server_request = types.JSONRPCMessage.model_validate(
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "sampling/createMessage",
+            "params": {},
+        }
+    )
+    client_response = types.JSONRPCMessage.model_validate(
+        {"jsonrpc": "2.0", "id": 1, "result": {}}
+    )
+
+    tracker.note_inbound(client_request)
+    tracker.note_outbound(server_request)
+    tracker.note_outbound(client_response)
+
+    assert tracker.has_active_requests is True
+    assert tracker.active == {("server", 1)}
+
+
+async def test_stdio_idle_timeout_waits_for_active_request(monkeypatch) -> None:
+    request = (
+        b'{"jsonrpc":"2.0","id":99,"method":"tools/list","params":{}}\n'
+    )
+    response = types.JSONRPCMessage.model_validate(
+        {"jsonrpc": "2.0", "id": 99, "result": {}}
+    )
+    chunks: list[bytes] = [request]
+
+    def _fake_read(_timeout_seconds: float | None = None) -> bytes | None:
+        if chunks:
+            return chunks.pop(0)
+        time.sleep(0.01)
+        return None
+
+    monkeypatch.setattr(
+        "sift_gateway.mcp.stdio_compat._read_stdin_chunk",
+        _fake_read,
+    )
+    monkeypatch.setattr(
+        "sift_gateway.mcp.stdio_compat._write_stdout_chunk",
+        lambda _payload: None,
+    )
+
+    async with stdio_server_compat(idle_timeout_seconds=0.01) as (
+        read_stream,
+        write_stream,
+    ):
+        received = await read_stream.receive()
+        assert received.message.root.id == 99
+
+        with anyio.move_on_after(0.05) as scope:
+            await read_stream.receive()
+        assert scope.cancel_called is True
+
+        await write_stream.send(SessionMessage(response))
+
+        with anyio.fail_after(1.0):
+            with pytest.raises(anyio.EndOfStream):
+                await read_stream.receive()
 
 
 def test_detect_mode_recognizes_header_prefix_before_content_length() -> None:

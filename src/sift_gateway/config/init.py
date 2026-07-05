@@ -36,6 +36,8 @@ from sift_gateway.config.upstream_secrets import write_secret
 from sift_gateway.constants import (
     DEFAULT_DATA_DIR,
     DEFAULT_GATEWAY_NAME,
+    DEFAULT_STDIO_IDLE_TIMEOUT_SECONDS,
+    STDIO_IDLE_TIMEOUT_ENV,
 )
 
 
@@ -279,6 +281,7 @@ def run_init(
         "backup_path": str(backup_path),
         "source_path": str(source_path),
         "gateway_config_path": str(gateway_config_path),
+        "gateway_url": gateway_url,
     }
 
     if dry_run:
@@ -340,4 +343,19 @@ def print_init_summary(
             "To revert: sift-gateway init --from "
             + summary["source_path"]
             + " --revert"
+        )
+    if not summary.get("gateway_url"):
+        print()
+        print(
+            "Note: command-mode MCP clients launch one gateway process "
+            "per client session."
+        )
+        print(
+            "Idle stdio sessions exit after "
+            f"{DEFAULT_STDIO_IDLE_TIMEOUT_SECONDS:g} seconds by default "
+            f"({STDIO_IDLE_TIMEOUT_ENV}=0 disables this)."
+        )
+        print(
+            "For one shared long-running gateway, start an HTTP transport "
+            "and rerun init with --gateway-url."
         )

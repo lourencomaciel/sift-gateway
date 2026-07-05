@@ -11,9 +11,10 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import partial
 import os
+import select
 import sys
 from typing import Any
 
@@ -41,6 +42,38 @@ class _ParseResult:
     payload: bytes
     consumed: int
     error: str | None = None
+
+
+_RequestId = int | str
+_RequestKey = tuple[str, _RequestId]
+
+
+@dataclass
+class _InFlightTracker:
+    """Track request IDs that still need a peer response."""
+
+    active: set[_RequestKey] = field(default_factory=set)
+
+    def note_inbound(self, message: types.JSONRPCMessage) -> None:
+        """Track a message received from the client."""
+        root = message.root
+        if isinstance(root, types.JSONRPCRequest):
+            self.active.add(("client", root.id))
+        elif isinstance(root, types.JSONRPCResponse | types.JSONRPCError):
+            self.active.discard(("server", root.id))
+
+    def note_outbound(self, message: types.JSONRPCMessage) -> None:
+        """Track a message sent to the client."""
+        root = message.root
+        if isinstance(root, types.JSONRPCRequest):
+            self.active.add(("server", root.id))
+        elif isinstance(root, types.JSONRPCResponse | types.JSONRPCError):
+            self.active.discard(("client", root.id))
+
+    @property
+    def has_active_requests(self) -> bool:
+        """Return whether any request is still awaiting a response."""
+        return bool(self.active)
 
 
 def _detect_mode(buffer: bytes) -> str | None:
@@ -177,8 +210,20 @@ def _encode_output(payload: bytes, mode: str | None) -> bytes:
     return payload + b"\n"
 
 
-def _read_stdin_chunk() -> bytes:
-    """Read one chunk from process stdin as raw bytes."""
+def _read_stdin_chunk(timeout_seconds: float | None = None) -> bytes | None:
+    """Read one chunk from process stdin as raw bytes.
+
+    Returns ``None`` when ``timeout_seconds`` elapses without input.
+    """
+    if timeout_seconds is not None:
+        try:
+            ready, _, _ = select.select([sys.stdin], [], [], timeout_seconds)
+        except (OSError, TypeError, ValueError):
+            # Some platforms only support select() for sockets. Fall back to
+            # the legacy blocking read rather than breaking stdio transport.
+            ready = [sys.stdin]
+        if not ready:
+            return None
     return os.read(sys.stdin.fileno(), 4096)
 
 
@@ -195,7 +240,9 @@ def _write_stdout_chunk(payload: bytes) -> None:
 
 
 @asynccontextmanager
-async def stdio_server_compat() -> AsyncIterator[
+async def stdio_server_compat(
+    idle_timeout_seconds: float | None = None,
+) -> AsyncIterator[
     tuple[
         MemoryObjectReceiveStream[SessionMessage | Exception],
         MemoryObjectSendStream[SessionMessage],
@@ -210,13 +257,23 @@ async def stdio_server_compat() -> AsyncIterator[
     read_stream_writer, read_stream = anyio.create_memory_object_stream(0)
     write_stream, write_stream_reader = anyio.create_memory_object_stream(0)
     mode_state = _ModeState()
+    in_flight = _InFlightTracker()
 
     async def stdin_reader() -> None:
         buffer = b""
+        timed_out = False
         try:
             async with read_stream_writer:
                 while True:
-                    chunk = await anyio.to_thread.run_sync(_read_stdin_chunk)
+                    chunk = await anyio.to_thread.run_sync(
+                        _read_stdin_chunk,
+                        idle_timeout_seconds,
+                    )
+                    if chunk is None:
+                        timed_out = True
+                        if in_flight.has_active_requests:
+                            continue
+                        break
                     if not chunk:
                         break
                     buffer += chunk
@@ -240,10 +297,11 @@ async def stdio_server_compat() -> AsyncIterator[
                         except Exception as exc:  # pragma: no cover
                             await read_stream_writer.send(exc)
                             continue
+                        in_flight.note_inbound(message)
                         await read_stream_writer.send(SessionMessage(message))
 
                 # EOF fallback for line-mode clients that omit trailing newline.
-                if mode_state.value == "line" and buffer.strip():
+                if not timed_out and mode_state.value == "line" and buffer.strip():
                     try:
                         message = types.JSONRPCMessage.model_validate_json(
                             buffer
@@ -251,6 +309,7 @@ async def stdio_server_compat() -> AsyncIterator[
                     except Exception as exc:  # pragma: no cover
                         await read_stream_writer.send(exc)
                     else:
+                        in_flight.note_inbound(message)
                         await read_stream_writer.send(SessionMessage(message))
         except anyio.ClosedResourceError:  # pragma: no cover
             await anyio.lowlevel.checkpoint()
@@ -259,6 +318,7 @@ async def stdio_server_compat() -> AsyncIterator[
         try:
             async with write_stream_reader:
                 async for session_message in write_stream_reader:
+                    in_flight.note_outbound(session_message.message)
                     payload = session_message.message.model_dump_json(
                         by_alias=True,
                         exclude_none=True,
@@ -273,7 +333,10 @@ async def stdio_server_compat() -> AsyncIterator[
     async with anyio.create_task_group() as task_group:
         task_group.start_soon(stdin_reader)
         task_group.start_soon(stdout_writer)
-        yield read_stream, write_stream
+        try:
+            yield read_stream, write_stream
+        finally:
+            task_group.cancel_scope.cancel()
 
 
 async def run_fastmcp_stdio_async_compat(
@@ -281,6 +344,7 @@ async def run_fastmcp_stdio_async_compat(
     *,
     show_banner: bool = True,
     log_level: str | None = None,
+    idle_timeout_seconds: float | None = None,
 ) -> None:
     """Run a FastMCP app over compatibility stdio transport."""
     from fastmcp.server.server import logger
@@ -292,7 +356,9 @@ async def run_fastmcp_stdio_async_compat(
 
     with temporary_log_level(log_level):
         async with app._lifespan_manager():
-            async with stdio_server_compat() as (
+            async with stdio_server_compat(
+                idle_timeout_seconds=idle_timeout_seconds,
+            ) as (
                 read_stream,
                 write_stream,
             ):
@@ -317,6 +383,7 @@ def run_fastmcp_stdio_compat(
     *,
     show_banner: bool = True,
     log_level: str | None = None,
+    idle_timeout_seconds: float | None = None,
 ) -> None:
     """Run a FastMCP app over compatibility stdio transport (sync API)."""
     # Test doubles may expose only ``run()`` and not FastMCP internals.
@@ -329,5 +396,6 @@ def run_fastmcp_stdio_compat(
             app,
             show_banner=show_banner,
             log_level=log_level,
+            idle_timeout_seconds=idle_timeout_seconds,
         )
     )

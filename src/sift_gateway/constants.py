@@ -49,6 +49,8 @@ BLOB_ID_PREFIX: str = "bin_"
 # ---------------------------------------------------------------------------
 DEFAULT_GATEWAY_NAME: str = "sift-gateway"
 DEFAULT_DATA_DIR: str = ".sift-gateway"
+DEFAULT_STDIO_IDLE_TIMEOUT_SECONDS: float = 1800.0
+STDIO_IDLE_TIMEOUT_ENV: str = "SIFT_GATEWAY_STDIO_IDLE_TIMEOUT_SECONDS"
 STATE_SUBDIR: str = "state"
 RESOURCES_SUBDIR: str = "resources"
 BLOBS_BIN_SUBDIR: str = "blobs/bin"

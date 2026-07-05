@@ -23,7 +23,11 @@ from typing import Any
 from sift_gateway import __version__
 from sift_gateway.config import load_gateway_config
 from sift_gateway.config.shared import is_sift_command
-from sift_gateway.constants import DEFAULT_GATEWAY_NAME
+from sift_gateway.constants import (
+    DEFAULT_GATEWAY_NAME,
+    DEFAULT_STDIO_IDLE_TIMEOUT_SECONDS,
+    STDIO_IDLE_TIMEOUT_ENV,
+)
 from sift_gateway.lifecycle import run_startup_check
 
 _ARTIFACT_COMMANDS = {
@@ -42,6 +46,7 @@ _SERVER_FLAGS_WITH_VALUE = {
     "--port",
     "--path",
     "--auth-token",
+    "--stdio-idle-timeout",
 }
 _SERVER_FLAGS = {
     "--check",
@@ -550,6 +555,16 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help=(
             "Bearer token for non-local HTTP access. "
             "Also reads SIFT_GATEWAY_AUTH_TOKEN env var"
+        ),
+    )
+    parser.add_argument(
+        "--stdio-idle-timeout",
+        type=float,
+        default=None,
+        help=(
+            "Seconds a stdio server may wait without input before exiting "
+            f"(default: {DEFAULT_STDIO_IDLE_TIMEOUT_SECONDS:g}; "
+            f"0 disables; also reads {STDIO_IDLE_TIMEOUT_ENV})"
         ),
     )
     _add_init_subcommand(sub)
@@ -1352,6 +1367,25 @@ def _print_check_report(
     return 0 if report.ok else 1
 
 
+def _resolve_stdio_idle_timeout(cli_value: float | None = None) -> float | None:
+    """Resolve stdio idle timeout from CLI, env, or default."""
+    raw_value = cli_value
+    if raw_value is None:
+        env_value = os.environ.get(STDIO_IDLE_TIMEOUT_ENV)
+        if env_value:
+            try:
+                raw_value = float(env_value)
+            except ValueError as exc:
+                msg = f"{STDIO_IDLE_TIMEOUT_ENV} must be a number of seconds"
+                raise ValueError(msg) from exc
+        else:
+            raw_value = DEFAULT_STDIO_IDLE_TIMEOUT_SECONDS
+
+    if raw_value <= 0:
+        return None
+    return raw_value
+
+
 def _run_server(
     config: Any,
     report: Any,
@@ -1414,7 +1448,13 @@ def _run_server(
                 run_fastmcp_stdio_compat,
             )
 
-            run_fastmcp_stdio_compat(app, show_banner=False)
+            run_fastmcp_stdio_compat(
+                app,
+                show_banner=False,
+                idle_timeout_seconds=_resolve_stdio_idle_timeout(
+                    getattr(args, "stdio_idle_timeout", None)
+                ),
+            )
         else:
             # Wrap with bearer auth middleware when token set
             if auth_token:

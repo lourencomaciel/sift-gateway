@@ -12,6 +12,20 @@ The default mode where Sift communicates via standard input/output. This is the 
 
 **No configuration needed** — this is the default when you run `sift-gateway` without transport flags.
 
+Command-mode MCP clients start a separate `sift-gateway` process for each client session. To prevent stale sessions from accumulating, stdio processes exit after 1800 seconds without stdin activity by default:
+
+```bash
+# Disable the idle shutdown for a stdio process
+sift-gateway --stdio-idle-timeout 0
+
+# Or configure it through the environment
+export SIFT_GATEWAY_STDIO_IDLE_TIMEOUT_SECONDS=3600
+```
+
+For one shared long-running gateway process, run an HTTP transport and configure the client with `sift-gateway init --gateway-url`.
+
+The stdio idle timeout depends on selectable stdin support. On platforms where stdin cannot be waited on this way, Sift falls back to a blocking read and the timeout is effectively disabled.
+
 ### SSE (Server-Sent Events)
 
 Expose Sift over HTTP using Server-Sent Events for real-time updates.
