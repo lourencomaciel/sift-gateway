@@ -27,7 +27,7 @@ classifiers = [
 ]
 dependencies = [
     # MCP framework
-    "fastmcp>=2.0.0",
+    "fastmcp>=2.0.0,<3",
     # Google Application Default Credentials for google-adc runtime auth
     "google-auth[requests]>=2.0.0",
     # Persistent OAuth token storage backend used by `upstream login`
@@ -39,8 +39,8 @@ dependencies = [
     # Structured logging
     "structlog>=24.0.0",
     # Config & model validation
-    "pydantic>=2.0.0",
-    "pydantic-settings>=2.0.0",
+    "pydantic>=2.0.0,<3",
+    "pydantic-settings>=2.0.0,<3",
 ]
 
 [project.urls]

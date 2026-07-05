@@ -2083,7 +2083,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "fastmcp", specifier = ">=2.0.0" },
+    { name = "fastmcp", specifier = ">=2.0.0,<3" },
     { name = "google-auth", extras = ["requests"], specifier = ">=2.0.0" },
     { name = "ijson", specifier = ">=3.3.0" },
     { name = "jmespath", marker = "extra == 'code'", specifier = ">=1.0.1" },
@@ -2095,8 +2095,8 @@ requires-dist = [
     { name = "pandas", marker = "extra == 'code'", specifier = ">=2.2.0" },
     { name = "pandas", marker = "extra == 'data-science'", specifier = ">=2.2.0" },
     { name = "py-key-value-aio", extras = ["disk"], specifier = ">=0.3.0" },
-    { name = "pydantic", specifier = ">=2.0.0" },
-    { name = "pydantic-settings", specifier = ">=2.0.0" },
+    { name = "pydantic", specifier = ">=2.0.0,<3" },
+    { name = "pydantic-settings", specifier = ">=2.0.0,<3" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0.0" },
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.24.0" },
     { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=6.0.0" },
