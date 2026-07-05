@@ -13,6 +13,7 @@ from collections.abc import Generator
 from contextlib import contextmanager
 from pathlib import Path
 import sqlite3
+from threading import RLock
 from typing import Any
 
 
@@ -203,6 +204,7 @@ class SqliteBackend:
         self._db_path = db_path
         self._busy_timeout_ms = busy_timeout_ms
         self._conn: sqlite3.Connection | None = None
+        self._lock = RLock()
         self._init_connection()
 
     def _init_connection(self) -> None:
@@ -236,7 +238,8 @@ class SqliteBackend:
         if self._conn is None:
             msg = "SqliteBackend is closed"
             raise RuntimeError(msg)
-        yield _SqliteConnectionProxy(self._conn)
+        with self._lock:
+            yield _SqliteConnectionProxy(self._conn)
 
     def close(self) -> None:
         """Close the SQLite connection and release resources."""

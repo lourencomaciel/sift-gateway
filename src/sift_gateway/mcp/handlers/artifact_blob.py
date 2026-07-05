@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any
 from sift_gateway.constants import WORKSPACE_ID
 from sift_gateway.envelope.responses import gateway_error
 from sift_gateway.fs.blob_store import normalize_mime
+from sift_gateway.mcp.async_db import run_sync_db
 from sift_gateway.mcp.lineage import resolve_related_artifacts
 
 if TYPE_CHECKING:
@@ -181,10 +182,7 @@ def _resolve_blob_list_limit(
     if raw_limit < 1 or raw_limit > _BLOB_LIST_MAX_LIMIT:
         return 0, gateway_error(
             "INVALID_ARGUMENT",
-            (
-                "limit must be between 1 and "
-                f"{_BLOB_LIST_MAX_LIMIT}"
-            ),
+            (f"limit must be between 1 and {_BLOB_LIST_MAX_LIMIT}"),
         )
     return raw_limit, None
 
@@ -200,10 +198,7 @@ def _resolve_blob_cleanup_limit(
     if raw_limit < 1 or raw_limit > _BLOB_CLEANUP_MAX_LIMIT:
         return 0, gateway_error(
             "INVALID_ARGUMENT",
-            (
-                "limit must be between 1 and "
-                f"{_BLOB_CLEANUP_MAX_LIMIT}"
-            ),
+            (f"limit must be between 1 and {_BLOB_CLEANUP_MAX_LIMIT}"),
         )
     return raw_limit, None
 
@@ -257,14 +252,22 @@ def _resolve_blob_list_artifacts(
         return None, "", artifact_ids_err
 
     if artifact_id is not None and artifact_ids is not None:
-        return None, "", gateway_error(
-            "INVALID_ARGUMENT",
-            "Provide either artifact_id or artifact_ids, not both",
+        return (
+            None,
+            "",
+            gateway_error(
+                "INVALID_ARGUMENT",
+                "Provide either artifact_id or artifact_ids, not both",
+            ),
         )
     if artifact_id is None and artifact_ids is None:
-        return None, "", gateway_error(
-            "INVALID_ARGUMENT",
-            "artifact_id or artifact_ids is required for action=blob_list",
+        return (
+            None,
+            "",
+            gateway_error(
+                "INVALID_ARGUMENT",
+                "artifact_id or artifact_ids is required for action=blob_list",
+            ),
         )
 
     scope, scope_err = _resolve_scope(arguments.get("scope"))
@@ -273,9 +276,13 @@ def _resolve_blob_list_artifacts(
 
     if artifact_ids is not None:
         if scope == "all_related":
-            return None, "", gateway_error(
-                "INVALID_ARGUMENT",
-                "scope=all_related requires artifact_id anchor",
+            return (
+                None,
+                "",
+                gateway_error(
+                    "INVALID_ARGUMENT",
+                    "scope=all_related requires artifact_id anchor",
+                ),
             )
         visibility_err = _check_artifact_visibility(
             ctx,
@@ -341,7 +348,10 @@ def _build_blob_list_entries(
                 "source_tool": source_tool,
             },
         )
-        if isinstance(artifact_id, str) and artifact_id not in entry["artifact_ids"]:
+        if (
+            isinstance(artifact_id, str)
+            and artifact_id not in entry["artifact_ids"]
+        ):
             entry["artifact_ids"].append(artifact_id)
     entries = list(by_hash.values())
     for entry in entries:
@@ -584,7 +594,9 @@ def _resolve_manifest_filename(
     return f"{stem}{extension}"
 
 
-def _materialize_manifest_csv(path: Path, blobs: Sequence[dict[str, Any]]) -> None:
+def _materialize_manifest_csv(
+    path: Path, blobs: Sequence[dict[str, Any]]
+) -> None:
     """Write manifest rows as CSV."""
     with path.open("w", encoding="utf-8", newline="") as handle:
         writer = csv.DictWriter(
@@ -785,20 +797,21 @@ def _resolve_output_extension(
     return ".bin", "default_bin", detected_mime
 
 
-async def handle_artifact_blob_list(
+def _collect_blob_list_payload(
     ctx: GatewayServer,
     arguments: dict[str, Any],
-) -> dict[str, Any]:
-    """Handle ``artifact(action="blob_list")`` requests."""
-    if ctx.db_pool is None:
-        return ctx._not_implemented("artifact.blob_list")
-
-    raw_ctx = arguments.get("_gateway_context")
-    session_id = str(raw_ctx["session_id"]) if isinstance(raw_ctx, dict) else ""
-    limit, limit_err = _resolve_blob_list_limit(arguments.get("limit"))
-    if limit_err is not None:
-        return limit_err
-
+    *,
+    session_id: str,
+    limit: int,
+) -> tuple[
+    list[str] | None,
+    str,
+    list[dict[str, Any]],
+    int,
+    bool,
+    dict[str, Any] | None,
+]:
+    """Collect blob-list DB rows and touch referenced artifacts."""
     with ctx.db_pool.connection() as connection:
         artifact_ids, scope, resolve_err = _resolve_blob_list_artifacts(
             ctx,
@@ -807,7 +820,7 @@ async def handle_artifact_blob_list(
             session_id=session_id,
         )
         if resolve_err is not None:
-            return resolve_err
+            return None, "", [], 0, False, resolve_err
         assert artifact_ids is not None
 
         rows = connection.execute(
@@ -833,6 +846,55 @@ async def handle_artifact_blob_list(
                 commit = getattr(connection, "commit", None)
                 if callable(commit):
                     commit()
+    return artifact_ids, scope, blobs, total, truncated, None
+
+
+def _lookup_blob_row_from_pool(
+    ctx: GatewayServer,
+    *,
+    blob_id: str | None,
+    binary_hash: str | None,
+) -> dict[str, Any] | None:
+    """Look up one blob row using the gateway DB pool."""
+    with ctx.db_pool.connection() as connection:
+        return _lookup_blob_row(
+            connection,
+            blob_id=blob_id,
+            binary_hash=binary_hash,
+        )
+
+
+async def handle_artifact_blob_list(
+    ctx: GatewayServer,
+    arguments: dict[str, Any],
+) -> dict[str, Any]:
+    """Handle ``artifact(action="blob_list")`` requests."""
+    if ctx.db_pool is None:
+        return ctx._not_implemented("artifact.blob_list")
+
+    raw_ctx = arguments.get("_gateway_context")
+    session_id = str(raw_ctx["session_id"]) if isinstance(raw_ctx, dict) else ""
+    limit, limit_err = _resolve_blob_list_limit(arguments.get("limit"))
+    if limit_err is not None:
+        return limit_err
+
+    (
+        artifact_ids,
+        scope,
+        blobs,
+        total,
+        truncated,
+        collect_err,
+    ) = await run_sync_db(
+        _collect_blob_list_payload,
+        ctx,
+        arguments,
+        session_id=session_id,
+        limit=limit,
+    )
+    if collect_err is not None:
+        return collect_err
+    assert artifact_ids is not None
 
     return {
         "action": "blob_list",
@@ -931,12 +993,12 @@ async def handle_artifact_blob_materialize(
         return destination_err
     assert destination_dir is not None
 
-    with ctx.db_pool.connection() as connection:
-        blob_row = _lookup_blob_row(
-            connection,
-            blob_id=blob_id,
-            binary_hash=binary_hash,
-        )
+    blob_row = await run_sync_db(
+        _lookup_blob_row_from_pool,
+        ctx,
+        blob_id=blob_id,
+        binary_hash=binary_hash,
+    )
     if blob_row is None:
         return gateway_error("NOT_FOUND", "blob not found")
 
@@ -1081,7 +1143,10 @@ async def handle_artifact_blob_cleanup(
         )
 
     older_than_seconds_raw = arguments.get("older_than_seconds", 0)
-    if not isinstance(older_than_seconds_raw, int) or older_than_seconds_raw < 0:
+    if (
+        not isinstance(older_than_seconds_raw, int)
+        or older_than_seconds_raw < 0
+    ):
         return gateway_error(
             "INVALID_ARGUMENT",
             "older_than_seconds must be a non-negative integer",
@@ -1176,40 +1241,23 @@ async def handle_artifact_blob_manifest(
         return destination_err
     assert destination_dir is not None
 
-    with ctx.db_pool.connection() as connection:
-        artifact_ids, scope, resolve_err = _resolve_blob_list_artifacts(
-            ctx,
-            connection,
-            arguments,
-            session_id=session_id,
-        )
-        if resolve_err is not None:
-            return resolve_err
-        assert artifact_ids is not None
-
-        rows = connection.execute(
-            _LIST_BLOBS_FOR_ARTIFACTS_SQL,
-            (WORKSPACE_ID, artifact_ids),
-        ).fetchall()
-        mapped_rows = [
-            mapped
-            for row in rows
-            if (mapped := _row_to_dict(row, _BLOB_LIST_COLUMNS)) is not None
-        ]
-        blobs, total, truncated = _build_blob_list_entries(
-            mapped_rows,
-            limit=limit,
-        )
-        if session_id:
-            touched = ctx._safe_touch_for_retrieval_many(
-                connection,
-                session_id=session_id,
-                artifact_ids=artifact_ids,
-            )
-            if touched:
-                commit = getattr(connection, "commit", None)
-                if callable(commit):
-                    commit()
+    (
+        artifact_ids,
+        scope,
+        blobs,
+        total,
+        truncated,
+        collect_err,
+    ) = await run_sync_db(
+        _collect_blob_list_payload,
+        ctx,
+        arguments,
+        session_id=session_id,
+        limit=limit,
+    )
+    if collect_err is not None:
+        return collect_err
+    assert artifact_ids is not None
 
     output_filename = _resolve_manifest_filename(
         filename=filename,

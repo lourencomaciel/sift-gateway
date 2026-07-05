@@ -31,6 +31,7 @@ from sift_gateway.envelope.responses import (
     gateway_tool_result,
     select_response_mode,
 )
+from sift_gateway.mcp.async_db import run_sync_db
 from sift_gateway.mcp.handlers.common import (
     row_to_dict,
     rows_to_dicts,
@@ -846,7 +847,9 @@ def _has_more_signal_detected(assessment: PaginationAssessment) -> bool:
     """Return whether upstream signaled more pages even if not continuable."""
     if assessment.has_more:
         return True
-    return assessment.partial_reason == UPSTREAM_PARTIAL_REASON_NEXT_TOKEN_MISSING
+    return (
+        assessment.partial_reason == UPSTREAM_PARTIAL_REASON_NEXT_TOKEN_MISSING
+    )
 
 
 def _pagination_capability_payload(
@@ -894,9 +897,7 @@ def _build_cardinality_summary(
         summary["root_count"] = len(json_value)
     elif isinstance(json_value, dict):
         summary["root_type"] = "object"
-        summary["top_level_keys"] = sorted(str(key) for key in json_value)[
-            :20
-        ]
+        summary["top_level_keys"] = sorted(str(key) for key in json_value)[:20]
         array_counts = {
             str(key): len(value)
             for key, value in json_value.items()
@@ -1057,9 +1058,7 @@ def _pagination_response_meta(
         warning = None
 
     next_kind: UpstreamNextKind | None = (
-        "tool_call"
-        if has_more and assessment.state is not None
-        else None
+        "tool_call" if has_more and assessment.state is not None else None
     )
     page_number = assessment.page_number
     meta = build_upstream_pagination_meta(
@@ -1634,7 +1633,8 @@ async def handle_mirrored_tool(
         forwarded_args=forwarded_args,
     )
 
-    upstream_args, upstream_args_error = _resolve_upstream_args(
+    upstream_args, upstream_args_error = await run_sync_db(
+        _resolve_upstream_args,
         ctx=ctx,
         forwarded_args=forwarded_args,
     )
@@ -1672,7 +1672,8 @@ async def handle_mirrored_tool(
         )
     except ValueError:
         return gateway_error("INTERNAL", "response redaction failed")
-    persist_result, persist_error = _persist_and_describe(
+    persist_result, persist_error = await run_sync_db(
+        _persist_and_describe,
         ctx=ctx,
         invocation=invocation,
         mirrored=mirrored,

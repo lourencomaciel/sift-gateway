@@ -12,6 +12,7 @@ from sift_gateway.core.artifact_code import (
 from sift_gateway.mcp.adapters.artifact_query_runtime import (
     GatewayArtifactQueryRuntime,
 )
+from sift_gateway.mcp.async_db import run_sync_db
 
 if TYPE_CHECKING:
     from sift_gateway.mcp.server import GatewayServer
@@ -23,7 +24,9 @@ async def handle_artifact_code(
 ) -> dict[str, Any]:
     """Handle code-mode artifact queries."""
     runtime = GatewayArtifactQueryRuntime(gateway=ctx)
-    return execute_artifact_code(runtime, arguments=arguments)
+    return await run_sync_db(
+        execute_artifact_code, runtime, arguments=arguments
+    )
 
 
 __all__ = [

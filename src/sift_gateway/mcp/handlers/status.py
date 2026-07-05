@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from sift_gateway.envelope.responses import gateway_error
+from sift_gateway.mcp.async_db import run_sync_db
 from sift_gateway.tools.status import (
     build_status_response_with_runtime,
     probe_db,
@@ -35,7 +36,7 @@ async def handle_status(
             "probe_upstreams must be a boolean when provided",
         )
 
-    db_health = probe_db(ctx.db_pool)
+    db_health = await run_sync_db(probe_db, ctx.db_pool)
     fs_health = probe_fs(ctx.config)
     return build_status_response_with_runtime(
         ctx.config,
