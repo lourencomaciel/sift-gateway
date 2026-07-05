@@ -24,19 +24,28 @@
 - `app.py` — Composition root (config -> db -> fs -> upstreams -> MCP server)
 - `lifecycle.py` — Startup checks (`CheckResult`)
 - `constants.py` — Version strings, `WORKSPACE_ID = "local"`, ID prefixes (`art_`, `bin_`), reserved keys
+- `artifacts/` — artifact persistence, derived artifact creation, payload/blob metadata writes
+- `auth/` — OAuth/login helpers and auth client utilities
+- `cli/` — CLI support modules used by entrypoints and admin commands
 - `config/` — Pydantic settings (`GatewayConfig`, `UpstreamConfig`), init/sync/secrets
+- `core/` — protocol-agnostic execution services for artifact actions
 - `db/` — SQLite backend, repos, migrations
+- `fs/` — filesystem blob store and local storage helpers
 - `mcp/` — `GatewayServer`, upstream connections, tool mirroring, handlers
 - `mcp/handlers/` — consolidated artifact routing (`query_kind=code`, `next_page`) plus mirrored tool handling
 - `envelope/` — `Envelope` frozen dataclass, `ContentPart` union, `ErrorBlock`, normalize/serialize
-- `artifacts/` — artifact creation pipeline (`persist_artifact`)
 - `mapping/` — full (in-memory) + partial (streaming) schema discovery
+- `openclaw/` — OpenClaw skill/pack CLI integration
 - `retrieval/` — output budget truncation for retrieval responses
 - `query/` — JSONPath, select paths, structured filters, SQL compilation
 - `pagination/` — auto-pagination loop, metadata extraction
 - `cursor/` — Unsigned cursor tokens (`cur1.<payload_b64u>`), TTL enforcement
 - `canon/` — RFC 8785 canonical JSON and compression helpers (`gzip`/`none`)
 - `codegen/` — code query execution in subprocess with AST safety guards
+- `security/` — response redaction and security helpers
+- `storage/` — payload canonicalization and envelope reconstruction
+- `tools/` — native artifact/status tool contract helpers
+- `util/` — shared hashing and low-level utilities
 - `obs/` — structlog setup (`LogEvents` constants), Prometheus metrics (`GatewayMetrics`)
 - `jobs/` — quota enforcement, soft/hard delete, FS reconciliation
 - Tests: `tests/unit/` (~97 files), `tests/integration/`
