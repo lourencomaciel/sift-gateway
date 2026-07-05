@@ -27,6 +27,8 @@ wheels/
 # Local scripts and data
 local/
 .mcp_gateway/
+/output/
+/tmp/
 
 # Planning files (local only)
 findings.md
