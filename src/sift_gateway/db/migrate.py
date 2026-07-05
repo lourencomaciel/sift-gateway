@@ -4,8 +4,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
-from sift_gateway.db.protocols import ConnectionLike, safe_rollback
+from sift_gateway.db.protocols import safe_rollback
 
 
 @dataclass(frozen=True)
@@ -69,7 +70,7 @@ def load_migrations(migrations_dir: Path) -> list[Migration]:
     ]
 
 
-def _ensure_schema_migrations(connection: ConnectionLike) -> None:
+def _ensure_schema_migrations(connection: Any) -> None:
     """Create the schema_migrations table if it does not exist.
 
     Args:
@@ -86,7 +87,7 @@ def _ensure_schema_migrations(connection: ConnectionLike) -> None:
     )
 
 
-def _applied_set(connection: ConnectionLike) -> set[str]:
+def _applied_set(connection: Any) -> set[str]:
     """Return the set of already-applied migration names.
 
     Args:
@@ -189,7 +190,7 @@ def _split_sql_statements(sql: str) -> list[str]:
 
 
 def apply_migrations(
-    connection: ConnectionLike,
+    connection: Any,
     migrations_dir: Path,
 ) -> list[str]:
     """Apply pending SQL migrations and record them.

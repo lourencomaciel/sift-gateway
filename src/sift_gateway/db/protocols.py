@@ -23,9 +23,7 @@ class CursorLike(Protocol):
 class ConnectionLike(Protocol):
     """Minimal connection protocol for execute + commit."""
 
-    def execute(
-        self, query: str, params: tuple[object, ...] | None = None
-    ) -> CursorLike:
+    def execute(self, query: str, params: Any = None, /) -> CursorLike:
         """Execute a SQL query and return a cursor."""
         ...
 
